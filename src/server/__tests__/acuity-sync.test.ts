@@ -127,7 +127,23 @@ describe("Acuity response parsing", () => {
     expect(parsed!.cancelled).toBe(false);
     expect(parsed!.status).toBe("scheduled");
     expect(parsed!.clientName).toBe("Jane Doe");
-    expect(parsed!.clientPhone).toBe("+1 917 555 0142");
+    // Contact identities are normalized AT THE SOURCE for the attribution
+    // engine: phone → raw digits (leading country-code 1 kept), email →
+    // lowercase-trimmed.
+    expect(parsed!.clientPhone).toBe("19175550142");
+    expect(parsed!.clientEmail).toBe("jane@example.com");
+  });
+  test("client contact fields normalize: messy phone/email in → digits + lowercase out", () => {
+    const parsed = parseAcuityAppointment({
+      ...RAW_APPT,
+      phone: " (917) 555-0142 ",
+      email: "  Jane.Doe@Example.COM ",
+    });
+    expect(parsed!.clientPhone).toBe("9175550142");
+    expect(parsed!.clientEmail).toBe("jane.doe@example.com");
+    const empty = parseAcuityAppointment({ ...RAW_APPT, phone: "", email: "" });
+    expect(empty!.clientPhone).toBe("");
+    expect(empty!.clientEmail).toBe("");
   });
 
   test("canceled:true maps to cancelled + status cancelled (frees the slot on upsert)", () => {

@@ -29,6 +29,7 @@
  */
 import { getSecret } from "../env";
 import { addDays, etToday } from "../date-logic";
+import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics/attribution";
 import type { Store } from "../store/types";
 import type { NormalizedAppointment } from "./adapters";
 
@@ -92,8 +93,12 @@ export function parseAcuityAppointment(raw: Record<string, unknown>): Normalized
     canceledAndFallbackCreated: parseAcuityInstant(raw.dateCreated) == null,
     cancelled: canceled,
     clientName: `${first} ${last}`.trim(),
-    clientPhone: typeof raw.phone === "string" ? raw.phone : "",
-    clientEmail: typeof raw.email === "string" ? raw.email : "",
+    // Contact identities NORMALIZED AT THE SOURCE (one definition lives in the
+    // attribution engine): email lowercase-trimmed; phone digits-only with the
+    // leading country-code 1 kept — stored as the raw digits string so the
+    // booking-attribution phone tier compares apples to apples.
+    clientPhone: normalizeAttributionPhone(typeof raw.phone === "string" ? raw.phone : "") ?? "",
+    clientEmail: normalizeAttributionEmail(typeof raw.email === "string" ? raw.email : "") ?? "",
     durationMinutes: duration ?? 60,
     durationMissing: duration == null,
   } as NormalizedAppointment & { canceledAndFallbackCreated?: boolean; durationMissing?: boolean };
@@ -278,8 +283,12 @@ export async function upsertAcuityAppointments(store: Store, appts: NormalizedAp
         status: a.status,
         cancelled: a.cancelled,
         client_name: a.clientName,
-        client_phone: a.clientPhone,
-        client_email: a.clientEmail,
+        // Defensive re-normalization (idempotent): ANY adapter path — demo seed
+        // included — lands identities in the same stored form the engine and
+        // the contacts table compare with. Upsert by acuity id rewrites these
+        // on every sync, so pre-normalization rows refill on the next pass.
+        client_phone: normalizeAttributionPhone(a.clientPhone) ?? "",
+        client_email: normalizeAttributionEmail(a.clientEmail) ?? "",
       };
     }),
   );

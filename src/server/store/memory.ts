@@ -343,7 +343,8 @@ export class MemoryStore implements Store {
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
     // Availability path — mirrors pg.ts: carries the per-appointment duration,
-    // calendar name (scope matching) and acuity id.
+    // calendar name (scope matching), acuity id AND the client contact fields
+    // (the attribution engine's phone/email tiers read them from this selector).
     return [...this.appointments.values()]
       .filter((a) => a.appointment_datetime < endUtc && a.appointment_datetime >= startUtc)
       .map((a) => ({
@@ -351,6 +352,9 @@ export class MemoryStore implements Store {
         calendar_name: a.calendar_name ?? null,
         acuity_appointment_id: a.acuity_appointment_id,
         duration_minutes: a.duration_minutes ?? null,
+        client_name: a.client_name ?? null,
+        client_phone: a.client_phone ?? null,
+        client_email: a.client_email ?? null,
       }));
   }
   async getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]> {

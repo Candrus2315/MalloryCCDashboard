@@ -688,14 +688,18 @@ export class PgStore implements Store {
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
     // Availability path: carries the per-appointment duration (session length),
-    // calendar name (scope matching) and acuity id — the lean selectors used by
-    // the booking metrics keep their original columns.
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, status, cancelled FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
+    // calendar name (scope matching), acuity id AND the client contact fields
+    // (the attribution engine's phone/email tiers read them from this selector)
+    // — the lean selectors used by the booking metrics keep their original columns.
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
     return rows.map((r) => ({
       ...this.apptRow(r as Record<string, unknown>),
       calendar_name: r.calendar_name ? String(r.calendar_name) : null,
       acuity_appointment_id: r.acuity_appointment_id ? String(r.acuity_appointment_id) : null,
       duration_minutes: r.duration_minutes == null ? null : Number(r.duration_minutes),
+      client_name: r.client_name ? String(r.client_name) : null,
+      client_phone: r.client_phone ? String(r.client_phone) : null,
+      client_email: r.client_email ? String(r.client_email) : null,
     }));
   }
   async getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]> {
