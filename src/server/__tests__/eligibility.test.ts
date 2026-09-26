@@ -162,6 +162,24 @@ describe("NO-MAPPING REGRESSION — bit-identical to the part-2 verified matrix"
     expect(TEAM_CALLS + buckets.nonRoster.totalCalls + buckets.unattributed.totalCalls).toBe(2168);
   });
 
+  test("ownership buckets UNLINKED shape (how the live harvest stored 9/21–25): rep NULL + raw HL id → still 162 non-roster + 1 unattributed", () => {
+    // The live DB held the non-roster rows with rep_id NULL and only the raw
+    // HL user id (the user row did not exist at call-sync time). Ownership
+    // must resolve from the RAW id: Non Roster Calls — never Unattributed.
+    const { calls, users } = buildCalls({ linkNonRoster: false });
+    const elig = buildRosterEligibility(users, []);
+    const buckets = buildCallOwnershipBuckets({
+      calls,
+      activeRepIds: elig.activeIds,
+      mappedExternalIds: new Set(elig.mapping.keys()),
+      userById: new Map(users.map((u) => [u.id, { name: u.name, external_id: u.external_id }])),
+      thresholdSeconds: 120,
+    });
+    expect(buckets.nonRoster.totalCalls).toBe(162); // same split as the linked shape
+    expect(buckets.nonRoster.users.map((u) => u.name)).toEqual(NON_ROSTER.map((n) => n.name));
+    expect(buckets.unattributed.totalCalls).toBe(NO_USER_ROWS); // the no-HL-user row only
+  });
+
   test("attribution eligibility is the IDENTITY with no mappings (same refs)", () => {
     const eligible = applyRosterEligibility(calls, elig);
     const attrs: AttributionRow[] = [
@@ -289,19 +307,28 @@ describe("IMMUTABLE SOURCE — mapping never rewrites stored rows", () => {
     expect(raw[0].provider_rep_external_id).toBe("hl-lexa"); // RAW ID UNCHANGED
 
     const eligible = applyRosterEligibility(raw, elig);
-    expect(eligible[0].rep_id).toBe("r-allison"); // QUERY-TIME view only
+    // QUERY-TIME view only. The decorated copy carries the MAPPED rep's
+    // STORE-GENERATED internal id (upsertUsers ignores caller-supplied ids —
+    // "r-allison" was never the stored id; the store assigned its own, which
+    // the mapping above resolved via getAllUsers()). Asserting the literal
+    // "r-allison" here was the defect: it tested the store's id policy, not
+    // eligibility.
+    expect(eligible[0].rep_id).toBe(allisonInternalId);
     expect(eligible[0]).not.toBe(raw[0]); // a copy, never the stored row
     expect(raw[0].rep_id).toBeNull(); // original still untouched
 
-    // audit view keeps showing the raw truth too: the row has NO user linkage
-    // (rep_id NULL), so it sits in the Unattributed bucket — the immutable
-    // ids (HL message id + conversation id) are still fully inspectable.
+    // The RAW audit view ignores mappings (they change reporting eligibility,
+    // never source truth): the call's owner IS a known HL user outside the
+    // roster — Lexa, resolved from provider_rep_external_id — so it shows in
+    // Non Roster Calls and NEVER in Unattributed. The immutable ids (HL
+    // message id + conversation id) remain fully inspectable there.
     const audit = await s.getAuditCalls("2026-09-01T00:00:00.000Z", "2026-10-01T00:00:00.000Z", "non-roster", 120);
-    expect(audit).toHaveLength(0); // not a KNOWN-user row → not Non Roster
+    expect(audit).toHaveLength(1); // KNOWN user outside the roster (mapped users stay visible in the raw view)
+    expect(audit[0].external_call_id).toBe("hlmsg-1");
+    expect(audit[0].conversation_id).toBe("conv-1");
+    expect(audit[0].rep_name).toBe("Lexa Brandis"); // resolved from the raw HL user id
     const unattributed = await s.getAuditCalls("2026-09-01T00:00:00.000Z", "2026-10-01T00:00:00.000Z", "unattributed", 120);
-    expect(unattributed).toHaveLength(1);
-    expect(unattributed[0].external_call_id).toBe("hlmsg-1");
-    expect(unattributed[0].conversation_id).toBe("conv-1");
+    expect(unattributed).toHaveLength(0); // ownership IS determinable (Lexa) — never Unattributed
   });
 });
 

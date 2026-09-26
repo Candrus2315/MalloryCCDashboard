@@ -188,6 +188,53 @@ describe("MemoryStore.getAuditCalls (same semantics as PgStore)", () => {
     expect(c.duration_seconds).toBe(180);
   });
 
+  test("THREE-BUCKET split on every ownership shape: known-user-off-roster / mapped-user / null-user", async () => {
+    // Fixture covers every storage shape the live DB holds (verified 2026-09-26):
+    //   C — rep NULL, raw HL id resolves to a KNOWN off-roster user
+    //   B — rep_id links an INACTIVE user (newer syncs link directly)
+    //   M — mapped user (mapping lives in settings; the raw audit ignores it)
+    //   D — rep NULL, raw HL id resolves to an ACTIVE roster user
+    //   E — rep NULL, raw HL id resolves to NO user row
+    //   F — rep NULL, no HL user id at all
+    const s = new MemoryStore();
+    await s.upsertUsers([
+      user("x", "ext-allison", "Allison Wittner", true),
+      user("y", "ext-christy", "Christy West", false),
+      user("z", "ext-lexa", "Lexa Brandis", false),
+    ]);
+    const stored = await s.getAllUsers();
+    const christyId = stored.find((u) => u.external_id === "ext-christy")!.id;
+    await s.upsertCalls([
+      call("msg-C1", null, "2026-09-25T14:00:00.000Z", 30, { provider_rep_external_id: "ext-christy" }), // C
+      call("msg-C2", christyId, "2026-09-25T15:00:00.000Z", 30, { provider_rep_external_id: "ext-christy" }), // B
+      call("msg-M1", null, "2026-09-25T16:00:00.000Z", 30, { provider_rep_external_id: "ext-lexa" }), // M (Lexa)
+      call("msg-D1", null, "2026-09-25T17:00:00.000Z", 30, { provider_rep_external_id: "ext-allison" }), // D
+      call("msg-E1", null, "2026-09-25T18:00:00.000Z", 30, { provider_rep_external_id: "ext-ghost" }), // E
+      call("msg-F1", null, "2026-09-25T19:00:00.000Z", 30, { provider_rep_external_id: null }), // F
+    ]);
+    const w = ["2026-09-25T04:00:00.000Z", "2026-09-26T04:00:00.000Z"] as const;
+
+    // Non Roster Calls = owner KNOWN and outside the roster (C + B + M raw);
+    // every row shows the resolved human name.
+    const nonRoster = await s.getAuditCalls(w[0], w[1], "non-roster", 120);
+    expect(nonRoster.map((r) => r.external_call_id).sort()).toEqual(["msg-C1", "msg-C2", "msg-M1"]);
+    expect(nonRoster.find((r) => r.external_call_id === "msg-C1")!.rep_name).toBe("Christy West");
+    expect(nonRoster.find((r) => r.external_call_id === "msg-C2")!.rep_name).toBe("Christy West");
+    expect(nonRoster.find((r) => r.external_call_id === "msg-M1")!.rep_name).toBe("Lexa Brandis");
+
+    // Unattributed = ONLY genuinely unknown ownership (E + F) — never a
+    // known non-roster user.
+    const unattributed = await s.getAuditCalls(w[0], w[1], "unattributed", 120);
+    expect(unattributed.map((r) => r.external_call_id).sort()).toEqual(["msg-E1", "msg-F1"]);
+
+    // Legacy alias = the exact union; D (roster-owned, unlinked) sits in no bucket.
+    const union = await s.getAuditCalls(w[0], w[1], "unassigned", 120);
+    expect(union.map((r) => r.external_call_id).sort()).toEqual(["msg-C1", "msg-C2", "msg-E1", "msg-F1", "msg-M1"]);
+    expect(union.length).toBe(nonRoster.length + unattributed.length);
+    const all = await s.getAuditCalls(w[0], w[1], "all", 120);
+    expect(all).toHaveLength(6);
+  });
+
   test("auditRowView stamps the ET calendar date + ET clock time", () => {
     const v = auditRowView({
       external_call_id: "x",
@@ -254,6 +301,28 @@ describe("buildCallOwnershipBuckets (Reps page: Non Roster Calls + Unattributed)
     expect(r.nonRoster.users.map((u) => u.key)).toEqual(["ext-g"]);
     expect(r.nonRoster.totalCalls).toBe(1);
     expect(r.unattributed.totalCalls).toBe(1); // untouched — never used for non-roster users
+  });
+
+  test("UNLINKED live shape: rep NULL + raw HL id → known off-roster user is Non Roster, never Unattributed", () => {
+    const r = buildCallOwnershipBuckets({
+      calls: [
+        { rep_id: null, duration_seconds: 150, provider_rep_external_id: "ext-c" }, // C: known off-roster
+        { rep_id: null, duration_seconds: 60, provider_rep_external_id: "ext-c" },
+        { rep_id: null, duration_seconds: 200, provider_rep_external_id: "ext-a" }, // D: raw id = ACTIVE roster user → no bucket
+        { rep_id: null, duration_seconds: 30, provider_rep_external_id: "ext-ghost" }, // E: unknown → Unattributed
+        { rep_id: null, duration_seconds: 30, provider_rep_external_id: null }, // F: no id → Unattributed
+        { rep_id: "u2", duration_seconds: 121, provider_rep_external_id: "ext-c" }, // B: linked shape unchanged
+      ],
+      activeRepIds,
+      mappedExternalIds: new Set(),
+      userById,
+      thresholdSeconds: 120,
+    });
+    expect(r.nonRoster.totalCalls).toBe(3); // 2 resolved from the raw id + 1 linked
+    expect(r.nonRoster.users.map((u) => u.name)).toEqual(["Christy West"]); // one user, both shapes merged
+    expect(r.nonRoster.users[0]).toMatchObject({ externalId: "ext-c", calls: 3, overThreshold: 2 });
+    expect(r.unattributed.totalCalls).toBe(2); // ONLY the unknown/no-id rows
+    expect(r.unattributed.totalOverThreshold).toBe(0);
   });
 });
 

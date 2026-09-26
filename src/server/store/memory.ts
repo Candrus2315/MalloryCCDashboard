@@ -193,33 +193,58 @@ export class MemoryStore implements Store {
     return this.getCallsBetween(startUtc, "9999-12-31");
   }
   async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
-    // Same semantics as the PG store: joined rep/contact fields, bucket specs
-    // "non-roster" (known inactive user) / "unattributed" (rep NULL) /
-    // "unassigned" (legacy alias = union of both), over_threshold per live
-    // threshold.
+    // Same semantics as the PG store (see its ownership comment): bucket specs
+    // "non-roster" (owner KNOWN and outside the active roster — via rep_id
+    // linkage OR resolved from the raw HL user id) / "unattributed" (no
+    // determinable owner: rep NULL and the raw HL user id missing or
+    // unresolved) / "unassigned" (legacy alias = union of both),
+    // over_threshold per live threshold.
     await this.ensureSchema();
     const activeIds = new Set([...this.users.values()].filter((u) => u.is_active).map((u) => u.id));
     type CallAuditExt = CallExt & { conversation_id?: string | null; provider_rep_external_id?: string | null };
+    const hlUserByKey = new Map([...this.users.values()].map((u) => [`${u.provider}:${u.external_id}`, u]));
+    // Owner of one row: rep_id linkage first, else the raw provider user id.
+    const ownerOf = (c: CallAuditExt): { id: string | null; name: string | null; isActive: boolean | null } => {
+      if (c.rep_id !== null) {
+        const u = this.users.get(c.rep_id);
+        return { id: c.rep_id, name: u?.name ?? null, isActive: u ? u.is_active : false }; // dangling → treated non-roster
+      }
+      const prov = c.provider_rep_external_id ?? null;
+      if (!prov) return { id: null, name: null, isActive: null };
+      const pu = hlUserByKey.get(`${c.provider}:${prov}`) ?? null;
+      return pu ? { id: pu.id, name: pu.name, isActive: pu.is_active } : { id: null, name: null, isActive: null };
+    };
+    const isNonRoster = (c: CallAuditExt): boolean => {
+      const o = ownerOf(c);
+      return o.id !== null && !activeIds.has(o.id);
+    };
+    const isUnattributed = (c: CallAuditExt): boolean => {
+      if (c.rep_id !== null) return false;
+      return ownerOf(c).id === null; // no prov, or prov resolves to no user row
+    };
     const rows = [...this.calls.values()]
       .filter((c) => c.started_at >= startUtc && c.started_at < endUtc)
       .filter((c) => {
         if (!repSpec || repSpec === "all") return true;
-        if (repSpec === "non-roster") return c.rep_id !== null && !activeIds.has(c.rep_id);
-        if (repSpec === "unattributed") return c.rep_id === null;
-        if (repSpec === "unassigned") return !c.rep_id || !activeIds.has(c.rep_id);
+        if (repSpec === "non-roster") return isNonRoster(c as CallAuditExt);
+        if (repSpec === "unattributed") return isUnattributed(c as CallAuditExt);
+        if (repSpec === "unassigned") return isNonRoster(c as CallAuditExt) || isUnattributed(c as CallAuditExt);
         return c.rep_id === repSpec;
       })
       .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : a.external_call_id < b.external_call_id ? 1 : -1));
     return rows.map((c) => {
-      const rep = c.rep_id ? this.users.get(c.rep_id) : undefined;
-      const contact = c.contact_id ? this.contacts.get(c.contact_id) : undefined;
       const cx = c as CallAuditExt;
+      const linked = c.rep_id ? this.users.get(c.rep_id) : undefined;
+      const contact = c.contact_id ? this.contacts.get(c.contact_id) : undefined;
+      const owner = ownerOf(cx);
       return {
         external_call_id: c.external_call_id,
         conversation_id: cx.conversation_id ?? null,
         rep_id: c.rep_id ?? null,
-        rep_name: rep?.name ?? null,
-        rep_is_active: rep ? rep.is_active : null,
+        // Raw linkage first; rows resolved from the raw HL user id show that
+        // owner's name/state so Non Roster Calls are human-readable.
+        rep_name: linked?.name ?? owner.name,
+        rep_is_active: linked ? linked.is_active : owner.isActive,
         provider_rep_external_id: cx.provider_rep_external_id ?? null,
         contact_id: c.contact_id ?? null,
         contact_name: contact?.name ?? null,

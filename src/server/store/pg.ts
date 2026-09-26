@@ -502,28 +502,40 @@ export class PgStore implements Store {
   }
   async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
     await this.ensureSchema();
-    // repSpec is one of the endpoint-validated buckets: "non-roster" = a KNOWN
-    // user outside the active roster; "unattributed" = no determinable owner
-    // (rep NULL); "unassigned" (legacy alias) = the union of both — the exact
-    // complement of the roster-kept call set.
+    // repSpec is one of the endpoint-validated buckets. Ownership resolves in
+    // TWO steps (both stores must agree — memory.ts mirrors this exactly):
+    //   1. rep_id linkage: c.rep_id → users u (the linked owner, any provider).
+    //   2. raw HL user id: provider_rep_external_id → users pu (owner known
+    //      even when the row was stored with rep_id NULL — the shape the live
+    //      harvest writes for calls whose user row did not exist yet).
+    //   "non-roster"   = Non Roster Calls: owner KNOWN and NOT on the active
+    //                    roster (linked-inactive OR resolved-from-raw-id).
+    //   "unattributed" = Unattributed: NO determinable owner (rep_id NULL and
+    //                    the raw HL user id missing or resolving to no user).
+    //   "unassigned"   = legacy alias = the union of both buckets.
+    // Roster-linked rows (owner active) stay in every bucket's complement.
     const repFilter =
       repSpec === "non-roster"
-        ? this.sql`(c.rep_id IS NOT NULL AND u.is_active = false)`
+        ? this.sql`((c.rep_id IS NOT NULL AND (u.id IS NULL OR u.is_active = false))
+             OR (c.rep_id IS NULL AND pu.id IS NOT NULL AND pu.is_active = false))`
         : repSpec === "unattributed"
-          ? this.sql`(c.rep_id IS NULL)`
+          ? this.sql`(c.rep_id IS NULL AND pu.id IS NULL)`
           : repSpec === "unassigned"
-            ? this.sql`(c.rep_id IS NULL OR u.is_active = false)`
+            ? this.sql`((c.rep_id IS NOT NULL AND (u.id IS NULL OR u.is_active = false))
+             OR (c.rep_id IS NULL AND (pu.id IS NULL OR pu.is_active = false)))`
             : repSpec && repSpec !== "all"
               ? this.sql`c.rep_id = ${repSpec}::uuid`
               : this.sql`TRUE`;
     const rows = await this.sql`
       SELECT c.external_call_id, c.conversation_id, c.provider_rep_external_id,
              c.rep_id::text AS rep_id, u.name AS rep_name, u.is_active AS rep_is_active,
+             pu.name AS prov_rep_name, pu.is_active AS prov_is_active,
              c.contact_id::text AS contact_id, ct.name AS contact_name, ct.external_id AS contact_external_id,
              c.direction, c.call_status, c.started_at::text AS started_at, c.duration_seconds,
              (c.duration_seconds > ${thresholdSeconds}) AS over_threshold
       FROM calls c
       LEFT JOIN users u ON u.id = c.rep_id
+      LEFT JOIN users pu ON pu.provider = c.provider AND pu.external_id = c.provider_rep_external_id
       LEFT JOIN contacts ct ON ct.id = c.contact_id
       WHERE c.started_at >= ${startUtc} AND c.started_at < ${endUtc} AND ${repFilter}
       ORDER BY c.started_at DESC, c.external_call_id`;
@@ -531,8 +543,10 @@ export class PgStore implements Store {
       external_call_id: String(r.external_call_id),
       conversation_id: r.conversation_id == null ? null : String(r.conversation_id),
       rep_id: r.rep_id == null ? null : String(r.rep_id),
-      rep_name: r.rep_name == null ? null : String(r.rep_name),
-      rep_is_active: r.rep_is_active == null ? null : Boolean(r.rep_is_active),
+      // Raw linkage first; rows resolved from the raw HL user id show that
+      // owner's name/state so Non Roster Calls are human-readable.
+      rep_name: (r.rep_name ?? r.prov_rep_name) == null ? null : String(r.rep_name ?? r.prov_rep_name),
+      rep_is_active: (r.rep_is_active ?? r.prov_is_active) == null ? null : Boolean(r.rep_is_active ?? r.prov_is_active),
       provider_rep_external_id: r.provider_rep_external_id == null ? null : String(r.provider_rep_external_id),
       contact_id: r.contact_id == null ? null : String(r.contact_id),
       contact_name: r.contact_name == null ? null : String(r.contact_name),

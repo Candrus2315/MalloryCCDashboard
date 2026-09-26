@@ -264,11 +264,15 @@ export interface CallOwnershipBuckets {
  *
  *  1. Roster Calls  — kept by the eligibility gate (rep on the active roster
  *     OR the HL user is roster-mapped); counted in rep/team metrics.
- *  2. Non Roster Calls — rep resolves to a KNOWN user outside the roster
- *     (rep_id set, user inactive) and NOT mapped. Label EXACTLY "Non Roster
- *     Calls". Visible + auditable; excluded from every CC metric.
- *  3. Unattributed — ONLY rows with no determinable owner (rep_id NULL, raw
- *     HL user unresolved) and NOT mapped. Never used for non-roster users.
+ *  2. Non Roster Calls — the owner resolves to a KNOWN user outside the
+ *     roster — via the stored rep_id linkage OR via the row's raw HL user id
+ *     (provider_rep_external_id → a user row; the shape the live harvest
+ *     writes when the user row did not exist yet at call-sync time) — and is
+ *     NOT mapped. Label EXACTLY "Non Roster Calls". Visible + auditable;
+ *     excluded from every CC metric.
+ *  3. Unattributed — ONLY rows with no determinable owner (rep_id NULL and
+ *     the raw HL user id missing or resolving to no user row) and NOT
+ *     mapped. Never used for non-roster users.
  *
  * This is computed over the SAME call rows the metrics layer used and is the
  * exact complement of the eligible set. Sorted by call count desc (ties by
@@ -286,8 +290,25 @@ export function buildCallOwnershipBuckets(input: {
   thresholdSeconds: number;
 }): CallOwnershipBuckets {
   const byUser = new Map<string, NonRosterUserRollup>();
+  // raw HL user id → user (resolves owners for rows stored with rep_id NULL)
+  const userByExternal = new Map(
+    [...input.userById.entries()]
+      .filter(([, u]) => u.external_id)
+      .map(([id, u]) => [u.external_id, { id, name: u.name, external_id: u.external_id }] as const),
+  );
   const nonRoster: NonRosterRollup = { users: [], totalCalls: 0, totalOverThreshold: 0 };
   const unattributed: UnattributedRollup = { totalCalls: 0, totalOverThreshold: 0 };
+  const addNonRoster = (key: string, ext: string | null, name: string | null, over: boolean): void => {
+    let row = byUser.get(key);
+    if (!row) {
+      row = { key, name, externalId: ext, calls: 0, overThreshold: 0 };
+      byUser.set(key, row);
+    }
+    row.calls += 1;
+    if (over) row.overThreshold += 1;
+    nonRoster.totalCalls += 1;
+    if (over) nonRoster.totalOverThreshold += 1;
+  };
 
   for (const c of input.calls) {
     if (c.rep_id && input.activeRepIds.has(c.rep_id)) continue; // roster call
@@ -297,23 +318,22 @@ export function buildCallOwnershipBuckets(input: {
       const u = input.userById.get(c.rep_id);
       const ext = u?.external_id ?? null;
       if (ext && input.mappedExternalIds.has(ext)) continue; // mapped → eligible
-      const key = ext ?? c.rep_id;
-      let row = byUser.get(key);
-      if (!row) {
-        row = { key, name: u?.name ?? null, externalId: ext, calls: 0, overThreshold: 0 };
-        byUser.set(key, row);
-      }
-      row.calls += 1;
-      if (over) row.overThreshold += 1;
-      nonRoster.totalCalls += 1;
-      if (over) nonRoster.totalOverThreshold += 1;
+      addNonRoster(ext ?? c.rep_id, ext, u?.name ?? null, over);
     } else {
-      // No determinable owner (no HL user) — "Unattributed" (unless the raw
-      // provider id on the row is mapped, which would make it eligible).
+      // rep_id NULL — resolve the owner from the row's raw HL user id BEFORE
+      // calling it Unattributed: a KNOWN non-roster user is "Non Roster
+      // Calls", never Unattributed (owner's hard rule).
       const prov = c.provider_rep_external_id ?? null;
       if (prov && input.mappedExternalIds.has(prov)) continue;
-      unattributed.totalCalls += 1;
-      if (over) unattributed.totalOverThreshold += 1;
+      const pu = prov ? (userByExternal.get(prov) ?? null) : null;
+      if (pu && !input.activeRepIds.has(pu.id)) addNonRoster(pu.external_id, pu.external_id, pu.name, over);
+      else if (!pu) {
+        // no raw HL id, or it resolves to no user row — genuinely no owner
+        unattributed.totalCalls += 1;
+        if (over) unattributed.totalOverThreshold += 1;
+      }
+      // pu on the active roster → a roster rep's row stored unlinked:
+      // roster ownership → neither Non Roster nor Unattributed.
     }
   }
   nonRoster.users = [...byUser.values()].sort((a, b) => b.calls - a.calls || a.key.localeCompare(b.key));
