@@ -17,9 +17,11 @@ import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
   AppSettings,
   AuditCallRow,
+  CallContactBackfillUpdate,
   ConnectionRow,
   ContactRow,
   DailyPrioritiesRow,
+  HarvestCallRow,
   HarvestConvRow,
   HarvestProgressRow,
   LeadCountAdjustmentRow,
@@ -36,6 +38,7 @@ import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings } from 
 interface CallExt extends CallRow {
   external_call_id: string;
   provider: string;
+  contact_resolved_at?: string | null;
 }
 interface ApptExt extends AppointmentRow {
   acuity_appointment_id: string;
@@ -62,6 +65,7 @@ export class MemoryStore implements Store {
   private users = new Map<string, UserRow>();
   private contacts = new Map<string, ContactRow>();
   private calls = new Map<string, CallExt>(); // keyed by provider:external_call_id
+  private harvestCalls = new Map<string, HarvestCallRow>(); // keyed by message_id (harvest_calls mirror)
   private harvestProgress = new Map<string, HarvestProgressRow>();
   private harvestConvs = new Map<string, HarvestConvRow & { visited: boolean; calls_found: number; messages_scanned: number }>();
   private opportunities = new Map<string, OpportunityRow>(); // keyed by provider:external_id
@@ -275,6 +279,7 @@ export class MemoryStore implements Store {
         contact_id: c.contact_id ?? null,
         contact_name: contact?.name ?? null,
         contact_external_id: contact?.external_id ?? null,
+        contact_resolution_method: cx.contact_resolution_method ?? null,
         direction: (c as Partial<CallRow> & { direction?: string | null }).direction ?? null,
         call_status: (c as Partial<CallRow> & { call_status?: string | null }).call_status ?? null,
         started_at: c.started_at,
@@ -618,6 +623,39 @@ export class MemoryStore implements Store {
     const flagged = (c: (typeof rows)[number]) => c.message_types.includes(1) || c.last_message_type === "TYPE_CALL" ? 1 : 0;
     rows.sort((a, b) => (callFlaggedFirst ? flagged(b) - flagged(a) : 0) || b.last_message_date - a.last_message_date);
     return rows.slice(0, limit).map(({ visited, calls_found, messages_scanned, ...r }) => r);
+  }
+  async getHarvestConversationsByIds(convIds: string[]): Promise<HarvestConvRow[]> {
+    if (!convIds.length) return [];
+    const set = new Set(convIds);
+    return [...this.harvestConvs.values()]
+      .filter((c) => set.has(c.conv_id))
+      .map(({ visited, calls_found, messages_scanned, ...r }) => r);
+  }
+  async upsertHarvestCalls(rows: HarvestCallRow[]): Promise<number> {
+    for (const r of rows) this.harvestCalls.set(r.message_id, { ...r });
+    return rows.length;
+  }
+  async getHarvestCallsByMessageIds(messageIds: string[]): Promise<HarvestCallRow[]> {
+    if (!messageIds.length) return [];
+    const set = new Set(messageIds);
+    return [...this.harvestCalls.values()].filter((r) => set.has(r.message_id)).map((r) => ({ ...r }));
+  }
+  async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
+    for (const r of rows) {
+      // FILL-NULL-ONLY (owner rule, mirrors pg.ts): an existing non-null
+      // contact_id is NEVER overwritten — direct source data always wins.
+      const call = [...this.calls.values()].find((c) => c.id === r.call_id);
+      if (!call) continue;
+      const key = `${call.provider}:${call.external_call_id}`;
+      if (call.contact_id == null) {
+        this.calls.set(key, {
+          ...call,
+          contact_id: r.contact_id,
+          contact_resolution_method: r.resolution_method,
+          contact_resolved_at: r.contact_resolved_at,
+        });
+      }
+    }
   }
   async markHarvestVisited(convIds: string[], callsFoundByConv: Record<string, number>, messagesScannedByConv?: Record<string, number>): Promise<void> {
     for (const id of convIds) {

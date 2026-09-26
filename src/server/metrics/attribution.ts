@@ -18,19 +18,35 @@
  *       one contact; that contact's calls are the candidates.
  *   (c) email        — same, by normalized email.
  *
+ * IDENTITY NORMALIZATION (owner-ratified attribution program, Session 2): the
+ * ONE canonical pair of normalizers lives in src/server/identity/normalize.ts
+ * and is used on BOTH sides of every Acuity↔HL comparison — a HighLevel
+ * "+15088891019" and an Acuity "5088891019" normalize to the same key
+ * (11-digit leading-1 dropped, 10-digit kept, emails trimmed+lowercased).
+ * No fuzzy name matching anywhere; a value that matches multiple contacts is
+ * ambiguous, never guessed.
+ *
+ * ATTRIBUTION WINDOW — DATE GRANULARITY (owner-ratified 2026-09-26; replaces
+ * the old exact-24h rule): a qualifying call must have its call DATE (ET) equal
+ * to the booking's CREATION date (ET) or the immediately preceding calendar
+ * date. Reasons (owner directive):
+ *   - Acuity dateCreated is DATE-ONLY: the intra-day ORDER of call vs booking
+ *     is NOT known, so a call later on the creation date itself still qualifies
+ *     and the scheduled session date is NEVER used as the anchor;
+ *   - all date math is America/New_York (date-logic.ts), midnight crossings
+ *     included.
+ * The parser stores a date-only dateCreated as UTC midnight, so a created_at
+ * of exactly 00:00:00.000Z is read back as a CALENDAR DATE, not as an ET
+ * instant (reading it as ET would shift the anchor a day early). Rows whose
+ * created_at is a real timestamp use its ET date. A legacy row with no
+ * created_at falls back to the session datetime and the match is MARKED
+ * `anchoredOn: "session-fallback"` — visible, never silent.
+ *
  * Constraints on every candidate call:
  *   - duration_seconds is a real number STRICTLY GREATER than
  *     settings.meeting_threshold_seconds (null/0/voicemail-duration never
  *     qualifies — an unknown length is never counted as meaningful);
- *   - the call STARTED within [anchor − window, anchor] where anchor = the
- *     appointment's CREATED_AT (docs/SPEC.md §BOOKING ATTRIBUTION: "the
- *     appointment was CREATED within the configured attribution window" — a
- *     session is booked days ahead, and the sales call precedes the
- *     booking-MADE moment, not the session) falling back to the session
- *     datetime only when created_at is absent; window =
- *     settings.attribution_window_hours. The booking is the EVIDENCE the call
- *     worked, so the call precedes the booking; a call that starts after the
- *     anchor never qualifies;
+ *   - the call's ET date ∈ {creation date − 1, creation date} (see above);
  *   - among qualifying candidates the MOST RECENT started_at wins (tie broken
  *     deterministically by external_call_id so re-runs are stable).
  *
@@ -39,16 +55,18 @@
  *      ambiguous at its tier — the engine stops there and reports
  *      reason "ambiguous". It does NOT fall through to a weaker tier: picking
  *      the email match when the stronger phone evidence names two different
- *      people would be exactly the guess the SPEC forbids ("the chosen contact
- *      match is contradicted by a stronger identity match on a different
- *      call").
+ *      people would be exactly the guess the SPEC forbids.
  *   2. The chosen match is additionally cross-checked: if a STRONGER tier's
  *      identity resolves unambiguously to a DIFFERENT contact than the chosen
  *      one and that contact also has a qualifying call, the evidence
- *      contradicts itself → "ambiguous". (Under the first-match-wins walk this
- *      can only fire when the stronger tier's candidates were hidden by an
- *      unparseable/absent id — the check makes the guarantee structural rather
- *      than incidental.)
+ *      contradicts itself → "ambiguous".
+ *   3. MULTI-REP (Session 2): when the matched contact's qualifying calls
+ *      within the window come from MULTIPLE DISTINCT roster reps (resolved
+ *      through the ONE roster-eligibility machinery, src/server/roster.ts) and
+ *      no deterministic rule resolves ownership, the booking is ambiguous and
+ *      routes to the manual attribution queue — a most-recent pick would be a
+ *      silent choice made to raise coverage. Deterministic single-rep cases
+ *      attribute normally.
  *   Everything ambiguous lands in the Unattributed queue with a reason string
  *   that says WHY — visible and auditable, ready for manual assignment.
  *
@@ -58,12 +76,37 @@
  * buildRosterEligibility + the settings' rep_mappings. Source rows are never
  * mutated — mapped eligibility produces fresh result objects only.
  *
- * Purity: imports TYPES and the roster pure functions only — no runtime store,
- * no fetch, no clock (the caller passes today). Feeds the future scheduler
- * wiring + manual-assignment API through this one seam.
+ * Purity: imports TYPES, date-logic and the roster pure functions only — no
+ * runtime store, no fetch, no clock (the caller passes today).
  */
 import type { AppSettings } from "../store/types";
-import { buildRosterEligibility, applyAttributionEligibility, type RosterEligibility } from "../roster";
+import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
+import { addDays, etDateStrFromInstant } from "../date-logic";
+import {
+  buildRosterEligibility,
+  applyAttributionEligibility,
+  eligibleRepId,
+  type RosterEligibility,
+} from "../roster";
+
+// Canonical identity normalizers re-exported under the engine's historical
+// names (callers keep compiling; the DEFINITION is the canonical one — the
+// divergent engine-local versions were removed in Session 2).
+export const normalizeAttributionEmail = normalizeEmail;
+export const normalizeAttributionPhone = normalizeUSPhone;
+
+/**
+ * Phone EQUALITY after canonical normalization: "+15088891019" and
+ * "5088891019" are the same number (the canonical normalizer drops the
+ * leading 1). Exact digit equality otherwise — no looser matching, so two
+ * genuinely different numbers can never collide.
+ */
+export function phonesEqual(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  const na = normalizeUSPhone(a);
+  const nb = normalizeUSPhone(b);
+  return na != null && na === nb;
+}
 
 // ---------- input shapes (structural — call sites pass store rows directly) ----------
 
@@ -72,16 +115,17 @@ export interface AttributionAppointment {
   /** Internal appointments.id — returned verbatim as `appointmentId`. */
   id: string;
   contact_id: string | null;
-  /** Normalized at sync (digits, leading 1 kept) — raw digits string or null. */
+  /** Normalized at sync via the CANONICAL normalizer — digits, leading 1 dropped. */
   client_phone?: string | null;
   /** Normalized at sync (lowercase-trimmed) or null. */
   client_email?: string | null;
   /** ISO UTC session time. */
   appointment_datetime: string;
   /**
-   * ISO UTC booking-MADE time — the SPEC's window anchor ("the appointment was
-   * created within the configured attribution window"). Falls back to
-   * appointment_datetime when absent (legacy rows always carry it).
+   * Booking-MADE time — the window anchor. Acuity dateCreated is DATE-ONLY;
+   * the parser encodes that as exactly UTC midnight, which this engine reads
+   * back as a calendar date (never as an ET instant). Falls back to the
+   * session datetime only for legacy rows without one (marked in the result).
    */
   created_at?: string;
   cancelled?: boolean;
@@ -115,6 +159,18 @@ export interface AttributionContact {
 
 export type AttributionMethod = "contact_id" | "phone" | "email";
 
+/** Audit/debug record of the window the match was evaluated against. */
+export interface WindowMarker {
+  /** First (earliest) ET calendar date whose calls qualify. */
+  from: string;
+  /** Last ET calendar date whose calls qualify (the booking's creation date). */
+  to: string;
+  /** Fixed marker: the window is DATE-GRANULARITY, not exact-hours. */
+  marker: "date_granularity_window";
+  /** Which row supplied the anchor: the booking creation, or a legacy session fallback. */
+  anchoredOn: "created_at" | "session-fallback";
+}
+
 export interface AttributionMatch {
   appointmentId: string;
   status: "attributed" | "unattributed";
@@ -125,10 +181,11 @@ export interface AttributionMatch {
   /**
    * Unattributed reason: "no-contact-identity" (the appointment carries no
    * contact id, phone or email at all), "ambiguous" (identity evidence
-   * conflicts or names multiple people — manual assignment required),
-   * "no-qualifying-call" (identity known but no call over threshold within
-   * the window before the booking), "bad-datetime" (unparseable session time
-   * — never guessed against a broken anchor).
+   * conflicts, names multiple people, or the qualifying calls span multiple
+   * roster reps — manual assignment required), "no-qualifying-call" (identity
+   * known but no call over threshold within the window dates before the
+   * booking), "bad-datetime" (unparseable creation/session time — never
+   * guessed against a broken anchor).
    */
   reason?: string;
   /** Evidence tier that produced an attribution (attributed only). */
@@ -138,43 +195,74 @@ export interface AttributionMatch {
    * which identity conflicted and how. Never present on attributed rows.
    */
   detail?: string;
+  /**
+   * Audit/debug: the exact window dates the match was evaluated against plus
+   * the date_granularity_window marker (the limitation is persisted on the
+   * attribution row by the sync wiring — never re-derived ad hoc).
+   */
+  window?: WindowMarker;
 }
 
-// ---------- normalization (ONE definition — the Acuity sync reuses these) ----------
+// ---------- window math (ET date granularity — owner-ratified 2026-09-26) ----------
 
-/** Email identity: trim + lowercase; empty → null. */
-export function normalizeAttributionEmail(raw: string | null | undefined): string | null {
-  const t = (raw ?? "").trim().toLowerCase();
-  return t.length > 0 ? t : null;
-}
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Phone identity: digits only, leading country code 1 KEPT when present —
- * the raw digits string is the stored form. Empty → null.
+ * The booking's CREATION date (ET, YYYY-MM-DD) from the stored created_at.
+ * Date-only encodings stay dates (Acuity dateCreated has no time — the parser
+ * stores it as exactly UTC midnight, which must NOT be re-read as an ET
+ * instant, or the anchor shifts a day early). Real timestamps become their ET
+ * calendar date. Never uses the scheduled session date while created_at
+ * exists; returns null only when nothing is parseable.
  */
-export function normalizeAttributionPhone(raw: string | null | undefined): string | null {
-  const digits = (raw ?? "").replace(/\D/g, "");
-  return digits.length > 0 ? digits : null;
+export function bookingCreationDateEt(appt: {
+  created_at?: string | null;
+  appointment_datetime?: string | null;
+}): { date: string; anchoredOn: "created_at" | "session-fallback" } | null {
+  const tryParse = (raw: string): string | null => {
+    if (DATE_ONLY_RE.test(raw)) return raw; // already a calendar date
+    const ms = Date.parse(raw);
+    if (!Number.isFinite(ms)) return null;
+    const iso = new Date(ms).toISOString();
+    if (iso.endsWith("T00:00:00.000Z")) {
+      // Date-only encoding (Acuity dateCreated): keep the calendar date the
+      // source meant instead of converting UTC midnight into the previous ET day.
+      return iso.slice(0, 10);
+    }
+    return etDateStrFromInstant(ms);
+  };
+  if (appt.created_at) {
+    const d = tryParse(appt.created_at);
+    if (d) return { date: d, anchoredOn: "created_at" };
+  }
+  if (appt.appointment_datetime) {
+    const d = tryParse(appt.appointment_datetime);
+    if (d) return { date: d, anchoredOn: "session-fallback" };
+  }
+  return null;
 }
 
-/**
- * Phone EQUALITY with 1-prefix tolerance: "15551234567" and "5551234567" are
- * the same North-American number whether or not one side stored the country
- * code. Exact digit equality otherwise — no looser last-10 matching, so two
- * genuinely different numbers can never collide.
- */
-export function phonesEqual(a: string | null, b: string | null): boolean {
-  if (!a || !b) return false;
-  if (a === b) return true;
-  if (a.length === 11 && a.startsWith("1") && a.slice(1) === b) return true;
-  if (b.length === 11 && b.startsWith("1") && b.slice(1) === a) return true;
-  return false;
+/** The ET dates whose calls can qualify for a booking created on `date`. */
+export function attributionWindowDates(date: string): { from: string; to: string } {
+  return { from: addDays(date, -1), to: date };
+}
+
+/** The ET calendar date of one call (unparseable → null — never qualifies). */
+export function callDateEt(startedAt: string): string | null {
+  const ms = Date.parse(startedAt);
+  return Number.isFinite(ms) ? etDateStrFromInstant(ms) : null;
 }
 
 // ---------- engine ----------
 
 export interface AttributionSettings {
   meeting_threshold_seconds: number;
+  /**
+   * LEGACY (kept for signature stability): the old exact-hours window. The
+   * owner-ratified 2026-09-26 rule is DATE GRANULARITY (see header) and no
+   * longer derives the window from this value; the field stays in settings
+   * for UI compatibility.
+   */
   attribution_window_hours: number;
   rep_mappings?: AppSettings["rep_mappings"];
 }
@@ -183,8 +271,8 @@ export interface AttributionOptions {
   /**
    * ET calendar date the evaluation runs for (date-logic convention).
    * Accepted for signature stability with the scheduler wiring; the pure
-   * matching math is anchored on each appointment's own datetime, never on
-   * wall-clock. Defaults to etToday().
+   * matching math is anchored on each appointment's own creation date, never
+   * on wall-clock. Defaults to etToday().
    */
   today?: string;
   /**
@@ -203,23 +291,21 @@ interface Candidate {
 
 function qualifyingCandidates(
   calls: AttributionCall[],
-  apptStartMs: number,
+  window: { from: string; to: string },
   settings: AttributionSettings,
 ): Candidate[] {
-  const windowMs = Math.max(0, settings.attribution_window_hours) * 3_600_000;
   const threshold = settings.meeting_threshold_seconds;
   const out: Candidate[] = [];
   for (const call of calls) {
     const dur = call.duration_seconds;
     // STRICTLY over the threshold; null/NaN (voicemail/unknown length) never qualifies.
     if (typeof dur !== "number" || !Number.isFinite(dur) || dur <= threshold) continue;
-    const startMs = Date.parse(call.started_at);
-    if (!Number.isFinite(startMs)) continue;
-    // [apptStart − window, apptStart] — both ends inclusive (exactly 24h00m
-    // before is IN, 24h01m is OUT; a call after the booking is OUT).
-    if (startMs > apptStartMs) continue;
-    if (startMs < apptStartMs - windowMs) continue;
-    out.push({ call, startMs });
+    const day = callDateEt(call.started_at);
+    // DATE-GRANULARITY window: the call's ET date must equal the booking's
+    // creation date or the immediately preceding one. A call on any earlier
+    // (or later) date is out; intra-day order is unknowable and never assumed.
+    if (!day || day < window.from || day > window.to) continue;
+    out.push({ call, startMs: Date.parse(call.started_at) });
   }
   return out;
 }
@@ -260,20 +346,19 @@ export function matchAppointmentsToCalls(
     provider_rep_external_id: c.provider_rep_external_id ?? null,
   }));
 
-  // Identity indexes over the contacts table (normalized).
-  const byPhone = new Map<string, string[]>(); // normalized phone → distinct contact ids
+  // Identity indexes over the contacts table (CANONICAL normalization — the
+  // same normalizer both sync boundaries store through, so a "+1"-prefixed HL
+  // value and a 10-digit Acuity value land on one key).
+  const byPhone = new Map<string, string[]>(); // canonical phone → distinct contact ids
   const byEmail = new Map<string, string[]>();
   for (const c of contacts) {
-    const phone = normalizeAttributionPhone(c.phone);
+    const phone = normalizeUSPhone(c.phone);
     if (phone) {
-      // 1-prefix tolerance on the index key: index under BOTH forms when they differ.
-      for (const key of new Set([phone, phone.length === 11 && phone.startsWith("1") ? phone.slice(1) : phone])) {
-        const list = byPhone.get(key) ?? [];
-        if (!list.includes(c.id)) list.push(c.id);
-        byPhone.set(key, list);
-      }
+      const list = byPhone.get(phone) ?? [];
+      if (!list.includes(c.id)) list.push(c.id);
+      byPhone.set(phone, list);
     }
-    const email = normalizeAttributionEmail(c.email);
+    const email = normalizeEmail(c.email);
     if (email) {
       const list = byEmail.get(email) ?? [];
       if (!list.includes(c.id)) list.push(c.id);
@@ -300,8 +385,8 @@ export function matchAppointmentsToCalls(
   for (const appt of appointments) {
     const apptId = appt.id;
     const apptContactId = (appt.contact_id ?? "").trim() || null;
-    const apptPhone = normalizeAttributionPhone(appt.client_phone);
-    const apptEmail = normalizeAttributionEmail(appt.client_email);
+    const apptPhone = normalizeUSPhone(appt.client_phone);
+    const apptEmail = normalizeEmail(appt.client_email);
 
     // No identity at all → Unattributed queue with the honest reason.
     if (!apptContactId && !apptPhone && !apptEmail) {
@@ -309,31 +394,88 @@ export function matchAppointmentsToCalls(
       continue;
     }
 
-    // SPEC window anchor: the booking-MADE time (created_at), falling back to
-    // the session datetime for rows without one. Neither parseable → honest
-    // "bad-datetime", never guessed against a broken anchor.
-    const anchorRaw = appt.created_at ?? appt.appointment_datetime;
-    const apptStartMs = Date.parse(anchorRaw);
-    if (!Number.isFinite(apptStartMs)) {
+    // DATE-GRANULARITY window anchor: the booking's creation date (ET). No
+    // parseable creation/session time → honest "bad-datetime", never guessed.
+    const anchor = bookingCreationDateEt(appt);
+    if (!anchor) {
       out.push({ appointmentId: apptId, status: "unattributed", reason: "bad-datetime" });
       continue;
     }
+    const window = attributionWindowDates(anchor.date);
+    const windowMarker: WindowMarker = {
+      from: window.from,
+      to: window.to,
+      marker: "date_granularity_window",
+      anchoredOn: anchor.anchoredOn,
+    };
+
+    /**
+     * Decide from one contact's qualifying candidates: multi-rep evidence is
+     * ambiguous (ambiguity rule 3 — never silently choose to raise coverage);
+     * a deterministic single-rep set attributes normally (most recent wins).
+     */
+    const decideForContact = (contactId: string, method: AttributionMethod): AttributionMatch => {
+      const candidates = qualifyingCandidates(
+        calls.filter((c) => c.contact_id === contactId),
+        window,
+        settings,
+      );
+      if (candidates.length === 0) {
+        return { appointmentId: apptId, status: "unattributed", reason: "no-qualifying-call", window: windowMarker };
+      }
+      const reps = new Set<string>();
+      for (const c of candidates) {
+        const r = eligibleRepId(
+          { rep_id: c.call.rep_id, provider_rep_external_id: c.call.provider_rep_external_id ?? null },
+          elig,
+        );
+        if (r != null) reps.add(r);
+      }
+      if (reps.size > 1) {
+        return {
+          appointmentId: apptId,
+          status: "unattributed",
+          reason: "ambiguous",
+          detail: `qualifying calls from ${reps.size} distinct roster reps in ${window.from}..${window.to} ET`,
+          window: windowMarker,
+        };
+      }
+      const winner = pickWinner(candidates)!;
+      return {
+        appointmentId: apptId,
+        status: "attributed",
+        callExternalId: winner.external_call_id,
+        repId: repFor(winner),
+        method,
+        window: windowMarker,
+      };
+    };
 
     // Tier (a): contact id — strongest evidence, needs no contact row.
-    let winner: AttributionCall | null = null;
-    let method: AttributionMethod | null = null;
     if (apptContactId) {
-      winner = pickWinner(qualifyingCandidates(calls.filter((c) => c.contact_id === apptContactId), apptStartMs, settings));
-      if (winner) method = "contact_id";
+      const match = decideForContact(apptContactId, "contact_id");
+      if (match.status === "attributed") {
+        out.push(match);
+        continue;
+      }
+      if (match.reason === "ambiguous") {
+        out.push(match);
+        continue;
+      }
+      // no-qualifying-call at this tier: weaker tiers may still resolve a
+      // DIFFERENT contact (the id may point at a contact with no stored calls).
+      if (!apptPhone && !apptEmail) {
+        out.push(match);
+        continue;
+      }
     }
 
     // Tier (b): phone → exactly one contact; MULTIPLE distinct contacts is a
     // hard stop — never fall through to weaker evidence past an unclear
     // stronger identity (the guess the SPEC forbids).
     let phoneContactId: string | null = null;
-    if (!winner && apptPhone) {
-      const phoneKey = apptPhone.length === 11 && apptPhone.startsWith("1") ? apptPhone.slice(1) : apptPhone;
-      const hit = byPhone.get(apptPhone) ?? byPhone.get(phoneKey) ?? [];
+    if (apptPhone) {
+      const hit = byPhone.get(apptPhone) ?? [];
       const distinct = new Set(hit);
       if (distinct.size > 1) {
         out.push({
@@ -341,6 +483,7 @@ export function matchAppointmentsToCalls(
           status: "unattributed",
           reason: "ambiguous",
           detail: `phone matches ${distinct.size} distinct contacts`,
+          window: windowMarker,
         });
         continue;
       }
@@ -357,17 +500,21 @@ export function matchAppointmentsToCalls(
             status: "unattributed",
             reason: "ambiguous",
             detail: "phone resolves a different contact than the stored contact id",
+            window: windowMarker,
           });
           continue;
         }
         phoneContactId = contactId;
-        winner = pickWinner(qualifyingCandidates(calls.filter((c) => c.contact_id === contactId), apptStartMs, settings));
-        if (winner) method = "phone";
+        const match = decideForContact(contactId, "phone");
+        if (match.status === "attributed" || match.reason === "ambiguous") {
+          out.push(match);
+          continue;
+        }
       }
     }
 
     // Tier (c): email — same shape as phone.
-    if (!winner && apptEmail) {
+    if (apptEmail) {
       const hit = byEmail.get(apptEmail) ?? [];
       const distinct = new Set(hit);
       if (distinct.size > 1) {
@@ -376,6 +523,7 @@ export function matchAppointmentsToCalls(
           status: "unattributed",
           reason: "ambiguous",
           detail: `email matches ${distinct.size} distinct contacts`,
+          window: windowMarker,
         });
         continue;
       }
@@ -389,6 +537,7 @@ export function matchAppointmentsToCalls(
             status: "unattributed",
             reason: "ambiguous",
             detail: "email resolves a different contact than the stored contact id",
+            window: windowMarker,
           });
           continue;
         }
@@ -398,27 +547,23 @@ export function matchAppointmentsToCalls(
             status: "unattributed",
             reason: "ambiguous",
             detail: "email resolves a different contact than the phone",
+            window: windowMarker,
           });
           continue;
         }
-        winner = pickWinner(qualifyingCandidates(calls.filter((c) => c.contact_id === contactId), apptStartMs, settings));
-        if (winner) method = "email";
+        const match = decideForContact(contactId, "email");
+        out.push(match);
+        continue;
       }
     }
 
-    if (winner) {
-      out.push({
-        appointmentId: apptId,
-        status: "attributed",
-        callExternalId: winner.external_call_id,
-        repId: repFor(winner),
-        method: method ?? undefined,
-      });
-      continue;
-    }
-
     // Identity known (or skipped as ambiguous-free) but nothing qualified.
-    out.push({ appointmentId: apptId, status: "unattributed", reason: "no-qualifying-call" });
+    out.push({
+      appointmentId: apptId,
+      status: "unattributed",
+      reason: "no-qualifying-call",
+      window: windowMarker,
+    });
   }
 
   return out;

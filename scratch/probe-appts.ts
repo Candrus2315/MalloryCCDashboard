@@ -1,0 +1,18 @@
+import { getStore } from "/home/team/shared/site/src/server/store";
+const store = await getStore();
+const s = store as any;
+const rows = await s.sql`SELECT acuity_appointment_id, created_at::text, appointment_datetime::text, raw->>'dateCreated' AS raw_created, raw->>'datetime' AS raw_dt FROM appointments ORDER BY created_at DESC LIMIT 6`;
+for (const r of rows) console.log(JSON.stringify(r));
+const convs = await s.sql`SELECT count(*) AS total, count(contact_id) AS with_contact FROM harvest_conversations`;
+console.log("convs:", JSON.stringify(convs[0]));
+const calls = await s.sql`SELECT count(*) AS total, count(contact_id) AS with_contact, count(conversation_id) AS with_conv, count(external_call_id) AS with_ext FROM calls`;
+console.log("calls:", JSON.stringify(calls[0]));
+const hc = await s.sql`SELECT count(*) AS total, count(contact_external_id) AS with_contact_ext FROM harvest_calls`;
+console.log("harvest_calls:", JSON.stringify(hc[0]));
+const overlap = await s.sql`SELECT count(*) AS n FROM calls c LEFT JOIN harvest_calls h ON h.message_id = c.external_call_id WHERE c.contact_id IS NULL AND h.contact_external_id IS NOT NULL`;
+console.log("calls NULL contact with ledger contact:", JSON.stringify(overlap[0]));
+const convJoin = await s.sql`SELECT count(*) AS n FROM calls c LEFT JOIN harvest_conversations h ON h.conv_id = c.conversation_id WHERE c.contact_id IS NULL AND h.contact_id IS NOT NULL`;
+console.log("calls NULL contact resolvable via conv:", JSON.stringify(convJoin[0]));
+const pct = await s.sql`SELECT count(*) FILTER (WHERE h.contact_id IS NOT NULL)::float / NULLIF(count(*),0) AS pct_with_contact FROM harvest_conversations h WHERE h.conv_id IN (SELECT DISTINCT conversation_id FROM calls WHERE conversation_id IS NOT NULL)`;
+console.log("conv-with-calls contact coverage:", JSON.stringify(pct[0]));
+process.exit(0);

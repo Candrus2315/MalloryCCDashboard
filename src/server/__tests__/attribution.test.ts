@@ -159,25 +159,35 @@ describe("attribution engine — threshold + window", () => {
     expect(got.callExternalId).toBe("hl-121");
   });
 
-  test("window boundary: a call exactly 24h00m before is eligible; 24h01m before is not", () => {
-    const exact = call("hl-exact", { contact_id: "c-1", started_at: "2026-09-27T14:00:00.000Z" });
-    const [inWindow] = matchAppointmentsToCalls([appt({ contact_id: "c-1" })], [exact], [contact("c-1")], SETTINGS, {
+  test("window boundary (DATE-GRANULARITY): a call on the previous ET date is eligible; two ET dates back is not", () => {
+    // Booking: Mon 2026-09-28 10:00 ET. Window ET dates: 09-27 + 09-28.
+    const prevDay = call("hl-prev", { contact_id: "c-1", started_at: "2026-09-27T14:00:00.000Z" }); // Sun 10:00 ET
+    const [inWindow] = matchAppointmentsToCalls([appt({ contact_id: "c-1" })], [prevDay], [contact("c-1")], SETTINGS, {
       today: "2026-09-28",
     });
     expect(inWindow.status).toBe("attributed");
-    expect(inWindow.callExternalId).toBe("hl-exact");
+    expect(inWindow.callExternalId).toBe("hl-prev");
 
-    const early = call("hl-early", { contact_id: "c-1", started_at: "2026-09-27T13:59:00.000Z" });
-    const [outOfWindow] = matchAppointmentsToCalls([appt({ contact_id: "c-1" })], [early], [contact("c-1")], SETTINGS, {
+    const twoBack = call("hl-two-back", { contact_id: "c-1", started_at: "2026-09-26T14:00:00.000Z" }); // Sat
+    const [outOfWindow] = matchAppointmentsToCalls([appt({ contact_id: "c-1" })], [twoBack], [contact("c-1")], SETTINGS, {
       today: "2026-09-28",
     });
     expect(outOfWindow.status).toBe("unattributed");
     expect(outOfWindow.reason).toBe("no-qualifying-call");
   });
 
-  test("a call that starts AFTER the booking never qualifies (booking is evidence the call worked)", () => {
-    const after = call("hl-after", { contact_id: "c-1", started_at: "2026-09-28T14:00:01.000Z" });
-    const [got] = matchAppointmentsToCalls([appt({ contact_id: "c-1" })], [after], [contact("c-1")], SETTINGS, {
+  test("a call on a LATER ET date never qualifies; same-ET-date order is unknowable (dateCreated is date-only)", () => {
+    // Same ET date but AFTER the booking instant: still qualifies — Acuity
+    // dateCreated carries no time-of-day, so intra-day ordering is never assumed.
+    const sameDay = call("hl-same-day", { contact_id: "c-1", started_at: "2026-09-28T14:00:01.000Z" });
+    const [sameDayGot] = matchAppointmentsToCalls([appt({ contact_id: "c-1" })], [sameDay], [contact("c-1")], SETTINGS, {
+      today: "2026-09-28",
+    });
+    expect(sameDayGot.status).toBe("attributed");
+    expect(sameDayGot.callExternalId).toBe("hl-same-day");
+    // The NEXT ET day is out.
+    const nextDay = call("hl-next-day", { contact_id: "c-1", started_at: "2026-09-29T14:00:00.000Z" });
+    const [got] = matchAppointmentsToCalls([appt({ contact_id: "c-1" })], [nextDay], [contact("c-1")], SETTINGS, {
       today: "2026-09-28",
     });
     expect(got.status).toBe("unattributed");
@@ -373,34 +383,33 @@ describe("attribution engine — roster eligibility (roster.ts machinery, never 
 });
 
 describe("attribution engine — normalization + ET/DST boundaries", () => {
-  test("normalizers: email lowercase-trim, phone raw digits with leading 1 kept, 1-prefix equality", () => {
+  test("normalizers (CANONICAL): email lowercase-trim, leading-1 dropped, HL '+15088891019' matches Acuity '5088891019'", () => {
     expect(normalizeAttributionEmail("  Jane.Doe@Example.COM ")).toBe("jane.doe@example.com");
     expect(normalizeAttributionEmail("   ")).toBeNull();
-    expect(normalizeAttributionPhone("+1 (917) 555-0142")).toBe("19175550142");
+    expect(normalizeAttributionPhone("+1 (917) 555-0142")).toBe("9175550142");
+    expect(normalizeAttributionPhone("+15088891019")).toBe("5088891019");
     expect(normalizeAttributionPhone("917-555-0142")).toBe("9175550142");
     expect(normalizeAttributionPhone("")).toBeNull();
+    expect(phonesEqual("+15088891019", "5088891019")).toBe(true);
     expect(phonesEqual("19175550142", "9175550142")).toBe(true);
-    expect(phonesEqual("9175550142", "19175550142")).toBe(true);
-    expect(phonesEqual("19175550142", "9175550143")).toBe(false);
+    expect(phonesEqual("9175550142", "9175550143")).toBe(false);
   });
 
-  test("ET boundaries + DST: the 24h window is ABSOLUTE hours across ET midnight and the fall-back", () => {
-    // Appointment: Sun 2026-11-01 01:00 ET **EST** (UTC-5) — one minute past
-    // the 2026 fall-back (02:00 EDT → 01:00 EST). Its ET date is 2026-11-01.
+  test("ET boundaries + DST: the window is DATE-GRANULARITY in America/New_York (creation date + the day before)", () => {
+    // Appointment created Sun 2026-11-01 01:00 ET **EST** (UTC-5) — one minute
+    // past the 2026 fall-back (02:00 EDT → 01:00 EST). Its ET date: 2026-11-01.
     const apptAt = "2026-11-01T06:00:00.000Z";
     expect(etDateStrFromInstant(Date.parse(apptAt))).toBe("2026-11-01");
-    // Exactly 24 ABSOLUTE hours before: Sat 2026-10-31 06:00Z = 02:00 EDT — a
-    // DIFFERENT ET calendar day (2026-10-31) yet inside the window.
-    const exact = call("hl-dst-exact", { contact_id: "c-1", started_at: "2026-10-31T06:00:00.000Z" });
+    // Sat 2026-10-31 06:00Z = 02:00 EDT — the PREVIOUS ET calendar date → in window.
+    const exact = call("hl-dst-prev", { contact_id: "c-1", started_at: "2026-10-31T06:00:00.000Z" });
     expect(etDateStrFromInstant(Date.parse(exact.started_at))).toBe("2026-10-31");
     const [inWindow] = matchAppointmentsToCalls([appt({ appointment_datetime: apptAt, created_at: apptAt, contact_id: "c-1" })], [exact], [contact("c-1")], SETTINGS, {
       today: "2026-11-01",
     });
     expect(inWindow.status).toBe("attributed");
-    // 24h01m absolute before → outside. Note the ET-clock trap: across the
-    // fall-back that instant reads only 23h of ET wall-clock distance, but the
-    // window is ABSOLUTE hours and does NOT stretch with DST.
-    const early = call("hl-dst-early", { contact_id: "c-1", started_at: "2026-10-31T05:59:00.000Z" });
+    // Fri 2026-10-30 → TWO ET calendar dates back → outside. DST shifts
+    // wall-clock distances, but the window is CALENDAR DATES and never stretches.
+    const early = call("hl-dst-two-back", { contact_id: "c-1", started_at: "2026-10-30T06:00:00.000Z" });
     const [outOfWindow] = matchAppointmentsToCalls([appt({ appointment_datetime: apptAt, created_at: apptAt, contact_id: "c-1" })], [early], [contact("c-1")], SETTINGS, {
       today: "2026-11-01",
     });
@@ -458,7 +467,7 @@ describe("attribution engine — end-to-end through the sync path (normalized fi
     const rows = await store.getAppointmentsOverlapping("2026-09-28T00:00:00.000Z", "2026-09-29T00:00:00.000Z");
     expect(rows).toHaveLength(1);
     const row = rows[0] as typeof rows[0] & { client_phone?: string | null; client_email?: string | null };
-    expect(row.client_phone).toBe("19175550142");
+    expect(row.client_phone).toBe("9175550142");
     expect(row.client_email).toBe("jane@example.com");
     // MemoryStore regenerates internal ids on upsert — resolve the LINKED id.
     const storedContacts = await store.getContacts();

@@ -127,10 +127,11 @@ describe("Acuity response parsing", () => {
     expect(parsed!.cancelled).toBe(false);
     expect(parsed!.status).toBe("scheduled");
     expect(parsed!.clientName).toBe("Jane Doe");
-    // Contact identities are normalized AT THE SOURCE for the attribution
-    // engine: phone → raw digits (leading country-code 1 kept), email →
-    // lowercase-trimmed.
-    expect(parsed!.clientPhone).toBe("19175550142");
+    // Contact identities are normalized AT THE SOURCE through the CANONICAL
+    // normalizer (identity/normalize.ts): phone → digits with the leading
+    // country-code 1 DROPPED (a HighLevel "+15088891019" matches an Acuity
+    // "5088891019"), email → lowercase-trimmed.
+    expect(parsed!.clientPhone).toBe("9175550142");
     expect(parsed!.clientEmail).toBe("jane@example.com");
   });
   test("client contact fields normalize: messy phone/email in → digits + lowercase out", () => {

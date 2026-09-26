@@ -98,6 +98,12 @@ export interface AuditCallRow {
   contact_id: string | null;
   contact_name: string | null;
   contact_external_id: string | null;
+  /**
+   * HOW the call's contact was resolved (call→contact restoration backfill):
+   * direct_message_contact | parent_conversation_contact | exact_phone |
+   * exact_email | ambiguous | unresolved; null = never backfilled.
+   */
+  contact_resolution_method: string | null;
   direction: string | null;
   call_status: string | null;
   started_at: string;
@@ -156,6 +162,50 @@ export interface HarvestConvRow {
   last_message_type: string | null;
   contact_id: string | null;
   assigned_to: string | null;
+}
+
+/**
+ * One call message in the harvest-side ledger (harvest_calls table; written by
+ * the harvest runner). The call→contact restoration backfill reads it as the
+ * DIRECT source identity: message_id = calls.external_call_id,
+ * contact_external_id = the HL message's own contactId.
+ */
+export interface HarvestCallRow {
+  message_id: string;
+  conversation_id: string | null;
+  user_external_id: string | null;
+  contact_external_id: string | null;
+  started_at: string; // ISO
+  duration_seconds: number | null;
+  direction: string | null;
+  call_status: string | null;
+}
+
+/**
+ * HOW a call's contact was resolved (call→contact restoration backfill,
+ * owner-ratified hierarchy): direct message contactId > parent conversation
+ * contactId > exact normalized phone > exact normalized email; ambiguity and
+ * failure are recorded, never guessed around.
+ */
+export type CallContactResolutionMethod =
+  | "direct_message_contact"
+  | "parent_conversation_contact"
+  | "exact_phone"
+  | "exact_email"
+  | "ambiguous"
+  | "unresolved";
+
+/**
+ * One call's restoration verdict for the fill-null-only store update.
+ * contact_id is the resolved internal contact (NULL for ambiguous/unresolved —
+ * the method records WHY); an existing non-null contact_id is NEVER
+ * overwritten (direct source data always wins; inheritance only fills NULL).
+ */
+export interface CallContactBackfillUpdate {
+  call_id: string;
+  contact_id: string | null;
+  resolution_method: CallContactResolutionMethod;
+  contact_resolved_at: string; // ISO
 }
 
 /** Singleton progress row for the call harvest (id 'highlevel-calls'). */
@@ -612,6 +662,19 @@ export interface Store {
   getHarvestProgress(id?: string): Promise<HarvestProgressRow | null>;
   saveHarvestProgress(p: HarvestProgressRow): Promise<void>;
   upsertHarvestConversations(rows: HarvestConvRow[]): Promise<number>;
+  /** Conversation ledger rows for the given HL conversation ids (parent-contact resolution). */
+  getHarvestConversationsByIds(convIds: string[]): Promise<HarvestConvRow[]>;
+  /** Upsert call-message ledger rows (harvest_calls mirror; the backfill's direct tier). */
+  upsertHarvestCalls(rows: HarvestCallRow[]): Promise<number>;
+  /** Call-message ledger rows for the given HL message ids (direct-contact resolution). */
+  getHarvestCallsByMessageIds(messageIds: string[]): Promise<HarvestCallRow[]>;
+  /**
+   * Call→contact restoration verdicts, FILL-NULL-ONLY: an existing non-null
+   * calls.contact_id is never touched (direct source data always wins); only
+   * NULL contact_ids are filled, and the resolution method/timestamp are
+   * recorded on the same row (ambiguous/unresolved keep contact_id NULL).
+   */
+  applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void>;
   /** Unvisited conversations with lastMessageDate >= windowStartMs, newest first; call-flagged first when requested. */
   getUnvisitedInWindow(windowStartMs: number, limit: number, callFlaggedFirst: boolean): Promise<HarvestConvRow[]>;
   markHarvestVisited(convIds: string[], callsFoundByConv: Record<string, number>, messagesScannedByConv?: Record<string, number>): Promise<void>;

@@ -32,7 +32,7 @@
 import { addDays, etDateStrFromInstant, etDayStartUtc } from "../date-logic";
 import { appointmentInScope } from "../metrics/availability";
 import { matchAppointmentsToCalls, type AttributionMatch } from "../metrics/attribution";
-import type { AttributionRow } from "../metrics/compute";
+import { assertBookingInvariant, type AttributionRow } from "../metrics/compute";
 import type { AppSettings, Store } from "../store/types";
 
 /** Minimum gap between BACKGROUND attribution recomputes (manual skips it). */
@@ -87,6 +87,13 @@ export function toAttributionRows(
       manuallyAssignedIds.push(m.appointmentId);
       continue;
     }
+    // Audit/debug note: persist the window limitation ON the row — the marker
+    // plus the exact window dates the match was evaluated against (Acuity
+    // dateCreated is date-only; the session date is never used and intra-day
+    // ordering is never assumed).
+    const note = m.window
+      ? `${m.window.marker} call-dates ${m.window.from}..${m.window.to} ET (anchor=${m.window.anchoredOn}; Acuity dateCreated is date-only)`
+      : null;
     if (m.status === "attributed") {
       rows.push({
         id: `attr:${m.appointmentId}`,
@@ -96,6 +103,7 @@ export function toAttributionRows(
         method: m.method ?? "none",
         confidence: CONFIDENCE[m.method ?? ""] ?? 0.5,
         manual_override: false,
+        note,
       });
     } else {
       rows.push({
@@ -106,6 +114,7 @@ export function toAttributionRows(
         method: "none",
         confidence: 0,
         manual_override: false,
+        note: m.reason ? `${m.reason}${m.detail ? ` — ${m.detail}` : ""}${note ? `; ${note}` : ""}` : note,
       });
     }
   }
@@ -123,9 +132,12 @@ export async function computeAndPersistAttributions(
   options?: { now?: () => Date },
 ): Promise<AttributionComputationResult> {
   const today = etDateStrFromInstant((options?.now ?? (() => new Date()))().getTime());
-  // Look-back: the 30-day appointment window PLUS the attribution window so a
-  // call just past the day boundary can still anchor a recent booking.
-  const since = etDayStartUtc(addDays(today, -(30 + Math.ceil(settings.attribution_window_hours / 24))));
+  // Look-back: the 30-day appointment window PLUS the call window. The
+  // owner-ratified window is DATE-GRANULARITY (call ET date == booking
+  // creation ET date or the day before — at most 2 ET days back), so 2 days
+  // is the real requirement; the legacy hour-based setting can only widen the
+  // margin, never narrow it below 2.
+  const since = etDayStartUtc(addDays(today, -(30 + Math.max(2, Math.ceil(settings.attribution_window_hours / 24)))));
   const [storedAppts, storedCalls, storedContacts, allUsers, existing] = await Promise.all([
     store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30))),
     store.getAllCallsSince(since),
@@ -135,8 +147,13 @@ export async function computeAndPersistAttributions(
   ]);
 
   // OWNER DIRECTIVE: only in-scope Acuity calendars/types may feed attribution
-  // — the same appointmentInScope rule every booking-feeding read applies.
-  const appts = storedAppts.filter((a) => appointmentInScope(a, settings.acuity));
+  // — the same appointmentInScope rule every booking-feeding read applies —
+  // and only QUALIFYING bookings (non-cancelled) need verdicts: the coverage
+  // invariant counts qualifying bookings, and a cancelled booking is never a
+  // sale the engine should chase.
+  const appts = storedAppts.filter(
+    (a) => appointmentInScope(a, settings.acuity) && a.status !== "cancelled" && !a.cancelled,
+  );
 
   const matches = matchAppointmentsToCalls(
     appts,
@@ -154,13 +171,22 @@ export async function computeAndPersistAttributions(
     storedCalls.filter((c) => c.external_call_id).map((c) => [c.external_call_id as string, c.id]),
   );
   const { rows, manuallyAssignedIds } = toAttributionRows(matches, existing, callIdByExternalId);
+
+  // METRIC INVARIANT (owner-ratified): attributed + unattributed must equal
+  // the qualifying total — Total NEVER shrinks because identity resolution is
+  // incomplete. A violation is a wiring/engine regression: record it as a
+  // sync error, never persist a dishonest split.
+  const attributedCount = matches.filter((m) => m.status === "attributed").length;
+  const unattributedCount = matches.filter((m) => m.status === "unattributed").length;
+  assertBookingInvariant(appts, rows, { engineAttributed: attributedCount, engineUnattributed: unattributedCount });
+
   await store.upsertAttributions(rows);
 
   return {
     outcome: "synced",
     appointments: appts.length,
-    attributed: matches.filter((m) => m.status === "attributed").length,
-    unattributed: matches.filter((m) => m.status === "unattributed").length,
+    attributed: attributedCount,
+    unattributed: unattributedCount,
     manuallyAssigned: manuallyAssignedIds.length,
   };
 }

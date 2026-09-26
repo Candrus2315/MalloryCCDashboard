@@ -16,9 +16,11 @@ import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
   AppSettings,
   AuditCallRow,
+  CallContactBackfillUpdate,
   ConnectionRow,
   ContactRow,
   DailyPrioritiesRow,
+  HarvestCallRow,
   HarvestConvRow,
   HarvestProgressRow,
   LeadCountAdjustmentRow,
@@ -267,6 +269,17 @@ const DDL: string[] = [
   `ALTER TABLE calls ADD COLUMN IF NOT EXISTS provider_rep_external_id text`,
   `ALTER TABLE calls ADD COLUMN IF NOT EXISTS conversation_id text`,
   `CREATE INDEX IF NOT EXISTS calls_provider_rep_ext_idx ON calls (provider_rep_external_id)`,
+  // Call→contact restoration backfill (owner-ratified attribution program,
+  // Session 2): provenance of HOW the call's contact was resolved and when.
+  // The raw source ids are already preserved (external_call_id = HL message
+  // id, conversation_id = HL conversation id, provider_rep_external_id = HL
+  // userId); these two columns record the resolution itself. Fill-null-only —
+  // an existing contact_id is never overwritten.
+  `ALTER TABLE calls ADD COLUMN IF NOT EXISTS contact_resolution_method text`,
+  `ALTER TABLE calls ADD COLUMN IF NOT EXISTS contact_resolved_at timestamptz`,
+  // Attribution audit/debug note: the window limitation is persisted ON the
+  // row ("date_granularity_window" + the exact window dates evaluated).
+  `ALTER TABLE booking_attributions ADD COLUMN IF NOT EXISTS note text`,
   // Resumable HighLevel call harvest (uncapped accuracy layer — see
   // src/server/sync/call-harvest.ts). Conversations discovered by dateAdded
   // binary partitioning; visited flags make a stopped run resume exactly.
@@ -512,7 +525,9 @@ export class PgStore implements Store {
     })) as unknown as ContactRow[];
   }
 
-  async upsertCalls(rows: (CallRow & { external_call_id: string; provider: string })[]): Promise<number> {
+  async upsertCalls(
+    rows: (CallRow & { external_call_id: string; provider: string; contact_resolution_method?: string | null; contact_resolved_at?: string | null })[],
+  ): Promise<number> {
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -542,16 +557,20 @@ export class PgStore implements Store {
       // RAW HL user id — mapping-driven eligibility is computed from it at
       // query time; the stored row is never rewritten.
       provider_rep_external_id: r.provider_rep_external_id == null ? null : String(r.provider_rep_external_id),
+      // RAW HL conversation id — the call→contact backfill's parent tier.
+      conversation_id: r.conversation_id == null ? null : String(r.conversation_id),
+      // Resolution provenance (call→contact backfill; null = never backfilled).
+      contact_resolution_method: r.contact_resolution_method == null ? null : String(r.contact_resolution_method),
     };
   }
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method FROM calls WHERE started_at >= ${startUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
@@ -585,6 +604,7 @@ export class PgStore implements Store {
              c.rep_id::text AS rep_id, u.name AS rep_name, u.is_active AS rep_is_active,
              pu.name AS prov_rep_name, pu.is_active AS prov_is_active,
              c.contact_id::text AS contact_id, ct.name AS contact_name, ct.external_id AS contact_external_id,
+             c.contact_resolution_method,
              c.direction, c.call_status, c.started_at::text AS started_at, c.duration_seconds,
              (c.duration_seconds > ${thresholdSeconds}) AS over_threshold
       FROM calls c
@@ -605,6 +625,7 @@ export class PgStore implements Store {
       contact_id: r.contact_id == null ? null : String(r.contact_id),
       contact_name: r.contact_name == null ? null : String(r.contact_name),
       contact_external_id: r.contact_external_id == null ? null : String(r.contact_external_id),
+      contact_resolution_method: r.contact_resolution_method == null ? null : String(r.contact_resolution_method),
       direction: r.direction == null ? null : String(r.direction),
       call_status: r.call_status == null ? null : String(r.call_status),
       started_at: new Date(r.started_at as string).toISOString(),
@@ -786,11 +807,12 @@ export class PgStore implements Store {
       // appointment_id is UNIQUE — re-syncs replace attributions instead of duplicating.
       // Never overwrite a manual override automatically.
       await this.sql`
-        INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override)
-        VALUES (${r.appointment_id}::uuid, ${r.call_id}, ${r.rep_id}, ${r.method}, ${r.confidence}, ${r.manual_override})
+        INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note)
+        VALUES (${r.appointment_id}::uuid, ${r.call_id}, ${r.rep_id}, ${r.method}, ${r.confidence}, ${r.manual_override}, ${r.note ?? null})
         ON CONFLICT (appointment_id) DO UPDATE SET
           call_id = EXCLUDED.call_id, rep_id = EXCLUDED.rep_id, method = EXCLUDED.method,
-          confidence = EXCLUDED.confidence, manual_override = booking_attributions.manual_override, updated_at = now()
+          confidence = EXCLUDED.confidence, manual_override = booking_attributions.manual_override,
+          note = EXCLUDED.note, updated_at = now()
         WHERE booking_attributions.manual_override = false
       `;
     }
@@ -798,7 +820,7 @@ export class PgStore implements Store {
   }
   async getAttributions(): Promise<AttributionRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text, appointment_id::text, call_id::text, rep_id::text, method, confidence, manual_override FROM booking_attributions`;
+    const rows = await this.sql`SELECT id::text, appointment_id::text, call_id::text, rep_id::text, method, confidence, manual_override, note FROM booking_attributions`;
     return rows.map((r) => ({
       id: String(r.id),
       appointment_id: String(r.appointment_id),
@@ -807,6 +829,7 @@ export class PgStore implements Store {
       method: String(r.method),
       confidence: Number(r.confidence),
       manual_override: Boolean(r.manual_override),
+      note: r.note == null ? null : String(r.note),
     }));
   }
   async setManualAttribution(row: AttributionRow): Promise<void> {
@@ -1155,5 +1178,69 @@ export class PgStore implements Store {
       callFlagged: Number(tot?.flagged ?? 0),
       byDay: byDayRows.map((r) => ({ day: String(r.day), total: Number(r.total), visited: Number(r.visited) })),
     };
+  }
+  async getHarvestConversationsByIds(convIds: string[]): Promise<HarvestConvRow[]> {
+    await this.ensureSchema();
+    if (!convIds.length) return [];
+    const rows = await this.sql`
+      SELECT conv_id, last_message_date::text AS lmd, date_added::text AS da, message_types, last_message_type, contact_id, assigned_to
+      FROM harvest_conversations WHERE conv_id = ANY(${convIds})`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      conv_id: String(r.conv_id),
+      last_message_date: Number(r.lmd),
+      date_added: Number(r.da),
+      message_types: (r.message_types ?? []) as number[],
+      last_message_type: (r.last_message_type as string | null) ?? null,
+      contact_id: (r.contact_id as string | null) ?? null,
+      assigned_to: (r.assigned_to as string | null) ?? null,
+    }));
+  }
+  async upsertHarvestCalls(rows: HarvestCallRow[]): Promise<number> {
+    await this.ensureSchema();
+    for (const r of rows) {
+      await this.sql`
+        INSERT INTO harvest_calls (message_id, conversation_id, user_external_id, contact_external_id, started_at, duration_seconds, direction, call_status)
+        VALUES (${r.message_id}, ${r.conversation_id ?? ""}, ${r.user_external_id}, ${r.contact_external_id}, ${r.started_at}, ${r.duration_seconds}, ${r.direction}, ${r.call_status})
+        ON CONFLICT (message_id) DO UPDATE SET
+          conversation_id = EXCLUDED.conversation_id, user_external_id = EXCLUDED.user_external_id,
+          contact_external_id = EXCLUDED.contact_external_id, started_at = EXCLUDED.started_at,
+          duration_seconds = EXCLUDED.duration_seconds, direction = EXCLUDED.direction,
+          call_status = EXCLUDED.call_status, harvested_at = now()`;
+    }
+    return rows.length;
+  }
+  async getHarvestCallsByMessageIds(messageIds: string[]): Promise<HarvestCallRow[]> {
+    await this.ensureSchema();
+    if (!messageIds.length) return [];
+    const rows = await this.sql`
+      SELECT message_id, conversation_id, user_external_id, contact_external_id, started_at::text AS started_at, duration_seconds, direction, call_status
+      FROM harvest_calls WHERE message_id = ANY(${messageIds})`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      message_id: String(r.message_id),
+      conversation_id: (r.conversation_id as string | null) ?? null,
+      user_external_id: (r.user_external_id as string | null) ?? null,
+      contact_external_id: (r.contact_external_id as string | null) ?? null,
+      started_at: new Date(r.started_at as string).toISOString(),
+      duration_seconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
+      direction: (r.direction as string | null) ?? null,
+      call_status: (r.call_status as string | null) ?? null,
+    }));
+  }
+  async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
+    await this.ensureSchema();
+    for (const r of rows) {
+      // FILL-NULL-ONLY (owner rule): an existing non-null contact_id is NEVER
+      // overwritten — direct source data always wins, inheritance only fills
+      // NULL. The provenance columns land only when this run made the call's
+      // contact decision (ambiguous/unresolved keep contact_id NULL but still
+      // record WHY — a rerun after the contacts backfill completes resolves them).
+      await this.sql`
+        UPDATE calls SET
+          contact_id = COALESCE(contact_id, ${r.contact_id}::uuid),
+          contact_resolution_method = CASE WHEN contact_id IS NULL THEN ${r.resolution_method} ELSE contact_resolution_method END,
+          contact_resolved_at = CASE WHEN contact_id IS NULL THEN ${r.contact_resolved_at}::timestamptz ELSE contact_resolved_at END,
+          updated_at = now()
+        WHERE id = ${r.call_id}::uuid`;
+    }
   }
 }

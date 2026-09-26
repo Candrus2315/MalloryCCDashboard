@@ -33,6 +33,17 @@ import {
 // Availability engine (runtime import — availability.ts depends on this
 // module's TYPES only, so there is no cycle). One engine, two consumers.
 import { computeDayAvailability } from "./availability";
+// CANONICAL identity normalizers (owner-ratified attribution program,
+// Session 2): EVERY Acuity↔HL identity comparison in this module goes through
+// the one definition in identity/normalize.ts — a HighLevel "+15088891019"
+// matches an Acuity "5088891019" (11-digit leading 1 dropped), emails compare
+// trimmed+lowercased. The former divergent local shims are gone.
+import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
+// Attribution-window date math (owner-ratified 2026-09-26 DATE-GRANULARITY
+// window). attribution.ts imports nothing from this module, so the runtime
+// import is acyclic — the old cycle note referred to src/server/attribution.ts
+// (the retired engine the sync no longer uses).
+import { attributionWindowDates, bookingCreationDateEt, callDateEt } from "./attribution";
 
 /**
  * OWNER SPEC (ux-charts-tables-spec.md §9 + accuracy pass 3): a positive
@@ -54,8 +65,9 @@ export interface CallRow {
   over_two_minutes: boolean;
   /**
    * HighLevel call id (the provider's message id) — the attribution engine's
-   * candidate id and the attribution audit trail's join-out key. Optional:
-   * tests may omit it (the engine falls back to the internal id).
+   * candidate id, the call→contact backfill's ledger join-out key and the
+   * attribution audit trail's join-out key. Optional: tests may omit it (the
+   * engine falls back to the internal id).
    */
   external_call_id?: string | null;
   /**
@@ -65,6 +77,21 @@ export interface CallRow {
    * row itself is never rewritten. Optional: tests may omit it.
    */
   provider_rep_external_id?: string | null;
+  /**
+   * The HighLevel conversation the call message came from (raw source id,
+   * preserved verbatim). The call→contact restoration backfill joins it to
+   * harvest_conversations.contact_id (parent-conversation tier). Optional:
+   * tests may omit it.
+   */
+  conversation_id?: string | null;
+  /**
+   * HOW the call's contact was (last) resolved, written by the call→contact
+   * restoration backfill: "direct_message_contact" | "parent_conversation_contact"
+   * | "exact_phone" | "exact_email" | "ambiguous" | "unresolved" (plus the
+   * pre-backfill legacy rows: null). Optional; carried so audit/debug reads
+   * see the resolution provenance without a second query.
+   */
+  contact_resolution_method?: string | null;
 }
 
 export interface AppointmentRow {
@@ -96,6 +123,14 @@ export interface AttributionRow {
   method: string; // contact_id | phone | email | manual | none
   confidence: number;
   manual_override: boolean;
+  /**
+   * Audit/debug note persisted with the row (booking_attributions.note). The
+   * sync wiring records the attribution window limitation here:
+   * "date_granularity_window" + the exact window dates the match was
+   * evaluated against (Acuity dateCreated is date-only — the scheduled
+   * session date is never used and intra-day ordering is never assumed).
+   */
+  note?: string | null;
 }
 
 export interface LeadRow {
@@ -1209,8 +1244,10 @@ export interface UnattributedBookingRow {
 /**
  * Active bookings with no attributed rep — the queue SPEC requires ("If
  * attribution is unclear, put it in UNATTRIBUTED BOOKINGS"). Pure: suggests
- * the contact's owner and lists qualifying calls (over threshold, created
- * within the window before the booking) but NEVER guesses on its own.
+ * the contact's owner and lists qualifying calls (over threshold, whose ET
+ * date falls in the owner-ratified DATE-GRANULARITY attribution window — the
+ * booking's creation date or the immediately preceding one, America/New_York)
+ * but NEVER guesses on its own.
  */
 export function buildUnattributedQueue(input: {
   appointments: AppointmentWithClient[];
@@ -1218,7 +1255,12 @@ export function buildUnattributedQueue(input: {
   calls: CallRow[];
   contacts: { id: string; phone: string | null; email: string | null; assigned_rep_id: string | null }[];
   thresholdSeconds: number;
-  windowHours: number;
+  /**
+   * LEGACY knob (kept so call sites compile): the engine's candidate window
+   * is now the DATE-GRANULARITY rule (creation ET date and the day before) and
+   * no longer derives from an hour count.
+   */
+  windowHours?: number;
   /** Engine results (matchAppointmentsToCalls) — supply the per-appointment reason. */
   matches?: { appointmentId: string; reason?: string }[];
 }): UnattributedBookingRow[] {
@@ -1229,28 +1271,36 @@ export function buildUnattributedQueue(input: {
   const contactByPhone = new Map<string, (typeof input.contacts)[number]>();
   const contactByEmail = new Map<string, (typeof input.contacts)[number]>();
   for (const c of input.contacts) {
-    const p = normalizePhone(c.phone);
+    const p = normalizeUSPhone(c.phone);
     if (p) contactByPhone.set(p, c);
     const e = normalizeEmail(c.email);
     if (e) contactByEmail.set(e, c);
   }
 
   const rows: UnattributedBookingRow[] = [];
+  // ET-date membership in the attribution window (call date == creation date
+  // or the day before; unparseable calls never qualify).
+  const inWindowDate = (startedAt: string, window: { from: string; to: string }): boolean => {
+    const d = callDateEt(startedAt);
+    return d != null && d >= window.from && d <= window.to;
+  };
   for (const a of input.appointments) {
     if (!isBooking(a) || attributed.has(a.id)) continue;
     const contact =
       (a.contact_id ? contactById.get(a.contact_id) : undefined) ??
-      (a.client_phone ? contactByPhone.get(normalizePhone(a.client_phone) ?? "") : undefined) ??
+      (a.client_phone ? contactByPhone.get(normalizeUSPhone(a.client_phone) ?? "") : undefined) ??
       (a.client_email ? contactByEmail.get(normalizeEmail(a.client_email) ?? "") : undefined);
-    const windowMs = input.windowHours * 3600_000;
-    const createdMs = new Date(a.created_at).getTime();
-    const candidates: QueueCandidateCall[] = (contact
+    // DATE-GRANULARITY candidate window (owner-ratified 2026-09-26): the call's
+    // ET date must equal the booking's creation ET date or the day before.
+    // Acuity dateCreated is date-only; intra-day ordering is never assumed.
+    const anchor = bookingCreationDateEt(a);
+    const window = anchor ? attributionWindowDates(anchor.date) : null;
+    const candidates: QueueCandidateCall[] = (contact && window
       ? input.calls.filter(
           (c) =>
             c.contact_id === contact.id &&
             c.duration_seconds > input.thresholdSeconds &&
-            new Date(c.started_at).getTime() <= createdMs &&
-            createdMs - new Date(c.started_at).getTime() <= windowMs,
+            inWindowDate(c.started_at, window),
         )
       : []
     )
@@ -1275,6 +1325,69 @@ export function buildUnattributedQueue(input: {
   }
   rows.sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
   return rows;
+}
+
+// ---------- booking-coverage invariants (SPEC: the totals must reconcile) ----------
+
+export interface BookingCoverage {
+  /** ALL qualifying (non-Zoom, non-cancelled) bookings in the period — attribution NOT required. */
+  total: number;
+  /** Bookings with an attribution row naming a rep (manual assignments included). */
+  attributed: number;
+  /** total − attributed; ambiguous bookings sit here until manually assigned. */
+  unattributed: number;
+}
+
+/**
+ * THE coverage invariant (owner-ratified): Attributed + Unattributed === Total,
+ * where Total = every qualifying booking in the period regardless of identity
+ * resolution. Total can NEVER shrink because identity resolution is
+ * incomplete — incomplete identity only moves bookings from attributed to
+ * unattributed (ambiguous bookings sit inside Unattributed until manually
+ * assigned). Pure; the metrics layer is the one place this is computed.
+ */
+export function bookingCoverage(appts: AppointmentRow[], attributions: AttributionRow[]): BookingCoverage {
+  const qualifying = appts.filter((a) => isBooking(a));
+  const qualifyingIds = new Set(qualifying.map((a) => a.id));
+  const attributedIds = new Set(
+    attributions.filter((a) => a.rep_id !== null && qualifyingIds.has(a.appointment_id)).map((a) => a.appointment_id),
+  );
+  const total = qualifying.length;
+  const attributed = attributedIds.size;
+  return { total, attributed, unattributed: total - attributed };
+}
+
+/**
+ * Assert the coverage invariant for one evaluation:
+ *   1. every qualifying booking carries EXACTLY ONE verdict row;
+ *   2. Attributed + Unattributed equals the qualifying Total;
+ *   3. (when supplied) the engine produced a verdict for every booking.
+ * Throws on violation — the sync records the error, never silently persists a
+ * dishonest split.
+ */
+export function assertBookingInvariant(
+  appts: AppointmentRow[],
+  attributions: AttributionRow[],
+  verdicts?: { engineAttributed: number; engineUnattributed: number },
+): void {
+  const cov = bookingCoverage(appts, attributions);
+  const qualifyingIds = new Set(appts.filter((a) => isBooking(a)).map((a) => a.id));
+  const rowsForQualifying = attributions.filter((r) => qualifyingIds.has(r.appointment_id));
+  if (rowsForQualifying.length !== cov.total || new Set(rowsForQualifying.map((r) => r.appointment_id)).size !== cov.total) {
+    throw new Error(
+      `Booking invariant violated: ${cov.total} qualifying bookings carry ${rowsForQualifying.length} verdict rows (expected exactly one each)`,
+    );
+  }
+  if (cov.attributed + cov.unattributed !== cov.total) {
+    throw new Error(
+      `Booking invariant violated: attributed(${cov.attributed}) + unattributed(${cov.unattributed}) must equal total(${cov.total})`,
+    );
+  }
+  if (verdicts && verdicts.engineAttributed + verdicts.engineUnattributed !== cov.total) {
+    throw new Error(
+      `Booking invariant violated: engine verdicts attributed(${verdicts.engineAttributed}) + unattributed(${verdicts.engineUnattributed}) must equal total(${cov.total})`,
+    );
+  }
 }
 
 // ---------- daily report (SPEC: Daily CC Report) ----------
@@ -1383,17 +1496,6 @@ export function buildDailyReportMetrics(input: {
 
 // local shims to avoid circular imports
 import { etDayEndUtc, etDayStartUtc as etDayStartOf } from "../date-logic";
-// phone/email normalizers duplicated locally (NOT imported from ../attribution):
-// a runtime import there creates a compute↔attribution module cycle that the
-// dev server tolerates but the production chunk graph does not.
-function normalizePhone(phone: string | null | undefined): string | null {
-  if (!phone) return null;
-  const digits = phone.replace(/\D/g, "");
-  return digits.length >= 10 ? digits.slice(-10) : digits.length > 0 ? digits : null;
-}
-function normalizeEmail(email: string | null | undefined): string | null {
-  return email ? email.trim().toLowerCase() || null : null;
-}
 function weekdayOf(dateStr: string): number {
   // weekday() is calendar-pure; import at top instead once — kept local for clarity
   const [y, m, d] = dateStr.split("-").map(Number);

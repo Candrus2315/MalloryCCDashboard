@@ -130,7 +130,6 @@ export const getSettingsData = createServerFn().handler(async () => {
     calls: callsWindow,
     contacts: contacts.map((c) => ({ id: c.id, phone: c.phone, email: c.email, assigned_rep_id: c.assigned_rep_id })),
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
-    windowHours: settings.attribution_window_hours,
     matches: engineMatches,
   });
 

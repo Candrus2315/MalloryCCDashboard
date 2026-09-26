@@ -324,9 +324,10 @@ describe("queue + conversion helpers", () => {
 
     const first = await computeAndPersistAttributions(store, settings, { now });
     expect(first.attributed).toBe(1);
-    // Engine result flips when the attribution window closes — the re-run REPLACES.
-    const narrowed = await getSettings(store, { attribution_window_hours: 0 });
-    const second = await computeAndPersistAttributions(store, narrowed, { now });
+    // Engine result flips when the call leaves the DATE-GRANULARITY window
+    // (creation ET date + the day before) — the re-run REPLACES.
+    await store.upsertCalls([{ ...call, started_at: iso(5 * 24 * H) }]); // 5 ET days back → out of window
+    const second = await computeAndPersistAttributions(store, settings, { now });
     expect(second.appointments).toBe(1);
     expect(second.attributed).toBe(0);
     const rows = await store.getAttributions();
