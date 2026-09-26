@@ -1,0 +1,344 @@
+/**
+ * Guards for the Team-page presentation rules (design/team-redesign-spec.md):
+ * the pacing sentence's honest pace clauses (weekend pace=0 shows the metrics
+ * layer's own note, never an invented number), lead-budget-pace verdicts,
+ * chip rules (no grades — per-rep goals are not in the payload), and the
+ * attention panel's risk-first rule order. Presentation-side only: everything
+ * here composes existing metric outputs. Lives outside src/server so
+ * `bun test src/server` counts stay stable.
+ */
+import { describe, expect, test } from "bun:test";
+import {
+  attentionNotes,
+  leadPacing,
+  paceSummary,
+  repChips,
+} from "~/components/team-views";
+import type { TeamRangeMetrics, TrendPoint } from "~/server/metrics/compute";
+import type { RepStripRow } from "~/server/queries";
+
+const metrics = (over: Partial<TeamRangeMetrics> = {}): TeamRangeMetrics => ({
+  totalCalls: 0,
+  callsOverThreshold: 0,
+  bookingsFromOverThreshold: 0,
+  totalBookings: 0,
+  assignedLeads: 0,
+  conversationConversion: null,
+  assignedLeadConversion: null,
+  avgCallDurationSeconds: null,
+  goal: { value: 79, basis: "team-goal", note: "79 from stored team goals" },
+  actual: 0,
+  remaining: 79,
+  goalAchievement: 0,
+  paceNeeded: 0,
+  paceDaysLeft: 5,
+  paceNote: "5 working days left through Fri, Sep 25",
+  ...over,
+});
+
+const point = (key: string, over: Partial<TrendPoint> = {}): TrendPoint => ({
+  key,
+  label: key,
+  bookings: 0,
+  calls: 0,
+  callsOverThreshold: 0,
+  bookingsFromOverThreshold: 0,
+  conversationConversion: null,
+  assignedLeadConversion: null,
+  avgCallDurationSeconds: null,
+  leads: 0,
+  budgetRef: 0,
+  ...over,
+});
+
+const rep = (id: string, name: string, over: Partial<RepStripRow> = {}): RepStripRow => ({
+  id,
+  name,
+  totalBookings: 0,
+  callsOverThreshold: 0,
+  conversationConversion: null,
+  ...over,
+});
+
+describe("paceSummary (spec §2: one pacing unit, honest pace clauses)", () => {
+  test("last working day → 'needed today (last working day)'", () => {
+    const ps = paceSummary({
+      metrics: metrics({
+        actual: 51,
+        remaining: 28,
+        goalAchievement: 51 / 79,
+        paceNeeded: 28,
+        paceDaysLeft: 1,
+        paceNote: "1 working day left through Fri, Sep 25",
+      }),
+      rangeEnd: "2026-09-25",
+      today: "2026-09-25",
+    });
+    expect(ps.achieved).toBe("64.6%");
+    expect(ps.remaining).toBe("28");
+    expect(ps.paceClause).toBe("28 needed today (last working day)");
+    expect(ps.paceFootnote).toBe("1 working day left through Fri, Sep 25");
+    expect(ps.barPct).toBeCloseTo((51 / 79) * 100);
+    expect(ps.hit).toBe(false);
+  });
+
+  test("mid-week → per-working-day phrasing", () => {
+    const ps = paceSummary({
+      metrics: metrics({ actual: 20, remaining: 59, goalAchievement: 20 / 79, paceNeeded: 15, paceDaysLeft: 4 }),
+      rangeEnd: "2026-09-24",
+      today: "2026-09-22",
+    });
+    expect(ps.paceClause).toBe("15 needed per working day");
+    expect(ps.paceFootnote).toBe("5 working days left through Fri, Sep 25"); // metrics layer's note, verbatim
+  });
+
+  test("weekend (pace=0, range open) → 0 needed today + the metrics layer's own note", () => {
+    const ps = paceSummary({
+      metrics: metrics({
+        actual: 51,
+        remaining: 28,
+        goalAchievement: 51 / 79,
+        paceNeeded: 0,
+        paceDaysLeft: 0,
+        paceNote: "work week complete — pace resumes Monday",
+      }),
+      rangeEnd: "2026-09-26",
+      today: "2026-09-26",
+    });
+    expect(ps.paceClause).toBe("0 needed today · work week complete — pace resumes Monday");
+    expect(ps.paceFootnote).toBeNull();
+  });
+
+  test("ended range → no pace needed", () => {
+    const ps = paceSummary({
+      metrics: metrics({ paceNeeded: 0, paceDaysLeft: 0, paceNote: "range already ended — no pace needed" }),
+      rangeEnd: "2026-09-19",
+      today: "2026-09-26",
+    });
+    expect(ps.paceClause).toBe("No pace needed — range already ended.");
+  });
+
+  test("goal reached → bar fills, remaining 0, hit", () => {
+    const ps = paceSummary({
+      metrics: metrics({ actual: 80, remaining: 0, goalAchievement: 80 / 79, paceNeeded: 0, paceDaysLeft: 0 }),
+      rangeEnd: "2026-09-26",
+      today: "2026-09-26",
+    });
+    expect(ps.barPct).toBe(100);
+    expect(ps.hit).toBe(true);
+    expect(ps.remaining).toBe("0");
+  });
+
+  test("no goal → no achievement, no bar", () => {
+    const ps = paceSummary({
+      metrics: metrics({ goal: { value: 0, basis: "with-default", note: "no goal" } }),
+      rangeEnd: "2026-09-26",
+      today: "2026-09-26",
+    });
+    expect(ps.achieved).toBeNull();
+    expect(ps.barPct).toBeNull();
+  });
+});
+
+describe("leadPacing (spec §4: are we getting enough leads?)", () => {
+  test("below budget pace", () => {
+    const lp = leadPacing([
+      point("2026-09-21", { leads: 10, budgetRef: 20 }),
+      point("2026-09-22", { leads: 12, budgetRef: 20 }),
+      point("2026-09-23", { leads: 11, budgetRef: 20 }),
+      point("2026-09-24", { leads: 10, budgetRef: 20 }),
+      point("2026-09-25", { leads: 10, budgetRef: 20 }),
+    ]);
+    expect(lp.leads).toBe(53);
+    expect(lp.budget).toBeCloseTo(100);
+    expect(lp.verdict).toBe("Below budget pace");
+    expect(lp.delta).toBe("−47 leads");
+    expect(lp.pct).toBe("53%");
+  });
+
+  test("above budget pace", () => {
+    const lp = leadPacing([
+      point("2026-09-21", { leads: 60, budgetRef: 50 }),
+      point("2026-09-22", { leads: 52, budgetRef: 50 }),
+    ]);
+    expect(lp.verdict).toBe("Above budget pace");
+    expect(lp.delta).toBe("+12 leads");
+    expect(lp.pct).toBe("112%");
+  });
+
+  test("on budget pace → no delta", () => {
+    const lp = leadPacing([point("2026-09-21", { leads: 50, budgetRef: 50 })]);
+    expect(lp.verdict).toBe("On budget pace");
+    expect(lp.delta).toBeNull();
+  });
+
+  test("no budget → verdict null, leads still reported", () => {
+    const lp = leadPacing([point("2026-09-21", { leads: 9 })]);
+    expect(lp.leads).toBe(9);
+    expect(lp.verdict).toBeNull();
+    expect(lp.delta).toBeNull();
+    expect(lp.pct).toBeNull();
+  });
+});
+
+describe("repChips (spec §5: real metrics only, no grades)", () => {
+  test("unique top bookings → Top performer", () => {
+    const chips = repChips([
+      rep("a", "A", { totalBookings: 9 }),
+      rep("b", "B", { totalBookings: 4, conversationConversion: 0.2 }),
+      rep("c", "C", { totalBookings: 3, conversationConversion: 0.4 }),
+      rep("d", "D", { totalBookings: 1, conversationConversion: 0.4 }),
+    ]);
+    expect(chips.get("a")).toEqual({ kind: "positive", label: "Top performer" });
+    expect(chips.get("b")).toBeUndefined(); // below the qualifying average → no chip
+  });
+
+  test("conversion above team average (≥3 qualifying) → Strong conversion", () => {
+    const chips = repChips([
+      rep("a", "A", { totalBookings: 9, conversationConversion: 0.5 }),
+      rep("b", "B", { totalBookings: 4, conversationConversion: 0.2 }),
+      rep("c", "C", { totalBookings: 3, conversationConversion: 0.3 }),
+      rep("d", "D", { totalBookings: 1, conversationConversion: 0.6 }),
+    ]);
+    expect(chips.get("d")).toEqual({ kind: "positive", label: "Strong conversion" });
+  });
+
+  test("fewer than 3 qualifying conversions → no average, no chip", () => {
+    const chips = repChips([
+      rep("a", "A", { totalBookings: 9, conversationConversion: 0.1 }),
+      rep("b", "B", { totalBookings: 4, conversationConversion: 0.9 }),
+      rep("c", "C", { totalBookings: 3 }),
+    ]);
+    expect(chips.get("b")).toBeUndefined();
+  });
+
+  test("no activity → neutral chip; calls but no bookings → needs attention", () => {
+    const chips = repChips([
+      rep("a", "A", { totalBookings: 9 }),
+      rep("b", "B", { callsOverThreshold: 7 }),
+      rep("c", "C"),
+    ]);
+    expect(chips.get("c")).toEqual({ kind: "neutral", label: "No activity" });
+    expect(chips.get("b")).toEqual({ kind: "risk", label: "Needs attention" });
+  });
+
+  test("tied max bookings → no Top performer", () => {
+    const chips = repChips([
+      rep("a", "A", { totalBookings: 9 }),
+      rep("b", "B", { totalBookings: 9 }),
+      rep("c", "C", { totalBookings: 1 }),
+    ]);
+    expect(chips.get("a")).toBeUndefined();
+    expect(chips.get("b")).toBeUndefined();
+  });
+});
+
+describe("attentionNotes (spec §6: rule-based, 3–5, risks first)", () => {
+  test("behind pace with working days left → goal-pace risk first", () => {
+    const notes = attentionNotes({
+      metrics: metrics({ actual: 51, remaining: 28, goalAchievement: 51 / 79, paceNeeded: 28, paceDaysLeft: 1 }),
+      points: [],
+      bucketMode: "day",
+      repRows: [rep("a", "A", { totalBookings: 51 })],
+      rangeEnd: "2026-09-25",
+      today: "2026-09-25",
+    });
+    expect(notes[0]?.severity).toBe("risk");
+    expect(notes[0]?.text).toContain("64.6% of goal with 1 working day remaining");
+  });
+
+  test("goal reached → positive note", () => {
+    const notes = attentionNotes({
+      metrics: metrics({ actual: 82, remaining: 0, goalAchievement: 82 / 79 }),
+      points: [],
+      bucketMode: "day",
+      repRows: [],
+      rangeEnd: "2026-09-26",
+      today: "2026-09-26",
+    });
+    expect(notes[0]?.severity).toBe("positive");
+    expect(notes[0]?.text).toContain("Booking goal reached: 82 of 79");
+  });
+
+  test("pace vs recent daily average — weekend buckets excluded, avg below pace → risk", () => {
+    const points = [
+      point("2026-09-21", { bookings: 2 }),
+      point("2026-09-22", { bookings: 2 }),
+      point("2026-09-23", { bookings: 2 }),
+      point("2026-09-24", { bookings: 2 }),
+      point("2026-09-25", { bookings: 2 }),
+      point("2026-09-26"), // Saturday — never in the recent-workday average
+      point("2026-09-27"), // Sunday
+    ];
+    const notes = attentionNotes({
+      metrics: metrics({ actual: 10, remaining: 69, goalAchievement: 10 / 79, paceNeeded: 28, paceDaysLeft: 5 }),
+      points,
+      bucketMode: "day",
+      repRows: [],
+      rangeEnd: "2026-09-27",
+      today: "2026-09-27",
+    });
+    const pace = notes.find((n) => n.text.includes("recent daily booking average"));
+    expect(pace?.severity).toBe("risk");
+    expect(pace?.text).toContain("above the recent daily booking average of 2");
+  });
+
+  test("top rep, silent rep, and leads below budget all surface", () => {
+    const notes = attentionNotes({
+      metrics: metrics({ actual: 20, remaining: 59, goalAchievement: 20 / 79, paceNeeded: 0, paceDaysLeft: 0, paceNote: "work week complete — pace resumes Monday" }),
+      points: [point("2026-09-21", { leads: 10, budgetRef: 100 / 7 })],
+      bucketMode: "day",
+      repRows: [rep("a", "Wittner", { totalBookings: 12 }), rep("b", "McKillop")],
+      rangeEnd: "2026-09-26",
+      today: "2026-09-26",
+    });
+    expect(notes.some((n) => n.rep === "Wittner" && n.text.includes("leads the team in bookings (12)"))).toBe(true);
+    expect(notes.some((n) => n.rep === "McKillop" && n.text.includes("verify sync or lead assignment"))).toBe(true);
+    expect(notes.some((n) => n.text.includes("Lead volume is below budget pace"))).toBe(true);
+  });
+
+  test("assigned-lead conversion unavailable + healthy conversation → combined honest note", () => {
+    const notes = attentionNotes({
+      metrics: metrics({ actual: 5, totalBookings: 5, remaining: 74, goalAchievement: 5 / 79, conversationConversion: 0.42, callsOverThreshold: 12 }),
+      points: [],
+      bucketMode: "week",
+      repRows: [],
+      rangeEnd: "2026-09-26",
+      today: "2026-09-26",
+    });
+    expect(notes.some((n) => n.text.includes("Assigned Lead Conversion is unavailable"))).toBe(true);
+    expect(notes.some((n) => n.text.includes("Conversation conversion is 42.0%"))).toBe(true);
+  });
+
+  test("notes cap at 5 with risks ordered before positives", () => {
+    const points = [
+      point("2026-09-21", { leads: 1, budgetRef: 20, bookings: 1 }),
+      point("2026-09-22", { leads: 1, budgetRef: 20, bookings: 1 }),
+      point("2026-09-23", { leads: 1, budgetRef: 20, bookings: 1 }),
+      point("2026-09-24", { leads: 1, budgetRef: 20, bookings: 1 }),
+      point("2026-09-25", { leads: 1, budgetRef: 20, bookings: 1 }),
+    ];
+    const notes = attentionNotes({
+      metrics: metrics({
+        actual: 5,
+        remaining: 74,
+        goalAchievement: 5 / 79,
+        paceNeeded: 28,
+        paceDaysLeft: 5,
+        assignedLeads: 0,
+        totalBookings: 5,
+        conversationConversion: 0.5,
+      }),
+      points,
+      bucketMode: "day",
+      repRows: [rep("a", "Top Rep", { totalBookings: 3 }), rep("b", "Silent Rep")],
+      rangeEnd: "2026-09-27",
+      today: "2026-09-27",
+    });
+    expect(notes.length).toBeLessThanOrEqual(5);
+    const firstPositive = notes.findIndex((n) => n.severity === "positive");
+    if (firstPositive >= 0) {
+      expect(notes.slice(firstPositive).every((n) => n.severity === "positive")).toBe(true);
+    }
+  });
+});

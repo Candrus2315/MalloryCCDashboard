@@ -1,0 +1,386 @@
+/**
+ * Centralized operational date logic for the Mallory CC dashboard.
+ *
+ * ALL Mallory operational date logic runs in America/New_York (per SPEC).
+ * Calendar dates are represented as "YYYY-MM-DD" strings (ET calendar dates).
+ * Instants are ISO-8601 UTC strings.
+ *
+ * LEAD DATE LOGIC (SPEC): "Leads Today" = leads the CC team is expected to
+ * WORK today, not leads that arrived today.
+ *  - Tuesday–Friday: today's working leads = leads received the PREVIOUS
+ *    calendar day (Tue=Mon, Wed=Tue, Thu=Wed, Fri=Thu).
+ *  - MONDAY: Monday's working leads = leads received previous Fri + Sat + Sun.
+ *  - SATURDAY / SUNDAY (explicit, documented): the team is expected to work
+ *    the cohort the upcoming Monday will work, i.e. the most recent
+ *    Fri/Sat/Sun window. Saturday therefore returns [Fri, Sat(today), Sun
+ *    (tomorrow)] and Sunday returns [Fri, Sat, Sun(today)] — "prefer Monday's
+ *    cohort" so weekend views stay continuous with Monday morning's report.
+ *
+ * Every lead stores BOTH:
+ *  - source_date: the date the lead actually entered the sheet
+ *  - work_date:   the date the team is expected to work it
+ * Operational reporting filters on work_date. Historical reporting may use
+ * source_date.
+ */
+
+export const OPERATIONAL_TIMEZONE = "America/New_York";
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function assertDateStr(d: string): string {
+  if (!DATE_RE.test(d)) throw new Error(`Invalid date string: ${d} (expected YYYY-MM-DD)`);
+  return d;
+}
+
+/** Calendar date (YYYY-MM-DD) of an instant in the operational timezone. */
+export function etDateStrFromInstant(instantMs: number): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: OPERATIONAL_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(instantMs));
+}
+
+/** Current calendar date in America/New_York. */
+export function etToday(): string {
+  return etDateStrFromInstant(Date.now());
+}
+
+/** Offset (ms) of the operational timezone at a given instant. */
+function etOffsetMs(instantMs: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: OPERATIONAL_TIMEZONE,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(new Date(instantMs));
+  const get = (t: string) => Number(parts.find((p) => p.type === t)!.value);
+  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+  return asUtc - instantMs;
+}
+
+/**
+ * UTC instant (ISO string) of midnight at the START of an ET calendar date.
+ * Two-pass to survive DST boundaries. Used to bound DB timestamp queries.
+ */
+export function etDayStartUtc(dateStr: string): string {
+  assertDateStr(dateStr);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const midnightUtc = Date.UTC(y, m - 1, d, 0, 0, 0);
+  let start = midnightUtc - etOffsetMs(midnightUtc + 12 * 3600_000);
+  start = midnightUtc - etOffsetMs(start);
+  return new Date(start).toISOString();
+}
+
+/** UTC instant of the START of the ET calendar day AFTER dateStr (exclusive upper bound). */
+export function etDayEndUtc(dateStr: string): string {
+  return etDayStartUtc(addDays(dateStr, 1));
+}
+
+/** Add n calendar days to a YYYY-MM-DD string (pure calendar arithmetic). */
+export function addDays(dateStr: string, n: number): string {
+  assertDateStr(dateStr);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Day of week: 0 = Sunday ... 6 = Saturday. Calendar dates are TZ-unambiguous. */
+export function weekday(dateStr: string): number {
+  assertDateStr(dateStr);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** Monday of the (Mon–Sun) week containing dateStr. Operational week = Mon..Sun. */
+export function weekStart(dateStr: string): string {
+  const wd = weekday(dateStr);
+  // Mon=1 → 0 days back; Sun=0 → 6 days back.
+  return addDays(dateStr, wd === 0 ? -6 : 1 - wd);
+}
+
+/** All dates in [startStr, endStr] inclusive. */
+export function dateRange(startStr: string, endStr: string): string[] {
+  const out: string[] = [];
+  let cur = startStr;
+  while (cur <= endStr) {
+    out.push(cur);
+    cur = addDays(cur, 1);
+  }
+  return out;
+}
+
+/**
+ * THE centralized lead cohort function (SPEC).
+ * Given the report date (the day the team is working), return the list of
+ * source_dates whose leads the team works that day. All pages must use this —
+ * never filter sheets by "today".
+ */
+export function getLeadCohort(reportDate: string): string[] {
+  const wd = weekday(reportDate);
+  if (wd >= 2 && wd <= 5) {
+    // Tuesday(2)–Friday(5): previous calendar day.
+    return [addDays(reportDate, -1)];
+  }
+  if (wd === 1) {
+    // Monday: previous Fri + Sat + Sun.
+    return [addDays(reportDate, -3), addDays(reportDate, -2), addDays(reportDate, -1)];
+  }
+  // Saturday(6)/Sunday(0): prefer Monday's cohort (documented above) — the
+  // Fri/Sat/Sun window the upcoming Monday works.
+  const nextMonday = wd === 6 ? addDays(reportDate, 2) : addDays(reportDate, 1);
+  return [addDays(nextMonday, -3), addDays(nextMonday, -2), addDays(nextMonday, -1)];
+}
+
+/**
+ * Inverse of getLeadCohort: for a lead that entered the sheet on sourceDate,
+ * the date the CC team is expected to work it. Stored on every lead row.
+ */
+export function getWorkDate(sourceDate: string): string {
+  const wd = weekday(sourceDate);
+  switch (wd) {
+    case 1: // Mon → Tue
+    case 2: // Tue → Wed
+    case 3: // Wed → Thu
+    case 4: // Thu → Fri
+      return addDays(sourceDate, 1);
+    case 5: // Fri → Mon
+      return addDays(sourceDate, 3);
+    case 6: // Sat → Mon
+      return addDays(sourceDate, 2);
+    case 0: // Sun → Mon
+      return addDays(sourceDate, 1);
+    default:
+      throw new Error("unreachable weekday");
+  }
+}
+
+// ---------- working-day (Mon–Fri) pace math (owner-corrected) ----------
+
+/**
+ * WORKING-DAY semantics: agents work Mon–Fri ONLY. Weekly counters still reset
+ * Monday, but every "days left" / pace / expected-to-date figure counts
+ * WORKING days, never weekend calendar days.
+ *
+ * Days left in the work week INCLUDING today: Mon=5 … Fri=1, Sat/Sun=0 (no
+ * working days remain — pace resumes Monday).
+ */
+export function daysLeftInWorkWeek(reportDate: string): number {
+  const wd = weekday(reportDate);
+  return wd >= 1 && wd <= 5 ? 6 - wd : 0; // Mon(1)=5 … Fri(5)=1; weekend=0
+}
+
+/** True when the date is a working day (Mon–Fri). */
+export function isWorkday(dateStr: string): boolean {
+  const wd = weekday(dateStr);
+  return wd >= 1 && wd <= 5;
+}
+
+/**
+ * Fraction of the work week elapsed INCLUDING today: Mon=1/5 … Fri=5/5.
+ * Sat/Sun=5/5 — the week's work is done, expected-to-date is the full goal.
+ */
+export function weekElapsedWorkFraction(reportDate: string): number {
+  const wd = weekday(reportDate);
+  return wd >= 1 && wd <= 5 ? wd / 5 : 1;
+}
+
+/** Working days (Mon–Fri) in [startStr, endStr] inclusive; 0 when end < start. */
+export function workingDaysBetween(startStr: string, endStr: string): number {
+  if (endStr < startStr) return 0;
+  let n = 0;
+  for (let cur = startStr; cur <= endStr; cur = addDays(cur, 1)) {
+    if (isWorkday(cur)) n += 1;
+  }
+  return n;
+}
+
+/** Format an ET calendar date for humans, e.g. "Fri, Sep 25". */
+export function formatDateHuman(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/** Format an ET calendar date for humans WITH the year, e.g. "Wed, Sep 24, 2026". */
+export function formatDateHumanFull(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+// ---------- report date-range resolution (Reps / Team page filters) ----------
+
+export type RangeMode =
+  | "today"
+  | "yesterday"
+  | "this-week"
+  | "last-week"
+  | "last-7"
+  | "last-30"
+  | "this-month"
+  | "custom";
+
+export const RANGE_MODES: RangeMode[] = [
+  "today",
+  "yesterday",
+  "this-week",
+  "last-week",
+  "last-7",
+  "last-30",
+  "this-month",
+  "custom",
+];
+
+/** Display labels for the filter pills — shared by the Reps and Team pages. */
+export const RANGE_LABELS: Record<RangeMode, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  "this-week": "This Week",
+  "last-week": "Last Week",
+  "last-7": "Last 7 Days",
+  "last-30": "Last 30 Days",
+  "this-month": "This Month",
+  custom: "Custom Range",
+};
+
+export function isRangeMode(v: unknown): v is RangeMode {
+  return typeof v === "string" && (RANGE_MODES as string[]).includes(v);
+}
+
+export interface ResolvedRange {
+  mode: RangeMode;
+  /** Inclusive ET calendar dates. */
+  start: string;
+  end: string;
+  /** Short label for the mode, e.g. "This Week". */
+  label: string;
+  /** True when the mode covers only elapsed days (week/month to date). */
+  toDate: boolean;
+  /** Non-fatal warning (e.g. invalid custom range) — surfaced by the page. */
+  warning: string | null;
+}
+
+/**
+ * Resolve a named filter mode to an inclusive ET date range. "This Week" and
+ * "This Month" are TO DATE (Mon..today / 1st..today) — future days have no
+ * activity and to-date matches the rest of the app (Bookings WTD). "Last
+ * Week" is the full previous Mon..Sun. Custom is validated; an invalid custom
+ * range falls back to Today with a warning (never silently mislabeled).
+ */
+export function resolveRange(
+  mode: RangeMode,
+  today: string,
+  from?: string,
+  to?: string,
+): ResolvedRange {
+  switch (mode) {
+    case "today":
+      return { mode, start: today, end: today, label: "Today", toDate: true, warning: null };
+    case "yesterday": {
+      const y = addDays(today, -1);
+      return { mode, start: y, end: y, label: "Yesterday", toDate: true, warning: null };
+    }
+    case "this-week":
+      return {
+        mode,
+        start: weekStart(today),
+        end: today,
+        label: "This Week",
+        toDate: true,
+        warning: null,
+      };
+    case "last-week": {
+      const ws = addDays(weekStart(today), -7);
+      return {
+        mode,
+        start: ws,
+        end: addDays(ws, 6),
+        label: "Last Week",
+        toDate: false,
+        warning: null,
+      };
+    }
+    case "last-7":
+      return {
+        mode,
+        start: addDays(today, -6),
+        end: today,
+        label: "Last 7 Days",
+        toDate: true,
+        warning: null,
+      };
+    case "last-30":
+      return {
+        mode,
+        start: addDays(today, -29),
+        end: today,
+        label: "Last 30 Days",
+        toDate: true,
+        warning: null,
+      };
+    case "this-month":
+      return {
+        mode,
+        start: today.slice(0, 7) + "-01",
+        end: today,
+        label: "This Month",
+        toDate: true,
+        warning: null,
+      };
+    case "custom": {
+      const fromOk = typeof from === "string" && DATE_RE.test(from);
+      const toOk = typeof to === "string" && DATE_RE.test(to);
+      if (fromOk && toOk && from! <= to!) {
+        return {
+          mode,
+          start: from!,
+          end: to!,
+          label: "Custom Range",
+          toDate: false,
+          warning: null,
+        };
+      }
+      const why = !fromOk || !toOk ? "both dates required" : "start date is after end date";
+      return {
+        mode: "today",
+        start: today,
+        end: today,
+        label: "Today",
+        toDate: true,
+        warning: `Invalid custom range (${why}) — showing Today instead.`,
+      };
+    }
+  }
+}
+
+/** All Mondays (week starts) covered by an inclusive ET date range. */
+export function mondaysInRange(start: string, end: string): string[] {
+  const out: string[] = [];
+  let ws = weekStart(start);
+  while (ws <= end) {
+    out.push(ws);
+    ws = addDays(ws, 7);
+  }
+  return out;
+}
+
+/** UTC bounds [startUtc, endUtc) covering inclusive ET calendar dates start..end. */
+export function etRangeBounds(start: string, end: string): { startUtc: string; endUtc: string } {
+  return { startUtc: etDayStartUtc(start), endUtc: etDayEndUtc(end) };
+}

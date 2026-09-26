@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+@layer base {
+  html,
+  body {
+    @apply bg-stone-50 text-stone-900 antialiased;
+    font-feature-settings: "tnum" 1;
+  }
+}
+
+@layer components {
+  /* Large KPI number — the core visual unit of the dashboard */
+  .kpi-value {
+    @apply text-4xl font-semibold tracking-tight text-stone-900 tabular-nums;
+  }
+  /* Label that names a number. Redesign spec §2 type scale: stone-500 (one
+     step darker than subtext) so label > number > subtext reads as a ladder. */
+  .kpi-label {
+    @apply text-[11px] font-medium uppercase tracking-[0.08em] text-stone-500;
+  }
+  .kpi-sub {
+    @apply text-xs text-stone-400;
+  }
+
+  /* ---------- Design system (defined on the Today redesign, spec §5) ----------
+     Shared classes so later pages (Reps, Team, Availability, Daily Report)
+     inherit the same vocabulary instead of re-inventing it. */
+
+  /* Hero KPI number — the primary booking-pace row */
+  .kpi-hero {
+    @apply text-5xl font-semibold tracking-tight text-stone-900 tabular-nums leading-none;
+  }
+  /* Secondary / lead-block KPI number — visibly under the hero row */
+  .kpi-mid {
+    @apply text-3xl font-semibold tracking-tight text-stone-900 tabular-nums;
+  }
+  /* Section heading: dark sentence case, NOT an uppercase gray label */
+  .section-heading {
+    @apply text-[13px] font-semibold text-stone-900;
+  }
+  /* vs-team delta under a table number — the sign carries direction, no color */
+  .delta-line {
+    @apply text-[11px] text-stone-400 tabular-nums;
+  }
+  /* Slim demo/stale-warning banner (keeps every honesty phrase, tighter form) */
+  .status-banner {
+    @apply flex items-center gap-2 rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-1.5 text-xs text-amber-900;
+  }
+  /* Status chips: text + dot, never color-only */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium;
+  }
+  .chip-positive {
+    @apply bg-emerald-50 text-emerald-700;
+  }
+  .chip-risk {
+    @apply bg-amber-50 text-amber-800;
+  }
+  .chip-neutral {
+    @apply bg-stone-100 text-stone-600;
+  }
+  /* Availability day card (reusable on the future Availability page) */
+  .day-card {
+    @apply w-28 shrink-0 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-1;
+  }
+  .day-card-on {
+    @apply border-stone-200 bg-white shadow-sm ring-1 ring-stone-900;
+  }
+  .day-card-off {
+    @apply border-stone-200/70 bg-stone-50 hover:border-stone-300;
+  }
+  /* Sortable table header button (spec §3.6 mechanics) */
+  .th-sort-btn {
+    @apply inline-flex cursor-pointer select-none items-center gap-1 rounded-sm text-[11px] font-medium uppercase tracking-[0.08em] transition-colors hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-1;
+  }
+
+  /* Compact data table */
+  .data-table {
+    @apply w-full text-[13px];
+  }
+  .data-table thead th {
+    @apply border-b border-stone-200 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-stone-400;
+  }
+  .data-table tbody td {
+    @apply border-b border-stone-100 py-2 text-stone-700 tabular-nums;
+  }
+  .data-table tbody tr:hover {
+    @apply bg-stone-100/50;
+  }
+  .section-title {
+    @apply text-[11px] font-medium uppercase tracking-[0.12em] text-stone-400;
+  }
+  .card {
+    @apply rounded-xl border border-stone-200/80 bg-white p-5;
+  }
+  /* Card padding variant for dense panels (availability, attention). Declared
+     AFTER .card so p-4 wins the cascade (equal specificity, later wins). */
+  .card-dense {
+    @apply p-4;
+  }
+  .accent-text {
+    @apply text-amber-700;
+  }
+}
