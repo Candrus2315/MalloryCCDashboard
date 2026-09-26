@@ -4,7 +4,7 @@ import { useState } from "react";
 import { WarningList } from "~/components/warnings";
 import {
   addBlockedTime,
-  assignBooking,
+  assignAttribution,
   getSettingsData,
   removeBlockedTime,
   saveAcuityScope,
@@ -163,7 +163,7 @@ function SettingsPage() {
       }} />
 
       {/* ---------- Manual overrides ---------- */}
-      <OverridesSection data={data} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignBooking({ data: { appointmentId, repId, callId } }))} onWorkDate={(leadId, workDate, previousWorkDate, reason) => run("Lead work date corrected", () => setLeadWorkDate({ data: { leadId, workDate, previousWorkDate, reason } }))} onLeadCount={(date, sheet, count, reason) => run("Lead count corrected", () => setLeadCount({ data: { date, sheet, count, reason } }))} />
+      <OverridesSection data={data} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onWorkDate={(leadId, workDate, previousWorkDate, reason) => run("Lead work date corrected", () => setLeadWorkDate({ data: { leadId, workDate, previousWorkDate, reason } }))} onLeadCount={(date, sheet, count, reason) => run("Lead count corrected", () => setLeadCount({ data: { date, sheet, count, reason } }))} />
 
       {/* ---------- Override history ---------- */}
       <section className="space-y-3">
@@ -902,13 +902,15 @@ function OverridesSection({ data, busy, onAssign, onWorkDate, onLeadCount }: {
           <p className="text-[13px] text-stone-400">Every active booking is attributed.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="data-table min-w-[860px]">
+            <table className="data-table min-w-[980px]">
               <thead>
                 <tr>
                   <th className="text-left">Client</th>
                   <th className="text-left">Type</th>
-                  <th className="text-left">Created</th>
+                  <th className="text-left">Session</th>
+                  <th className="text-left">Why unattributed</th>
                   <th className="text-left">Suggested</th>
+                  <th className="text-left">Call</th>
                   <th className="text-left">Assign to</th>
                   <th className="text-left"></th>
                 </tr>
@@ -932,25 +934,57 @@ function OverridesSection({ data, busy, onAssign, onWorkDate, onLeadCount }: {
   );
 }
 
+/** Owner vocabulary for the engine's unattributed reasons (never guessed here). */
+const UNATTRIBUTED_REASON_LABELS: Record<string, string> = {
+  "no-qualifying-call": "No qualifying call in window",
+  "no-contact-identity": "No contact identity",
+  ambiguous: "Unclear match — decide who",
+  "bad-datetime": "Unreadable booking time",
+  "manually-assigned": "Manually assigned",
+};
+
 function UnattributedRow({ row, users, busy, onAssign }: {
-  row: { appointment_id: string; client_name: string | null; client_phone: string | null; appointment_type: string; calendar_name: string | null; created_at: string; suggested_rep_id: string | null; candidate_calls: { call_id: string; rep_id: string | null }[] };
+  row: { appointment_id: string; client_name: string | null; client_phone: string | null; client_email: string | null; appointment_type: string; calendar_name: string | null; appointment_datetime: string; created_at: string; reason: string | null; suggested_rep_id: string | null; candidate_calls: { call_id: string; rep_id: string | null; started_at: string; duration_seconds: number }[] };
   users: { id: string; name: string }[];
   busy: boolean;
   onAssign: (appointmentId: string, repId: string, callId?: string | null) => void;
 }) {
   const [repId, setRepId] = useState(row.suggested_rep_id ?? row.candidate_calls[0]?.rep_id ?? "");
+  const [callId, setCallId] = useState(row.candidate_calls[0]?.call_id ?? "");
   return (
     <tr>
       <td className="font-medium text-stone-900">
         {row.client_name ?? "Unknown"}
         <span className="block text-[11px] font-normal text-stone-400">{row.client_phone ?? ""}</span>
+        <span className="block text-[11px] font-normal text-stone-400">{row.client_email ?? ""}</span>
       </td>
       <td>
         {row.appointment_type}
         <span className="block text-[11px] text-stone-400">{row.calendar_name ?? ""}</span>
       </td>
-      <td>{new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</td>
+      <td>
+        {new Date(row.appointment_datetime).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}
+        <span className="block text-[11px] text-stone-400">booked {new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
+      </td>
+      <td>
+        <span className="text-[12px] text-stone-600" title={row.reason ?? ""}>
+          {row.reason ? (UNATTRIBUTED_REASON_LABELS[row.reason] ?? row.reason) : "—"}
+        </span>
+      </td>
       <td>{users.find((u) => u.id === row.suggested_rep_id)?.name ?? "—"}</td>
+      <td>
+        {row.candidate_calls.length > 0 ? (
+          <select className="rounded-lg border border-stone-300 bg-white px-2 py-1 text-[13px]" value={callId} onChange={(e) => setCallId(e.target.value)}>
+            {row.candidate_calls.map((c) => (
+              <option key={c.call_id} value={c.call_id}>
+                {new Date(c.started_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })} · {Math.round(c.duration_seconds / 60)}m · {users.find((u) => u.id === c.rep_id)?.name ?? "non-roster"}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="text-stone-400">—</span>
+        )}
+      </td>
       <td>
         <select className="rounded-lg border border-stone-300 bg-white px-2 py-1 text-[13px]" value={repId} onChange={(e) => setRepId(e.target.value)}>
           <option value="">Choose rep…</option>
@@ -962,7 +996,7 @@ function UnattributedRow({ row, users, busy, onAssign }: {
         </select>
       </td>
       <td>
-        <button className="rounded-lg border border-stone-300 px-3 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50" disabled={busy || !repId} onClick={() => onAssign(row.appointment_id, repId, row.candidate_calls[0]?.call_id ?? null)}>
+        <button className="rounded-lg border border-stone-300 px-3 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50" disabled={busy || !repId} onClick={() => onAssign(row.appointment_id, repId, callId || null)}>
           Assign
         </button>
       </td>

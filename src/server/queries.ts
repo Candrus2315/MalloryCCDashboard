@@ -37,7 +37,10 @@ import {
   resolveRepGoal,
 } from "./metrics/compute";
 import { getStore } from "./store";
+import type { Store } from "./store/types";
 import { availabilityPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData } from "./page-data";
+import { matchAppointmentsToCalls } from "./metrics/attribution";
+import { appointmentInScope } from "./metrics/availability";
 import {
   applyAttributionEligibility,
   applyRosterEligibility,
@@ -105,13 +108,30 @@ export const getSettingsData = createServerFn().handler(async () => {
   const goalByWeek = new Map(teamGoals.map((g) => [g.week_start, g]));
 
   // Unattributed bookings queue — composed via the metrics layer, never guessed.
+  // OWNER DIRECTIVE: only in-scope Acuity calendars/types feed the queue (the
+  // same appointmentInScope rule every booking-feeding read applies — Zoom
+  // bookings never enter attribution), and the SAME pure engine run supplies
+  // each row's honest unattributed reason.
+  const scopedAppts = apptsWindow.filter((a) => appointmentInScope(a, settings.acuity));
+  const engineMatches = matchAppointmentsToCalls(
+    scopedAppts,
+    callsWindow,
+    contacts.map((c) => ({ id: c.id, phone: c.phone, email: c.email })),
+    {
+      meeting_threshold_seconds: settings.meaningful_call_threshold_seconds,
+      attribution_window_hours: settings.attribution_window_hours,
+      rep_mappings: settings.rep_mappings,
+    },
+    { today, users: allUsers.map((u) => ({ id: u.id, is_active: u.is_active })) },
+  );
   const unattributed = buildUnattributedQueue({
-    appointments: apptsWindow,
+    appointments: scopedAppts,
     attributions,
     calls: callsWindow,
     contacts: contacts.map((c) => ({ id: c.id, phone: c.phone, email: c.email, assigned_rep_id: c.assigned_rep_id })),
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
     windowHours: settings.attribution_window_hours,
+    matches: engineMatches,
   });
 
   // Observed per-date lead counts (before adjustments) for the count editor.
@@ -525,33 +545,101 @@ export const removeBlockedTime = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-/** Manual booking attribution from the unattributed queue. */
-export const assignBooking = createServerFn({ method: "POST" })
-  .validator((input: unknown) => input as { appointmentId: string; repId: string; callId?: string | null })
-  .handler(async ({ data }) => {
-    const store = await getStore();
-    const appointmentId = String(data.appointmentId);
-    const repId = String(data.repId);
-    const prev = (await store.getAttributions()).find((a) => a.appointment_id === appointmentId);
-    await store.setManualAttribution({
-      id: prev?.id ?? "",
-      appointment_id: appointmentId,
-      call_id: data.callId ? String(data.callId) : (prev?.call_id ?? null),
-      rep_id: repId,
-      method: "manual",
-      confidence: 1,
-      manual_override: true,
-    });
+/**
+ * MANUAL ATTRIBUTION (owner spec: the Unattributed queue is manually
+ * assignable — never silently guessed). Writes a manual override the
+ * attribution tick RESPECTS: manual rows are never overwritten by re-runs
+ * (manual wins; store upserts skip manual_override rows).
+ *
+ * Guards:
+ *  - only ACTIVE ROSTER reps are assignable (a mapping target or a
+ *    deactivated user is rejected — manual assignments can never put a
+ *    booking on someone who is not on the CC team);
+ *  - the call, when supplied, may be the internal id (the queue's candidate
+ *    calls) or the HighLevel external call id (resolved to internal).
+ *
+ * The editor note lands in the audit trail; unassign deletes the derived row
+ * so the next attribution tick recomputes the appointment from raw rows.
+ */
+export interface AssignAttributionInput {
+  appointmentId: string;
+  /** Internal rep id — MUST be an active roster rep. */
+  repId?: string;
+  /** Qualifying call: internal id (queue candidates) or HL external call id. */
+  callId?: string | null;
+  callExternalId?: string | null;
+  note?: string;
+}
+
+/** Core of the assignAttribution server fn (test seam — no TanStack runtime). */
+export async function assignAttributionCore(store: Store, input: AssignAttributionInput): Promise<{ ok: true }> {
+  const appointmentId = String(input.appointmentId);
+  const repId = String(input.repId ?? "");
+  const rep = (await store.getUsers()).find((u) => u.id === repId && u.is_active);
+  if (!rep) throw new Error("Only active roster reps can be assigned");
+  let callId = input.callId ? String(input.callId) : null;
+  if (!callId && input.callExternalId) {
+    const since = etDayStartUtc(addDays(etToday(), -(30 + 7)));
+    callId =
+      (await store.getAllCallsSince(since)).find((c) => c.external_call_id === String(input.callExternalId))?.id ??
+      null;
+  }
+  const prev = (await store.getAttributions()).find((a) => a.appointment_id === appointmentId);
+  await store.setManualAttribution({
+    id: prev?.id ?? "",
+    appointment_id: appointmentId,
+    call_id: callId ?? prev?.call_id ?? null,
+    rep_id: repId,
+    method: "manual",
+    confidence: 1,
+    manual_override: true,
+  });
+  await store.insertManualOverride({
+    entity_type: "booking_attribution",
+    entity_id: appointmentId,
+    field: "rep",
+    previous_value: prev?.rep_id ?? "unattributed",
+    new_value: rep.name,
+    changed_by: "christopher",
+  });
+  const note = input.note?.trim();
+  if (note) {
     await store.insertManualOverride({
       entity_type: "booking_attribution",
       entity_id: appointmentId,
-      field: "rep",
-      previous_value: prev?.rep_id ?? "unattributed",
-      new_value: repId,
+      field: "note",
+      previous_value: null,
+      new_value: note.slice(0, 500),
       changed_by: "christopher",
     });
-    return { ok: true };
+  }
+  return { ok: true };
+}
+
+/** Core of the unassignAttribution server fn (test seam). */
+export async function unassignAttributionCore(store: Store, appointmentId: string): Promise<{ ok: true }> {
+  const prev = (await store.getAttributions()).find((a) => a.appointment_id === appointmentId);
+  await store.deleteAttribution(appointmentId);
+  await store.insertManualOverride({
+    entity_type: "booking_attribution",
+    entity_id: appointmentId,
+    field: "rep",
+    previous_value: prev?.rep_id ?? "unattributed",
+    new_value: "unassigned",
+    changed_by: "christopher",
   });
+  return { ok: true };
+}
+
+/** Manual booking attribution from the unattributed queue (roster-guarded). */
+export const assignAttribution = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as AssignAttributionInput)
+  .handler(async ({ data }) => assignAttributionCore(await getStore(), data));
+
+/** Remove a manual attribution — the appointment returns to the engine's control. */
+export const unassignAttribution = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { appointmentId: string })
+  .handler(async ({ data }) => unassignAttributionCore(await getStore(), String(data.appointmentId)));
 
 /** Manual lead work-date correction. */
 export const setLeadWorkDate = createServerFn({ method: "POST" })

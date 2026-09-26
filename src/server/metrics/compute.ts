@@ -53,6 +53,12 @@ export interface CallRow {
   duration_seconds: number;
   over_two_minutes: boolean;
   /**
+   * HighLevel call id (the provider's message id) — the attribution engine's
+   * candidate id and the attribution audit trail's join-out key. Optional:
+   * tests may omit it (the engine falls back to the internal id).
+   */
+  external_call_id?: string | null;
+  /**
    * RAW HighLevel userId, preserved verbatim even when the call has no roster
    * rep (immutable-source guarantee). Carried so the roster filter can apply
    * mapping-driven eligibility AT QUERY TIME (src/server/roster.ts) — the DB
@@ -1189,6 +1195,15 @@ export interface UnattributedBookingRow {
   /** Contact's assigned owner — the default pick when Christopher assigns manually. */
   suggested_rep_id: string | null;
   candidate_calls: QueueCandidateCall[]; // qualifying calls, most recent first (max 3)
+  /**
+   * WHY the booking is unattributed — the attribution engine's reason for this
+   * appointment ("no-qualifying-call" | "ambiguous" | "no-contact-identity" |
+   * "bad-datetime" | "manually-assigned"), or null when no engine result was
+   * supplied. Never guessed here; the queue renders what the engine said.
+   */
+  reason: string | null;
+  /** True when the stored attribution row for this appointment is a manual override. */
+  manual: boolean;
 }
 
 /**
@@ -1204,8 +1219,12 @@ export function buildUnattributedQueue(input: {
   contacts: { id: string; phone: string | null; email: string | null; assigned_rep_id: string | null }[];
   thresholdSeconds: number;
   windowHours: number;
+  /** Engine results (matchAppointmentsToCalls) — supply the per-appointment reason. */
+  matches?: { appointmentId: string; reason?: string }[];
 }): UnattributedBookingRow[] {
   const attributed = new Set(input.attributions.filter((a) => a.rep_id).map((a) => a.appointment_id));
+  const manualIds = new Set(input.attributions.filter((a) => a.manual_override).map((a) => a.appointment_id));
+  const matchByAppt = new Map((input.matches ?? []).map((m) => [m.appointmentId, m]));
   const contactById = new Map(input.contacts.map((c) => [c.id, c]));
   const contactByPhone = new Map<string, (typeof input.contacts)[number]>();
   const contactByEmail = new Map<string, (typeof input.contacts)[number]>();
@@ -1250,6 +1269,8 @@ export function buildUnattributedQueue(input: {
       created_at: a.created_at,
       suggested_rep_id: contact?.assigned_rep_id ?? null,
       candidate_calls: candidates,
+      reason: manualIds.has(a.id) ? "manually-assigned" : matchByAppt.get(a.id)?.reason ?? null,
+      manual: manualIds.has(a.id),
     });
   }
   rows.sort((x, y) => (x.created_at < y.created_at ? 1 : -1));

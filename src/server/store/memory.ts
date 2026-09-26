@@ -187,7 +187,7 @@ export class MemoryStore implements Store {
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
     return [...this.calls.values()]
       .filter((c) => c.started_at >= startUtc && c.started_at < endUtc)
-      .map(({ external_call_id: _e, provider: _p, ...rest }) => rest);
+      .map(({ provider: _p, ...rest }) => rest); // external_call_id now CARRIED (attribution engine reads it)
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
     return this.getCallsBetween(startUtc, "9999-12-31");
@@ -397,6 +397,11 @@ export class MemoryStore implements Store {
     // manual assignment wins over the engine and survives re-syncs (engine
     // upserts skip rows with manual_override = true)
     this.attributions.set(row.appointment_id, { ...row, method: "manual", manual_override: true });
+  }
+  async deleteAttribution(appointmentId: string): Promise<void> {
+    // manual UNASSIGN: mirror the PG store — delete the derived row; the next
+    // attribution tick recomputes the appointment from raw rows
+    this.attributions.delete(appointmentId);
   }
 
   async deleteLeadsForSheet(sourceSheet: string): Promise<void> {

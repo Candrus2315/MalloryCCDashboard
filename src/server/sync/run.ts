@@ -37,32 +37,16 @@ async function runProvider(
 
 /**
  * Recompute booking attributions from STORED rows and persist them. One source
- * of truth for the engine invocation — used by the full sync AND by the
- * background scheduler after each incremental HighLevel tick.
+ * of truth for the engine invocation — used by the full sync (manual SYNC NOW
+ * included) AND by the background scheduler after each incremental HighLevel
+ * tick. Delegates to computeAndPersistAttributions (attribution-tick.ts): the
+ * PURE engine (metrics/attribution.ts), appointmentInScope applied, manual
+ * overrides preserved.
  */
 export async function recomputeAttributions(store: Store, settings: AppSettings): Promise<number> {
-  const since = etDayStartUtc(addDays(new Date().toISOString().slice(0, 10), -30));
-  const [storedCalls, storedContacts, storedAppts] = await Promise.all([
-    store.getAllCallsSince(since),
-    store.getContacts(),
-    store.getAllAppointmentsSince(since),
-  ]);
-  const { computeAttributions } = await import("../attribution");
-  const res = computeAttributions({
-    appointments: storedAppts,
-    calls: storedCalls,
-    contacts: storedContacts.map((c) => ({
-      id: c.id,
-      name: c.name,
-      phone: c.phone,
-      email: c.email,
-      assigned_rep_id: c.assigned_rep_id,
-    })),
-    thresholdSeconds: settings.meaningful_call_threshold_seconds,
-    windowHours: settings.attribution_window_hours,
-  });
-  await store.upsertAttributions(res.attributions);
-  return res.attributions.length;
+  const { computeAndPersistAttributions } = await import("./attribution-tick");
+  const res = await computeAndPersistAttributions(store, settings);
+  return (res.attributed ?? 0) + (res.unattributed ?? 0);
 }
 
 export interface SyncResult {

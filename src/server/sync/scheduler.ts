@@ -26,6 +26,7 @@ import { readHighLevelCreds, type HighLevelCreds } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
 import { recomputeAttributions, runDemoSync } from "./run";
 import { availabilityTick, type AvailabilityTickResult } from "./acuity-live";
+import { attributionTick, type AttributionTickResult } from "./attribution-tick";
 
 /** A "running" sync_runs row older than this is a crashed process, not a live one. */
 export const STALE_RUNNING_CUTOFF_HOURS = 12;
@@ -48,6 +49,8 @@ export interface SchedulerTickResult {
   error?: string;
   /** Independent Acuity availability refresh piggy-backed on the same tick (never fails the tick). */
   availability?: AvailabilityTickResult;
+  /** Independent attribution recompute piggy-backed on the same tick (never fails the tick). */
+  attribution?: AttributionTickResult;
 }
 
 /** Attribution recompute wrapped in its own sync_runs row (visible in the Sync Center). */
@@ -240,12 +243,14 @@ async function highlevelTick(options?: {
 // ---------- composed tick (HighLevel + independent availability refresh) ----------
 
 /**
- * One scheduler tick = the HighLevel harvest PLUS an independent Acuity
- * availability refresh. Availability failures are recorded (sync_runs +
- * connection rows) and reported on the result — they never fail the tick or
- * crash the scheduler loop. Background refreshes are throttled to
- * ACUITY_MIN_INTERVAL_MS inside availabilityTick; manual triggers (REFRESH /
- * SYNC NOW) skip the throttle.
+ * One scheduler tick = the HighLevel harvest PLUS two independent refreshes:
+ * the Acuity availability sync and the booking-attribution recompute (the
+ * pure engine over stored rows — scope-filtered, manual overrides win).
+ * Both piggy-backed refreshes record their failures (sync_runs rows) and
+ * report them on the result — they never fail the tick or crash the scheduler
+ * loop. Background refreshes are throttled (ACUITY_MIN_INTERVAL_MS /
+ * ATTRIBUTION_MIN_INTERVAL_MS); manual triggers (REFRESH / SYNC NOW) skip the
+ * throttle.
  */
 export async function schedulerTick(options?: {
   store?: Store;
@@ -271,7 +276,18 @@ export async function schedulerTick(options?: {
   } catch (e) {
     availability = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
-  return { ...base, availability };
+  let attribution: AttributionTickResult;
+  try {
+    attribution = await attributionTick({
+      store: options?.store,
+      settings: options?.settings,
+      now: options?.now,
+      trigger: options?.trigger,
+    });
+  } catch (e) {
+    attribution = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability, attribution };
 }
 
 // ---------- the always-on loop ----------

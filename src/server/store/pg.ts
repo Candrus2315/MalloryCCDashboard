@@ -485,6 +485,9 @@ export class PgStore implements Store {
       started_at: new Date(r.started_at as string).toISOString(),
       duration_seconds: Number(r.duration_seconds),
       over_two_minutes: Boolean(r.over_two_minutes),
+      // HL call id — the attribution engine's candidate id (external↔internal
+      // resolution for manual assignment; tie-breaks identical re-runs).
+      external_call_id: r.external_call_id == null ? null : String(r.external_call_id),
       // RAW HL user id — mapping-driven eligibility is computed from it at
       // query time; the stored row is never rewritten.
       provider_rep_external_id: r.provider_rep_external_id == null ? null : String(r.provider_rep_external_id),
@@ -492,12 +495,12 @@ export class PgStore implements Store {
   }
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
@@ -766,6 +769,12 @@ export class PgStore implements Store {
         call_id = EXCLUDED.call_id, rep_id = EXCLUDED.rep_id, method = 'manual',
         confidence = 1, manual_override = true, updated_at = now()
     `;
+  }
+  async deleteAttribution(appointmentId: string): Promise<void> {
+    await this.ensureSchema();
+    // Manual UNASSIGN: the row is derived data — delete it and the next
+    // attribution tick recomputes the appointment from raw rows.
+    await this.sql`DELETE FROM booking_attributions WHERE appointment_id = ${appointmentId}::uuid`;
   }
 
   async upsertLeads(rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null })[]): Promise<number> {

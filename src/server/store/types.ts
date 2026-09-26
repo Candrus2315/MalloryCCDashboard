@@ -537,6 +537,12 @@ export interface Store {
   getAttributions(): Promise<AttributionRow[]>;
   /** Manual assignment from the overrides UI — force-writes method="manual", manual_override=true. */
   setManualAttribution(row: AttributionRow): Promise<void>;
+  /**
+   * Remove ONE appointment's attribution row entirely (manual UNASSIGN). The
+   * row is computed data — deleting it returns the appointment to the engine's
+   * control, and the next attribution tick recomputes it from raw rows.
+   */
+  deleteAttribution(appointmentId: string): Promise<void>;
 
   // leads
   upsertLeads(
