@@ -15,6 +15,7 @@ import { createDemoAdapters } from "./adapters";
 import type { HighLevelAdapter, NormalizedLead } from "./adapters";
 import { createSheetsAdapter, type SheetsLiveRunReport } from "./sheets-live";
 import { createHighLevelAdapter, type LiveHighLevelAdapter } from "./highlevel-live";
+import { resolveAcuityAdapterForSync, upsertAcuityAppointments, writeAcuityConnection, type AcuityLiveAdapter } from "./acuity-live";
 import type { GoogleSheetsAdapter } from "./adapters";
 
 async function runProvider(
@@ -73,16 +74,18 @@ export interface SyncResult {
 
 /**
  * Full sync: users → contacts → calls → opportunities → appointments + blocked
- * times → leads → attributions. HighLevel + Google Sheets are LIVE when their
- * credentials resolve (demo fallback on failure, real error recorded); Acuity
- * stays demo until its credentials arrive. Upserts keyed by external IDs;
- * safe to re-run any time.
+ * times → leads → attributions. HighLevel, Google Sheets AND Acuity are LIVE
+ * when their credentials resolve (demo fallback with the real error recorded
+ * on failure — EXCEPT Acuity/HighLevel live failures, which skip demo seeding
+ * so fake rows never mask real data). Upserts keyed by external IDs; safe to
+ * re-run any time.
  */
 export async function runDemoSync(options?: {
   settings?: AppSettings;
   store?: Store;
   sheetsAdapter?: GoogleSheetsAdapter | null;
   highlevelAdapter?: LiveHighLevelAdapter | null;
+  acuityAdapter?: AcuityLiveAdapter | null;
 }): Promise<SyncResult> {
   const startedAt = new Date().toISOString();
   const store = options?.store ?? (await getStore());
@@ -274,48 +277,54 @@ export async function runDemoSync(options?: {
     }
   }
 
-  // --- Acuity (appointments + blocked times; cancellations update in place) ---
+  // --- Acuity (LIVE when credentials resolve; demo otherwise; cancellations update in place) ---
+  // Live failures do NOT seed demo rows — demo slots must never mix with (or
+  // mask) live Acuity data; the pages keep the last successfully synced live
+  // appointments and the connection row records the real error.
+  const liveAcuity: AcuityLiveAdapter | null = options && "acuityAdapter" in options
+    ? options.acuityAdapter ?? null
+    : resolveAcuityAdapterForSync();
   const acuityRes = await runProvider(store, "acuity", async () => {
-    let count = 0;
-    const storedContacts = await store.getContacts();
-    const contactByPhone = new Map(storedContacts.map((c) => [c.phone?.replace(/\D/g, "").slice(-10) ?? "", c.id]));
-    const contactByEmail = new Map(storedContacts.map((c) => [c.email?.toLowerCase() ?? "", c.id]));
-    const contactByExt = new Map(storedContacts.map((c) => [c.external_id, c.id]));
-
-    const appts = await acuity.fetchAppointments();
-    await store.upsertAppointments(
-      appts.map((a) => {
-        // link to HighLevel contact by phone, then email (contact-ID linkage happens in attribution)
-        const contactId =
-          contactByExt.get(a.clientName) ??
-          contactByPhone.get(a.clientPhone.replace(/\D/g, "").slice(-10)) ??
-          contactByEmail.get(a.clientEmail.toLowerCase()) ??
-          null;
+    if (liveAcuity) {
+      try {
+        const appts = await liveAcuity.fetchAppointments();
+        // first thing a successful live sync does: purge demo Acuity rows so
+        // demo slots can never blend into live availability
+        const purged = await store.deleteDemoAcuityRows();
+        const count = await upsertAcuityAppointments(store, appts);
+        const report = liveAcuity.lastRun;
+        const note = [
+          report ? `window ${report.window.minDate} → ${report.window.maxDate}` : null,
+          `${count} appointments`,
+          purged.appointments + purged.blocked > 0 ? `demo rows purged: ${purged.appointments} appointments, ${purged.blocked} blocks` : null,
+          report?.truncated ? "TRUNCATED at cap" : null,
+          ...(report?.warnings ?? []).slice(0, 3),
+        ]
+          .filter(Boolean)
+          .join(" · ")
+          .slice(0, 500);
+        return { count, live: true, note, purged };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         return {
-          acuity_appointment_id: a.acuity_appointment_id,
-          contact_id: contactId,
-          calendar_id: a.calendarId,
-          calendar_name: a.calendarName,
-          appointment_type: a.appointmentType,
-          appointment_datetime: a.appointmentDatetime,
-          duration_minutes: a.durationMinutes,
-          created_at: a.createdAt,
-          status: a.status,
-          cancelled: a.cancelled,
-          client_name: a.clientName,
-          client_phone: a.clientPhone,
-          client_email: a.clientEmail,
+          count: 0,
+          error: msg,
+          live: false,
+          liveError: msg,
+          note: "Live Acuity sync failed — demo seed skipped; showing last synced data",
         };
-      }),
-    );
-    count += appts.length;
-
+      }
+    }
+    // Demo path (no credentials): the seeded demo dataset, labeled demo.
+    let count = 0;
+    const appts = await acuity.fetchAppointments();
+    count += await upsertAcuityAppointments(store, appts);
     const blocked = await acuity.fetchBlockedTimes();
     await store.upsertBlockedTimes(
       blocked.map((b) => ({ provider: "acuity", external_id: b.external_id, start_at: b.startAt, end_at: b.endAt, reason: b.reason })),
     );
     count += blocked.length;
-    return { count };
+    return { count, live: false, note: null };
   });
   results.push({ provider: "acuity", count: acuityRes.count, error: acuityRes.error ?? null });
 
@@ -442,16 +451,22 @@ export async function runDemoSync(options?: {
       },
     });
   }
-  // Acuity: demo adapter until its credentials arrive (later phase).
+  // Acuity: provider-aware honesty via the shared writer — live success →
+  // connected; live failure → error (last successful timestamp preserved); no
+  // credentials → demo.
   {
-    await store.upsertConnection({
-      provider: "acuity",
-      status: acuityRes.error ? "error" : "demo",
-      is_demo: true,
-      last_sync_at: now,
-      last_successful_sync_at: acuityRes.error ? null : now,
-      last_error: acuityRes.error ?? null,
-      config: { source: "demo-seed", note: "Demo dataset — no live provider API calls in this phase" },
+    const live = acuityRes.live === true;
+    const liveError = typeof acuityRes.liveError === "string" ? acuityRes.liveError : null;
+    const note = typeof acuityRes.note === "string" ? acuityRes.note : null;
+    await writeAcuityConnection(store, {
+      live,
+      error: liveError,
+      note: liveError
+        ? `Live sync failed — demo seed skipped; showing last synced data until fixed. ${liveError}`.slice(0, 500)
+        : live
+          ? note ?? "Live Acuity sync"
+          : "Demo dataset — ACUITY_USER_ID / ACUITY_API_KEY not set",
+      nowIso: now,
     });
   }
   // Google Sheets: provider-aware honesty. Live success → connected; partial

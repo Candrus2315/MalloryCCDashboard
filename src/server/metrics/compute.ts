@@ -30,6 +30,9 @@ import {
   repOperatingState,
   weekStart,
 } from "../date-logic";
+// Availability engine (runtime import — availability.ts depends on this
+// module's TYPES only, so there is no cycle). One engine, two consumers.
+import { computeDayAvailability } from "./availability";
 
 /**
  * OWNER SPEC (ux-charts-tables-spec.md §9 + accuracy pass 3): a positive
@@ -62,6 +65,16 @@ export interface AppointmentRow {
   id: string;
   contact_id: string | null;
   calendar_id: string | null;
+  /**
+   * Optional extras carried by the availability paths (store joins for the
+   * Acuity-driven surfaces; plain metrics callers omit them):
+   * duration_minutes = per-appointment session length (Acuity), calendar_name
+   * = human calendar label (Acuity scope matching), acuity_appointment_id =
+   * provider id.
+   */
+  duration_minutes?: number | null;
+  calendar_name?: string | null;
+  acuity_appointment_id?: string | null;
   appointment_type: string;
   appointment_datetime: string; // ISO UTC (session time)
   created_at: string; // ISO UTC (when booked)
@@ -1063,6 +1076,14 @@ export interface BlockedTimeRow {
  * Open studio slots for an ET calendar date: generated from studio hours,
  * slot interval and appointment duration, minus booked appointments (with
  * padding) and blocked times. Pure — used by Today and Availability pages.
+ *
+ * DELEGATES to computeDayAvailability (src/server/metrics/availability.ts) —
+ * the ONE availability engine. Today gets the same slot list as before; the
+ * Availability payload additionally gets capacity/booked/utilization/blocked
+ * from the same evaluation, so the two pages can never diverge. The only
+ * behavior refinement: an appointment's session end now uses its stored
+ * duration_minutes when present (owner spec: "availability must respect the
+ * selected type's duration") instead of the hardcoded 1-hour approximation.
  */
 export function computeOpenSlots(input: {
   date: string;
@@ -1073,54 +1094,7 @@ export function computeOpenSlots(input: {
   durationMin: number;
   paddingMin: number;
 }): string[] {
-  const rule = input.rules.find((r) => r.weekday === weekdayOf(input.date) && r.active);
-  if (!rule) return [];
-
-  const dayStart = etDayStartOf(input.date);
-  const dayEnd = etDayStartOf(addDays(input.date, 1));
-  // instants are compared as ms numbers — the UTC bound strings above must be
-  // parsed first (number↔string comparison would yield NaN and silently pass
-  // every appointment/block as busy-offset NaN, opening every slot)
-  const dayStartMs = new Date(dayStart).getTime();
-  const dayEndMs = new Date(dayEnd).getTime();
-
-  const toMin = (hhmm: string) => {
-    const [h, m] = hhmm.split(":").map(Number);
-    return h * 60 + m;
-  };
-  const openMin = toMin(rule.open_time);
-  const closeMin = toMin(rule.close_time);
-
-  const busy: Array<[number, number]> = []; // minutes offsets within the ET day
-  for (const a of input.appointments) {
-    if (!isBooking(a)) continue;
-    const start = new Date(a.appointment_datetime).getTime();
-    const end = start + 60 * 60_000; // booked hour approximation; refined below by duration if provided
-    if (end <= dayStartMs || start >= dayEndMs) continue;
-    const s = (start - input.paddingMin * 60_000 - dayStartMs) / 60_000;
-    const e = (end + input.paddingMin * 60_000 - dayStartMs) / 60_000;
-    busy.push([s, e]);
-  }
-  for (const b of input.blocked) {
-    const start = new Date(b.start_at).getTime();
-    const end = new Date(b.end_at).getTime();
-    if (end <= dayStartMs || start >= dayEndMs) continue;
-    busy.push([(start - dayStartMs) / 60_000, (end - dayStartMs) / 60_000]);
-  }
-
-  const overlaps = (s: number, e: number) => busy.some(([bs, be]) => s < be && e > bs);
-
-  const slots: string[] = [];
-  for (let t = openMin; t + input.durationMin <= closeMin; t += input.slotIntervalMin) {
-    if (overlaps(t - 0, t + input.durationMin)) continue;
-    const h = Math.floor(t / 60);
-    const m = t % 60;
-    const label = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", hour12: true }).format(
-      new Date(Date.UTC(2000, 0, 1, h, m)),
-    );
-    slots.push(label);
-  }
-  return slots;
+  return computeDayAvailability(input).openSlotTimes;
 }
 
 /**

@@ -51,7 +51,7 @@ import {
   buildDailyReportText,
 } from "./metrics/report-text";
 import { getStore } from "./store";
-import { repsPageData, teamPageData } from "./page-data";
+import { availabilityPageData, repsPageData, teamPageData } from "./page-data";
 import {
   applyAttributionEligibility,
   applyRosterEligibility,
@@ -1019,3 +1019,6 @@ export interface RepStripRow {
 export const getTeamData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as TeamSearchParams)
   .handler(async ({ data }) => teamPageData(data));
+
+/** AVAILABILITY page — engine + Acuity connection + scope filters (playbook contract). */
+export const getAvailabilityData = createServerFn().handler(async () => availabilityPageData());

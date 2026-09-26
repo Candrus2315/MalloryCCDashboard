@@ -15,6 +15,7 @@ import type { Store } from "./store/types";
 import {
   addDays,
   dateRange,
+  etDayEndUtc,
   etDayStartUtc,
   etRangeBounds,
   etToday,
@@ -36,9 +37,11 @@ import {
   compareWithTeam,
   filterApptsCreatedInEtRange,
   filterCallsInEtRange,
+  materializeRecurringBlocks,
   repRangeSummaries,
   resolveRepGoal,
 } from "./metrics/compute";
+import { computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
 import { syncStaleWarnings, type PageMeta, type RepsSearchParams, type RepStripRow, type TeamSearchParams } from "./queries";
@@ -384,4 +387,96 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
       warnings,
       teamGoalDefault: teamGoalByWeek.get(weeks[0]) ?? 79,
     };
+}
+
+// ---------- AVAILABILITY PAGE (merged-build playbook Phase 1 payload contract) ----------
+
+/** Public contract name for one day of the availability payload. */
+export type AvailabilityDay = DayAvailability;
+
+/** Acuity freshness for the availability header (honest states only). */
+export interface AvailabilityConnection {
+  connected: boolean;
+  /** "live" = Acuity API data; "demo" = the labeled demo dataset; "disconnected" = no usable connection. */
+  mode: "live" | "demo" | "disconnected";
+  lastSyncAt: string | null; // last SUCCESSFUL sync (ISO)
+  stale: boolean;
+}
+
+/** Data older than this warns "Availability may be outdated" (near-real-time is the goal). */
+export const ACUITY_STALE_AFTER_MS = 30 * 60_000;
+
+/**
+ * Availability payload — the next 7 operational days (ET) through the ONE
+ * availability engine, plus the Acuity connection state and the Settings
+ * scope filters. Same PageDeps seam as the other builders: tests inject a
+ * MemoryStore + pinned `today`; the loader passes nothing.
+ */
+export async function availabilityPageData(deps?: PageDeps) {
+  const today = deps?.today ?? etToday();
+  const meta: PageMeta = deps?.store
+    ? { mode: "memory", dbReason: null, today, demoSeeded: false }
+    : await loadPageMeta();
+  const store = deps?.store ?? (await getStore());
+  const settings = await store.getSettings();
+
+  // studio hours: availability_rules is the runtime mirror; fall back to the
+  // settings rules when the mirror is empty (fresh store/tests) — never invent
+  const storedRules = await store.getAvailabilityRules();
+  const rules = storedRules.length > 0 ? storedRules : settings.studio.hours;
+  const recurring = settings.studio.recurring_blocks ?? [];
+
+  const dayDates = Array.from({ length: 7 }, (_, off) => addDays(today, off));
+  const days: DayAvailability[] = await Promise.all(
+    dayDates.map(async (date) => {
+      const [appointments, blockedRaw] = await Promise.all([
+        store.getAppointmentsOverlapping(etDayStartUtc(date), etDayEndUtc(date)),
+        store.getBlockedTimesBetween(etDayStartUtc(date), etDayEndUtc(date)),
+      ]);
+      return computeDayAvailability({
+        date,
+        rules,
+        blocked: [...blockedRaw, ...materializeRecurringBlocks(date, recurring)],
+        appointments,
+        slotIntervalMin: settings.studio.slot_interval_min,
+        durationMin: settings.studio.appointment_duration_min,
+        paddingMin: settings.studio.padding_min,
+        scope: settings.acuity,
+      });
+    }),
+  );
+
+  const connections = await store.getConnections();
+  const row = connections.find((c) => c.provider === "acuity") ?? null;
+  const lastSuccess = row?.last_successful_sync_at ?? null;
+  const lastMs = lastSuccess ? Date.parse(lastSuccess) : NaN;
+  const stale =
+    row?.status === "connected" && Number.isFinite(lastMs) && Date.now() - lastMs > ACUITY_STALE_AFTER_MS;
+  const connection: AvailabilityConnection = {
+    connected: row?.status === "connected" ?? false,
+    mode: row && row.is_demo ? "demo" : row?.status === "connected" ? "live" : "disconnected",
+    lastSyncAt: lastSuccess,
+    stale,
+  };
+
+  // honesty warnings — acuity-only slice of the shared stale warnings, plus
+  // the explicit stale/outdated and disconnected lines the spec requires
+  const warnings: string[] = syncStaleWarnings(connections).filter((w) => w.startsWith("Acuity"));
+  if (stale) {
+    warnings.push(
+      `Availability may be outdated — last successful Acuity sync was ${Math.max(1, Math.round((Date.now() - lastMs) / 60_000))} minutes ago.`,
+    );
+  }
+  if (connection.mode === "disconnected") {
+    warnings.push("Acuity connection required — availability stays unavailable (no invented slots) until Acuity connects.");
+  }
+
+  return {
+    meta,
+    today,
+    connection,
+    days,
+    filters: { calendars: settings.acuity.calendars_included, types: settings.acuity.types_included },
+    warnings,
+  };
 }

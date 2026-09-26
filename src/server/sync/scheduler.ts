@@ -25,6 +25,7 @@ import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
 import { recomputeAttributions, runDemoSync } from "./run";
+import { availabilityTick, type AvailabilityTickResult } from "./acuity-live";
 
 /** A "running" sync_runs row older than this is a crashed process, not a live one. */
 export const STALE_RUNNING_CUTOFF_HOURS = 12;
@@ -45,6 +46,8 @@ export interface SchedulerTickResult {
   users?: number;
   attributions?: number;
   error?: string;
+  /** Independent Acuity availability refresh piggy-backed on the same tick (never fails the tick). */
+  availability?: AvailabilityTickResult;
 }
 
 /** Attribution recompute wrapped in its own sync_runs row (visible in the Sync Center). */
@@ -62,10 +65,12 @@ async function runAttributionRun(store: Store, settings: AppSettings): Promise<n
 }
 
 /**
- * One scheduler tick. Injectable for tests: store, creds, fetchImpl, sleep and
- * the clock are all options — no live API and no real time needed.
+ * HighLevel portion of a tick (incremental harvest / bootstrap full sync).
+ * Wrapped by schedulerTick, which piggy-backs the independent availability
+ * refresh. Injectable for tests: store, creds, fetchImpl, sleep and the clock
+ * are all options — no live API and no real time needed.
  */
-export async function schedulerTick(options?: {
+async function highlevelTick(options?: {
   store?: Store;
   settings?: AppSettings;
   creds?: HighLevelCreds | null;
@@ -75,6 +80,7 @@ export async function schedulerTick(options?: {
   trigger?: "background" | "manual";
   /** Test injection for the bootstrap full-sync path; absent in production (real adapters). */
   liveAdapters?: { sheets: null; highlevel: import("./highlevel-live").LiveHighLevelAdapter };
+  acuityAdapter?: import("./acuity-live").AcuityLiveAdapter | null;
 }): Promise<SchedulerTickResult> {
   const now = options?.now ?? (() => new Date());
   const store = options?.store ?? (await getStore());
@@ -102,7 +108,8 @@ export async function schedulerTick(options?: {
       const adapterOpts = options?.liveAdapters
         ? { sheetsAdapter: options.liveAdapters.sheets, highlevelAdapter: options.liveAdapters.highlevel }
         : {};
-      const full = await runDemoSync({ store, settings, ...adapterOpts });
+      const acuityOpt = options && "acuityAdapter" in options ? { acuityAdapter: options.acuityAdapter } : {};
+      const full = await runDemoSync({ store, settings, ...adapterOpts, ...acuityOpt });
       const hlError = full.providers.find((p) => p.provider === "highlevel")?.error ?? null;
       if (hlError) return { outcome: "error", mode: "full", error: hlError };
       const after = await runAttributionRun(store, settings);
@@ -228,6 +235,43 @@ export async function schedulerTick(options?: {
     });
     return { outcome: "error", error: msg };
   }
+}
+
+// ---------- composed tick (HighLevel + independent availability refresh) ----------
+
+/**
+ * One scheduler tick = the HighLevel harvest PLUS an independent Acuity
+ * availability refresh. Availability failures are recorded (sync_runs +
+ * connection rows) and reported on the result — they never fail the tick or
+ * crash the scheduler loop. Background refreshes are throttled to
+ * ACUITY_MIN_INTERVAL_MS inside availabilityTick; manual triggers (REFRESH /
+ * SYNC NOW) skip the throttle.
+ */
+export async function schedulerTick(options?: {
+  store?: Store;
+  settings?: AppSettings;
+  creds?: HighLevelCreds | null;
+  fetchImpl?: (url: string, init?: { headers?: Record<string, string>; method?: string; body?: string }) => Promise<Response>;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => Date;
+  trigger?: "background" | "manual";
+  liveAdapters?: { sheets: null; highlevel: import("./highlevel-live").LiveHighLevelAdapter };
+  /** Test injection for the availability refresh; absent → resolve from env (null when no creds → skip). */
+  acuityAdapter?: import("./acuity-live").AcuityLiveAdapter | null;
+}): Promise<SchedulerTickResult> {
+  const base = await highlevelTick(options);
+  let availability: AvailabilityTickResult;
+  try {
+    availability = await availabilityTick({
+      store: options?.store,
+      now: options?.now,
+      trigger: options?.trigger,
+      ...(options && "acuityAdapter" in options ? { adapter: options.acuityAdapter } : {}),
+    });
+  } catch (e) {
+    availability = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability };
 }
 
 // ---------- the always-on loop ----------

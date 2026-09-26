@@ -423,11 +423,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   // SPEC sheet IDs + configurable column mapping/mode; acuity scope configurable.
   // Default mapping: row_per_day_count, date column Q (owner-corrected).
+  // Acuity scope defaults to EMPTY = everything counts (owner rule) — the live
+  // account's calendars ("MALLORY PORTRAITS", "Zoom") share no name with the
+  // demo-era defaults, and a non-matching default scope would hide real
+  // bookings from the availability engine (phantom openings). The owner picks
+  // specific calendars/types in Settings when they want a narrower scope.
   sheets: {
     family: { sheet_id: DEFAULT_SHEET_IDS.family, mode: "row_per_day_count", columns: { ...DEFAULT_COLUMN_MAPPING_DAY_COUNT } },
     animalia: { sheet_id: DEFAULT_SHEET_IDS.animalia, mode: "row_per_day_count", columns: { ...DEFAULT_COLUMN_MAPPING_DAY_COUNT } },
   },
-  acuity: { calendars_included: ["Family Studio", "Animalia Studio"], types_included: [] },
+  acuity: { calendars_included: [], types_included: [] },
 };
 
 export function defaultSettings(): AppSettings {
@@ -498,6 +503,15 @@ export interface Store {
    * replaces demo content (idempotent; no-op when no demo rows remain).
    */
   deleteDemoHighLevelRows(): Promise<{ users: number; contacts: number; calls: number }>;
+  /**
+   * Remove rows the demo generator seeded for the ACUITY provider (appointment
+   * ids prefixed "demo-", blocked times with provider="acuity" and demo
+   * external ids). Called after a successful LIVE Acuity sync so demo slots
+   * never mix with live availability (owner spec: no demo/live mixing).
+   * Manual blocks (provider="manual") and recurring blocks (settings) are
+   * untouched. Idempotent; no-op when no demo rows remain.
+   */
+  deleteDemoAcuityRows(): Promise<{ appointments: number; blocked: number }>;
   upsertAppointments(
     rows: (AppointmentRow & {
       acuity_appointment_id: string;

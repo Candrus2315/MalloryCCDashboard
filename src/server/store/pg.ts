@@ -639,6 +639,18 @@ export class PgStore implements Store {
       SELECT (SELECT count(*) FROM deleted) AS n`;
     return { users: Number(users), contacts: Number(contacts), calls: Number(calls) };
   }
+  async deleteDemoAcuityRows(): Promise<{ appointments: number; blocked: number }> {
+    await this.ensureSchema();
+    // Demo Acuity rows: appointment ids prefixed "demo-" + demo blocked-time
+    // rows (provider acuity). Manual blocks (provider 'manual') and recurring
+    // blocks (settings) are untouched. FK: attributions cascade with their
+    // appointment. Idempotent.
+    const [{ n: appointments }] = await this.sql`SELECT count(*)::int AS n FROM appointments WHERE acuity_appointment_id LIKE 'demo-%'`;
+    await this.sql`DELETE FROM appointments WHERE acuity_appointment_id LIKE 'demo-%'`;
+    const [{ n: blocked }] = await this.sql`SELECT count(*)::int AS n FROM blocked_times WHERE provider = 'acuity' AND external_id LIKE 'demo-%'`;
+    await this.sql`DELETE FROM blocked_times WHERE provider = 'acuity' AND external_id LIKE 'demo-%'`;
+    return { appointments: Number(appointments), blocked: Number(blocked) };
+  }
 
   async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null })[]): Promise<number> {
     await this.ensureSchema();
@@ -675,8 +687,16 @@ export class PgStore implements Store {
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, status, cancelled FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
-    return rows.map((r) => this.apptRow(r as Record<string, unknown>));
+    // Availability path: carries the per-appointment duration (session length),
+    // calendar name (scope matching) and acuity id — the lean selectors used by
+    // the booking metrics keep their original columns.
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, status, cancelled FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
+    return rows.map((r) => ({
+      ...this.apptRow(r as Record<string, unknown>),
+      calendar_name: r.calendar_name ? String(r.calendar_name) : null,
+      acuity_appointment_id: r.acuity_appointment_id ? String(r.acuity_appointment_id) : null,
+      duration_minutes: r.duration_minutes == null ? null : Number(r.duration_minutes),
+    }));
   }
   async getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();

@@ -342,9 +342,16 @@ export class MemoryStore implements Store {
       .map((a) => this.stripAppt(a));
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
+    // Availability path — mirrors pg.ts: carries the per-appointment duration,
+    // calendar name (scope matching) and acuity id.
     return [...this.appointments.values()]
       .filter((a) => a.appointment_datetime < endUtc && a.appointment_datetime >= startUtc)
-      .map((a) => this.stripAppt(a));
+      .map((a) => ({
+        ...this.stripAppt(a),
+        calendar_name: a.calendar_name ?? null,
+        acuity_appointment_id: a.acuity_appointment_id,
+        duration_minutes: a.duration_minutes ?? null,
+      }));
   }
   async getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]> {
     return [...this.appointments.values()]
@@ -439,6 +446,26 @@ export class MemoryStore implements Store {
   async upsertBlockedTimes(rows: BlockedExt[]): Promise<number> {
     for (const r of rows) this.blocked.set(`${r.provider}:${r.external_id}`, { ...r });
     return rows.length;
+  }
+  async deleteDemoAcuityRows(): Promise<{ appointments: number; blocked: number }> {
+    // Mirror pg.ts: drop the demo generator's Acuity appointments (ids
+    // prefixed "demo-") + demo blocked rows (provider acuity); manual blocks
+    // and recurring blocks stay. Idempotent.
+    let appointments = 0;
+    for (const [key, a] of this.appointments) {
+      if (a.acuity_appointment_id.startsWith("demo-")) {
+        this.appointments.delete(key);
+        appointments += 1;
+      }
+    }
+    let blocked = 0;
+    for (const [key, b] of this.blocked) {
+      if (b.provider === "acuity" && b.external_id.startsWith("demo-")) {
+        this.blocked.delete(key);
+        blocked += 1;
+      }
+    }
+    return { appointments, blocked };
   }
   async getBlockedTimesBetween(startUtc: string, endUtc: string): Promise<BlockedTimeRow[]> {
     return [...this.blocked.values()]
