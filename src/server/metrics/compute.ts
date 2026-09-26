@@ -962,6 +962,10 @@ export interface TrendPoint {
   avgCallDurationSeconds: number | null;
   /** Leads worked in the bucket (work_date cohort — consistent with the metrics layer). */
   leads: number;
+  /** Family-sheet share of `leads` — split of the SAME already-computed rows (no new math). */
+  family: number;
+  /** Animalia-sheet share of `leads` — split of the SAME already-computed rows (no new math). */
+  animalia: number;
   /** Reference-line value: weekly lead budget per week, budget ÷ 7 per day. */
   budgetRef: number;
 }
@@ -978,6 +982,29 @@ function shortDayLabel(dateStr: string): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(
     new Date(Date.UTC(y, m - 1, d)),
   );
+}
+
+// ---------- lead-source split (Family / Animalia) ----------
+export interface LeadSplit {
+  family: number;
+  animalia: number;
+}
+/**
+ * Split ALREADY-COMPUTED lead rows by source sheet — no new math, no new
+ * cohort logic: rows counted here are exactly the rows the caller already
+ * aggregated into a `leads` total. A row counts as family/animalia when its
+ * lead_type (source_sheet fallback) names that sheet; rows with any other or
+ * blank type stay in the total but in NEITHER split (never guessed).
+ */
+export function splitLeadRows(leads: LeadRow[]): LeadSplit {
+  let family = 0;
+  let animalia = 0;
+  for (const l of leads) {
+    const t = (l.lead_type || l.source_sheet || "").trim().toLowerCase();
+    if (t === "family") family += 1;
+    else if (t === "animalia") animalia += 1;
+  }
+  return { family, animalia };
 }
 
 /**
@@ -1022,6 +1049,7 @@ export function buildTeamTrends(input: {
       .filter((a) => a.work_date >= b.start && a.work_date <= b.end)
       .reduce((sum, a) => sum + (Number(a.delta) || 0), 0);
     const bLeadsCount = bLeads.length + bAdjustment;
+    const leadSplit = splitLeadRows(bLeads);
     const cs = summarizeCalls(bCalls, input.thresholdSeconds);
     const bookings = countBookingsCreatedBetween(bAppts, "", "9999");
     const fromOver = bookingsFromOverThresholdCalls(
@@ -1042,6 +1070,8 @@ export function buildTeamTrends(input: {
       assignedLeadConversion: bLeadsCount >= TREND_MIN_DENOMINATOR ? assignedLeadConversion(bookings, bLeadsCount) : null,
       avgCallDurationSeconds: cs.avgDurationSeconds,
       leads: bLeadsCount,
+      family: leadSplit.family,
+      animalia: leadSplit.animalia,
       budgetRef: mode === "week" ? weeklyBudget : weeklyBudget / 7,
     } satisfies TrendPoint;
   });

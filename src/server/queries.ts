@@ -29,29 +29,15 @@ import {
   type RangeMode,
 } from "./date-logic";
 import {
-  buildDailyReportMetrics,
-  buildRepDetail,
-  buildTeamAverages,
+  type RepGoalInfo,
   buildTeamRangeMetrics,
   buildTeamTrends,
-  compareWithTeam,
-  computeOpenSlots,
-  buildTodayMetrics,
   buildUnattributedQueue,
-  filterApptsCreatedInEtRange,
-  filterCallsInEtRange,
-  materializeRecurringBlocks,
   repRangeSummaries,
   resolveRepGoal,
 } from "./metrics/compute";
-import {
-  big3Incomplete,
-  buildDailyReportEmail,
-  buildDailyReportSlack,
-  buildDailyReportText,
-} from "./metrics/report-text";
 import { getStore } from "./store";
-import { availabilityPageData, repsPageData, teamPageData } from "./page-data";
+import { availabilityPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData } from "./page-data";
 import {
   applyAttributionEligibility,
   applyRosterEligibility,
@@ -62,9 +48,6 @@ import { ensureDemoData } from "./sync/run";
 import type { AuditOkBody } from "./audit-api";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
 import { normalizeRepMappings, type AppSettings, type RepMapping } from "./store/types";
-
-/** Open-slot horizon for the Today page: today + the next 6 days (spec §7.1). */
-const SLOT_DAY_OFFSETS = [0, 1, 2, 3, 4, 5, 6] as const;
 
 export interface PageMeta {
   mode: "postgres" | "memory";
@@ -80,127 +63,8 @@ async function loadPageMeta(): Promise<PageMeta> {
   return { mode: seeded.mode, dbReason: status.ok ? null : status.reason, today: etToday(), demoSeeded: seeded.seeded };
 }
 
-/** TODAY page — everything computed via buildTodayMetrics. */
-export const getTodayData = createServerFn().handler(async () => {
-  const meta = await loadPageMeta();
-  const store = await getStore();
-
-  const today = etToday();
-  const yesterday = addDays(today, -1);
-  const ws = weekStart(today);
-
-  const settings = await store.getSettings();
-  const todayStart = etDayStartUtc(today);
-  const todayEnd = etDayEndUtc(today);
-  const yesterdayStart = etDayStartUtc(yesterday);
-  const weekStartUtc = etDayStartUtc(ws);
-
-  const [callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, slotDayResults] =
-    await Promise.all([
-      store.getCallsBetween(todayStart, todayEnd),
-      store.getCallsBetween(weekStartUtc, todayEnd),
-      store.getAllCallsSince(weekStartUtc),
-      store.getAppointmentsCreatedBetween(todayStart, todayEnd),
-      store.getAppointmentsCreatedBetween(yesterdayStart, todayStart),
-      store.getAppointmentsCreatedBetween(weekStartUtc, todayEnd),
-      store.getAvailabilityRules(),
-      // leads worked this week so far: cohorts for each day Mon..today (work_date)
-      store.getLeadsByWorkDates(
-        Array.from({ length: daysSinceMonday(today) + 1 }, (_, i) => addDays(ws, i)),
-      ),
-      store.getTeamGoal(ws),
-      store.getRepGoals(ws),
-      store.getUsers(),
-      store.getAttributions(),
-      // manual lead-count corrections for the operational week (metrics applies them)
-      store.getLeadCountAdjustments(dateRange(ws, addDays(ws, 6))),
-      // Spec §7.1: open slots for today + the next 6 days — per-day store
-      // queries (appointments overlapping + blocked times), no new methods.
-      Promise.all(
-        SLOT_DAY_OFFSETS.flatMap((off) => {
-          const d = addDays(today, off);
-          return [
-            store.getAppointmentsOverlapping(etDayStartUtc(d), etDayEndUtc(d)),
-            store.getBlockedTimesBetween(etDayStartUtc(d), etDayEndUtc(d)),
-          ];
-        }),
-      ),
-    ]);
-
-  const teamBookingGoal = teamGoal?.booking_goal ?? 79;
-  const weeklyLeadBudget = teamGoal?.lead_budget ?? 700;
-
-  // ROSTER ELIGIBILITY (mapping-aware): active-roster users + owner roster
-  // mappings (Settings). Calls pass when their rep is a roster member OR their
-  // raw HL user id is mapped to one — computed at QUERY TIME; source rows are
-  // never rewritten. With no mappings this is exactly the verified roster
-  // filter. Non-roster/unattributed calls stay in the DB and stay visible in
-  // the Reps-page ownership buckets — never merged into roster/team totals.
-  const eligibility = buildRosterEligibility(users, settings.rep_mappings ?? []);
-  const rosterCallsToday = applyRosterEligibility(callsToday, eligibility);
-  const rosterCallsWtd = applyRosterEligibility(callsWtd, eligibility);
-  const rosterCallsForAttribution = applyRosterEligibility(callsForAttribution, eligibility);
-  // Bookings inherit the same query-time eligibility (a mapped user's
-  // historical bookings flow to their mapped rep via the underlying call).
-  const attributionsEligible = applyAttributionEligibility(attributions, rosterCallsForAttribution, eligibility);
-
-  // concrete blocks (Acuity/manual) PLUS the weekly recurring pattern,
-  // materialized per queried day — the open-slot engine stays date-agnostic
-  const recurring = settings.studio.recurring_blocks ?? [];
-
-  const openSlotsByDay = SLOT_DAY_OFFSETS.map((off, i) => {
-    const date = addDays(today, off);
-    const appointments = slotDayResults[i * 2];
-    const blockedRaw = slotDayResults[i * 2 + 1];
-    return {
-      date,
-      slots: computeOpenSlots({
-        date,
-        rules,
-        blocked: [...blockedRaw, ...materializeRecurringBlocks(date, recurring)],
-        appointments,
-        slotIntervalMin: settings.studio.slot_interval_min,
-        durationMin: settings.studio.appointment_duration_min,
-        paddingMin: settings.studio.padding_min,
-      }),
-    };
-  });
-
-  const metrics = buildTodayMetrics({
-    reportDate: today,
-    calls: rosterCallsToday,
-    apptsCreatedToday: apptsToday,
-    apptsCreatedYesterday: apptsYesterday,
-    apptsCreatedWtd: apptsWtd,
-    callsWtd: rosterCallsWtd,
-    allCallsForWeek: rosterCallsForAttribution,
-    attributions: attributionsEligible,
-    leadsAllRecent: leads,
-    leadCountAdjustments: leadAdjustments,
-    teamBookingGoal,
-    weeklyLeadBudget,
-    thresholdSeconds: settings.meaningful_call_threshold_seconds,
-    openSlotsByDay,
-    reps: users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date })),
-    repGoals: repGoals.map((g) => ({ rep_id: g.rep_id, week_start: g.week_start, goal: g.goal })),
-  });
-
-  return {
-    meta,
-    settings,
-    metrics,
-    connections: serializableConnections(await store.getConnections()),
-    staleWarnings: syncStaleWarnings(await store.getConnections()),
-    cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")}`,
-  };
-});
-
-function daysSinceMonday(today: string): number {
-  const ws = weekStart(today);
-  const [y1, m1, d1] = ws.split("-").map(Number);
-  const [y2, m2, d2] = today.split("-").map(Number);
-  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
-}
+/** TODAY page — payload built in page-data.ts todayPageData (PageDeps test seam). */
+export const getTodayData = createServerFn().handler(async () => todayPageData());
 
 /** SETTINGS page data — every editable surface loads its rows here. */
 export const getSettingsData = createServerFn().handler(async () => {
@@ -314,7 +178,7 @@ export const getSettingsData = createServerFn().handler(async () => {
 });
 
 /** integration_connections in a fully serializable shape (config → note string). */
-function serializableConnections(connections: { provider: string; status: string; is_demo: boolean; last_sync_at: string | null; last_successful_sync_at: string | null; last_error: string | null; config: Record<string, unknown> }[]) {
+export function serializableConnections(connections: { provider: string; status: string; is_demo: boolean; last_sync_at: string | null; last_successful_sync_at: string | null; last_error: string | null; config: Record<string, unknown> }[]) {
   return connections.map((c) => ({
     provider: c.provider,
     status: c.status,
@@ -814,88 +678,8 @@ export const saveSyncInterval = createServerFn({ method: "POST" })
     return { ok: true, intervalSeconds };
   });
 
-/** DAILY REPORT page — yesterday's performance + current week progress. */
-export const getDailyReportData = createServerFn().handler(async () => {
-  const meta = await loadPageMeta();
-  const store = await getStore();
-
-  const today = etToday();
-  const yesterday = addDays(today, -1);
-  const ws = weekStart(today);
-
-  const settings = await store.getSettings();
-  const todayStart = etDayStartUtc(today);
-  const todayEnd = etDayEndUtc(today);
-  const yesterdayStart = etDayStartUtc(yesterday);
-  const weekStartUtc = etDayStartUtc(ws);
-
-  const [callsYesterday, apptsYesterday, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
-    await Promise.all([
-      store.getCallsBetween(yesterdayStart, todayStart),
-      store.getAppointmentsCreatedBetween(yesterdayStart, todayStart),
-      store.getAppointmentsCreatedBetween(weekStartUtc, todayEnd),
-      store.getAllCallsSince(weekStartUtc),
-      // all leads worked this week so far (work_date Mon..today) — covers both
-      // today's cohort and yesterday's for the conversion denominators
-      store.getLeadsByWorkDates(dateRange(ws, today)),
-      store.getTeamGoal(ws),
-      store.getDailyPriorities(today),
-      store.getLeadCountAdjustments(dateRange(ws, addDays(ws, 6))),
-    ]);
-
-  // ROSTER ELIGIBILITY (mapping-aware): report call metrics cover roster reps
-  // + mapped HL users only, computed at query time (source rows untouched).
-  const rosterUsers = await store.getUsers();
-  const eligibility = buildRosterEligibility(rosterUsers, settings.rep_mappings ?? []);
-  const rosterCallsYesterday = applyRosterEligibility(callsYesterday, eligibility);
-  const rosterCallsForAttribution = applyRosterEligibility(callsForAttribution, eligibility);
-  const attributionsEligible = applyAttributionEligibility(
-    await store.getAttributions(),
-    rosterCallsForAttribution,
-    eligibility,
-  );
-
-  const metrics = buildDailyReportMetrics({
-    reportDate: today,
-    callsYesterday: rosterCallsYesterday,
-    apptsCreatedYesterday: apptsYesterday,
-    apptsCreatedWtd: apptsWtd,
-    allCallsForWeek: rosterCallsForAttribution,
-    attributions: attributionsEligible,
-    leadsAllRecent: leads,
-    leadCountAdjustments: leadAdjustments,
-    teamBookingGoal: teamGoal?.booking_goal ?? 79,
-    weeklyLeadBudget: teamGoal?.lead_budget ?? 700,
-    thresholdSeconds: settings.meaningful_call_threshold_seconds,
-  });
-
-  const saved = priorities ?? { date: today, priority1: null, priority2: null, priority3: null, updated_at: null };
-
-  // Missing-data warnings — never render a plausible number for absent data.
-  const warnings: string[] = [];
-  if (metrics.conversationConversion == null)
-    warnings.push("No qualifying calls recorded yesterday — Conversation Conversion is unavailable.");
-  if (metrics.assignedLeadConversion == null)
-    warnings.push("No leads worked yesterday — Assigned Lead Conversion is unavailable.");
-  if (metrics.goalAchievement == null)
-    warnings.push("Weekly booking goal is 0 — Goal Achievement is unavailable.");
-  if (metrics.leadsToday === 0 && metrics.weeklyLeads === 0)
-    warnings.push("No leads in this week's cohort yet — run SYNC NOW or check the Google Sheets connection.");
-  if (big3Incomplete(saved))
-    warnings.push("Big 3 not fully set for today — fill the three priorities below before copying the report.");
-
-  const reportText = buildDailyReportText(metrics, saved);
-  return {
-    meta,
-    metrics,
-    priorities: saved,
-    warnings: [...syncStaleWarnings(await store.getConnections()), ...warnings],
-    reportText,
-    emailText: buildDailyReportEmail(metrics, saved),
-    slackText: buildDailyReportSlack(metrics, saved),
-    cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")} (work-date logic)`,
-  };
-});
+/** DAILY REPORT page — payload built in page-data.ts dailyReportPageData (PageDeps test seam). */
+export const getDailyReportData = createServerFn().handler(async () => dailyReportPageData());
 
 /** Save the Big 3 priorities for TODAY's report date (America/New_York). */
 export const saveDailyPriorities = createServerFn({ method: "POST" })
@@ -1011,6 +795,12 @@ export interface RepStripRow {
   totalBookings: number;
   callsOverThreshold: number;
   conversationConversion: number | null;
+  /** Range call total — carried from the same repRangeSummaries pass (no new math). */
+  totalCalls: number;
+  /** Range average call length in seconds — from repRangeSummaries (null with no calls). */
+  avgCallDurationSeconds: number | null;
+  /** Booking goal over the payload range — resolveRepGoal (rep goal or team share); null = no range. */
+  goal: RepGoalInfo | null;
   /** "not-yet-active" reps show only the Not Yet Active chip; attention rules skip them. */
   operatingState: "active" | "not-yet-active";
   callStartDate: string | null;

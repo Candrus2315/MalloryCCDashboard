@@ -47,6 +47,8 @@ const point = (key: string, over: Partial<TrendPoint> = {}): TrendPoint => ({
   assignedLeadConversion: null,
   avgCallDurationSeconds: null,
   leads: 0,
+  family: 0,
+  animalia: 0,
   budgetRef: 0,
   ...over,
 });
@@ -57,6 +59,9 @@ const rep = (id: string, name: string, over: Partial<RepStripRow> = {}): RepStri
   totalBookings: 0,
   callsOverThreshold: 0,
   conversationConversion: null,
+  totalCalls: 0,
+  avgCallDurationSeconds: null,
+  goal: null,
   operatingState: "active" as const,
   callStartDate: null,
   ...over,
