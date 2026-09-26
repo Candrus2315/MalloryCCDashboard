@@ -51,6 +51,24 @@ for (let attempt = 1; ; attempt++) {
       idleTimeout: IDLE_TIMEOUT,
       async fetch(req) {
         const { pathname } = new URL(req.url);
+        // RAW AUDIT ENDPOINT (GET /api/audit?rep=&date=) — read-only DB rows via
+        // the shared audit-api core. Same passphrase gate as every other route
+        // (resolveGate), so enabling DASHBOARD_PASSPHRASE later protects it too.
+        if (pathname === "/api/audit") {
+          const { resolveGate } = await import("./src/server/auth");
+          const gate = await resolveGate(req);
+          if (gate.kind !== "allow") return gate.response;
+          const url = new URL(req.url);
+          const { handleAuditQuery } = await import("./src/server/audit-api");
+          const out = await handleAuditQuery({
+            rep: url.searchParams.get("rep"),
+            date: url.searchParams.get("date"),
+          });
+          return new Response(JSON.stringify(out.body), {
+            status: out.status,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          });
+        }
         if (pathname !== "/") {
           const file = Bun.file(CLIENT_DIR + pathname);
           if (await file.exists()) return new Response(file);

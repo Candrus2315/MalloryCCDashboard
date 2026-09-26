@@ -50,6 +50,8 @@ import {
 } from "./metrics/report-text";
 import { getStore } from "./store";
 import { keepRosterRepCalls } from "./roster";
+import { buildUnassignedRollup } from "~/components/reps-views";
+import { AUDIT_ALL, AUDIT_UNASSIGNED, handleAuditQuery, type AuditOkBody } from "./audit-api";
 import { ensureDemoData } from "./sync/run";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
 import type { AppSettings } from "./store/types";
@@ -837,7 +839,7 @@ export const getRepsData = createServerFn()
     const { startUtc, endUtc } = etRangeBounds(range.start, range.end);
     const weeks = mondaysInRange(range.start, range.end);
 
-    const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls] = await Promise.all([
+    const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers] = await Promise.all([
       store.getUsers(),
       store.getCallsBetween(startUtc, endUtc),
       store.getAppointmentsCreatedBetween(startUtc, endUtc),
@@ -848,6 +850,8 @@ export const getRepsData = createServerFn()
       store.getAllCallsSince(
         etDayStartUtc(addDays(range.start, -Math.ceil(settings.attribution_window_hours / 24) - 1)),
       ),
+      // ALL users (roster or not) — names the Unassigned rollup below
+      store.getAllUsers(),
     ]);
     const repGoalRows = await Promise.all(weeks.map((w) => store.getRepGoals(w)));
     const teamGoalRows = await Promise.all(weeks.map((w) => store.getTeamGoal(w)));
@@ -861,6 +865,18 @@ export const getRepsData = createServerFn()
     const rosterIds = new Set(users.map((u) => u.id));
     const rosterCalls = keepRosterRepCalls(calls, rosterIds);
     const rosterLookBackCalls = keepRosterRepCalls(lookBackCalls, rosterIds);
+
+    // UNASSIGNED (visible, never merged): non-roster HighLevel users' calls in
+    // the SAME window over the SAME call rows — the exact complement of the
+    // roster-kept set. Pure rollup in reps-views; displayed under the roster
+    // list on the Reps page and excluded from every roster/team total.
+    const userById = new Map(allUsers.map((u) => [u.id, { name: u.name, external_id: u.external_id }]));
+    const unassigned = buildUnassignedRollup({
+      calls,
+      activeRepIds: rosterIds,
+      userById,
+      thresholdSeconds: settings.meaningful_call_threshold_seconds,
+    });
 
     const reps = users.map((u) => ({ id: u.id, name: u.name }));
     const thresholdSeconds = settings.meaningful_call_threshold_seconds;
@@ -943,8 +959,48 @@ export const getRepsData = createServerFn()
       detail,
       teamAverages,
       comparisons,
+      unassigned,
       warnings,
       teamGoalDefault: teamGoalByWeek.get(weeks[0]) ?? 79,
+    };
+  });
+
+/** AUDIT page — read-only DB call rows for one rep × one ET day (audit-api). */
+export interface AuditSearchParams {
+  rep?: string;
+  date?: string;
+}
+export interface AuditPicker {
+  /** Active-roster reps (label + internal id) for the rep picker. */
+  reps: { id: string; name: string }[];
+  allLabel: string;
+  unassignedLabel: string;
+}
+export interface AuditPageData {
+  error: string | null;
+  payload: AuditOkBody | null;
+  picker: AuditPicker | null;
+  today: string | null;
+}
+export const getAuditData = createServerFn()
+  .validator((input: unknown) => (input ?? {}) as AuditSearchParams)
+  .handler(async ({ data }): Promise<AuditPageData> => {
+    const today = etToday();
+    const res = await handleAuditQuery({ rep: data?.rep ?? AUDIT_ALL, date: data?.date ?? null });
+    if (res.status !== 200) {
+      return { error: (res.body as { error: string }).error, payload: null, picker: null, today };
+    }
+    const store = await getStore();
+    const reps = (await store.getUsers()).map((u) => ({ id: u.id, name: u.name }));
+    return {
+      error: null,
+      payload: res.body,
+      picker: {
+        reps,
+        allLabel: `All calls (${reps.length} roster reps + unassigned)`,
+        unassignedLabel: "Unassigned — non-roster HL users",
+      },
+      today,
     };
   });
 

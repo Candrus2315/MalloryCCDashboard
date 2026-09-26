@@ -14,6 +14,7 @@ import {
 } from "../metrics/compute";
 import type {
   AppSettings,
+  AuditCallRow,
   ConnectionRow,
   ContactRow,
   DailyPrioritiesRow,
@@ -475,6 +476,45 @@ export class PgStore implements Store {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes FROM calls WHERE started_at >= ${startUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
+  }
+  async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
+    await this.ensureSchema();
+    // repSpec is validated by the endpoint against users.id before it reaches
+    // here; "unassigned" is the exact complement of the roster-kept call set
+    // (rep NULL or users.is_active=false — same predicate, same users table).
+    const repFilter =
+      repSpec === "unassigned"
+        ? this.sql`(c.rep_id IS NULL OR u.is_active = false)`
+        : repSpec && repSpec !== "all"
+          ? this.sql`c.rep_id = ${repSpec}::uuid`
+          : this.sql`TRUE`;
+    const rows = await this.sql`
+      SELECT c.external_call_id, c.conversation_id, c.provider_rep_external_id,
+             c.rep_id::text AS rep_id, u.name AS rep_name, u.is_active AS rep_is_active,
+             c.contact_id::text AS contact_id, ct.name AS contact_name, ct.external_id AS contact_external_id,
+             c.direction, c.call_status, c.started_at::text AS started_at, c.duration_seconds,
+             (c.duration_seconds > ${thresholdSeconds}) AS over_threshold
+      FROM calls c
+      LEFT JOIN users u ON u.id = c.rep_id
+      LEFT JOIN contacts ct ON ct.id = c.contact_id
+      WHERE c.started_at >= ${startUtc} AND c.started_at < ${endUtc} AND ${repFilter}
+      ORDER BY c.started_at DESC, c.external_call_id`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      external_call_id: String(r.external_call_id),
+      conversation_id: r.conversation_id == null ? null : String(r.conversation_id),
+      rep_id: r.rep_id == null ? null : String(r.rep_id),
+      rep_name: r.rep_name == null ? null : String(r.rep_name),
+      rep_is_active: r.rep_is_active == null ? null : Boolean(r.rep_is_active),
+      provider_rep_external_id: r.provider_rep_external_id == null ? null : String(r.provider_rep_external_id),
+      contact_id: r.contact_id == null ? null : String(r.contact_id),
+      contact_name: r.contact_name == null ? null : String(r.contact_name),
+      contact_external_id: r.contact_external_id == null ? null : String(r.contact_external_id),
+      direction: r.direction == null ? null : String(r.direction),
+      call_status: r.call_status == null ? null : String(r.call_status),
+      started_at: new Date(r.started_at as string).toISOString(),
+      duration_seconds: Number(r.duration_seconds),
+      over_threshold: Boolean(r.over_threshold),
+    }));
   }
 
   async upsertOpportunities(rows: OpportunityRow[]): Promise<number> {

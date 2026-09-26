@@ -12,6 +12,7 @@ const NAV = [
   { to: "/availability", label: "Availability" },
   { to: "/daily-report", label: "Daily Report" },
   { to: "/settings", label: "Settings" },
+  { to: "/audit", label: "Audit" },
 ];
 
 export const Route = createRootRoute({

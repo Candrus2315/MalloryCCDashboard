@@ -379,6 +379,47 @@ function RepsPage() {
             </div>
           </div>
           <p className="mt-2 text-[11px] text-stone-400">Bookings · calls in the selected range.</p>
+
+          {/* UNASSIGNED — non-roster HighLevel users' calls in the same window.
+              Deliberately SEPARATE from the roster list and every team total:
+              held unassigned in the DB until the booking-attribution /
+              manual-assignment work assigns them. */}
+          {data.unassigned && (
+            <div className="mt-4">
+              <p className="section-heading mb-2">Unassigned</p>
+              <div className="card p-3">
+                {data.unassigned.users.length === 0 ? (
+                  <p className="text-[12px] text-stone-500">No unassigned calls in this window.</p>
+                ) : (
+                  <ul className="divide-y divide-stone-100">
+                    {data.unassigned.users.map((u) => (
+                      <li key={u.key} className="flex items-baseline justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
+                        <span className="min-w-0 truncate text-[12px] font-medium text-stone-700" title={u.key}>
+                          {u.name ?? u.key}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-[12px] text-stone-500">
+                          {formatInt(u.calls)} call{u.calls === 1 ? "" : "s"} ·{" "}
+                          {formatInt(u.overThreshold)} &gt;{data.thresholdSeconds}s
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {data.unassigned.totalCalls > 0 && (
+                  <p className="mt-2 border-t border-stone-100 pt-2 text-[11px] tabular-nums text-stone-500">
+                    Total: {formatInt(data.unassigned.totalCalls)} calls ·{" "}
+                    {formatInt(data.unassigned.totalOverThreshold)} over threshold — excluded from roster and team
+                    totals.
+                  </p>
+                )}
+                <p className="mt-2 text-[11px] leading-relaxed text-stone-400">
+                  Non-roster HighLevel users' calls, held unassigned in the database. They are never merged into the
+                  roster or team numbers. Assignment happens via the upcoming booking-attribution / manual-assignment
+                  work; inspect raw rows on the Audit page.
+                </p>
+              </div>
+            </div>
+          )}
         </aside>
 
         {d ? (

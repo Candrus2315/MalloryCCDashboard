@@ -218,3 +218,61 @@ export function coachingObservations(input: {
 
   return [...risks, ...positives].slice(0, 3);
 }
+
+// ---------- unassigned rollup (non-roster HighLevel users' calls) ----------
+
+export interface UnassignedUserRollup {
+  /** Display key: HL user id when known, "(no user)" when the call had none. */
+  key: string;
+  /** HighLevel user name when known — null renders as the raw HL user id. */
+  name: string | null;
+  externalId: string | null;
+  calls: number;
+  overThreshold: number;
+}
+
+export interface UnassignedRollup {
+  users: UnassignedUserRollup[];
+  totalCalls: number;
+  totalOverThreshold: number;
+}
+
+/**
+ * Rollup of the calls that are NOT roster-rep calls in the same window:
+ * rep NULL (unknown HL user) or the rep is a roster-excluded user. This is the
+ * exact complement of keepRosterRepCalls' kept set over the SAME call rows the
+ * metrics layer used — never merged into roster or team totals, shown apart.
+ * Sorted by call count desc (ties by key asc); a missing HL user name degrades
+ * to the raw id.
+ */
+export function buildUnassignedRollup(input: {
+  /** ALL calls in the window (the same array the metrics layer filtered). */
+  calls: { rep_id: string | null; duration_seconds: number }[];
+  /** Active-roster rep ids (the keepRosterRepCalls keep-set). */
+  activeRepIds: Set<string>;
+  /** rep_id → { name, external_id } for ALL users (roster or not). */
+  userById: Map<string, { name: string; external_id: string }>;
+  thresholdSeconds: number;
+}): UnassignedRollup {
+  const byUser = new Map<string, UnassignedUserRollup>();
+  let totalCalls = 0;
+  let totalOver = 0;
+  for (const c of input.calls) {
+    // unassigned = no rep OR rep not on the active roster (same predicate as
+    // the audit endpoint's "unassigned" spec and keepRosterRepCalls' complement)
+    if (c.rep_id && input.activeRepIds.has(c.rep_id)) continue;
+    const u = c.rep_id ? input.userById.get(c.rep_id) : undefined;
+    const key = u?.external_id ?? "(no user)";
+    let row = byUser.get(key);
+    if (!row) {
+      row = { key, name: u?.name ?? null, externalId: u?.external_id ?? null, calls: 0, overThreshold: 0 };
+      byUser.set(key, row);
+    }
+    row.calls += 1;
+    if (c.duration_seconds > input.thresholdSeconds) row.overThreshold += 1;
+    totalCalls += 1;
+    if (c.duration_seconds > input.thresholdSeconds) totalOver += 1;
+  }
+  const users = [...byUser.values()].sort((a, b) => b.calls - a.calls || a.key.localeCompare(b.key));
+  return { users, totalCalls, totalOverThreshold: totalOver };
+}

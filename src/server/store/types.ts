@@ -54,11 +54,14 @@ export interface OpportunityRow {
 
 /** Raw joined call record for the audit endpoint (source = normalized DB). */
 export interface AuditCallRow {
+  /** HighLevel call-message id (the calls table's external_call_id). */
   external_call_id: string;
   conversation_id: string | null;
   rep_id: string | null;
   rep_name: string | null;
+  /** users.is_active — false/NULL means the call is held UNASSIGNED (non-roster or unknown user). */
   rep_is_active: boolean | null;
+  /** RAW HighLevel userId preserved even when the call has no roster rep. */
   provider_rep_external_id: string | null;
   contact_id: string | null;
   contact_name: string | null;
@@ -67,7 +70,12 @@ export interface AuditCallRow {
   call_status: string | null;
   started_at: string;
   duration_seconds: number;
-  over_two_minutes: boolean;
+  /**
+   * duration_seconds > threshold, computed with the LIVE settings threshold —
+   * the SAME rule the metrics layer (summarizeCalls) applies, so the audit view
+   * can never diverge from what Reps/Team show for the same day.
+   */
+  over_threshold: boolean;
 }
 
 export interface TeamGoalRow {
@@ -413,8 +421,15 @@ export interface Store {
   upsertCalls(rows: (CallRow & { external_call_id: string; provider: string; provider_rep_external_id?: string | null; conversation_id?: string | null })[]): Promise<number>;
   getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]>;
   getAllCallsSince(startUtc: string): Promise<CallRow[]>;
-  /** Raw records behind the call metrics (audit endpoint): rep/contact joined. */
-  getAuditCalls(startUtc: string, endUtc: string, repIdOrSlug: string | null): Promise<AuditCallRow[]>;
+  /**
+   * Raw records behind the call metrics (audit endpoint): rep/contact joined.
+   * repSpec: null|"all" = every call, "unassigned" = rep NULL or non-roster
+   * (users.is_active=false) — the exact complement of keepRosterRepCalls' kept
+   * set, so unassigned counts reconcile with the roster math by construction.
+   * A user id string filters to that user (roster or not — read-only audit).
+   * thresholdSeconds drives over_threshold (live settings value, metrics rule).
+   */
+  getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]>;
   upsertOpportunities(rows: OpportunityRow[]): Promise<number>;
   getOpportunities(): Promise<OpportunityRow[]>;
   /**

@@ -15,6 +15,7 @@ import {
 } from "../metrics/compute";
 import type {
   AppSettings,
+  AuditCallRow,
   ConnectionRow,
   ContactRow,
   DailyPrioritiesRow,
@@ -170,6 +171,41 @@ export class MemoryStore implements Store {
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
     return this.getCallsBetween(startUtc, "9999-12-31");
+  }
+  async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
+    // Same semantics as the PG store: joined rep/contact fields, "unassigned"
+    // = rep NULL or users.is_active=false, over_threshold per live threshold.
+    const activeIds = new Set([...this.users.values()].filter((u) => u.is_active).map((u) => u.id));
+    type CallAuditExt = CallExt & { conversation_id?: string | null; provider_rep_external_id?: string | null };
+    const rows = [...this.calls.values()]
+      .filter((c) => c.started_at >= startUtc && c.started_at < endUtc)
+      .filter((c) => {
+        if (!repSpec || repSpec === "all") return true;
+        if (repSpec === "unassigned") return !c.rep_id || !activeIds.has(c.rep_id);
+        return c.rep_id === repSpec;
+      })
+      .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : a.external_call_id < b.external_call_id ? 1 : -1));
+    return rows.map((c) => {
+      const rep = c.rep_id ? this.users.get(c.rep_id) : undefined;
+      const contact = c.contact_id ? this.contacts.get(c.contact_id) : undefined;
+      const cx = c as CallAuditExt;
+      return {
+        external_call_id: c.external_call_id,
+        conversation_id: cx.conversation_id ?? null,
+        rep_id: c.rep_id ?? null,
+        rep_name: rep?.name ?? null,
+        rep_is_active: rep ? rep.is_active : null,
+        provider_rep_external_id: cx.provider_rep_external_id ?? null,
+        contact_id: c.contact_id ?? null,
+        contact_name: contact?.name ?? null,
+        contact_external_id: contact?.external_id ?? null,
+        direction: (c as Partial<CallRow> & { direction?: string | null }).direction ?? null,
+        call_status: (c as Partial<CallRow> & { call_status?: string | null }).call_status ?? null,
+        started_at: c.started_at,
+        duration_seconds: c.duration_seconds,
+        over_threshold: c.duration_seconds > thresholdSeconds,
+      };
+    });
   }
 
   async upsertOpportunities(rows: OpportunityRow[]): Promise<number> {

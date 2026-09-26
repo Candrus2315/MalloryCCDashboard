@@ -1,8 +1,43 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
+
+/**
+ * DEV-ONLY JSON endpoint: GET /api/audit?rep=<repId|all|unassigned>&date=YYYY-MM-DD
+ * Same shared handler the production serve.ts exposes (src/server/audit-api.ts)
+ * so the read-only audit API works identically on the working (dev) site and the
+ * published server. Read-only DB reads; no live harvesting on page load.
+ */
+function auditApiDevPlugin(): Plugin {
+  return {
+    name: "mallory-audit-api-dev",
+    apply: "serve",
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use("/api/audit", (req, res) => {
+        void (async () => {
+          try {
+            const { handleAuditQuery } = await import("./src/server/audit-api");
+            // connect strips the mount prefix, so req.url is "/?rep=…&date=…"
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const out = await handleAuditQuery({
+              rep: url.searchParams.get("rep"),
+              date: url.searchParams.get("date"),
+            });
+            res.statusCode = out.status;
+            res.setHeader("content-type", "application/json; charset=utf-8");
+            res.end(JSON.stringify(out.body));
+          } catch (e) {
+            res.statusCode = 500;
+            res.setHeader("content-type", "application/json; charset=utf-8");
+            res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+          }
+        })();
+      });
+    },
+  };
+}
 
 export default defineConfig({
   server: {
@@ -30,6 +65,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    auditApiDevPlugin(),
     tailwindcss(),
     tsConfigPaths({
       projects: ["./tsconfig.json"],
