@@ -92,8 +92,15 @@ function DailyReportPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Daily Report</h1>
-          <p className="mt-0.5 text-sm text-stone-400">
-            {formatDateHuman(m.reportDate)} · yesterday's performance + week of {formatDateHuman(m.weekStart)}
+          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm text-stone-400">
+            <span>
+              {formatDateHuman(m.reportDate)} · yesterday's performance + week of {formatDateHuman(m.weekStart)}
+            </span>
+            {/* live-state indicator (owner hard rule): the report is always the live week */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+              Current Week
+            </span>
           </p>
         </div>
         {data.meta.mode === "memory" && (

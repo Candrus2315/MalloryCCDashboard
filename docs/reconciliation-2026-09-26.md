@@ -140,3 +140,38 @@ Every mismatch is `db ≥ ledger` for TODAY only, and a message-level diff finds
 - **Matrix tooling** — `scripts/recon-snapshot.ts --matrix` re-runs this whole recount on demand.
 
 **Final status: RECONCILED.** Zero unexplained mismatches; the operative window 9/14 00:00 ET → 9/25 23:59 ET matches cell-for-cell, and today's 6 cells are accounted for by the 8 documented conversation-less messages above (they will reconcile in the ledger's day view only if HighLevel starts returning conversation ids for them — the dashboard counts stand on their own either way).
+
+---
+
+# Part 3 — Week-boundary verification through the historical "Week of…" selector (cadence lock-in)
+
+**Run:** `bun scripts/week-boundary-verify.ts` at 2026-09-26T18:43 UTC (today = Sat 9/26 ET). This pass reads the LIVE dashboard database through the page builders' real range resolution — the exact code path the new "Week of…" selector drives — and prints rep-by-rep calls / calls-over-2-min. No ledger involved: source-of-truth here is "what the dashboard now displays for that week."
+
+## Verdict
+
+**STABLE.** The completed prior week (Mon 9/14–Sun 9/20 ET) matches the Part-2 day matrix cell-for-cell, day-for-day, with zero drift. WTD has grown by exactly today's 8 documented in-flight calls — no other movement.
+
+## Prior week 9/14–9/20 via `?range=week-of&from=2026-09-14` (live DB)
+
+| Rep | Part-2 matrix sum (9/14–9/20) | Live selector now | Match |
+|---|---|---|---|
+| Allison Wittner | 622/58 | **622/58** | ✓ |
+| Carmine Morgano | 667/20 | **667/20** | ✓ |
+| Dan McKillop | 0/0 | **0/0** | ✓ |
+| Jennifer Stitt | 701/20 | **701/20** | ✓ |
+| Laura Rivera | 153/12 | **153/12** | ✓ |
+| **TEAM (roster)** | 2143/110 | **2143/110** | ✓ |
+
+Per-day completed-day check (team roster totals, selector range vs Part-2 matrix): 9/14 506/33 ✓ · 9/15 428/21 ✓ · 9/16 387/19 ✓ · 9/17 398/17 ✓ · 9/18 414/19 ✓ · 9/19 2/0 ✓ · 9/20 8/1 ✓ — **all 7 days identical**. A completed ET week is immutable through the week boundary: Monday's counter reset does not touch it, and the whole page (metrics, rep strip, goal, trends) resolves from that one week's range.
+
+## WTD (Mon 9/21 → now) live vs stored
+
+- Stored Part-1 (9/26 ~15:20 UTC): **2005 calls / 106 over-2-min**, five-rep team; bookings WTD 51 vs goal 79.
+- Live now (9/26 18:43 UTC): **2013 / 106**; bookings WTD 51, goal 79.
+- Drift: **+8 calls, +0 over-2-min** — exactly the 8 conversation-less messages documented in Part 2 (Allison 5/0 + Carmine 1/0 on the roster, plus 2 unassigned), ingested by the incremental sync after the Part-1 read. This is legitimate same-day growth, not a correction: every completed day (9/21–9/25) is unchanged, and the over-2-min column did not move because all 8 are sub-threshold.
+
+## Cadence lock-in shipped with this pass
+
+- **Regression suite** `src/server/__tests__/week-cadence.test.ts` (21 tests): the ratified Fri → Sat/Sun → Mon 12AM ET → Tue sequence, getWorkDate/getLeadCohort inverses, whole-page atomicity through the page builders (MemoryStore + pinned clock via the `PageDeps` seam — no live DB, no Start runtime), goal independence per week_start, page-consistency, DST fall-back week = 7 full ET days (169h).
+- **Historical selector**: "Week of …" mode + dropdown on Reps and Team; whole-page atomic payload from the ONE resolved range through the ONE metrics engine — historical weeks recompute from persisted raw records (mapping-aware eligibility), no snapshots. "Current Week" / "Historical · Week of …" live-state indicator on Reps and Team; Today and Daily Report show the Current Week chip (they are live-only by construction).
+- Gate before this run: `bun test src/server` **283 pass / 0 fail** (incl. typecheck tripwire).

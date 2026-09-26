@@ -38,3 +38,48 @@ export function Segmented<T extends string>({
     </div>
   );
 }
+
+/**
+ * Compact "Week of …" dropdown for the week-of range mode (owner directive
+ * 9/26): lists recent Mondays (current operating week first) and navigates to
+ * ?range=week-of&from=<monday>. Rendered next to the Segmented control when
+ * the week-of segment is active. Options come from the centralized
+ * recentMondays() helper — no page invents its own week list.
+ */
+export function WeekOfSelect({
+  mondays,
+  value,
+  onChange,
+}: {
+  /** Monday week-starts, most recent first (recentMondays()). */
+  mondays: string[];
+  /** Currently selected Monday (weekStart of the resolved range). */
+  value: string;
+  onChange: (monday: string) => void;
+}) {
+  const label = (m: string) => {
+    const [y, mo, d] = m.split("-").map(Number);
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(
+      new Date(Date.UTC(y, mo - 1, d)),
+    );
+  };
+  const known = mondays.includes(value);
+  return (
+    <select
+      aria-label="Select week"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={
+        "rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[13px] font-medium text-stone-900 outline-none focus:border-stone-500 " +
+        (known ? "" : "text-stone-400")
+      }
+    >
+      {!known && <option value={value}>Week of {label(value)}</option>}
+      {mondays.map((m) => (
+        <option key={m} value={m}>
+          Week of {label(m)}
+        </option>
+      ))}
+    </select>
+  );
+}

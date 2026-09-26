@@ -6,7 +6,10 @@ import { getRepsData } from "~/server/queries";
 import {
   RANGE_LABELS,
   RANGE_MODES,
+  addDays,
   formatDateHuman,
+  isHistoricalWeek,
+  recentMondays,
   weekStart,
   type RangeMode,
 } from "~/server/date-logic";
@@ -18,7 +21,7 @@ import {
   formatPercent,
 } from "~/server/metrics/report-text";
 import type { ComparisonUnit } from "~/server/metrics/compute";
-import { Segmented } from "~/components/Segmented";
+import { Segmented, WeekOfSelect } from "~/components/Segmented";
 import { StatusChip } from "~/components/StatusChip";
 import {
   coachingObservations,
@@ -92,13 +95,31 @@ function RepsPage() {
   const [sortAsc, setSortAsc] = useState(true);
 
   const setRange = (mode: RangeMode) => {
+    // week-of needs a Monday anchor (same rule as the Team page): stay on the
+    // viewed week when it is historical, otherwise default to LAST week — a
+    // historical picker whose default were the current week would show a live
+    // week under a historical label. The dropdown refines it afterwards.
+    const viewedWeekOf = weekStart(data.range.start);
+    const defaultWeekOf = addDays(weekStart(data.today), -7);
+    const weekAnchor = isHistoricalWeek(data.range.mode, data.range.start, data.today) ? viewedWeekOf : defaultWeekOf;
     router.navigate({
       to: "/reps",
       search: (prev) => ({
         rep: prev.rep,
         range: mode,
-        from: mode === "custom" ? (customFrom || undefined) : undefined,
+        from: mode === "custom" ? (customFrom || undefined) : mode === "week-of" ? weekAnchor : undefined,
         to: mode === "custom" ? (customTo || undefined) : undefined,
+      }),
+    });
+  };
+  const setWeekOf = (monday: string) => {
+    router.navigate({
+      to: "/reps",
+      search: (prev) => ({
+        rep: prev.rep,
+        range: "week-of" as RangeMode,
+        from: monday,
+        to: undefined,
       }),
     });
   };
@@ -285,6 +306,18 @@ function RepsPage() {
         <p className="mt-1 flex items-center gap-1.5 text-xs text-stone-500">
           <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />
           <span>{rangeCaption}</span>
+          {/* live-state indicator (owner hard rule): live vs historical is never ambiguous */}
+          {data.range.isCurrentWeek ? (
+            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+              Current Week
+            </span>
+          ) : (
+            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+              Historical · {data.range.label}
+            </span>
+          )}
         </p>
         {data.meta.mode === "memory" && (
           <div className="status-banner mt-2" role="status">
@@ -308,6 +341,13 @@ function RepsPage() {
           value={data.range.mode}
           onChange={(m) => setRange(m)}
         />
+        {data.range.mode === "week-of" && (
+          <WeekOfSelect
+            mondays={recentMondays(data.today, 8)}
+            value={weekStart(data.range.start)}
+            onChange={(monday) => setWeekOf(monday)}
+          />
+        )}
         {data.range.mode === "custom" && (
           <span className="flex items-center gap-2 text-[13px] text-stone-500">
             <input

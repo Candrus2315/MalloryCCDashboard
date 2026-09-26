@@ -248,6 +248,38 @@ export function formatDateHumanFull(dateStr: string): string {
   }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
+/** Compact month-day label for week pickers, e.g. "Sep 21" (no weekday/year). */
+export function formatDateShort(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/**
+ * The most recent Mondays (week starts), current operating week first, for
+ * the historical "Week of…" picker. Centralized so no page invents its own
+ * week list.
+ */
+export function recentMondays(today: string, count = 8): string[] {
+  const current = weekStart(today);
+  return Array.from({ length: Math.max(1, count) }, (_, i) => addDays(current, -7 * i));
+}
+
+/**
+ * True when the resolved range is a HISTORICAL week (week-of mode anchored
+ * before the current operating week's Monday). Only "week-of" can be
+ * historical: every other preset either tracks now (Today/This Week/Last 7/
+ * Last 30/This Month) or is labeled as its own past preset (Yesterday/Last
+ * Week). Drives the "Current Week" vs "Historical · Week of …" live-state
+ * indicator (owner hard rule: live vs historical is never ambiguous).
+ */
+export function isHistoricalWeek(mode: RangeMode, start: string, today: string): boolean {
+  return mode === "week-of" && start < weekStart(today);
+}
+
 // ---------- report date-range resolution (Reps / Team page filters) ----------
 
 export type RangeMode =
@@ -255,6 +287,7 @@ export type RangeMode =
   | "yesterday"
   | "this-week"
   | "last-week"
+  | "week-of"
   | "last-7"
   | "last-30"
   | "this-month"
@@ -265,6 +298,7 @@ export const RANGE_MODES: RangeMode[] = [
   "yesterday",
   "this-week",
   "last-week",
+  "week-of",
   "last-7",
   "last-30",
   "this-month",
@@ -277,6 +311,7 @@ export const RANGE_LABELS: Record<RangeMode, string> = {
   yesterday: "Yesterday",
   "this-week": "This Week",
   "last-week": "Last Week",
+  "week-of": "Week of…",
   "last-7": "Last 7 Days",
   "last-30": "Last 30 Days",
   "this-month": "This Month",
@@ -304,8 +339,12 @@ export interface ResolvedRange {
  * Resolve a named filter mode to an inclusive ET date range. "This Week" and
  * "This Month" are TO DATE (Mon..today / 1st..today) — future days have no
  * activity and to-date matches the rest of the app (Bookings WTD). "Last
- * Week" is the full previous Mon..Sun. Custom is validated; an invalid custom
- * range falls back to Today with a warning (never silently mislabeled).
+ * Week" is the full previous Mon..Sun. "Week of…" is a full historical
+ * Mon..Sun week anchored on the supplied `from` Monday (owner directive
+ * 9/26: whole-page historical context — the ONE resolved range drives every
+ * payload section through the single metrics engine). Custom is validated; an
+ * invalid custom range falls back to Today with a warning (never silently
+ * mislabeled); an invalid week-of falls back to This Week with a warning.
  */
 export function resolveRange(
   mode: RangeMode,
@@ -338,6 +377,28 @@ export function resolveRange(
         label: "Last Week",
         toDate: false,
         warning: null,
+      };
+    }
+    case "week-of": {
+      const fromOk = typeof from === "string" && DATE_RE.test(from);
+      if (fromOk) {
+        const ws = weekStart(from!); // normalize any day to its Monday
+        return {
+          mode,
+          start: ws,
+          end: addDays(ws, 6),
+          label: `Week of ${formatDateShort(ws)}`,
+          toDate: false,
+          warning: null,
+        };
+      }
+      return {
+        mode: "this-week",
+        start: weekStart(today),
+        end: today,
+        label: "This Week",
+        toDate: true,
+        warning: "Invalid week — showing This Week instead.",
       };
     }
     case "last-7":

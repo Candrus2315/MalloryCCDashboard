@@ -169,6 +169,11 @@ function TodayPage() {
           <span className="text-[15px] font-medium text-stone-500">
             Week of {formatDateHuman(m.weekStart)}
           </span>
+          {/* live-state indicator (owner hard rule): Today is always the live week */}
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            Current Week
+          </span>
         </div>
         <p className="mt-1 flex items-center gap-1.5 text-xs text-stone-500">
           <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />

@@ -339,8 +339,10 @@ describe("handleAuditQuery (orchestration — 400s + response shape)", () => {
   test("happy path returns the audit envelope with ET bounds + live threshold", async () => {
     const ok = await handleAuditQuery({ rep: "all", date: "2026-09-25" });
     expect(ok.status).toBe(200);
-    if (ok.status === 200) {
-      expect(ok.body.timezone).toBe("America/New_York");
+    if ("error" in ok.body) {
+      throw new Error(`audit query returned an error envelope: ${ok.body.error}`);
+    }
+    expect(ok.body.timezone).toBe("America/New_York");
       expect(ok.body.threshold_seconds).toBe(120); // default settings in this environment
       expect(ok.body.range.startUtc).toBe("2026-09-25T04:00:00.000Z");
       expect(ok.body.range.endUtc).toBe("2026-09-26T04:00:00.000Z");
@@ -351,6 +353,5 @@ describe("handleAuditQuery (orchestration — 400s + response shape)", () => {
         expect(typeof r.external_call_id).toBe("string");
         expect(typeof r.et_date).toBe("string");
       }
-    }
   });
 });
