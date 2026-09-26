@@ -125,9 +125,14 @@ export function emptyCheckpoint(updatedAt: string): CallContactBackfillCheckpoin
     done: false,
     scanned: 0,
     filled: 0,
-    byMethod: METHOD_ORDER.reduce((acc, m) => ({ ...acc, [m]: 0 }), {} as Record<CallContactResolutionMethod, number>),
+    byMethod: emptyByMethod(),
     updated_at: updatedAt,
   };
+}
+
+/** Zeroed per-method counters (a fresh chunk's result, or a fresh checkpoint). */
+export function emptyByMethod(): Record<CallContactResolutionMethod, number> {
+  return METHOD_ORDER.reduce((acc, m) => ({ ...acc, [m]: 0 }), {} as Record<CallContactResolutionMethod, number>);
 }
 
 /**
@@ -260,6 +265,8 @@ export interface CallContactBackfillChunkResult {
   scanned: number;
   /** Calls whose contact_id was actually filled. */
   filled: number;
+  /** THIS CHUNK's resolutions per method (per-chunk, like scanned/filled —
+   * the running totals live on checkpoint.byMethod). */
   byMethod: Record<CallContactResolutionMethod, number>;
   /** True when a full pass over unresolved calls found nothing left. */
   done: boolean;
@@ -312,7 +319,7 @@ export async function runCallContactBackfillChunk(opts: CallContactBackfillChunk
     if (opts.persistCheckpoint !== false) {
       await store.setSyncCheckpoint(CALL_CONTACT_BACKFILL_CHECKPOINT_KEY, JSON.stringify(cp));
     }
-    return { scanned: 0, filled: 0, byMethod: { ...cp.byMethod }, done: true, checkpoint: cp };
+    return { scanned: 0, filled: 0, byMethod: emptyByMethod(), done: true, checkpoint: cp };
   }
 
   // Contacts index (canonical keys — the same normalizers the boundaries store through).
@@ -351,6 +358,7 @@ export async function runCallContactBackfillChunk(opts: CallContactBackfillChunk
 
   const updates: CallContactBackfillUpdate[] = [];
   let filled = 0;
+  const chunkByMethod = emptyByMethod();
   for (const call of batch) {
     const ledger = call.external_call_id ? ledgerByMessage.get(call.external_call_id) ?? null : null;
     let fetched: CallContactSourceIdentity | null = null;
@@ -377,7 +385,7 @@ export async function runCallContactBackfillChunk(opts: CallContactBackfillChunk
       resolution_method: resolution.method,
       contact_resolved_at: now().toISOString(),
     });
-    cp.byMethod[resolution.method] = (cp.byMethod[resolution.method] ?? 0) + 1;
+    chunkByMethod[resolution.method] = (chunkByMethod[resolution.method] ?? 0) + 1;
     if (resolution.contact_id) filled += 1;
   }
 
@@ -389,6 +397,7 @@ export async function runCallContactBackfillChunk(opts: CallContactBackfillChunk
   cp.lastCallId = last.id;
   cp.scanned += batch.length;
   cp.filled += filled;
+  for (const m of METHOD_ORDER) cp.byMethod[m] = (cp.byMethod[m] ?? 0) + (chunkByMethod[m] ?? 0);
   cp.done = done;
   cp.updated_at = now().toISOString();
   if (opts.persistCheckpoint !== false) {
@@ -397,5 +406,5 @@ export async function runCallContactBackfillChunk(opts: CallContactBackfillChunk
     await store.setSyncCheckpoint(CALL_CONTACT_BACKFILL_CHECKPOINT_KEY, JSON.stringify(cp));
   }
 
-  return { scanned: batch.length, filled, byMethod: { ...cp.byMethod }, done, checkpoint: cp };
+  return { scanned: batch.length, filled, byMethod: { ...chunkByMethod }, done, checkpoint: cp };
 }

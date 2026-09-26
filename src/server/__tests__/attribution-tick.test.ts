@@ -326,7 +326,12 @@ describe("queue + conversion helpers", () => {
     expect(first.attributed).toBe(1);
     // Engine result flips when the call leaves the DATE-GRANULARITY window
     // (creation ET date + the day before) — the re-run REPLACES.
-    await store.upsertCalls([{ ...call, started_at: iso(5 * 24 * H) }]); // 5 ET days back → out of window
+    // NOTE: `call` is the internal id STRING — spread the actual call ROW and
+    // re-supply provider (getAllCallsSince strips it; the upsert key is
+    // provider:external_call_id) so this UPDATES the row instead of inserting
+    // a junk one while the original stays in-window.
+    const callRow = (await store.getAllCallsSince("2000-01-01")).find((c) => c.external_call_id === "call_ext_1")!;
+    await store.upsertCalls([{ ...callRow, provider: "highlevel", started_at: iso(5 * 24 * H) }]); // 5 ET days back → out of window
     const second = await computeAndPersistAttributions(store, settings, { now });
     expect(second.appointments).toBe(1);
     expect(second.attributed).toBe(0);
