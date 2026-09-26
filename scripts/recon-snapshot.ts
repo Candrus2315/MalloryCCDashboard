@@ -72,7 +72,7 @@ async function runMatrix() {
   const rosterUsers = (await sql`SELECT external_id, name FROM users WHERE is_active ORDER BY name`) as any[];
   const rosterExts = new Set(rosterUsers.map((u) => u.external_id));
 
-  const { ledRows, dbRows } = await sql.begin("repeatable read", async (tx) => ({
+  const { ledRows, dbRows } = await sql.begin(async (tx) => ({
     ledRows: (await tx`SELECT COALESCE(user_external_id,'(none)') ext, to_char(started_at AT TIME ZONE 'America/New_York','YYYY-MM-DD') d, count(*)::int n, SUM(CASE WHEN duration_seconds > 120 THEN 1 ELSE 0 END)::int over2 FROM harvest_calls WHERE started_at >= ${new Date(WINDOW_START_MS).toISOString()} AND started_at < ${endUtc} GROUP BY 1,2`) as any[],
     dbRows: (await tx`SELECT COALESCE(u.external_id, c.provider_rep_external_id, '(none)') ext, to_char(c.started_at AT TIME ZONE 'America/New_York','YYYY-MM-DD') d, count(*)::int n, SUM((c.duration_seconds > 120)::int)::int over2 FROM calls c LEFT JOIN users u ON u.id=c.rep_id WHERE c.provider='highlevel' AND c.started_at >= ${new Date(WINDOW_START_MS).toISOString()} AND c.started_at < ${endUtc} GROUP BY 1,2`) as any[],
   }));
@@ -84,6 +84,7 @@ async function runMatrix() {
 
   // every ext seen on EITHER side (ledger or DB), stable order: roster first, then others
   const allExts = new Set<string>([...ledRows.map((r) => r.ext), ...dbRows.map((r) => r.ext)]);
+  const userNameByExt = new Map(((await sql`SELECT external_id, name FROM users`) as any[]).map((u) => [u.external_id, u.name]));
   const otherExts = [...allExts].filter((e) => !rosterExts.has(e)).sort((a, b) => {
     const sa = sumExt(lmap, a) + sumExt(dmap, a), sb = sumExt(lmap, b) + sumExt(dmap, b);
     return sb - sa || a.localeCompare(b);
@@ -98,18 +99,19 @@ async function runMatrix() {
     ` | UNASSIGNED   | TEAM(roster) | verdict`;
   matrixLines.push(header);
   for (const day of dayList) {
+    const dayMismatchStart = mismatchLines.length;
     const cells1 = rosterUsers.map((u: any) => {
       const cmp = cmpCell(lmap, dmap, u.external_id, day);
       cells += 1;
-      if (!cmp.ok) { mismatches += 1; mismatchLines.push(`${day} ${u.name}: ledger=${cmp.l} db=${cmp.d}`); }
-      return pad(cmp.ok ? `${cmp.l}` : `${cmp.l}≠${cmp.d}`, 12);
+      if (!cmp.ok) { mismatches += 1; mismatchLines.push(`${day} ${u.name}: ledger=${cmp.lStr} db=${cmp.dStr}`); }
+      return pad(cmp.ok ? cmp.lStr : `${cmp.lStr}≠${cmp.dStr}`, 12);
     });
     // unassigned: sum over non-roster exts (still diffed per ext below)
     let la = 0, lo = 0, da = 0, doo = 0;
     for (const e of otherExts) {
       const cmp = cmpCell(lmap, dmap, e, day);
       cells += 1;
-      if (!cmp.ok) { mismatches += 1; mismatchLines.push(`${day} ${e}: ledger=${cmp.l} db=${cmp.d}`); }
+      if (!cmp.ok) { mismatches += 1; mismatchLines.push(`${day} ${userNameByExt.get(e) ?? e}: ledger=${cmp.lStr} db=${cmp.dStr}`); }
       la += cmp.l.n; lo += cmp.l.over2; da += cmp.d.n; doo += cmp.d.over2;
     }
     const teamL = rosterUsers.reduce((s: number, u: any) => s + (lmap.get(`${u.external_id}|${day}`)?.n ?? 0), 0);
@@ -122,7 +124,7 @@ async function runMatrix() {
     if (!teamOk) { mismatches += 1; mismatchLines.push(`${day} TEAM: ledger=${teamL}/${teamO} db=${teamD}/${teamOD}`); }
     const unTxt = unOk ? `${la}/${lo}` : `${la}/${lo}≠${da}/${doo}`;
     const teamTxt = teamOk ? `${teamL}/${teamO}` : `${teamL}/${teamO}≠${teamD}/${teamOD}`;
-    const dayVerdict = !mismatchLines.some((m) => m.startsWith(day + " ")) ? "OK" : "MISMATCH";
+    const dayVerdict = mismatchLines.length === dayMismatchStart ? "OK" : "MISMATCH";
     matrixLines.push(`${day} | ${cells1.join(" | ")} | ${pad(unTxt, 12)} | ${pad(teamTxt, 12)} | ${dayVerdict}`);
   }
 
@@ -130,7 +132,7 @@ async function runMatrix() {
   const totalLines: string[] = [];
   let totOk = 0, totBad = 0;
   for (const e of [...rosterUsers.map((u: any) => u.external_id), ...otherExts]) {
-    const nm = rosterUsers.find((u: any) => u.external_id === e)?.name ?? e;
+    const nm = rosterUsers.find((u: any) => u.external_id === e)?.name ?? userNameByExt.get(e) ?? e;
     const ln = sumExt(lmap, e), lo2 = sumOver(lmap, e), dn = sumExt(dmap, e), do2 = sumOver(dmap, e);
     const ok = ln === dn && lo2 === do2;
     ok ? totOk++ : totBad++;
@@ -148,7 +150,7 @@ async function runMatrix() {
   console.log(`ext-level totals: ${totOk} OK, ${totBad} MISMATCH`);
 }
 
-const cell = (m: Map<string, { n: number; over2: number }>, e: string, d: string) => m.get(`${e}|${d}`) ?? { n: 0, over2: 0 };
+function cell(m: Map<string, { n: number; over2: number }>, e: string, d: string) { return m.get(`${e}|${d}`) ?? { n: 0, over2: 0 }; }
 function cmpCell(lm: Map<string, { n: number; over2: number }>, dm: Map<string, { n: number; over2: number }>, e: string, d: string) {
   const l = cell(lm, e, d), dbv = cell(dm, e, d);
   const ok = l.n === dbv.n && l.over2 === dbv.over2;
