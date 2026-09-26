@@ -19,6 +19,7 @@ import {
 } from "~/server/metrics/report-text";
 import type { ComparisonUnit } from "~/server/metrics/compute";
 import { Segmented } from "~/components/Segmented";
+import { StatusChip } from "~/components/StatusChip";
 import {
   coachingObservations,
   goalProgress,
@@ -214,6 +215,8 @@ function RepsPage() {
             ? { wtd: goalViewRaw.wtd, goalValue: goalViewRaw.goalValue, anchorDay: goalViewRaw.anchorDay }
             : null,
         today: data.today,
+        // Not Yet Active reps get NO coaching verdicts (owner spec)
+        operatingState: data.selectedOperatingState,
       })
     : [];
 
@@ -372,6 +375,9 @@ function RepsPage() {
                       (r.isSelected ? "text-stone-500" : "text-stone-400")
                     }
                   >
+                    {r.operatingState === "not-yet-active" ? (
+                      <span className="font-medium normal-case tabular-nums">Not Yet Active · </span>
+                    ) : null}
                     {plural(r.totalBookings, "booking")} · {plural(r.totalCalls, "call")}
                   </span>
                 </button>
@@ -380,19 +386,21 @@ function RepsPage() {
           </div>
           <p className="mt-2 text-[11px] text-stone-400">Bookings · calls in the selected range.</p>
 
-          {/* UNASSIGNED — non-roster HighLevel users' calls in the same window.
-              Deliberately SEPARATE from the roster list and every team total:
-              held unassigned in the DB until the booking-attribution /
-              manual-assignment work assigns them. */}
-          {data.unassigned && (
+          {/* CALL-OWNERSHIP BUCKETS (design/data-terminology.md — three, mutually
+              exclusive). "Non Roster Calls" = a KNOWN HL user outside the CC
+              roster; "Unattributed" = ONLY rows with no determinable owner.
+              Both stay visible here and are EXCLUDED from every roster/team
+              total; mapping a user (Settings) moves them into roster math at
+              query time without touching any source record. */}
+          {data.nonRoster && (
             <div className="mt-4">
-              <p className="section-heading mb-2">Unassigned</p>
+              <p className="section-heading mb-2">Non Roster Calls</p>
               <div className="card p-3">
-                {data.unassigned.users.length === 0 ? (
-                  <p className="text-[12px] text-stone-500">No unassigned calls in this window.</p>
+                {data.nonRoster.users.length === 0 ? (
+                  <p className="text-[12px] text-stone-500">No non-roster calls in this window.</p>
                 ) : (
                   <ul className="divide-y divide-stone-100">
-                    {data.unassigned.users.map((u) => (
+                    {data.nonRoster.users.map((u) => (
                       <li key={u.key} className="flex items-baseline justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
                         <span className="min-w-0 truncate text-[12px] font-medium text-stone-700" title={u.key}>
                           {u.name ?? u.key}
@@ -405,17 +413,37 @@ function RepsPage() {
                     ))}
                   </ul>
                 )}
-                {data.unassigned.totalCalls > 0 && (
+                {data.nonRoster.totalCalls > 0 && (
                   <p className="mt-2 border-t border-stone-100 pt-2 text-[11px] tabular-nums text-stone-500">
-                    Total: {formatInt(data.unassigned.totalCalls)} calls ·{" "}
-                    {formatInt(data.unassigned.totalOverThreshold)} over threshold — excluded from roster and team
+                    Total: {formatInt(data.nonRoster.totalCalls)} calls ·{" "}
+                    {formatInt(data.nonRoster.totalOverThreshold)} over threshold — excluded from roster and team
                     totals.
                   </p>
                 )}
                 <p className="mt-2 text-[11px] leading-relaxed text-stone-400">
-                  Non-roster HighLevel users' calls, held unassigned in the database. They are never merged into the
-                  roster or team numbers. Assignment happens via the upcoming booking-attribution / manual-assignment
-                  work; inspect raw rows on the Audit page.
+                  Calls from valid HighLevel users outside the CC roster. Fully visible and auditable but excluded from
+                  CC rep metrics, team metrics, conversions, goal progress and coaching logic — unless the user is
+                  mapped to the roster in Settings → Roster Mapping. Raw rows: Audit page → Non Roster Calls.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {data.unattributed && (
+            <div className="mt-4">
+              <p className="section-heading mb-2">Unattributed</p>
+              <div className="card p-3">
+                {data.unattributed.totalCalls === 0 ? (
+                  <p className="text-[12px] text-stone-500">No unattributed calls in this window.</p>
+                ) : (
+                  <p className="text-[12px] tabular-nums text-stone-700">
+                    {formatInt(data.unattributed.totalCalls)} call{data.unattributed.totalCalls === 1 ? "" : "s"} ·{" "}
+                    {formatInt(data.unattributed.totalOverThreshold)} &gt;{data.thresholdSeconds}s
+                  </p>
+                )}
+                <p className="mt-2 text-[11px] leading-relaxed text-stone-400">
+                  Reserved EXCLUSIVELY for call records whose ownership genuinely cannot be determined (no HighLevel
+                  user id). Never used for non-roster users; excluded from every roster and team total.
                 </p>
               </div>
             </div>
@@ -426,11 +454,21 @@ function RepsPage() {
           <div className="min-w-0 space-y-4">
             {/* summary header */}
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <p className="text-[15px] font-semibold text-stone-900">
+              <p className="flex items-center gap-2 text-[15px] font-semibold text-stone-900">
                 {d.rep.name} — {RANGE_LABELS[data.range.mode]} performance
+                {data.selectedOperatingState === "not-yet-active" && (
+                  <StatusChip kind="neutral" label="Not Yet Active" />
+                )}
               </p>
               <p className="text-xs text-stone-400">Meaningful call threshold: {data.thresholdSeconds}s</p>
             </div>
+            {data.selectedOperatingState === "not-yet-active" && (
+              <p className="text-xs text-stone-500">
+                {d.rep.name} is rostered but begins calling{" "}
+                {d.rep.call_start_date ? formatDateHuman(d.rep.call_start_date) : "on their start date"}. Zero calls
+                are expected before then — no performance flags apply, and normal monitoring begins that day.
+              </p>
+            )}
 
             {/* PRIMARY PERFORMANCE METRICS (spec: stronger typography) */}
             <section className="card" aria-label="Primary performance metrics">

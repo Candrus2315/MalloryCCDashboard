@@ -27,8 +27,18 @@ import {
   formatDateHuman,
   getLeadCohort,
   mondaysInRange,
+  repOperatingState,
   weekStart,
 } from "../date-logic";
+
+/**
+ * OWNER SPEC (ux-charts-tables-spec.md §9 + accuracy pass 3): a positive
+ * performance chip may exist only when the rep's conversion stands on a
+ * MINIMUM QUALIFYING SAMPLE — at least this many calls over the meaningful
+ * threshold. A rep at 0.0% (or with 1–4 qualifying calls) must never earn a
+ * positive chip no matter how the team compares. Tunable in one place.
+ */
+export const MIN_CONVERSION_SAMPLE = 5;
 
 // ---------- row shapes (plain, serializable) ----------
 
@@ -39,6 +49,13 @@ export interface CallRow {
   started_at: string; // ISO UTC
   duration_seconds: number;
   over_two_minutes: boolean;
+  /**
+   * RAW HighLevel userId, preserved verbatim even when the call has no roster
+   * rep (immutable-source guarantee). Carried so the roster filter can apply
+   * mapping-driven eligibility AT QUERY TIME (src/server/roster.ts) — the DB
+   * row itself is never rewritten. Optional: tests may omit it.
+   */
+  provider_rep_external_id?: string | null;
 }
 
 export interface AppointmentRow {
@@ -81,6 +98,8 @@ export interface RepGoalRow {
 export interface Rep {
   id: string;
   name: string;
+  /** Explicit activation date (ET) when set — drives "Not Yet Active" state. */
+  call_start_date?: string | null;
 }
 
 // ---------- helpers ----------
@@ -373,6 +392,15 @@ export interface RepPerformanceRow {
   goal: number;
   actual: number;
   goalPercent: number | null;
+  /**
+   * Operating state from users.call_start_date vs the report date (ET):
+   * "not-yet-active" reps are visible with zero calls EXPECTED — no activity
+   * chips, no coaching/attention notes, no negative messaging. Chips and
+   * attention rules MUST consult this before any other rule.
+   */
+  operatingState: "active" | "not-yet-active";
+  /** The activation date itself (null when the rep has always been monitored). */
+  callStartDate: string | null;
 }
 
 /**
@@ -441,6 +469,7 @@ export function buildTodayMetrics(input: {
     weekEnd: addDays(ws, 6),
     repGoals: input.repGoals,
     thresholdSeconds: input.thresholdSeconds,
+    today: reportDate,
   });
 
   return {
@@ -488,6 +517,8 @@ export function buildRepPerformanceRows(input: {
   weekEnd: string;
   repGoals: RepGoalRow[];
   thresholdSeconds: number;
+  /** Report date (ET) for the operating-state boundary; defaults to weekEnd. */
+  today?: string;
 }): RepPerformanceRow[] {
   const summaries = repRangeSummaries({
     reps: input.reps,
@@ -501,6 +532,7 @@ export function buildRepPerformanceRows(input: {
     thresholdSeconds: input.thresholdSeconds,
   });
   const goalByRep = new Map(input.repGoals.map((g) => [g.rep_id, g.goal]));
+  const today = input.today ?? input.weekEnd;
   return input.reps
     .map((rep) => {
       const s = summaries.get(rep.id)!;
@@ -518,6 +550,8 @@ export function buildRepPerformanceRows(input: {
         goal,
         actual: s.totalBookings,
         goalPercent: goalAchievement(s.totalBookings, goal),
+        operatingState: repOperatingState(rep.call_start_date, today),
+        callStartDate: rep.call_start_date ?? null,
       };
     })
     .sort((a, b) => b.totalBookings - a.totalBookings || b.totalCalls - a.totalCalls);

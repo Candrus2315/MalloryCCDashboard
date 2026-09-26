@@ -1,9 +1,18 @@
 /**
- * AUDIT ENDPOINT CORE — GET /api/audit?rep=<repId|all|unassigned>&date=YYYY-MM-DD
+ * AUDIT ENDPOINT CORE — GET /api/audit?rep=<repId|all|non-roster|unattributed|unassigned>&date=YYYY-MM-DD
  *
  * Read-only DB inspection for the owner: any rep's calls for any ET day,
  * straight from the normalized `calls` table. NO live HighLevel harvesting —
  * the only I/O is store reads (calls joined to users/contacts) + settings.
+ *
+ * CALL-OWNERSHIP BUCKETS (design/data-terminology.md — three, mutually
+ * exclusive; labels are EXACT owner terminology):
+ *   - "non-roster"    → Non Roster Calls: a KNOWN HighLevel user outside the
+ *                       CC roster. Visible + auditable; never in CC metrics.
+ *   - "unattributed"  → Unattributed: ownership genuinely undeterminable
+ *                       (no HL user). NEVER used for non-roster users.
+ *   - "unassigned"    → legacy alias kept for backward compatibility; returns
+ *                       the UNION of both buckets (the old combined view).
  *
  * ET day boundaries come from the CENTRALIZED date helpers (etDayStartUtc /
  * etDayEndUtc, America/New_York) — never the server's local timezone. The
@@ -19,8 +28,15 @@
 import { etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etToday, formatDateHumanFull } from "./date-logic";
 import type { AuditCallRow } from "./store/types";
 
+export const AUDIT_NON_ROSTER = "non-roster";
+export const AUDIT_UNATTRIBUTED = "unattributed";
+/** Legacy alias → the UNION of non-roster + unattributed (old combined view). */
 export const AUDIT_UNASSIGNED = "unassigned";
 export const AUDIT_ALL = "all";
+
+/** Exact owner terminology (design/data-terminology.md) — used everywhere. */
+export const LABEL_NON_ROSTER = "Non Roster Calls";
+export const LABEL_UNATTRIBUTED = "Unattributed";
 
 /** Pure ET-day resolution: null date → today; invalid → error (HTTP 400). */
 export function resolveAuditDayBounds(
@@ -42,22 +58,27 @@ export interface AuditUserRef {
 }
 
 /**
- * Pure rep-filter resolution. Accepts "all"/null (every call), "unassigned"
- * (rep NULL or non-roster user), or an internal user id — roster or not, the
- * audit view can inspect ANY user's raw rows.
+ * Pure rep-filter resolution. Accepts "all"/null (every call), the ownership
+ * buckets ("non-roster", "unattributed", legacy alias "unassigned"), or an
+ * internal user id — roster or not, the audit view can inspect ANY user's raw
+ * rows. Raw view only: roster MAPPINGS change reporting eligibility, never
+ * what these source rows show.
  */
 export function resolveAuditRepFilter(
   rep: string | null | undefined,
   users: AuditUserRef[],
 ): { ok: true; spec: string | null; label: string } | { ok: false; error: string } {
   const r = rep == null || rep === "" ? AUDIT_ALL : rep;
-  if (r === AUDIT_ALL) return { ok: true, spec: null, label: "All calls (roster + unassigned)" };
-  if (r === AUDIT_UNASSIGNED) return { ok: true, spec: AUDIT_UNASSIGNED, label: "Unassigned — non-roster HighLevel users" };
+  if (r === AUDIT_ALL) return { ok: true, spec: null, label: "All calls (roster + non-roster + unattributed)" };
+  if (r === AUDIT_NON_ROSTER) return { ok: true, spec: AUDIT_NON_ROSTER, label: LABEL_NON_ROSTER };
+  if (r === AUDIT_UNATTRIBUTED) return { ok: true, spec: AUDIT_UNATTRIBUTED, label: LABEL_UNATTRIBUTED };
+  if (r === AUDIT_UNASSIGNED)
+    return { ok: true, spec: AUDIT_UNASSIGNED, label: "Unassigned (legacy alias — Non Roster Calls + Unattributed)" };
   const u = users.find((x) => x.id === r);
   if (!u) {
     return {
       ok: false,
-      error: `Unknown rep "${r}" — use a user id from this database, "all", or "unassigned".`,
+      error: `Unknown rep "${r}" — use a user id from this database, "all", "non-roster", or "unattributed".`,
     };
   }
   return { ok: true, spec: u.id, label: `${u.name}${u.is_active ? "" : " (non-roster user)"}` };
@@ -115,12 +136,18 @@ export async function handleAuditQuery(params: { rep?: string | null; date?: str
   const threshold = settings.meaningful_call_threshold_seconds;
   const rows = await store.getAuditCalls(day.startUtc, day.endUtc, repFilter.spec, threshold);
 
+  // Echo the requested bucket back (all / non-roster / unattributed / unassigned)
+  const requested = params.rep == null || params.rep === "" ? AUDIT_ALL : params.rep;
+  const bucketEcho = [AUDIT_NON_ROSTER, AUDIT_UNATTRIBUTED, AUDIT_UNASSIGNED].includes(requested)
+    ? requested
+    : AUDIT_ALL;
+
   return {
     status: 200,
     body: {
       date: day.date,
       date_label: formatDateHumanFull(day.date),
-      rep: repFilter.spec ?? (params.rep === AUDIT_UNASSIGNED ? AUDIT_UNASSIGNED : AUDIT_ALL),
+      rep: repFilter.spec ?? bucketEcho,
       rep_label: repFilter.label,
       threshold_seconds: threshold,
       timezone: "America/New_York",

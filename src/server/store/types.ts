@@ -23,7 +23,24 @@ export interface UserRow {
   name: string;
   email: string | null;
   is_active: boolean;
+  /**
+   * OWNER SPEC (design/data-terminology.md): explicit rep activation date
+   * (ET calendar date). Before it the rep is visible with operating state
+   * "Not Yet Active" — zero calls expected, NO exception/coaching flags, no
+   * negative messaging; normal monitoring begins ON the date. Null = active
+   * monitoring from whenever their rows start (existing reps).
+   */
+  call_start_date: string | null;
 }
+
+/**
+ * Owner-set activation dates (design/data-terminology.md worked example):
+ * Dan McKillop is rostered now but begins calling Monday 2026-09-28.
+ * Backfilled on schema ensure in both stores when the column is still unset.
+ */
+export const DEFAULT_CALL_START_DATES: Record<string, string> = {
+  "Dan McKillop": "2026-09-28",
+};
 
 export interface ContactRow {
   id: string;
@@ -222,6 +239,32 @@ export function normalizeRoster(raw: unknown): RosterEntry[] {
   return out.length > 0 ? out : fallback();
 }
 
+/**
+ * One roster-mapping entry (design/data-terminology.md): a HighLevel user id
+ * OUTSIDE the CC roster explicitly mapped to a CC rep by the owner. The raw
+ * HighLevel user id is the KEY (stable across stores; internal ids are not
+ * owner-visible). Mapping drives REPORTING ELIGIBILITY ONLY at query time —
+ * it must NEVER alter the original source record (provider_rep_external_id,
+ * rep linkage, ids, timestamps stay untouched).
+ */
+export interface RepMapping {
+  external_user_id: string;
+  rep_id: string; // internal users.id of an ACTIVE roster rep
+}
+
+/** Keep well-formed mappings; last one wins per HL user id; never throws. */
+export function normalizeRepMappings(raw: unknown): RepMapping[] {
+  if (!Array.isArray(raw)) return [];
+  const byExternal = new Map<string, RepMapping>();
+  for (const item of raw) {
+    const r = (item ?? {}) as Partial<RepMapping>;
+    const ext = typeof r.external_user_id === "string" ? r.external_user_id.trim() : "";
+    const rep = typeof r.rep_id === "string" ? r.rep_id.trim() : "";
+    if (ext && rep) byExternal.set(ext, { external_user_id: ext, rep_id: rep });
+  }
+  return [...byExternal.values()];
+}
+
 export interface AppSettings {
   meaningful_call_threshold_seconds: number;
   /** Background HighLevel sync cadence (owner-configurable, default 90s, clamped 30–3600). */
@@ -236,6 +279,14 @@ export interface AppSettings {
    * appears on rep surfaces or in team rollups. See src/server/roster.ts.
    */
   active_roster: RosterEntry[];
+  /**
+   * Owner-managed HL-user → CC-rep roster mappings (Settings → Roster
+   * Mapping). When a non-roster HighLevel user is mapped here, ALL historical
+   * calls under that HL user id become eligible AT QUERY TIME for the mapped
+   * rep's performance and the CC team totals — no re-import, no backfill,
+   * and the source records stay immutable. Empty = verified part-2 behavior.
+   */
+  rep_mappings: RepMapping[];
   studio: {
     appointment_duration_min: number;
     slot_interval_min: number;
@@ -337,6 +388,7 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
     ...r,
     highlevel_sync_interval_seconds: clampNumber(r.highlevel_sync_interval_seconds, base.highlevel_sync_interval_seconds, 30, 3600),
     active_roster: normalizeRoster(r.active_roster ?? base.active_roster),
+    rep_mappings: normalizeRepMappings(r.rep_mappings ?? base.rep_mappings),
     studio: { ...base.studio, ...(r.studio ?? {}) },
     sheets: {
       family: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.family ?? base.sheets.family, DEFAULT_SHEET_IDS.family),
@@ -353,6 +405,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   attribution_window_hours: 24,
   timezone: "America/New_York",
   active_roster: DEFAULT_ACTIVE_ROSTER,
+  rep_mappings: [],
   studio: {
     appointment_duration_min: 60,
     slot_interval_min: 90,
@@ -401,6 +454,8 @@ export interface Store {
 
   // core entities
   upsertUsers(rows: UserRow[]): Promise<number>;
+  /** Set/clear one rep's activation date (Settings editor; ET YYYY-MM-DD or null). */
+  setUserCallStartDate(repId: string, date: string | null): Promise<void>;
   /** Active-roster users only (every page/rep surface reads this). */
   getUsers(): Promise<UserRow[]>;
   /**
@@ -423,11 +478,14 @@ export interface Store {
   getAllCallsSince(startUtc: string): Promise<CallRow[]>;
   /**
    * Raw records behind the call metrics (audit endpoint): rep/contact joined.
-   * repSpec: null|"all" = every call, "unassigned" = rep NULL or non-roster
-   * (users.is_active=false) — the exact complement of keepRosterRepCalls' kept
-   * set, so unassigned counts reconcile with the roster math by construction.
-   * A user id string filters to that user (roster or not — read-only audit).
-   * thresholdSeconds drives over_threshold (live settings value, metrics rule).
+   * repSpec: null|"all" = every call, "non-roster" = calls whose rep resolves
+   * to a KNOWN user that is not on the active roster, "unattributed" = calls
+   * with rep NULL (no determinable owner). "unassigned" is kept as a legacy
+   * alias for the UNION of both buckets (the exact complement of
+   * keepRosterRepCalls' kept set, so counts reconcile with the roster math by
+   * construction). A user id string filters to that user (roster or not —
+   * read-only audit). thresholdSeconds drives over_threshold (live settings
+   * value, metrics rule).
    */
   getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]>;
   upsertOpportunities(rows: OpportunityRow[]): Promise<number>;

@@ -182,6 +182,30 @@ export function isWorkday(dateStr: string): boolean {
   return wd >= 1 && wd <= 5;
 }
 
+// ---------- rep operating state (call_start_date, design/data-terminology.md) ----------
+
+export type RepOperatingState = "active" | "not-yet-active";
+
+/**
+ * Rep operating state for an ET calendar date, from the rep's explicit
+ * activation field (users.call_start_date). BEFORE the start date the rep is
+ * "not-yet-active": visible in the roster with zero calls EXPECTED — never
+ * flagged for zero activity, never coached, never labeled underperforming,
+ * never part of zero-activity exception logic, and never given negative
+ * performance messaging. Normal monitoring begins ON the start date
+ * (boundary: today === call_start_date is ACTIVE). No start date (null) means
+ * the rep has always been monitored.
+ */
+export function repOperatingState(
+  callStartDate: string | null | undefined,
+  today: string,
+): RepOperatingState {
+  if (typeof callStartDate !== "string" || !DATE_RE.test(callStartDate) || callStartDate <= today) {
+    return "active";
+  }
+  return "not-yet-active";
+}
+
 /**
  * Fraction of the work week elapsed INCLUDING today: Mon=1/5 … Fri=5/5.
  * Sat/Sun=5/5 — the week's work is done, expected-to-date is the full goal.

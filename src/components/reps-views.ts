@@ -118,7 +118,16 @@ export function coachingObservations(input: {
   /** Week-scoped goal figures; null when the range is multi-week (pace is a weekly notion). */
   goal: { wtd: number; goalValue: number; anchorDay: string } | null;
   today: string;
+  /**
+   * Operating state (call_start_date). "not-yet-active" reps get NO coaching
+   * verdicts at all — zero calls are EXPECTED before the start date; never a
+   * sync-gap note, never a pace/conversion judgment (owner spec).
+   */
+  operatingState?: "active" | "not-yet-active";
 }): CoachingObservation[] {
+  // 0 — Not Yet Active: no flags, no coaching, no negative messaging.
+  if (input.operatingState === "not-yet-active") return [];
+
   // 1 — no activity at all: a sync/assignment gap, not a performance verdict.
   if (input.totalCalls === 0 && input.totalBookings === 0) {
     return [
@@ -219,10 +228,10 @@ export function coachingObservations(input: {
   return [...risks, ...positives].slice(0, 3);
 }
 
-// ---------- unassigned rollup (non-roster HighLevel users' calls) ----------
+// ---------- call-ownership buckets (design/data-terminology.md) ----------
 
-export interface UnassignedUserRollup {
-  /** Display key: HL user id when known, "(no user)" when the call had none. */
+export interface NonRosterUserRollup {
+  /** Display key: the HL user's external id. */
   key: string;
   /** HighLevel user name when known — null renders as the raw HL user id. */
   name: string | null;
@@ -231,48 +240,82 @@ export interface UnassignedUserRollup {
   overThreshold: number;
 }
 
-export interface UnassignedRollup {
-  users: UnassignedUserRollup[];
+export interface NonRosterRollup {
+  users: NonRosterUserRollup[];
   totalCalls: number;
   totalOverThreshold: number;
 }
 
+export interface UnattributedRollup {
+  totalCalls: number;
+  totalOverThreshold: number;
+}
+
+export interface CallOwnershipBuckets {
+  /** "Non Roster Calls" — rows with a KNOWN HL user outside the CC roster. */
+  nonRoster: NonRosterRollup;
+  /** "Unattributed" — ONLY rows with no determinable owner (no HL user). */
+  unattributed: UnattributedRollup;
+}
+
 /**
- * Rollup of the calls that are NOT roster-rep calls in the same window:
- * rep NULL (unknown HL user) or the rep is a roster-excluded user. This is the
- * exact complement of keepRosterRepCalls' kept set over the SAME call rows the
- * metrics layer used — never merged into roster or team totals, shown apart.
- * Sorted by call count desc (ties by key asc); a missing HL user name degrades
- * to the raw id.
+ * Split the calls that are NOT roster-rep calls in the same window into the
+ * owner's THREE mutually exclusive buckets (design/data-terminology.md):
+ *
+ *  1. Roster Calls  — kept by the eligibility gate (rep on the active roster
+ *     OR the HL user is roster-mapped); counted in rep/team metrics.
+ *  2. Non Roster Calls — rep resolves to a KNOWN user outside the roster
+ *     (rep_id set, user inactive) and NOT mapped. Label EXACTLY "Non Roster
+ *     Calls". Visible + auditable; excluded from every CC metric.
+ *  3. Unattributed — ONLY rows with no determinable owner (rep_id NULL, raw
+ *     HL user unresolved) and NOT mapped. Never used for non-roster users.
+ *
+ * This is computed over the SAME call rows the metrics layer used and is the
+ * exact complement of the eligible set. Sorted by call count desc (ties by
+ * key asc); a missing HL user name degrades to the raw id.
  */
-export function buildUnassignedRollup(input: {
+export function buildCallOwnershipBuckets(input: {
   /** ALL calls in the window (the same array the metrics layer filtered). */
-  calls: { rep_id: string | null; duration_seconds: number }[];
-  /** Active-roster rep ids (the keepRosterRepCalls keep-set). */
+  calls: { rep_id: string | null; duration_seconds: number; provider_rep_external_id?: string | null }[];
+  /** Active-roster rep ids (the eligibility keep-set). */
   activeRepIds: Set<string>;
+  /** HL external user ids that are roster-mapped (already eligible). */
+  mappedExternalIds: Set<string>;
   /** rep_id → { name, external_id } for ALL users (roster or not). */
   userById: Map<string, { name: string; external_id: string }>;
   thresholdSeconds: number;
-}): UnassignedRollup {
-  const byUser = new Map<string, UnassignedUserRollup>();
-  let totalCalls = 0;
-  let totalOver = 0;
+}): CallOwnershipBuckets {
+  const byUser = new Map<string, NonRosterUserRollup>();
+  const nonRoster: NonRosterRollup = { users: [], totalCalls: 0, totalOverThreshold: 0 };
+  const unattributed: UnattributedRollup = { totalCalls: 0, totalOverThreshold: 0 };
+
   for (const c of input.calls) {
-    // unassigned = no rep OR rep not on the active roster (same predicate as
-    // the audit endpoint's "unassigned" spec and keepRosterRepCalls' complement)
-    if (c.rep_id && input.activeRepIds.has(c.rep_id)) continue;
-    const u = c.rep_id ? input.userById.get(c.rep_id) : undefined;
-    const key = u?.external_id ?? "(no user)";
-    let row = byUser.get(key);
-    if (!row) {
-      row = { key, name: u?.name ?? null, externalId: u?.external_id ?? null, calls: 0, overThreshold: 0 };
-      byUser.set(key, row);
+    if (c.rep_id && input.activeRepIds.has(c.rep_id)) continue; // roster call
+    const over = c.duration_seconds > input.thresholdSeconds;
+    if (c.rep_id) {
+      // KNOWN user outside the roster — "Non Roster Calls" (unless mapped).
+      const u = input.userById.get(c.rep_id);
+      const ext = u?.external_id ?? null;
+      if (ext && input.mappedExternalIds.has(ext)) continue; // mapped → eligible
+      const key = ext ?? c.rep_id;
+      let row = byUser.get(key);
+      if (!row) {
+        row = { key, name: u?.name ?? null, externalId: ext, calls: 0, overThreshold: 0 };
+        byUser.set(key, row);
+      }
+      row.calls += 1;
+      if (over) row.overThreshold += 1;
+      nonRoster.totalCalls += 1;
+      if (over) nonRoster.totalOverThreshold += 1;
+    } else {
+      // No determinable owner (no HL user) — "Unattributed" (unless the raw
+      // provider id on the row is mapped, which would make it eligible).
+      const prov = c.provider_rep_external_id ?? null;
+      if (prov && input.mappedExternalIds.has(prov)) continue;
+      unattributed.totalCalls += 1;
+      if (over) unattributed.totalOverThreshold += 1;
     }
-    row.calls += 1;
-    if (c.duration_seconds > input.thresholdSeconds) row.overThreshold += 1;
-    totalCalls += 1;
-    if (c.duration_seconds > input.thresholdSeconds) totalOver += 1;
   }
-  const users = [...byUser.values()].sort((a, b) => b.calls - a.calls || a.key.localeCompare(b.key));
-  return { users, totalCalls, totalOverThreshold: totalOver };
+  nonRoster.users = [...byUser.values()].sort((a, b) => b.calls - a.calls || a.key.localeCompare(b.key));
+  return { nonRoster, unattributed };
 }

@@ -12,6 +12,7 @@
  */
 import { daysLeftInWorkWeek, weekElapsedWorkFraction, weekday } from "~/server/date-logic";
 import {
+  MIN_CONVERSION_SAMPLE,
   TREND_MIN_DENOMINATOR,
   type AvailabilityRule,
   type RepPerformanceRow,
@@ -146,22 +147,39 @@ export function formatDelta(delta: number | null, unit: DeltaUnit): string | nul
 }
 
 /**
- * Status chip per spec §6.2 — FIRST MATCH WINS. Null-safe: every rule that
- * reads a nullable value checks it first. `teamConv` is the rep's team mean
- * Conversation Conversion (others only). A data gap is never labeled.
+ * Status chip per spec §6.2 + ux-charts-tables-spec.md §9 — FIRST MATCH WINS.
+ * Null-safe: every rule that reads a nullable value checks it first.
+ * `teamConv` is the rep's team mean Conversation Conversion (others only).
+ * A data gap is never labeled.
+ *
+ * §9 CHIP BUG FIX (owner audit): "Strong converter" requires ALL of
+ *   (a) a valid conversion denominator (calls > 2 min > 0),
+ *   (b) MIN_CONVERSION_SAMPLE qualifying calls (minimum sample — a 1–4-call
+ *       conversion is noise, never a badge), and
+ *   (c) the rep EXCEEDING the team comparison (strictly greater — a rep at
+ *       0.0% tied with a 0.0% team must never earn a positive chip).
+ * Otherwise NO chip from this rule — and a failed positive test never
+ * auto-substitutes a negative chip (the "Needs coaching" rule keeps its own
+ * independent, genuine conditions below).
+ * A "not-yet-active" rep (call_start_date in the future) shows ONLY the
+ * "Not Yet Active" chip — no activity chips, no risk chips (owner spec).
  */
 export function chipFor(
   row: RepPerformanceRow,
   teamConv: number | null,
   weekElapsed: number,
 ): ChipView | null {
+  if (row.operatingState === "not-yet-active") {
+    return { kind: "neutral", label: "Not Yet Active" };
+  }
   if (row.goal === 0 && row.conversationConversion == null && row.totalCalls === 0) return null;
   if (row.goalPercent != null && row.goalPercent >= 1) return { kind: "positive", label: "Goal hit" };
   if (
     row.conversationConversion != null &&
     teamConv != null &&
-    row.conversationConversion >= teamConv &&
-    row.callsOverThreshold >= TREND_MIN_DENOMINATOR
+    row.callsOverThreshold > 0 &&
+    row.callsOverThreshold >= MIN_CONVERSION_SAMPLE &&
+    row.conversationConversion > teamConv
   ) {
     return { kind: "positive", label: "Strong converter" };
   }
@@ -199,6 +217,10 @@ export function attentionNotes(rows: RepPerformanceRow[], reportDate: string): A
   const scored: ScoredNote[] = [];
 
   for (const r of rows) {
+    // 0. Not Yet Active (call_start_date in the future): visible in the
+    // roster, zero calls EXPECTED — never an activity alert, never a coaching
+    // note, never negative messaging (owner spec, design/data-terminology.md).
+    if (r.operatingState === "not-yet-active") continue;
     // 1. No activity — a sync/assignment gap, not a performance verdict.
     if (r.totalCalls === 0 && r.totalBookings === 0) {
       scored.push({

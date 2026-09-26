@@ -15,6 +15,7 @@
  */
 import { isWorkday } from "~/server/date-logic";
 import {
+  MIN_CONVERSION_SAMPLE,
   TREND_MIN_DENOMINATOR,
   type TeamRangeMetrics,
   type TrendBucketMode,
@@ -120,13 +121,19 @@ export function leadPacing(points: TrendPoint[]): LeadPacing {
 // ---------- by-rep status chips (spec §5: real metrics only, one per rep max) ----------
 
 /**
- * One optional chip per rep, first match wins: top bookings (unique max, >0)
- * → "Top performer"; conversation conversion above the team average of
- * qualifying reps (≥ TREND_MIN_DENOMINATOR with a value — the same thin-
- * denominator gate the trends use) → "Strong conversion"; no recorded
- * activity → "No activity"; calls but no bookings → "Needs attention".
- * Reps with bookings below average get NO chip — per-rep goals are not in
- * this page's payload, so "below pace" would be an invented grade.
+ * One optional chip per rep, FIRST match wins (spec §5 + ux-charts-tables-spec
+ * §9/§10): "Not Yet Active" (call_start_date in the future — visible, zero
+ * calls expected, no other chip) → top bookings (unique max, >0) → "Top
+ * performer"; conversation conversion EXCEEDING the team average of qualifying
+ * reps → "Strong conversion" — but ONLY with a genuine sample: the rep needs
+ * callsOverThreshold > 0 AND ≥ MIN_CONVERSION_SAMPLE qualifying calls, and the
+ * team average must exist (≥ TREND_MIN_DENOMINATOR reps with a value — the
+ * thin-denominator gate the trends use). A rep at 0.0% (or on an all-zero
+ * team) never earns it; no chip is auto-substituted in its place.
+ * No recorded activity → "No activity"; calls but no bookings → "Needs
+ * attention" (both skipped for not-yet-active reps). Reps with bookings below
+ * average get NO chip — per-rep goals are not in this page's payload, so
+ * "below pace" would be an invented grade.
  */
 export function repChips(rows: RepStripRow[]): Map<string, ChipView> {
   const withConv = rows.filter((r) => r.conversationConversion != null);
@@ -139,9 +146,17 @@ export function repChips(rows: RepStripRow[]): Map<string, ChipView> {
 
   const chips = new Map<string, ChipView>();
   for (const r of rows) {
-    if (maxBookings > 0 && topCount === 1 && r.totalBookings === maxBookings) {
+    if (r.operatingState === "not-yet-active") {
+      chips.set(r.id, { kind: "neutral", label: "Not Yet Active" });
+    } else if (maxBookings > 0 && topCount === 1 && r.totalBookings === maxBookings) {
       chips.set(r.id, { kind: "positive", label: "Top performer" });
-    } else if (r.conversationConversion != null && convAvg != null && r.conversationConversion > convAvg) {
+    } else if (
+      r.conversationConversion != null &&
+      convAvg != null &&
+      r.callsOverThreshold > 0 &&
+      r.callsOverThreshold >= MIN_CONVERSION_SAMPLE &&
+      r.conversationConversion > convAvg
+    ) {
       chips.set(r.id, { kind: "positive", label: "Strong conversion" });
     } else if (r.totalBookings === 0 && r.callsOverThreshold === 0) {
       chips.set(r.id, { kind: "neutral", label: "No activity" });
@@ -248,10 +263,14 @@ export function attentionNotes(input: {
     }
   }
 
-  // 4 — silent rep: honest sync/assignment gap, not a performance verdict
+  // 4 — silent rep: honest sync/assignment gap, not a performance verdict.
+  // "Not Yet Active" reps (call_start_date in the future) are EXPECTED to show
+  // zero calls — they never trigger activity or attention rules (owner spec).
   const anyActivity = input.repRows.some((r) => r.totalBookings > 0 || r.callsOverThreshold > 0);
   if (anyActivity) {
-    const silent = input.repRows.find((r) => r.totalBookings === 0 && r.callsOverThreshold === 0);
+    const silent = input.repRows.find(
+      (r) => r.operatingState !== "not-yet-active" && r.totalBookings === 0 && r.callsOverThreshold === 0,
+    );
     if (silent) {
       notes.push({
         severity: "risk",
@@ -259,7 +278,9 @@ export function attentionNotes(input: {
         text: `${silent.name} has no calls or bookings recorded in this range — verify sync or lead assignment.`,
       });
     }
-    const noBookings = input.repRows.find((r) => r.callsOverThreshold > 0 && r.totalBookings === 0);
+    const noBookings = input.repRows.find(
+      (r) => r.operatingState !== "not-yet-active" && r.callsOverThreshold > 0 && r.totalBookings === 0,
+    );
     if (noBookings) {
       notes.push({
         severity: "risk",

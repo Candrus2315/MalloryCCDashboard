@@ -10,6 +10,8 @@ import {
   saveAcuityScope,
   saveRecurringBlocks,
   saveRepGoals,
+  saveRepMappings,
+  saveRepStartDates,
   saveSettings,
   saveSheetMapping,
   saveStudioRules,
@@ -114,6 +116,12 @@ function SettingsPage() {
 
       {/* ---------- Rep goals ---------- */}
       <RepGoalsSection data={data} busy={busy} onSave={(weekStart, goals) => run(`Rep goals saved for ${weekStart}`, () => saveRepGoals({ data: { weekStart, goals } }))} />
+
+      {/* ---------- Roster mapping (owner terminology: mapping drives eligibility) ---------- */}
+      <RosterMappingSection data={data} busy={busy} onSave={(mappings) => run("Roster mappings saved", () => saveRepMappings({ data: { mappings } }))} />
+
+      {/* ---------- Rep start dates (call_start_date → "Not Yet Active") ---------- */}
+      <RepStartDatesSection data={data} busy={busy} onSave={(entries) => run("Rep start dates saved", () => saveRepStartDates({ data: { entries } }))} />
 
       {/* ---------- Core operational settings ---------- */}
       <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -302,6 +310,142 @@ function RepGoalsSection({ data, busy, onSave }: {
             onClick={() => onSave(week, data.users.map((u) => ({ repId: u.id, goal: (draft[u.id] ?? "").trim() === "" ? null : Number(draft[u.id]) })))}
           >
             Save rep goals
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ================= roster mapping (owner rule: mapping drives eligibility) ================= */
+
+function RosterMappingSection({ data, busy, onSave }: {
+  data: ReturnType<typeof Route.useLoaderData>;
+  busy: boolean;
+  onSave: (mappings: { external_user_id: string; rep_id: string }[]) => void;
+}) {
+  // draft rep choice per non-roster HL user (prefilled with any existing mapping)
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(data.nonRosterUsers.filter((u) => u.mappedTo).map((u) => [u.externalId, u.mappedTo!])),
+  );
+  const currentByExternal = new Map(data.repMappings.map((m) => [m.external_user_id, m.rep_id]));
+  // the payload to save: every current mapping kept (unless changed below) + new drafts
+  const nextMappings = () => {
+    const merged = new Map<string, string>();
+    for (const m of data.repMappings) merged.set(m.external_user_id, m.rep_id);
+    for (const [ext, repId] of Object.entries(draft)) {
+      if (repId) merged.set(ext, repId);
+      else merged.delete(ext);
+    }
+    return [...merged.entries()].map(([external_user_id, rep_id]) => ({ external_user_id, rep_id }));
+  };
+  const dirty = [...currentByExternal.entries()].some(([ext, rep]) => (draft[ext] ?? rep) !== rep) ||
+    Object.entries(draft).some(([ext, rep]) => rep && !currentByExternal.has(ext));
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <p className="section-title">Roster Mapping</p>
+        <p className="mt-1 text-[13px] text-stone-500">
+          Map a non-roster HighLevel user to a CC rep. From then on ALL historical calls under that HighLevel user id
+          count for the rep&apos;s performance and the team totals — computed from the mapping at query time. Source
+          records are never rewritten: the original HL user id, message ids and timestamps stay untouched, and removing
+          a mapping returns the calls to Non Roster.
+        </p>
+      </div>
+      <div className="card space-y-1 p-0">
+        {data.nonRosterUsers.length === 0 && (
+          <p className="p-5 text-sm text-stone-400">No non-roster HighLevel users seen in calls yet.</p>
+        )}
+        {data.nonRosterUsers.map((u) => {
+          const val = draft[u.externalId] ?? "";
+          return (
+            <div key={u.externalId} className="flex flex-wrap items-center justify-between gap-4 border-b border-stone-100 px-5 py-2.5 last:border-0">
+              <span className="text-[13px] font-medium text-stone-800">
+                {u.name || u.externalId}
+                <span className="ml-2 font-mono text-[11px] text-stone-400">{u.externalId}</span>
+              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] tabular-nums text-stone-400">
+                  {u.callCount > 0 ? `${u.callCount} calls in last 30 days` : "no calls in last 30 days"}
+                </span>
+                <select
+                  aria-label={`Map ${u.name || u.externalId} to`}
+                  className="rounded-lg border border-stone-300 bg-white px-2 py-1 text-[13px]"
+                  value={val}
+                  onChange={(e) => setDraft({ ...draft, [u.externalId]: e.target.value })}
+                >
+                  <option value="">Non Roster (excluded)</option>
+                  {data.users.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          );
+        })}
+        <div className="flex justify-end px-5 py-3">
+          <button
+            className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
+            disabled={busy || !dirty}
+            onClick={() => onSave(nextMappings())}
+          >
+            Save roster mappings
+          </button>
+        </div>
+      </div>
+      {data.repMappings.length > 0 && (
+        <p className="text-[11px] text-stone-400">
+          Active mappings: {data.repMappings.map((m) => `${m.external_user_id} → ${data.users.find((u) => u.id === m.rep_id)?.name ?? m.rep_id}`).join(" · ")}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/* ================= rep start dates (call_start_date) ================= */
+
+function RepStartDatesSection({ data, busy, onSave }: {
+  data: ReturnType<typeof Route.useLoaderData>;
+  busy: boolean;
+  onSave: (entries: { repId: string; date: string | null }[]) => void;
+}) {
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(data.users.map((u) => [u.id, u.call_start_date ?? ""])),
+  );
+  const dirty = data.users.some((u) => (draft[u.id] ?? "") !== (u.call_start_date ?? ""));
+  return (
+    <section className="space-y-3">
+      <div>
+        <p className="section-title">Rep start dates</p>
+        <p className="mt-1 text-[13px] text-stone-500">
+          A rep with a future start date stays visible in the roster as <b>Not Yet Active</b>: zero calls expected, no
+          coaching flags, no zero-activity alerts, no negative messaging. Normal performance monitoring begins ON the
+          start date. Clear a date to monitor the rep from whenever their records begin.
+        </p>
+      </div>
+      <div className="card space-y-1 p-0">
+        {data.users.map((u) => (
+          <div key={u.id} className="flex items-center justify-between gap-4 border-b border-stone-100 px-5 py-2.5 last:border-0">
+            <span className="text-[13px] font-medium text-stone-800">{u.name}</span>
+            <input
+              type="date"
+              aria-label={`Call start date for ${u.name}`}
+              className="rounded-lg border border-stone-300 bg-white px-2 py-1 text-[13px]"
+              value={draft[u.id] ?? ""}
+              onChange={(e) => setDraft({ ...draft, [u.id]: e.target.value })}
+            />
+          </div>
+        ))}
+        <div className="flex justify-end px-5 py-3">
+          <button
+            className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
+            disabled={busy || !dirty}
+            onClick={() => onSave(data.users.map((u) => ({ repId: u.id, date: (draft[u.id] ?? "").trim() === "" ? null : draft[u.id] })))}
+          >
+            Save rep start dates
           </button>
         </div>
       </div>

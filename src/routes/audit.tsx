@@ -111,7 +111,9 @@ function AuditPage() {
           className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[13px] text-stone-900 outline-none focus:border-stone-500"
         >
           <option value="all">{data.picker?.allLabel ?? "All calls"}</option>
-          <option value="unassigned">{data.picker?.unassignedLabel ?? "Unassigned — non-roster HL users"}</option>
+          <option value="non-roster">{data.picker?.nonRosterLabel ?? "Non Roster Calls"}</option>
+          <option value="unattributed">{data.picker?.unattributedLabel ?? "Unattributed"}</option>
+          <option value="unassigned">{data.picker?.unassignedLabel ?? "Unassigned (legacy — both buckets)"}</option>
           {(data.picker?.reps ?? []).map((r) => (
             <option key={r.id} value={r.id}>
               {r.name}
@@ -227,8 +229,9 @@ function AuditPage() {
         <p className="mt-2 text-[11px] text-stone-400">
           Read-only rows from the normalized <code>calls</code> table — the same rows Reps/Team count. Over-threshold
           uses the live settings threshold ({p?.threshold_seconds ?? 120}s), the same rule as every page; no live
-          HighLevel harvesting happens here. Assignment of unassigned calls arrives with the booking-attribution /
-          manual-assignment work.
+          HighLevel harvesting happens here. Buckets per the owner&apos;s terminology: <b>Non Roster Calls</b> = a known
+          HighLevel user outside the CC roster; <b>Unattributed</b> = no determinable owner. Roster mappings (Settings)
+          change reporting eligibility at query time — these raw rows always show the original source values.
         </p>
       </section>
     </div>

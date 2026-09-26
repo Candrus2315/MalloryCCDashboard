@@ -22,6 +22,7 @@ import {
   formatDateHumanFull,
   isRangeMode,
   mondaysInRange,
+  repOperatingState,
   resolveRange,
   weekStart,
   type RangeMode,
@@ -49,12 +50,16 @@ import {
   buildDailyReportText,
 } from "./metrics/report-text";
 import { getStore } from "./store";
-import { keepRosterRepCalls } from "./roster";
-import { buildUnassignedRollup } from "~/components/reps-views";
+import {
+  applyAttributionEligibility,
+  applyRosterEligibility,
+  buildRosterEligibility,
+} from "./roster";
+import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
 import type { AuditOkBody } from "./audit-api";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
-import type { AppSettings } from "./store/types";
+import { normalizeRepMappings, type AppSettings, type RepMapping } from "./store/types";
 
 /** Open-slot horizon for the Today page: today + the next 6 days (spec §7.1). */
 const SLOT_DAY_OFFSETS = [0, 1, 2, 3, 4, 5, 6] as const;
@@ -123,13 +128,19 @@ export const getTodayData = createServerFn().handler(async () => {
   const teamBookingGoal = teamGoal?.booking_goal ?? 79;
   const weeklyLeadBudget = teamGoal?.lead_budget ?? 700;
 
-  // ROSTER: users are active-roster only (store filters is_active); team call
-  // metrics must likewise never see non-roster users' calls. Raw rows stay in
-  // the DB — this filter is per-surface, applied before the metrics layer.
-  const rosterIds = new Set(users.map((u) => u.id));
-  const rosterCallsToday = keepRosterRepCalls(callsToday, rosterIds);
-  const rosterCallsWtd = keepRosterRepCalls(callsWtd, rosterIds);
-  const rosterCallsForAttribution = keepRosterRepCalls(callsForAttribution, rosterIds);
+  // ROSTER ELIGIBILITY (mapping-aware): active-roster users + owner roster
+  // mappings (Settings). Calls pass when their rep is a roster member OR their
+  // raw HL user id is mapped to one — computed at QUERY TIME; source rows are
+  // never rewritten. With no mappings this is exactly the verified roster
+  // filter. Non-roster/unattributed calls stay in the DB and stay visible in
+  // the Reps-page ownership buckets — never merged into roster/team totals.
+  const eligibility = buildRosterEligibility(users, settings.rep_mappings ?? []);
+  const rosterCallsToday = applyRosterEligibility(callsToday, eligibility);
+  const rosterCallsWtd = applyRosterEligibility(callsWtd, eligibility);
+  const rosterCallsForAttribution = applyRosterEligibility(callsForAttribution, eligibility);
+  // Bookings inherit the same query-time eligibility (a mapped user's
+  // historical bookings flow to their mapped rep via the underlying call).
+  const attributionsEligible = applyAttributionEligibility(attributions, rosterCallsForAttribution, eligibility);
 
   // concrete blocks (Acuity/manual) PLUS the weekly recurring pattern,
   // materialized per queried day — the open-slot engine stays date-agnostic
@@ -161,14 +172,14 @@ export const getTodayData = createServerFn().handler(async () => {
     apptsCreatedWtd: apptsWtd,
     callsWtd: rosterCallsWtd,
     allCallsForWeek: rosterCallsForAttribution,
-    attributions,
+    attributions: attributionsEligible,
     leadsAllRecent: leads,
     leadCountAdjustments: leadAdjustments,
     teamBookingGoal,
     weeklyLeadBudget,
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
     openSlotsByDay,
-    reps: users.map((u) => ({ id: u.id, name: u.name })),
+    reps: users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date })),
     repGoals: repGoals.map((g) => ({ rep_id: g.rep_id, week_start: g.week_start, goal: g.goal })),
   });
 
@@ -201,7 +212,7 @@ export const getSettingsData = createServerFn().handler(async () => {
   const editorWeeks = Array.from({ length: 9 }, (_, i) => addDays(weekStart(today), 7 * (i - 2)));
   const week = dateRange(ws, addDays(ws, 6));
 
-  const [teamGoals, connections, runs, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow] =
+  const [teamGoals, connections, runs, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow, allUsers] =
     await Promise.all([
       store.getTeamGoals(),
       store.getConnections(),
@@ -216,6 +227,9 @@ export const getSettingsData = createServerFn().handler(async () => {
       store.getContacts(),
       store.getAttributions(),
       store.getBlockedTimesBetween(etDayStartUtc(addDays(today, -7)), etDayEndUtc(addDays(today, 30))),
+      // ALL users (roster + non-roster) — the Roster Mapping panel lists the
+      // non-roster HighLevel users actually seen in calls.
+      store.getAllUsers(),
     ]);
 
   const repGoalsByWeek: Record<string, { rep_id: string; goal: number }[]> = {};
@@ -243,6 +257,25 @@ export const getSettingsData = createServerFn().handler(async () => {
     });
   });
 
+  // Roster Mapping panel: non-roster HighLevel users seen in the last 30 days
+  // of calls, with call counts (calls carry the RAW HL user id — immutable).
+  const activeIds = new Set(users.map((u) => u.id));
+  const callsByExternalId = new Map<string, number>();
+  for (const c of callsWindow) {
+    const ext = c.provider_rep_external_id;
+    if (!ext) continue;
+    callsByExternalId.set(ext, (callsByExternalId.get(ext) ?? 0) + 1);
+  }
+  const nonRosterUsers = allUsers
+    .filter((u) => !u.is_active && !activeIds.has(u.id))
+    .map((u) => ({
+      externalId: u.external_id,
+      name: u.name,
+      callCount: callsByExternalId.get(u.external_id) ?? 0,
+      mappedTo: (settings.rep_mappings ?? []).find((m) => m.external_user_id === u.external_id)?.rep_id ?? null,
+    }))
+    .sort((a, b) => b.callCount - a.callCount || a.name.localeCompare(b.name));
+
   const { isPassphraseConfigured } = await import("./auth");
   return {
     meta,
@@ -257,9 +290,11 @@ export const getSettingsData = createServerFn().handler(async () => {
       goal: goalByWeek.get(w)?.booking_goal ?? null,
       leadBudget: goalByWeek.get(w)?.lead_budget ?? null,
     })),
-    users: users.map((u) => ({ id: u.id, name: u.name })),
+    users: users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date })),
     repCount: users.length,
     repGoalsByWeek,
+    repMappings: settings.rep_mappings ?? [],
+    nonRosterUsers,
     connections: serializableConnections(connections),
     syncRuns: runs,
     overrides,
@@ -369,6 +404,79 @@ export const saveWeekGoal = createServerFn({ method: "POST" })
       });
     }
     return { ok: true, changed: changes.length };
+  });
+
+/**
+ * OWNER ROSTER MAPPINGS (design/data-terminology.md): map a non-roster
+ * HighLevel user to a CC rep. From then on ALL historical calls under that HL
+ * user id are eligible AT QUERY TIME for the rep's performance and CC team
+ * totals — source records are never rewritten (eligibility, not mutation).
+ * Replaces the whole mapping list; entries pointing outside the active roster
+ * are inert (filtered by buildRosterEligibility).
+ */
+export const saveRepMappings = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { mappings: RepMapping[] })
+  .handler(async ({ data }) => {
+    const store = await getStore();
+    const settings = await store.getSettings();
+    const mappings = normalizeRepMappings(data?.mappings ?? []);
+    const prev = settings.rep_mappings ?? [];
+    await store.saveSettings({ rep_mappings: mappings });
+    // audit trail: every added/removed HL user id, never the raw call data
+    const prevKeys = new Set(prev.map((m) => m.external_user_id));
+    const nextKeys = new Set(mappings.map((m) => m.external_user_id));
+    const repName = new Map((await store.getUsers()).map((u) => [u.id, u.name]));
+    for (const m of mappings) {
+      if (!prevKeys.has(m.external_user_id)) {
+        await store.insertManualOverride({
+          entity_type: "rep_mapping",
+          entity_id: m.external_user_id,
+          field: "mapped_rep",
+          previous_value: null,
+          new_value: repName.get(m.rep_id) ?? m.rep_id,
+          changed_by: "christopher",
+        });
+      }
+    }
+    for (const p of prev) {
+      if (!nextKeys.has(p.external_user_id)) {
+        await store.insertManualOverride({
+          entity_type: "rep_mapping",
+          entity_id: p.external_user_id,
+          field: "mapped_rep",
+          previous_value: repName.get(p.rep_id) ?? p.rep_id,
+          new_value: "removed",
+          changed_by: "christopher",
+        });
+      }
+    }
+    return { ok: true, count: mappings.length };
+  });
+
+/** Rep activation dates (call_start_date) — Settings editor, audited per rep. */
+export const saveRepStartDates = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { entries: { repId: string; date: string | null }[] })
+  .handler(async ({ data }) => {
+    const store = await getStore();
+    const repName = new Map((await store.getUsers()).map((u) => [u.id, u.name]));
+    for (const e of data?.entries ?? []) {
+      const repId = String(e.repId);
+      const raw = e.date == null || String(e.date).trim() === "" ? null : String(e.date);
+      if (raw && !/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new Error(`Invalid date for ${repName.get(repId) ?? repId} — expected YYYY-MM-DD`);
+      const all = await store.getAllUsers();
+      const previous = all.find((u) => u.id === repId)?.call_start_date ?? null;
+      if ((previous ?? null) === raw) continue;
+      await store.setUserCallStartDate(repId, raw);
+      await store.insertManualOverride({
+        entity_type: "rep_call_start_date",
+        entity_id: repId,
+        field: `call_start_date:${repName.get(repId) ?? repId}`,
+        previous_value: previous ?? "unset",
+        new_value: raw ?? "unset",
+        changed_by: "christopher",
+      });
+    }
+    return { ok: true };
   });
 
 /**
@@ -733,12 +841,17 @@ export const getDailyReportData = createServerFn().handler(async () => {
       store.getLeadCountAdjustments(dateRange(ws, addDays(ws, 6))),
     ]);
 
-  // ROSTER: report call metrics cover active-roster users only (raw rows stay
-  // in the DB; team-level numbers reflect only the CC team).
+  // ROSTER ELIGIBILITY (mapping-aware): report call metrics cover roster reps
+  // + mapped HL users only, computed at query time (source rows untouched).
   const rosterUsers = await store.getUsers();
-  const rosterIds = new Set(rosterUsers.map((u) => u.id));
-  const rosterCallsYesterday = keepRosterRepCalls(callsYesterday, rosterIds);
-  const rosterCallsForAttribution = keepRosterRepCalls(callsForAttribution, rosterIds);
+  const eligibility = buildRosterEligibility(rosterUsers, settings.rep_mappings ?? []);
+  const rosterCallsYesterday = applyRosterEligibility(callsYesterday, eligibility);
+  const rosterCallsForAttribution = applyRosterEligibility(callsForAttribution, eligibility);
+  const attributionsEligible = applyAttributionEligibility(
+    await store.getAttributions(),
+    rosterCallsForAttribution,
+    eligibility,
+  );
 
   const metrics = buildDailyReportMetrics({
     reportDate: today,
@@ -746,7 +859,7 @@ export const getDailyReportData = createServerFn().handler(async () => {
     apptsCreatedYesterday: apptsYesterday,
     apptsCreatedWtd: apptsWtd,
     allCallsForWeek: rosterCallsForAttribution,
-    attributions: await store.getAttributions(),
+    attributions: attributionsEligible,
     leadsAllRecent: leads,
     leadCountAdjustments: leadAdjustments,
     teamBookingGoal: teamGoal?.booking_goal ?? 79,
@@ -860,32 +973,38 @@ export const getRepsData = createServerFn()
     const calls = filterCallsInEtRange(callsRaw, range.start, range.end);
     const appts = filterApptsCreatedInEtRange(apptsRaw, range.start, range.end);
 
-    // ROSTER: reps and team averages cover active-roster users only; calls
-    // from roster-excluded users stay in the DB but leave this page's math.
-    const rosterIds = new Set(users.map((u) => u.id));
-    const rosterCalls = keepRosterRepCalls(calls, rosterIds);
-    const rosterLookBackCalls = keepRosterRepCalls(lookBackCalls, rosterIds);
+    // ROSTER ELIGIBILITY (mapping-aware): reps and team averages cover active
+    // roster users PLUS calls whose raw HL user id is mapped to a roster rep —
+    // eligibility is computed from the mapping at QUERY TIME; source records
+    // stay immutable. With no mappings this is the verified roster filter.
+    const thresholdSeconds = settings.meaningful_call_threshold_seconds;
+    const eligibility = buildRosterEligibility(allUsers, settings.rep_mappings ?? []);
+    const rosterCalls = applyRosterEligibility(calls, eligibility);
+    const rosterLookBackCalls = applyRosterEligibility(lookBackCalls, eligibility);
+    // Bookings inherit query-time eligibility via the underlying call.
+    const attributionsEligible = applyAttributionEligibility(attributions, rosterLookBackCalls, eligibility);
 
-    // UNASSIGNED (visible, never merged): non-roster HighLevel users' calls in
-    // the SAME window over the SAME call rows — the exact complement of the
-    // roster-kept set. Pure rollup in reps-views; displayed under the roster
-    // list on the Reps page and excluded from every roster/team total.
+    // CALL-OWNERSHIP BUCKETS (design/data-terminology.md — three, mutually
+    // exclusive): roster calls feed the metrics; the complement splits into
+    // "Non Roster Calls" (KNOWN HL user outside the roster) and "Unattributed"
+    // (no determinable owner). Both are visible below and excluded from every
+    // roster/team total; mapped users leave the non-roster bucket at query time.
     const userById = new Map(allUsers.map((u) => [u.id, { name: u.name, external_id: u.external_id }]));
-    const unassigned = buildUnassignedRollup({
+    const buckets = buildCallOwnershipBuckets({
       calls,
-      activeRepIds: rosterIds,
+      activeRepIds: eligibility.activeIds,
+      mappedExternalIds: new Set(eligibility.mapping.keys()),
       userById,
-      thresholdSeconds: settings.meaningful_call_threshold_seconds,
+      thresholdSeconds,
     });
 
-    const reps = users.map((u) => ({ id: u.id, name: u.name }));
-    const thresholdSeconds = settings.meaningful_call_threshold_seconds;
+    const reps = users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date }));
 
     const summaries = repRangeSummaries({
       reps,
       calls: rosterCalls,
       appts,
-      attributions,
+      attributions: attributionsEligible,
       allCallsForJoin: rosterLookBackCalls,
       leads,
       workStart: range.start,
@@ -896,6 +1015,9 @@ export const getRepsData = createServerFn()
     // selected rep: requested id when present in the active list, else first
     const requestedId = data?.rep;
     const rep = reps.find((r) => r.id === requestedId) ?? reps[0];
+    const selectedOperatingState: "active" | "not-yet-active" = rep
+      ? repOperatingState(rep.call_start_date, today)
+      : "active";
 
     const repGoalsByWeek = new Map<string, number>();
     for (const rows of repGoalRows) {
@@ -918,11 +1040,13 @@ export const getRepsData = createServerFn()
     const detail = rep && metrics ? buildRepDetail({ rep, metrics, goal, weeks }) : null;
     const comparisons = metrics ? compareWithTeam(metrics, teamAverages) : [];
 
-    // missing-data warnings — never render a plausible number for absent data
+    // missing-data warnings — never render a plausible number for absent data.
+    // A "Not Yet Active" rep (call_start_date in the future) EXPECTS zero
+    // calls: no zero-activity warning, ever (owner spec).
     const warnings: string[] = [...syncStaleWarnings(await store.getConnections())];
     if (range.warning) warnings.push(range.warning);
     if (!rep) warnings.push("No active reps found — sync HighLevel users to populate this page.");
-    if (rep && metrics) {
+    if (rep && metrics && selectedOperatingState !== "not-yet-active") {
       if (metrics.totalCalls === 0 && metrics.totalBookings === 0 && metrics.assignedLeads === 0) {
         warnings.push(`No activity recorded for ${rep.name} in this range — run SYNC NOW or widen the range.`);
       }
@@ -954,12 +1078,16 @@ export const getRepsData = createServerFn()
           totalCalls: s?.totalCalls ?? 0,
           callsOverThreshold: s?.callsOverThreshold ?? 0,
           isSelected: r.id === rep?.id,
+          operatingState: repOperatingState(r.call_start_date, today),
+          callStartDate: r.call_start_date ?? null,
         };
       }),
       detail,
+      selectedOperatingState,
       teamAverages,
       comparisons,
-      unassigned,
+      nonRoster: buckets.nonRoster,
+      unattributed: buckets.unattributed,
       warnings,
       teamGoalDefault: teamGoalByWeek.get(weeks[0]) ?? 79,
     };
@@ -974,6 +1102,10 @@ export interface AuditPicker {
   /** Active-roster reps (label + internal id) for the rep picker. */
   reps: { id: string; name: string }[];
   allLabel: string;
+  /** Exact owner terminology (design/data-terminology.md). */
+  nonRosterLabel: string;
+  unattributedLabel: string;
+  /** Legacy alias kept working for old links. */
   unassignedLabel: string;
 }
 export interface AuditPageData {
@@ -989,7 +1121,7 @@ export const getAuditData = createServerFn()
     // LAZY import: keeps the audit orchestration (and its store graph) out of
     // the client bundle — handler bodies are stripped client-side, so a static
     // import here would retain the module in the browser graph.
-    const { handleAuditQuery } = await import("./audit-api");
+    const { handleAuditQuery, LABEL_NON_ROSTER, LABEL_UNATTRIBUTED } = await import("./audit-api");
     const res = await handleAuditQuery({ rep: data?.rep ?? "all", date: data?.date ?? null });
     if (res.status !== 200) {
       return { error: (res.body as { error: string }).error, payload: null, picker: null, today };
@@ -1001,8 +1133,10 @@ export const getAuditData = createServerFn()
       payload: res.body as AuditOkBody,
       picker: {
         reps,
-        allLabel: `All calls (${reps.length} roster reps + unassigned)`,
-        unassignedLabel: "Unassigned — non-roster HL users",
+        allLabel: `All calls (${reps.length} roster reps + non-roster + unattributed)`,
+        nonRosterLabel: LABEL_NON_ROSTER,
+        unattributedLabel: LABEL_UNATTRIBUTED,
+        unassignedLabel: "Unassigned (legacy — both buckets)",
       },
       today,
     };
@@ -1021,6 +1155,9 @@ export interface RepStripRow {
   totalBookings: number;
   callsOverThreshold: number;
   conversationConversion: number | null;
+  /** "not-yet-active" reps show only the Not Yet Active chip; attention rules skip them. */
+  operatingState: "active" | "not-yet-active";
+  callStartDate: string | null;
 }
 
 export const getTeamData = createServerFn()
@@ -1057,13 +1194,15 @@ export const getTeamData = createServerFn()
     const calls = filterCallsInEtRange(callsRaw, range.start, range.end);
     const appts = filterApptsCreatedInEtRange(apptsRaw, range.start, range.end);
 
-    // ROSTER: rep strip + team rollups cover active-roster users only; calls
-    // from roster-excluded users stay in the DB but leave the team math.
-    const rosterIds = new Set(users.map((u) => u.id));
-    const rosterCalls = keepRosterRepCalls(calls, rosterIds);
-    const rosterLookBackCalls = keepRosterRepCalls(lookBackCalls, rosterIds);
+    // ROSTER ELIGIBILITY (mapping-aware): rep strip + team rollups cover
+    // active roster users PLUS calls whose raw HL user id is mapped — query
+    // time only, source rows immutable. Empty mapping = the verified filter.
+    const eligibility = buildRosterEligibility(users, settings.rep_mappings ?? []);
+    const rosterCalls = applyRosterEligibility(calls, eligibility);
+    const rosterLookBackCalls = applyRosterEligibility(lookBackCalls, eligibility);
+    const attributionsEligible = applyAttributionEligibility(attributions, rosterLookBackCalls, eligibility);
 
-    const reps = users.map((u) => ({ id: u.id, name: u.name }));
+    const reps = users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date }));
     const thresholdSeconds = settings.meaningful_call_threshold_seconds;
 
     // one summaries pass feeds both the per-rep strip and (nothing else here —
@@ -1072,7 +1211,7 @@ export const getTeamData = createServerFn()
       reps,
       calls: rosterCalls,
       appts,
-      attributions,
+      attributions: attributionsEligible,
       allCallsForJoin: rosterLookBackCalls,
       leads,
       workStart: range.start,
@@ -1091,7 +1230,7 @@ export const getTeamData = createServerFn()
     const metrics = buildTeamRangeMetrics({
       calls: rosterCalls,
       appts,
-      attributions,
+      attributions: attributionsEligible,
       allCallsForJoin: rosterLookBackCalls,
       leads,
       workStart: range.start,
@@ -1100,13 +1239,13 @@ export const getTeamData = createServerFn()
       teamGoalByWeek,
       today,
       thresholdSeconds,
-      activeRepIds: rosterIds,
+      activeRepIds: eligibility.activeIds,
     });
 
     const trends = buildTeamTrends({
       calls: rosterCalls,
       appts,
-      attributions,
+      attributions: attributionsEligible,
       allCallsForJoin: rosterLookBackCalls,
       leads,
       leadCountAdjustments: await store.getLeadCountAdjustments(dateRange(range.start, range.end)),
@@ -1125,6 +1264,8 @@ export const getTeamData = createServerFn()
           totalBookings: s?.totalBookings ?? 0,
           callsOverThreshold: s?.callsOverThreshold ?? 0,
           conversationConversion: s?.conversationConversion ?? null,
+          operatingState: repOperatingState(r.call_start_date, today),
+          callStartDate: r.call_start_date ?? null,
         };
       })
       .sort((a, b) => b.totalBookings - a.totalBookings || b.callsOverThreshold - a.callsOverThreshold);

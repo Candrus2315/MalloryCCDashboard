@@ -13,7 +13,7 @@ import {
   resolveAuditRepFilter,
   type AuditUserRef,
 } from "../audit-api";
-import { buildUnassignedRollup } from "../../components/reps-views";
+import { buildCallOwnershipBuckets } from "../../components/reps-views";
 import { MemoryStore } from "../store/memory";
 import type { UserRow } from "../store/types";
 
@@ -89,9 +89,18 @@ describe("resolveAuditRepFilter", () => {
     expect(resolveAuditRepFilter("", users).ok).toBe(true);
     expect(resolveAuditRepFilter("all", users).ok).toBe(true);
   });
-  test("'unassigned' → non-roster spec with explicit label", () => {
+  test("'non-roster' → Non Roster Calls (EXACT owner label)", () => {
+    const r = resolveAuditRepFilter("non-roster", users);
+    expect(r).toEqual({ ok: true, spec: "non-roster", label: "Non Roster Calls" });
+  });
+  test("'unattributed' → Unattributed (EXACT owner label)", () => {
+    const r = resolveAuditRepFilter("unattributed", users);
+    expect(r).toEqual({ ok: true, spec: "unattributed", label: "Unattributed" });
+  });
+  test("'unassigned' stays as a backward-compatible alias for the union", () => {
     const r = resolveAuditRepFilter("unassigned", users);
-    expect(r).toEqual({ ok: true, spec: "unassigned", label: expect.stringContaining("non-roster") });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.spec).toBe("unassigned");
   });
   test("a known user id → that user (roster or not); unknown id → error", () => {
     expect(resolveAuditRepFilter("u2", users)).toEqual({ ok: true, spec: "u2", label: expect.stringContaining("Christy") });
@@ -156,6 +165,15 @@ describe("MemoryStore.getAuditCalls (same semantics as PgStore)", () => {
     expect(unassigned.find((r) => r.external_call_id === "msg-c")!.rep_name).toBe("Christy West");
     expect(unassigned.find((r) => r.external_call_id === "msg-d")!.rep_id).toBeNull();
 
+    // THREE-BUCKET split (design/data-terminology.md): non-roster = KNOWN user
+    // outside the roster; unattributed = no determinable owner; the legacy
+    // alias unassigned = the union of both.
+    const nonRoster = await s.getAuditCalls("2026-09-25T04:00:00.000Z", "2026-09-26T04:00:00.000Z", "non-roster", 120);
+    expect(nonRoster.map((r) => r.external_call_id)).toEqual(["msg-c"]);
+    const unattributed = await s.getAuditCalls("2026-09-25T04:00:00.000Z", "2026-09-26T04:00:00.000Z", "unattributed", 120);
+    expect(unattributed.map((r) => r.external_call_id)).toEqual(["msg-d"]);
+    expect(nonRoster.length + unattributed.length).toBe(unassigned.length);
+
     const none = await s.getAuditCalls("2026-09-25T04:00:00.000Z", "2026-09-26T04:00:00.000Z", "user-does-not-exist", 120);
     expect(none).toEqual([]);
   });
@@ -192,13 +210,13 @@ describe("MemoryStore.getAuditCalls (same semantics as PgStore)", () => {
   });
 });
 
-describe("buildUnassignedRollup (Reps page Unassigned section)", () => {
+describe("buildCallOwnershipBuckets (Reps page: Non Roster Calls + Unattributed)", () => {
   const calls = [
-    { rep_id: "u1", duration_seconds: 121 },
-    { rep_id: "u2", duration_seconds: 180 },
+    { rep_id: "u1", duration_seconds: 121 }, // roster → excluded from buckets
+    { rep_id: "u2", duration_seconds: 180 }, // Christy (inactive) → Non Roster
     { rep_id: "u2", duration_seconds: 60 },
-    { rep_id: null, duration_seconds: 150 },
-    { rep_id: "u3", duration_seconds: 130 }, // active? u3 NOT in activeRepIds → unassigned, unknown name
+    { rep_id: null, duration_seconds: 150 }, // no owner → Unattributed
+    { rep_id: "u3", duration_seconds: 130 }, // inactive "Ghost User" → Non Roster
   ];
   const activeRepIds = new Set(["u1"]);
   const userById = new Map([
@@ -207,16 +225,35 @@ describe("buildUnassignedRollup (Reps page Unassigned section)", () => {
     ["u3", { name: "Ghost User", external_id: "ext-g" }],
   ]);
 
-  test("unassigned = every call NOT kept by keepRosterRepCalls; roster rep excluded", () => {
-    const r = buildUnassignedRollup({ calls, activeRepIds, userById, thresholdSeconds: 120 });
-    expect(r.totalCalls).toBe(4); // u2×2 + null + u3
-    expect(r.totalOverThreshold).toBe(3); // 180, 150, 130 (60s under)
-    const names = r.users.map((u) => u.name ?? u.key);
-    // sorted by calls desc; ties broken by key ("(no user)" < "Ghost User")
-    expect(names).toEqual(["Christy West", "(no user)", "Ghost User"]);
-    expect(r.users[0]).toMatchObject({ externalId: "ext-c", calls: 2, overThreshold: 1 });
-    expect(r.users[1]).toMatchObject({ key: "(no user)", name: null, externalId: null, calls: 1, overThreshold: 1 });
-    expect(r.users[2]).toMatchObject({ key: "ext-g", name: "Ghost User", calls: 1, overThreshold: 1 });
+  test("non-roster = known users outside the roster; unattributed = no owner only", () => {
+    const r = buildCallOwnershipBuckets({
+      calls,
+      activeRepIds,
+      mappedExternalIds: new Set(),
+      userById,
+      thresholdSeconds: 120,
+    });
+    expect(r.nonRoster.totalCalls).toBe(3); // u2×2 + u3
+    expect(r.nonRoster.totalOverThreshold).toBe(2); // 180, 130
+    expect(r.unattributed.totalCalls).toBe(1);
+    expect(r.unattributed.totalOverThreshold).toBe(1);
+    const names = r.nonRoster.users.map((u) => u.name ?? u.key);
+    expect(names).toEqual(["Christy West", "Ghost User"]);
+    expect(r.nonRoster.users[0]).toMatchObject({ externalId: "ext-c", calls: 2, overThreshold: 1 });
+    expect(r.nonRoster.users[1]).toMatchObject({ externalId: "ext-g", calls: 1, overThreshold: 1 });
+  });
+
+  test("mapping a HL user moves their calls OUT of Non Roster (eligible at query time)", () => {
+    const r = buildCallOwnershipBuckets({
+      calls,
+      activeRepIds,
+      mappedExternalIds: new Set(["ext-c"]), // Christy mapped → roster-eligible
+      userById,
+      thresholdSeconds: 120,
+    });
+    expect(r.nonRoster.users.map((u) => u.key)).toEqual(["ext-g"]);
+    expect(r.nonRoster.totalCalls).toBe(1);
+    expect(r.unattributed.totalCalls).toBe(1); // untouched — never used for non-roster users
   });
 });
 

@@ -30,7 +30,7 @@ import type {
   TeamGoalRow,
   UserRow,
 } from "./types";
-import { defaultSettings, normalizeAppSettings } from "./types";
+import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings } from "./types";
 
 interface CallExt extends CallRow {
   external_call_id: string;
@@ -84,7 +84,21 @@ export class MemoryStore implements Store {
     return `${prefix}_${this.seq}`;
   }
 
-  async ensureSchema(): Promise<void> {}
+  private schemaDone = false;
+
+  async ensureSchema(): Promise<void> {
+    // Mirror the PG store's memoized DDL: the owner-set activation-date
+    // backfill runs ONCE per store lifetime (Dan McKillop begins calling
+    // 2026-09-28) so the Settings editor can later clear a date without it
+    // snapping back on the next read.
+    if (this.schemaDone) return;
+    this.schemaDone = true;
+    for (const u of this.users.values()) {
+      if (u.call_start_date == null && DEFAULT_CALL_START_DATES[u.name]) {
+        u.call_start_date = DEFAULT_CALL_START_DATES[u.name];
+      }
+    }
+  }
 
   async getSettings(): Promise<AppSettings> {
     // Normalize on read so settings saved before newer default fields existed
@@ -124,19 +138,25 @@ export class MemoryStore implements Store {
   async upsertUsers(rows: UserRow[]): Promise<number> {
     for (const r of rows) {
       const existing = [...this.users.values()].find((u) => u.provider === r.provider && u.external_id === r.external_id);
-      if (existing) this.users.set(existing.id, { ...existing, ...r, id: existing.id });
+      if (existing) this.users.set(existing.id, { ...existing, ...r, id: existing.id, call_start_date: r.call_start_date ?? existing.call_start_date ?? null });
       else {
         const key = this.nextId("u");
-        this.users.set(key, { ...r, id: key });
+        this.users.set(key, { ...r, id: key, call_start_date: r.call_start_date ?? null });
       }
     }
     return rows.length;
   }
+  async setUserCallStartDate(repId: string, date: string | null): Promise<void> {
+    const u = this.users.get(repId);
+    if (u) this.users.set(repId, { ...u, call_start_date: date });
+  }
   async getUsers(): Promise<UserRow[]> {
+    await this.ensureSchema();
     // Active-roster users only — same semantics as the PG store's read.
     return [...this.users.values()].filter((u) => u.is_active);
   }
   async getAllUsers(): Promise<UserRow[]> {
+    await this.ensureSchema();
     return [...this.users.values()];
   }
 
@@ -173,14 +193,19 @@ export class MemoryStore implements Store {
     return this.getCallsBetween(startUtc, "9999-12-31");
   }
   async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
-    // Same semantics as the PG store: joined rep/contact fields, "unassigned"
-    // = rep NULL or users.is_active=false, over_threshold per live threshold.
+    // Same semantics as the PG store: joined rep/contact fields, bucket specs
+    // "non-roster" (known inactive user) / "unattributed" (rep NULL) /
+    // "unassigned" (legacy alias = union of both), over_threshold per live
+    // threshold.
+    await this.ensureSchema();
     const activeIds = new Set([...this.users.values()].filter((u) => u.is_active).map((u) => u.id));
     type CallAuditExt = CallExt & { conversation_id?: string | null; provider_rep_external_id?: string | null };
     const rows = [...this.calls.values()]
       .filter((c) => c.started_at >= startUtc && c.started_at < endUtc)
       .filter((c) => {
         if (!repSpec || repSpec === "all") return true;
+        if (repSpec === "non-roster") return c.rep_id !== null && !activeIds.has(c.rep_id);
+        if (repSpec === "unattributed") return c.rep_id === null;
         if (repSpec === "unassigned") return !c.rep_id || !activeIds.has(c.rep_id);
         return c.rep_id === repSpec;
       })

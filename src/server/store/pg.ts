@@ -234,6 +234,11 @@ const DDL: string[] = [
     watermark timestamptz NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
+  // Rep activation dates (design/data-terminology.md): explicit per-rep
+  // "Not Yet Active" field. Owner's worked example: Dan starts 2026-09-28 —
+  // backfilled when still unset, never overwriting an owner edit.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS call_start_date text`,
+  `UPDATE users SET call_start_date = '2026-09-28' WHERE name = 'Dan McKillop' AND call_start_date IS NULL`,
   // Harvest-side call columns: roster-external rep id (kept even when the rep is
   // not on the active roster) + the HighLevel conversation the call came from.
   `ALTER TABLE calls ADD COLUMN IF NOT EXISTS provider_rep_external_id text`,
@@ -413,15 +418,30 @@ export class PgStore implements Store {
     }
     return rows.length;
   }
+  async setUserCallStartDate(repId: string, date: string | null): Promise<void> {
+    await this.ensureSchema();
+    await this.sql`UPDATE users SET call_start_date = ${date}, updated_at = now() WHERE id = ${repId}::uuid`;
+  }
+  private userRow(r: Record<string, unknown>): UserRow {
+    return {
+      id: String(r.id),
+      provider: String(r.provider),
+      external_id: String(r.external_id),
+      name: String(r.name),
+      email: r.email == null ? null : String(r.email),
+      is_active: Boolean(r.is_active),
+      call_start_date: r.call_start_date == null ? null : String(r.call_start_date),
+    };
+  }
   async getUsers(): Promise<UserRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text, provider, external_id, name, email, is_active FROM users WHERE is_active ORDER BY name`;
-    return rows as unknown as UserRow[];
+    const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date FROM users WHERE is_active ORDER BY name`;
+    return rows.map((r) => this.userRow(r as Record<string, unknown>));
   }
   async getAllUsers(): Promise<UserRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text, provider, external_id, name, email, is_active FROM users ORDER BY name`;
-    return rows as unknown as UserRow[];
+    const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date FROM users ORDER BY name`;
+    return rows.map((r) => this.userRow(r as Record<string, unknown>));
   }
 
   async upsertContacts(rows: ContactRow[]): Promise<number> {
@@ -465,29 +485,37 @@ export class PgStore implements Store {
       started_at: new Date(r.started_at as string).toISOString(),
       duration_seconds: Number(r.duration_seconds),
       over_two_minutes: Boolean(r.over_two_minutes),
+      // RAW HL user id — mapping-driven eligibility is computed from it at
+      // query time; the stored row is never rewritten.
+      provider_rep_external_id: r.provider_rep_external_id == null ? null : String(r.provider_rep_external_id),
     };
   }
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes FROM calls WHERE started_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, provider_rep_external_id FROM calls WHERE started_at >= ${startUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {
     await this.ensureSchema();
-    // repSpec is validated by the endpoint against users.id before it reaches
-    // here; "unassigned" is the exact complement of the roster-kept call set
-    // (rep NULL or users.is_active=false — same predicate, same users table).
+    // repSpec is one of the endpoint-validated buckets: "non-roster" = a KNOWN
+    // user outside the active roster; "unattributed" = no determinable owner
+    // (rep NULL); "unassigned" (legacy alias) = the union of both — the exact
+    // complement of the roster-kept call set.
     const repFilter =
-      repSpec === "unassigned"
-        ? this.sql`(c.rep_id IS NULL OR u.is_active = false)`
-        : repSpec && repSpec !== "all"
-          ? this.sql`c.rep_id = ${repSpec}::uuid`
-          : this.sql`TRUE`;
+      repSpec === "non-roster"
+        ? this.sql`(c.rep_id IS NOT NULL AND u.is_active = false)`
+        : repSpec === "unattributed"
+          ? this.sql`(c.rep_id IS NULL)`
+          : repSpec === "unassigned"
+            ? this.sql`(c.rep_id IS NULL OR u.is_active = false)`
+            : repSpec && repSpec !== "all"
+              ? this.sql`c.rep_id = ${repSpec}::uuid`
+              : this.sql`TRUE`;
     const rows = await this.sql`
       SELECT c.external_call_id, c.conversation_id, c.provider_rep_external_id,
              c.rep_id::text AS rep_id, u.name AS rep_name, u.is_active AS rep_is_active,

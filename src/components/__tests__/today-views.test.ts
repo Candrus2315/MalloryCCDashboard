@@ -31,6 +31,8 @@ const row = (o: Partial<RepPerformanceRow>): RepPerformanceRow => ({
   goal: 0,
   actual: 0,
   goalPercent: null,
+  operatingState: "active" as const,
+  callStartDate: null,
   ...o,
 });
 
@@ -110,8 +112,12 @@ describe("today-views (spec §0/§6)", () => {
       row({ repId: "e", name: "Eve", goal: 14, actual: 12, goalPercent: 0.86, totalCalls: 6, callsOverThreshold: 4, conversationConversion: 0.4 }),
       row({ repId: "d", name: "Dee", goal: 14, actual: 11, goalPercent: 0.79, totalCalls: 4, callsOverThreshold: 4, conversationConversion: 0.25 }),
     ];
+    // MID-WEEK date (Wed 2026-09-23, 3/5 of the week): expected-to-date for a
+    // 14 goal is 8.4, so NO rep is behind pace and the conversion rules can
+    // fire. (A Friday date would make the behind-pace rule legitimately win
+    // first for Dee — 11 of 14 with the week done — which is its own rule.)
     // only 3 others carry values for each rep → gate passes (≥ 3)
-    const notes = attentionNotes(rows, "2026-09-25");
+    const notes = attentionNotes(rows, "2026-09-23");
     const dee = notes.find((n) => n.rep === "Dee");
     expect(dee!.text).toBe("Dee is below team average in Conversation Conversion (25.0% vs 53.3%).");
     // Ann (50%) and Cy (70%) sit ABOVE their team means — no conversion note for them.
@@ -131,6 +137,71 @@ describe("today-views (spec §0/§6)", () => {
     expect(deltaValue(5, 0, "pct")).toBeNull();
     expect(deltaValue(null, 3, "pts")).toBeNull();
     expect(formatDelta(null, "pts")).toBeNull();
+  });
+});
+
+describe("chip fix (ux-charts-tables-spec §9): positive chips need a genuine sample", () => {
+  const MIN = 5; // MIN_CONVERSION_SAMPLE — keep in sync with the constant
+
+  test("owner's bug case: 0.0% conversion / 0.0 pts vs team → NO positive chip", () => {
+    // rep qualified 6 calls but booked none: 0.0%, team also 0.0% → tied, not exceeding
+    const chip = chipFor(
+      row({ goal: 0, conversationConversion: 0, callsOverThreshold: 6 }),
+      0,
+      0.6,
+    );
+    expect(chip?.kind).not.toBe("positive");
+    expect(chip?.label).not.toBe("Strong converter");
+  });
+
+  test("all-zero team → no chips at all", () => {
+    const rows = [row({ repId: "a", name: "A" }), row({ repId: "b", name: "B" })];
+    for (const r of rows) {
+      expect(chipFor(r, null, 0.6)).toBeNull();
+    }
+  });
+
+  test("tiny sample (<5 qualifying calls) → no positive chip, no auto-substituted negative", () => {
+    // 60% conversion over only 4 qualifying calls, clearly above the 40% team —
+    // still NO Strong converter (sample too thin), and no negative chip either.
+    const tiny = row({ goal: 0, conversationConversion: 0.6, callsOverThreshold: MIN - 1 });
+    expect(chipFor(tiny, 0.4, 0.6)).toBeNull();
+    // boundary: exactly MIN qualifying calls now qualifies
+    const ok = row({ goal: 0, conversationConversion: 0.6, callsOverThreshold: MIN });
+    expect(chipFor(ok, 0.4, 0.6)).toEqual({ kind: "positive", label: "Strong converter" });
+  });
+
+  test("tied with the team average → no positive chip (must EXCEED)", () => {
+    const tied = row({ goal: 0, conversationConversion: 0.5, callsOverThreshold: MIN });
+    expect(chipFor(tied, 0.5, 0.6)?.kind).not.toBe("positive");
+  });
+
+  test("genuine strong performer (valid denominator + ≥5 sample + above team) → chip shows", () => {
+    const strong = row({ goal: 0, conversationConversion: 0.9, callsOverThreshold: 12 });
+    expect(chipFor(strong, 0.4, 0.6)).toEqual({ kind: "positive", label: "Strong converter" });
+  });
+
+  test("no conversion denominator (0 qualifying calls) → never a positive chip", () => {
+    const noDenom = row({ goal: 0, conversationConversion: null, callsOverThreshold: 0 });
+    expect(chipFor(noDenom, 0.4, 0.6)?.kind).not.toBe("positive");
+  });
+});
+
+describe("Not Yet Active (call_start_date, owner spec §10)", () => {
+  test("not-yet-active rep shows ONLY the Not Yet Active chip — never activity/risk chips", () => {
+    const dan = row({ goal: 14, actual: 0, goalPercent: 0, operatingState: "not-yet-active" });
+    expect(chipFor(dan, 0.4, 1)).toEqual({ kind: "neutral", label: "Not Yet Active" });
+    // even a behind-pace goal state must not surface
+    expect(chipFor(dan, null, 1)?.label).toBe("Not Yet Active");
+  });
+
+  test("attention rules skip not-yet-active reps entirely (zero calls EXPECTED)", () => {
+    const rows = [
+      row({ repId: "a", name: "Ann", totalBookings: 3 }),
+      row({ repId: "d", name: "Dan", goal: 14, actual: 0, goalPercent: 0, operatingState: "not-yet-active" }),
+    ];
+    const notes = attentionNotes(rows, "2026-09-24");
+    expect(notes.some((n) => n.rep === "Dan")).toBe(false);
   });
 });
 

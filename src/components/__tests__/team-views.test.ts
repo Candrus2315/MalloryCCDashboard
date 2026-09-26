@@ -57,6 +57,8 @@ const rep = (id: string, name: string, over: Partial<RepStripRow> = {}): RepStri
   totalBookings: 0,
   callsOverThreshold: 0,
   conversationConversion: null,
+  operatingState: "active" as const,
+  callStartDate: null,
   ...over,
 });
 
@@ -195,12 +197,52 @@ describe("repChips (spec §5: real metrics only, no grades)", () => {
 
   test("conversion above team average (≥3 qualifying) → Strong conversion", () => {
     const chips = repChips([
-      rep("a", "A", { totalBookings: 9, conversationConversion: 0.5 }),
-      rep("b", "B", { totalBookings: 4, conversationConversion: 0.2 }),
-      rep("c", "C", { totalBookings: 3, conversationConversion: 0.3 }),
-      rep("d", "D", { totalBookings: 1, conversationConversion: 0.6 }),
+      rep("a", "A", { totalBookings: 9, conversationConversion: 0.5, callsOverThreshold: 9 }),
+      rep("b", "B", { totalBookings: 4, conversationConversion: 0.2, callsOverThreshold: 8 }),
+      rep("c", "C", { totalBookings: 3, conversationConversion: 0.3, callsOverThreshold: 7 }),
+      rep("d", "D", { totalBookings: 1, conversationConversion: 0.6, callsOverThreshold: 6 }),
     ]);
     expect(chips.get("d")).toEqual({ kind: "positive", label: "Strong conversion" });
+  });
+
+  test("§9 chip fix: Strong conversion needs MIN_CONVERSION_SAMPLE qualifying calls", () => {
+    // D's 60% stands on only 4 qualifying calls (< MIN_CONVERSION_SAMPLE=5) →
+    // NO positive chip even though it exceeds the team average.
+    const chips = repChips([
+      rep("a", "A", { totalBookings: 9, conversationConversion: 0.5, callsOverThreshold: 10 }),
+      rep("b", "B", { totalBookings: 4, conversationConversion: 0.2, callsOverThreshold: 10 }),
+      rep("c", "C", { totalBookings: 3, conversationConversion: 0.3, callsOverThreshold: 10 }),
+      rep("d", "D", { totalBookings: 1, conversationConversion: 0.6, callsOverThreshold: 4 }),
+    ]);
+    expect(chips.get("d")).toBeUndefined();
+    // exactly 5 qualifying calls → the chip earns itself
+    const withSample = repChips([
+      rep("a", "A", { totalBookings: 9, conversationConversion: 0.5, callsOverThreshold: 10 }),
+      rep("b", "B", { totalBookings: 4, conversationConversion: 0.2, callsOverThreshold: 10 }),
+      rep("c", "C", { totalBookings: 3, conversationConversion: 0.3, callsOverThreshold: 10 }),
+      rep("d", "D", { totalBookings: 1, conversationConversion: 0.6, callsOverThreshold: 5 }),
+    ]);
+    expect(withSample.get("d")).toEqual({ kind: "positive", label: "Strong conversion" });
+  });
+
+  test("§9 chip fix: all-zero team → no positive chips", () => {
+    const chips = repChips([
+      rep("a", "A", { conversationConversion: 0, callsOverThreshold: 8 }),
+      rep("b", "B", { conversationConversion: 0, callsOverThreshold: 6 }),
+      rep("c", "C", { conversationConversion: 0, callsOverThreshold: 7 }),
+      rep("d", "D", { conversationConversion: 0, callsOverThreshold: 5 }),
+    ]);
+    for (const id of ["a", "b", "c", "d"]) {
+      expect(chips.get(id)?.kind).not.toBe("positive");
+    }
+  });
+
+  test("§10: not-yet-active rep → Not Yet Active chip, no activity/attention chips", () => {
+    const chips = repChips([
+      rep("a", "A", { totalBookings: 9 }),
+      rep("d", "Dan", { operatingState: "not-yet-active" as const, callStartDate: "2026-09-28" }),
+    ]);
+    expect(chips.get("d")).toEqual({ kind: "neutral", label: "Not Yet Active" });
   });
 
   test("fewer than 3 qualifying conversions → no average, no chip", () => {
@@ -295,6 +337,21 @@ describe("attentionNotes (spec §6: rule-based, 3–5, risks first)", () => {
     expect(notes.some((n) => n.rep === "Wittner" && n.text.includes("leads the team in bookings (12)"))).toBe(true);
     expect(notes.some((n) => n.rep === "McKillop" && n.text.includes("verify sync or lead assignment"))).toBe(true);
     expect(notes.some((n) => n.text.includes("Lead volume is below budget pace"))).toBe(true);
+  });
+
+  test("§10: a not-yet-active rep never triggers silent/no-booking attention notes", () => {
+    const notes = attentionNotes({
+      metrics: metrics({ actual: 12, remaining: 67, goalAchievement: 12 / 79, paceNeeded: 0, paceDaysLeft: 0, paceNote: "work week complete — pace resumes Monday" }),
+      points: [point("2026-09-21", { leads: 20, budgetRef: 100 / 7 })],
+      bucketMode: "day",
+      repRows: [
+        rep("a", "Wittner", { totalBookings: 12, callsOverThreshold: 30 }),
+        rep("d", "Dan", { operatingState: "not-yet-active" as const, callStartDate: "2026-09-28" }),
+      ],
+      rangeEnd: "2026-09-25",
+      today: "2026-09-25",
+    });
+    expect(notes.some((n) => n.rep === "Dan")).toBe(false);
   });
 
   test("assigned-lead conversion unavailable + healthy conversation → combined honest note", () => {
