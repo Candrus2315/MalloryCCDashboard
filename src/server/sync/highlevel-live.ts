@@ -13,10 +13,14 @@
  *    for voicemail/missed), direction, status, userId, ISO dateAdded.
  *  - GET /users/            → 200 but REJECTS limit/offset (422
  *    "property limit should not exist") — single unpaginated request.
- *  - GET /contacts/         → cursor pagination (meta.startAfterId /
- *    nextPageUrl), NOT offset. The location reports 116k contacts, so the
+ *  - GET /contacts/         → cursor pagination. PROVEN QUIRK (2026-09-26):
+ *    a bare `startAfterId` param is IGNORED and echoed back (page 1 repeats
+ *    forever — the old bug that left ~119 contacts in the DB); pagination
+ *    MUST follow meta.nextPageUrl verbatim (it carries startAfterId AND the
+ *    startAfter timestamp). The location reports 116k contacts, so the
  *    snapshot is capped (CONTACT_SNAPSHOT_CAP) at the most recent contacts;
- *    truncation is recorded as a warning, never silently ignored.
+ *    truncation is recorded as a warning, never silently ignored. The FULL
+ *    population is backfilled once by scripts/contacts-backfill.ts.
  *  - GET /opportunities/    → 404; POST /opportunities/search works
  *    (limit/offset body paging). Stage field is pipelineStageId.
  *
@@ -373,13 +377,26 @@ export class LiveHighLevelAdapter {
   async fetchContacts(): Promise<NormalizedContact[]> {
     const opts = this.endpointOpts();
     const contacts: NormalizedContact[] = [];
-    let startAfterId: string | null = null;
+    let url: string | null = `${BASE_URL}/contacts/?locationId=${encodeURIComponent(opts.creds.locationId)}&limit=${this.pageSize}`;
     let truncated = false;
-    for (let page = 0; page < 200; page++) {
-      const query = new URLSearchParams({ locationId: opts.creds.locationId, limit: String(this.pageSize) });
-      if (startAfterId) query.set("startAfterId", startAfterId);
-      const body = (await hlRequest({ path: "/contacts/", query }, opts)) as Record<string, unknown> | null;
+    // ROOT-CAUSE FIX (proven live 2026-09-26): this account IGNORES a bare
+    // `startAfterId` query param and echoes it back unchanged — advancing via
+    // meta.startAfterId alone re-read page 1 until the snapshot cap (the DB
+    // held only ~119 contacts for months). meta.nextPageUrl — which carries
+    // BOTH startAfterId AND the startAfter timestamp — advances correctly, so
+    // it is followed verbatim. The stuck-cursor shape is guarded below.
+    let lastNext: string | null = null;
+    for (let page = 0; page < 200 && url != null; page++) {
+      const body = (await hlRequest({ path: url.startsWith(BASE_URL) ? url.slice(BASE_URL.length) : url }, opts)) as Record<string, unknown> | null;
       const meta = (body?.["meta"] ?? null) as Record<string, unknown> | null;
+      const next = asString(meta?.["nextPageUrl"]);
+      if (next != null && lastNext != null && next === lastNext) {
+        // startAfterId-echo failure mode: the API handed back the same cursor
+        // twice in a row. Stop instead of looping page 1 (stored contacts are
+        // unaffected — syncs are upsert-only).
+        this.warn("contacts: stuck cursor (meta.nextPageUrl unchanged) — stopping to avoid an infinite page-1 loop; stored contacts are unaffected (upsert-only).");
+        break;
+      }
       for (const raw of listOf(body, "contacts", "data")) {
         if (contacts.length >= CONTACT_SNAPSHOT_CAP) {
           truncated = true;
@@ -389,8 +406,9 @@ export class LiveHighLevelAdapter {
         if (c) contacts.push(c);
         else this.warn("contacts: skipped one row with no id");
       }
-      startAfterId = asString(meta?.["startAfterId"]);
-      if (truncated || !startAfterId) break;
+      url = next;
+      lastNext = next;
+      if (!truncated && url) await opts.sleep(100); // conservative inter-page pacing
     }
     if (truncated) this.warn(`contacts: snapshot capped at ${CONTACT_SNAPSHOT_CAP} most recent — the location has more; linked calls/leads still resolve by phone/email.`);
     this.lastRun.counts.contacts = contacts.length;

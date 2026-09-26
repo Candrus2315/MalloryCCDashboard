@@ -51,6 +51,21 @@ export interface ContactRow {
   email: string | null;
   assigned_rep_id: string | null;
   created_at: string; // ISO
+  // ---- identity-program fields (Session 1; both stores must agree) ----
+  first_name?: string | null;
+  last_name?: string | null;
+  /** Untouched HL value duplicated from `phone` (raw kept alongside normalized). */
+  phone_raw?: string | null;
+  /** normalizeUSPhone(phone_raw) — canonical identity key (Session 2 matching). */
+  phone_normalized?: string | null;
+  email_raw?: string | null;
+  /** normalizeEmail(email_raw) — canonical identity key (Session 2 matching). */
+  email_normalized?: string | null;
+  /** HL contact dateAdded / dateUpdated (ISO) where the provider reports them. */
+  source_created_at?: string | null;
+  source_updated_at?: string | null;
+  /** Last time this row was (re)synced from the provider. */
+  last_synced_at?: string | null;
 }
 
 /** Pipeline opportunity synced from HighLevel (provider rows; upsert by external id). */
@@ -588,6 +603,9 @@ export interface Store {
   /** Incremental HighLevel sync watermark (ISO timestamp: everything before it is already stored), or null when never synced. */
   getSyncWatermark(provider: string): Promise<string | null>;
   setSyncWatermark(provider: string, watermarkIso: string): Promise<void>;
+  /** Generic named checkpoint KV (jsonb value) — used by resumable backfill jobs (e.g. the HL contacts backfill cursor). */
+  getSyncCheckpoint(key: string): Promise<string | null>;
+  setSyncCheckpoint(key: string, value: string): Promise<void>;
 
   // call harvest (resumable; see src/server/sync/call-harvest.ts)
   /** One progress row per listing pass (id e.g. 'highlevel-calls-calllast' or 'highlevel-calls-all'). */

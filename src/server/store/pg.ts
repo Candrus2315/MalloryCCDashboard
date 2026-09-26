@@ -12,6 +12,7 @@ import {
   type CallRow,
   type LeadRow,
 } from "../metrics/compute";
+import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
   AppSettings,
   AuditCallRow,
@@ -234,6 +235,28 @@ const DDL: string[] = [
     watermark timestamptz NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
+  // Generic named checkpoints (jsonb) for resumable backfill jobs — the HL
+  // contacts backfill persists its pagination cursor here after EVERY page so
+  // an interrupted run resumes exactly where it stopped (never page 1).
+  `CREATE TABLE IF NOT EXISTS sync_checkpoints (
+    key text PRIMARY KEY,
+    value jsonb NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  // Identity-program contact fields (owner-ratified attribution program,
+  // Session 1): raw values stay in phone/email; normalized identity keys and
+  // source timestamps live alongside. Upsert-only — nothing here ever deletes.
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS first_name text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_name text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS phone_raw text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS phone_normalized text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS email_raw text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS email_normalized text`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS source_created_at timestamptz`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS source_updated_at timestamptz`,
+  `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_synced_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS contacts_phone_normalized_idx ON contacts (phone_normalized)`,
+  `CREATE INDEX IF NOT EXISTS contacts_email_normalized_idx ON contacts (email_normalized)`,
   // Rep activation dates (design/data-terminology.md): explicit per-rep
   // "Not Yet Active" field. Owner's worked example: Dan starts 2026-09-28 —
   // backfilled when still unset, never overwriting an owner edit.
@@ -447,18 +470,46 @@ export class PgStore implements Store {
   async upsertContacts(rows: ContactRow[]): Promise<number> {
     await this.ensureSchema();
     for (const r of rows) {
+      // Canonical normalizers at the store boundary: raw stays verbatim in
+      // phone/email/phone_raw/email_raw; identity keys are always derived.
+      const phoneNorm = r.phone_normalized ?? normalizeUSPhone(r.phone);
+      const emailNorm = r.email_normalized ?? normalizeEmail(r.email);
       await this.sql`
-        INSERT INTO contacts (provider, external_id, name, phone, email, assigned_rep_id)
-        VALUES (${r.provider}, ${r.external_id}, ${r.name}, ${r.phone}, ${r.email}, ${r.assigned_rep_id})
-        ON CONFLICT (provider, external_id) DO UPDATE SET name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email, assigned_rep_id = EXCLUDED.assigned_rep_id, updated_at = now()
+        INSERT INTO contacts (provider, external_id, name, phone, email, assigned_rep_id, first_name, last_name, phone_raw, phone_normalized, email_raw, email_normalized, source_created_at, source_updated_at, last_synced_at)
+        VALUES (${r.provider}, ${r.external_id}, ${r.name}, ${r.phone}, ${r.email}, ${r.assigned_rep_id}, ${r.first_name ?? null}, ${r.last_name ?? null}, ${r.phone_raw ?? r.phone}, ${phoneNorm}, ${r.email_raw ?? r.email}, ${emailNorm}, ${r.source_created_at ?? null}, ${r.source_updated_at ?? null}, ${r.last_synced_at ?? null})
+        ON CONFLICT (provider, external_id) DO UPDATE SET
+          name = COALESCE(EXCLUDED.name, contacts.name), phone = EXCLUDED.phone, email = EXCLUDED.email,
+          assigned_rep_id = COALESCE(EXCLUDED.assigned_rep_id, contacts.assigned_rep_id),
+          first_name = COALESCE(EXCLUDED.first_name, contacts.first_name),
+          last_name = COALESCE(EXCLUDED.last_name, contacts.last_name),
+          phone_raw = COALESCE(EXCLUDED.phone_raw, contacts.phone_raw), phone_normalized = COALESCE(EXCLUDED.phone_normalized, contacts.phone_normalized),
+          email_raw = COALESCE(EXCLUDED.email_raw, contacts.email_raw), email_normalized = COALESCE(EXCLUDED.email_normalized, contacts.email_normalized),
+          source_created_at = COALESCE(EXCLUDED.source_created_at, contacts.source_created_at),
+          source_updated_at = COALESCE(EXCLUDED.source_updated_at, contacts.source_updated_at),
+          last_synced_at = COALESCE(EXCLUDED.last_synced_at, contacts.last_synced_at),
+          updated_at = now()
       `;
     }
     return rows.length;
   }
   async getContacts(): Promise<ContactRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text, provider, external_id, name, phone, email, assigned_rep_id::text, created_at::text FROM contacts`;
-    return rows.map((r) => ({ ...r, id: String(r.id), assigned_rep_id: r.assigned_rep_id ? String(r.assigned_rep_id) : null, created_at: String(r.created_at) })) as unknown as ContactRow[];
+    const rows = await this.sql`SELECT id::text, provider, external_id, name, phone, email, assigned_rep_id::text, created_at::text, first_name, last_name, phone_raw, phone_normalized, email_raw, email_normalized, source_created_at::text, source_updated_at::text, last_synced_at::text FROM contacts`;
+    return rows.map((r: Record<string, unknown>) => ({
+      ...r,
+      id: String(r.id),
+      assigned_rep_id: r.assigned_rep_id ? String(r.assigned_rep_id) : null,
+      created_at: String(r.created_at),
+      first_name: r.first_name == null ? null : String(r.first_name),
+      last_name: r.last_name == null ? null : String(r.last_name),
+      phone_raw: r.phone_raw == null ? null : String(r.phone_raw),
+      phone_normalized: r.phone_normalized == null ? null : String(r.phone_normalized),
+      email_raw: r.email_raw == null ? null : String(r.email_raw),
+      email_normalized: r.email_normalized == null ? null : String(r.email_normalized),
+      source_created_at: r.source_created_at == null ? null : String(r.source_created_at),
+      source_updated_at: r.source_updated_at == null ? null : String(r.source_updated_at),
+      last_synced_at: r.last_synced_at == null ? null : String(r.last_synced_at),
+    })) as unknown as ContactRow[];
   }
 
   async upsertCalls(rows: (CallRow & { external_call_id: string; provider: string })[]): Promise<number> {
@@ -983,6 +1034,16 @@ export class PgStore implements Store {
     await this.ensureSchema();
     await this.sql`INSERT INTO sync_watermarks (provider, watermark, updated_at) VALUES (${provider}, ${watermarkIso}, now())
       ON CONFLICT (provider) DO UPDATE SET watermark = EXCLUDED.watermark, updated_at = now()`;
+  }
+  async getSyncCheckpoint(key: string): Promise<string | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT value::text FROM sync_checkpoints WHERE key = ${key}`;
+    return rows.length ? String(rows[0].value) : null;
+  }
+  async setSyncCheckpoint(key: string, value: string): Promise<void> {
+    await this.ensureSchema();
+    await this.sql`INSERT INTO sync_checkpoints (key, value, updated_at) VALUES (${key}, ${value}::jsonb, now())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
   }
 
   async insertManualOverride(row: Omit<ManualOverrideRow, "id" | "changed_at">): Promise<void> {

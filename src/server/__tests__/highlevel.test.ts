@@ -46,13 +46,22 @@ const CONTACTS_P1 = {
     { id: "cnt_001", contactName: "Emma Carter", phone: "+19175550142", email: "emma@example.test", assignedTo: "usr_001" },
     { id: "cnt_002", contactName: "Liam Nguyen", phone: "+19175550188", email: "liam@example.test", assignedUserId: "usr_002" },
   ],
-  meta: { total: 3, startAfterId: "cursor_1" },
+  meta: { total: 3, startAfterId: "cursor_1", nextPageUrl: "https://services.leadconnectorhq.com/contacts/?locationId=loc_123&limit=2&startAfter=1000&startAfterId=cursor_1" },
   traceId: "t2",
 };
 const CONTACTS_P2 = {
   contacts: [{ id: "cnt_003", firstName: "Ava", lastName: "Stone", phone: "", email: "ava@example.test", assignedTo: "usr_003" }],
   meta: {},
   traceId: "t3",
+};
+const CONTACTS_ECHO = {
+  contacts: [
+    { id: "cnt_001", contactName: "Emma Carter", phone: "+19175550142", email: "emma@example.test", assignedTo: "usr_001" },
+    { id: "cnt_002", contactName: "Liam Nguyen", phone: "+19175550188", email: "liam@example.test", assignedUserId: "usr_002" },
+  ],
+  // the live API's failure shape: identical nextPageUrl echoed back forever
+  meta: { total: 3, startAfterId: "cursor_1", nextPageUrl: "https://services.leadconnectorhq.com/contacts/?locationId=loc_123&limit=2&startAfter=1000&startAfterId=cursor_1" },
+  traceId: "t4",
 };
 
 const CONVS_P1 = {
@@ -265,7 +274,7 @@ describe("LiveHighLevelAdapter (fixture fetch)", () => {
     expect(seen[0].headers.version).toBe("2021-07-28");
   });
 
-  test("contacts: cursor pagination via meta.startAfterId, capped", async () => {
+  test("contacts: cursor pagination follows meta.nextPageUrl verbatim, capped", async () => {
     const seen: SeenReq[] = [];
     const adapter = new LiveHighLevelAdapter({
       creds: CREDENTIALS,
@@ -278,6 +287,21 @@ describe("LiveHighLevelAdapter (fixture fetch)", () => {
     expect(seen.length).toBe(2);
     expect(seen[0].url).not.toContain("startAfterId");
     expect(seen[1].url).toContain("startAfterId=cursor_1");
+  });
+  test("contacts: stuck cursor (echoed nextPageUrl) stops instead of looping page 1 forever", async () => {
+    const seen: SeenReq[] = [];
+    const adapter = new LiveHighLevelAdapter({
+      creds: CREDENTIALS,
+      // The PROVEN live failure mode: the API returns the same nextPageUrl on
+      // every call. Without the guard this looped 200 pages re-reading page 1.
+      fetchImpl: makeFetch({ "contacts|GET": [CONTACTS_P1, CONTACTS_ECHO, CONTACTS_ECHO] }, { apiKey: CREDENTIALS.apiKey, locationId: CREDENTIALS.locationId, seen }),
+      sleep: SLEEP_NOOP,
+      pageSize: 2,
+    });
+    const contacts = await adapter.fetchContacts();
+    expect(seen.length).toBe(2); // stopped after the echo — NOT a 200-page loop
+    expect(contacts.map((c) => c.external_id)).toEqual(["cnt_001", "cnt_002"]); // page 1's rows only, once
+    expect(adapter.lastRun.warnings.some((w) => w.includes("stuck cursor"))).toBe(true);
   });
 
   test("calls: conversations in window visited, out-of-window skipped, dedupe, durations", async () => {

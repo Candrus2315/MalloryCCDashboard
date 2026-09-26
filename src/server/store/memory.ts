@@ -13,6 +13,7 @@ import {
   type CallRow,
   type LeadRow,
 } from "../metrics/compute";
+import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
   AppSettings,
   AuditCallRow,
@@ -162,11 +163,36 @@ export class MemoryStore implements Store {
 
   async upsertContacts(rows: ContactRow[]): Promise<number> {
     for (const r of rows) {
+      // Mirror of the PG store: raw values verbatim, canonical identity keys
+      // derived at the boundary when not supplied, upsert-only (never delete).
+      const patch: ContactRow = {
+        ...r,
+        phone_raw: r.phone_raw ?? r.phone,
+        email_raw: r.email_raw ?? r.email,
+        phone_normalized: r.phone_normalized ?? normalizeUSPhone(r.phone),
+        email_normalized: r.email_normalized ?? normalizeEmail(r.email),
+      };
       const existing = [...this.contacts.values()].find((c) => c.provider === r.provider && c.external_id === r.external_id);
-      if (existing) this.contacts.set(existing.id, { ...existing, ...r, id: existing.id });
-      else {
+      if (existing) {
+        this.contacts.set(existing.id, {
+          ...existing,
+          ...patch,
+          id: existing.id,
+          name: patch.name ?? existing.name,
+          assigned_rep_id: patch.assigned_rep_id ?? existing.assigned_rep_id,
+          first_name: patch.first_name ?? existing.first_name ?? null,
+          last_name: patch.last_name ?? existing.last_name ?? null,
+          phone_raw: patch.phone_raw ?? existing.phone_raw ?? null,
+          phone_normalized: patch.phone_normalized ?? existing.phone_normalized ?? null,
+          email_raw: patch.email_raw ?? existing.email_raw ?? null,
+          email_normalized: patch.email_normalized ?? existing.email_normalized ?? null,
+          source_created_at: patch.source_created_at ?? existing.source_created_at ?? null,
+          source_updated_at: patch.source_updated_at ?? existing.source_updated_at ?? null,
+          last_synced_at: patch.last_synced_at ?? existing.last_synced_at ?? null,
+        });
+      } else {
         const key = this.nextId("c");
-        this.contacts.set(key, { ...r, id: key });
+        this.contacts.set(key, { ...patch, id: key, created_at: r.created_at ?? new Date().toISOString() });
       }
     }
     return rows.length;
@@ -542,6 +568,13 @@ export class MemoryStore implements Store {
   }
   async setSyncWatermark(provider: string, watermarkIso: string): Promise<void> {
     this.watermarks.set(provider, watermarkIso);
+  }
+  private checkpoints = new Map<string, string>();
+  async getSyncCheckpoint(key: string): Promise<string | null> {
+    return this.checkpoints.get(key) ?? null;
+  }
+  async setSyncCheckpoint(key: string, value: string): Promise<void> {
+    this.checkpoints.set(key, value);
   }
 
   async insertManualOverride(row: Omit<ManualOverrideRow, "id" | "changed_at">): Promise<void> {
