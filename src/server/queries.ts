@@ -51,8 +51,8 @@ import {
 import { getStore } from "./store";
 import { keepRosterRepCalls } from "./roster";
 import { buildUnassignedRollup } from "~/components/reps-views";
-import { AUDIT_ALL, AUDIT_UNASSIGNED, handleAuditQuery, type AuditOkBody } from "./audit-api";
 import { ensureDemoData } from "./sync/run";
+import type { AuditOkBody } from "./audit-api";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
 import type { AppSettings } from "./store/types";
 
@@ -986,7 +986,11 @@ export const getAuditData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as AuditSearchParams)
   .handler(async ({ data }): Promise<AuditPageData> => {
     const today = etToday();
-    const res = await handleAuditQuery({ rep: data?.rep ?? AUDIT_ALL, date: data?.date ?? null });
+    // LAZY import: keeps the audit orchestration (and its store graph) out of
+    // the client bundle — handler bodies are stripped client-side, so a static
+    // import here would retain the module in the browser graph.
+    const { handleAuditQuery } = await import("./audit-api");
+    const res = await handleAuditQuery({ rep: data?.rep ?? "all", date: data?.date ?? null });
     if (res.status !== 200) {
       return { error: (res.body as { error: string }).error, payload: null, picker: null, today };
     }
@@ -994,7 +998,7 @@ export const getAuditData = createServerFn()
     const reps = (await store.getUsers()).map((u) => ({ id: u.id, name: u.name }));
     return {
       error: null,
-      payload: res.body,
+      payload: res.body as AuditOkBody,
       picker: {
         reps,
         allLabel: `All calls (${reps.length} roster reps + unassigned)`,

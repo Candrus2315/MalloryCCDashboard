@@ -17,7 +17,6 @@
  * The /audit page reads the same logic via getAuditData in queries.ts.
  */
 import { etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etToday, formatDateHumanFull } from "./date-logic";
-import { getStore } from "./store";
 import type { AuditCallRow } from "./store/types";
 
 export const AUDIT_UNASSIGNED = "unassigned";
@@ -98,6 +97,10 @@ export interface AuditQueryResult {
 
 /** Orchestration shared by serve.ts (prod), the vite dev middleware, and the /audit page loader. */
 export async function handleAuditQuery(params: { rep?: string | null; date?: string | null }): Promise<AuditQueryResult> {
+  // LAZY store import: this module is also pulled into the client bundle (the
+  // /audit page shares the response types) — a static store import here drags
+  // the pg driver into the browser graph and breaks `vite build`.
+  const { getStore } = await import("./store");
   const store = await getStore();
   const settings = await store.getSettings();
   const today = etToday();
