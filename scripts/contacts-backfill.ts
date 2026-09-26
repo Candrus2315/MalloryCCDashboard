@@ -57,23 +57,49 @@ async function fetchPage(url: string): Promise<ContactsPage> {
 
 const startUrl = `https://services.leadconnectorhq.com/contacts/?locationId=${creds.locationId}&limit=100`;
 
-const existing = await store.getSyncCheckpoint(CONTACTS_BACKFILL_CHECKPOINT_KEY);
-if (existing) {
-  const cp = JSON.parse(existing) as ContactsBackfillCheckpoint;
-  console.log(`RESUMING: ${cp.pagesDone} pages / ${cp.upserted} contacts already upserted${cp.failedPages.length ? `, ${cp.failedPages.length} failed page(s) recorded` : ""}`);
+/**
+ * Defensive checkpoint parse. History: the first live resume crashed because a
+ * checkpoint had been stored DOUBLE-ENCODED (JSON.stringify passed into a
+ * ::jsonb cast => jsonb string). Accept both shapes, default failedPages, and
+ * treat a shape without a cursor as corrupt (null => engine restarts from page
+ * 1; upserts are idempotent so that is safe, just slower).
+ */
+function parseCheckpoint(v: string | null): ContactsBackfillCheckpoint | null {
+  if (!v) return null;
+  let out: unknown = v;
+  try {
+    out = JSON.parse(v);
+  } catch {
+    return null;
+  }
+  if (typeof out === "string") {
+    try {
+      out = JSON.parse(out);
+    } catch {
+      return null;
+    }
+  }
+  const cp = out as ContactsBackfillCheckpoint;
+  if (!cp || typeof cp !== "object" || typeof cp.nextPageUrl !== "string") return null;
+  return { ...cp, failedPages: Array.isArray(cp.failedPages) ? cp.failedPages : [] };
+}
+
+const existingCp = parseCheckpoint(await store.getSyncCheckpoint(CONTACTS_BACKFILL_CHECKPOINT_KEY));
+if (existingCp) {
+  console.log(`RESUMING: ${existingCp.pagesDone} pages / ${existingCp.upserted} contacts already upserted${existingCp.failedPages.length ? `, ${existingCp.failedPages.length} failed page(s) recorded` : ""}`);
 } else {
-  console.log("STARTING from page 1 (no checkpoint)");
+  console.log("STARTING from page 1 (no usable checkpoint)");
 }
 
 const outcome = await runContactsBackfill(
   {
     fetchPage,
     upsertContacts: (rows) => store.upsertContacts(rows),
-    loadCheckpoint: async () => {
-      const v = await store.getSyncCheckpoint(CONTACTS_BACKFILL_CHECKPOINT_KEY);
-      return v ? (JSON.parse(v) as ContactsBackfillCheckpoint) : null;
-    },
-    saveCheckpoint: (cp) => store.setSyncCheckpoint(CONTACTS_BACKFILL_CHECKPOINT_KEY, JSON.stringify(cp)),
+    loadCheckpoint: async () => parseCheckpoint(await store.getSyncCheckpoint(CONTACTS_BACKFILL_CHECKPOINT_KEY)),
+    // Pass the OBJECT, not JSON.stringify(cp): setSyncCheckpoint casts to
+    // ::jsonb, so a pre-stringified value lands as a double-encoded jsonb
+    // string (the exact bug that broke the first live resume).
+    saveCheckpoint: (cp) => store.setSyncCheckpoint(CONTACTS_BACKFILL_CHECKPOINT_KEY, cp),
     pageDelayMs: PAGE_DELAY_MS,
     maxPagesThisRun: MAX_PAGES_THIS_RUN,
     userIdByExternal,
