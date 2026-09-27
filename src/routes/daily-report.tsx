@@ -204,7 +204,7 @@ function DailyReportPage() {
           <CopyButton label="COPY FOR EMAIL" text={data.emailText} />
           <CopyButton label="COPY FOR SLACK" text={data.slackText} />
         </div>
-        <div className="card mt-5 max-w-xl">
+        <div className="card mt-5">
           <p className="kpi-label">Report preview — exactly what COPY REPORT puts on your clipboard</p>
           <pre className="mt-3 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-stone-700">
             {data.reportText}

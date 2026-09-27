@@ -621,7 +621,7 @@ function TeamPage() {
       </section>
 
       {/* team performance summary + goal pacing — the above-the-fold story */}
-      <div className="grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
         <section className="card" aria-label="Team performance summary">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <p className="section-heading">Team Performance</p>
@@ -686,8 +686,9 @@ function TeamPage() {
           )}
         </section>
 
-        {/* GOAL PACING — one unit: number line, bar, sentence (spec §2) */}
-        <section className="card flex flex-col" aria-label="Goal pacing">
+        {/* GOAL PACING — one unit: number line, bar, sentence (spec §2) — sizes to its
+            own content height (equal-height abolition: items-start on the grid above) */}
+        <section className="card" aria-label="Goal pacing">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <p className="section-heading">Goal Pacing</p>
             <p className="max-w-[240px] text-right text-[11px] leading-snug text-stone-400">{m.goal.note}</p>
@@ -732,14 +733,14 @@ function TeamPage() {
           <p className="text-xs text-stone-400">{t.bucketNote}</p>
         </div>
         <p className="mt-3 text-xs font-semibold text-stone-500">Performance trends</p>
-        <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-2 grid gap-4 md:grid-cols-2">
           {renderCard("bookings")}
           {renderCard("calls")}
           {renderCard("calls-over")}
           {renderCard("conv")}
         </div>
         <p className="mt-4 text-xs font-semibold text-stone-500">Lead &amp; efficiency trends</p>
-        <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-2 grid gap-4 md:grid-cols-2">
           {renderCard("assigned-conv")}
           {renderCard("avg-duration")}
         </div>

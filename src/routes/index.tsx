@@ -226,9 +226,20 @@ function TodayPage() {
         </div>
       </section>
 
-      {/* 4 — lead load + studio availability */}
-      <section className="grid gap-4 lg:grid-cols-5" aria-label="Leads and availability">
-        <div className="card lg:col-span-3">
+      {/* 4a — studio availability (own FULL-width band, global-layout-spec TODAY order:
+          availability before the compact leads block — never a stretch pair) */}
+      <section aria-label="Studio availability">
+        <div className="card card-dense">
+          <p className="section-heading">Studio Availability</p>
+          <div className="mt-3">
+            <DayCardStrip days={dayCards} />
+          </div>
+        </div>
+      </section>
+
+      {/* 4b — leads worked today (compact FULL/STRIP-class block) */}
+      <section aria-label="Leads worked today">
+        <div className="card">
           <p className="section-heading">Leads — worked today (work-date logic)</p>
           <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
             <KpiMid label="Family Leads Today" value={m.leads.today.family} />
@@ -248,12 +259,6 @@ function TodayPage() {
               }
               percentUsed={m.leads.percentUsed}
             />
-          </div>
-        </div>
-        <div className="card card-dense lg:col-span-2">
-          <p className="section-heading">Studio Availability</p>
-          <div className="mt-3">
-            <DayCardStrip days={dayCards} />
           </div>
         </div>
       </section>
