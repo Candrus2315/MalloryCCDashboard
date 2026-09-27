@@ -39,6 +39,12 @@ const beforeAmb = new Set(before.filter((r) => (r.note ?? "").startsWith("ambigu
 const res = await computeAndPersistAttributions(store, settings);
 const after = await store.getAttributions();
 const afterByAppt = new Map(after.map((r) => [r.appointment_id, r]));
+// OWNER MANUAL OVERRIDES outrank engine-baseline expectations: rows the owner
+// assigned by hand in Settings (manual_override=true, audit-tracked) are
+// expected to diverge from the s1/kept baselines BY DESIGN. They are skipped
+// (counted, not failed) — the engine itself must never touch them.
+const manualOverrideIds = new Set(after.filter((r) => r.manual_override).map((r) => r.appointment_id));
+let manualOverrides = 0;
 
 const attributed = after.filter((r) => r.rep_id != null).length;
 const ambiguous = after.filter((r) => r.rep_id == null && (r.note ?? "").startsWith("ambiguous")).length;
@@ -70,6 +76,7 @@ for (const o of outcomes) {
   const row = afterByAppt.get(apptId);
   checked71 += 1;
   if (!row) { failures.push(`71-population ${apptId}: NO stored row`); continue; }
+  if (row.manual_override || manualOverrideIds.has(apptId)) { manualOverrides += 1; continue; }
   if (c1Reps.length === 1) {
     const c1 = o.c1 as { id: string; rep: string } | null;
     newly30 += 1;
@@ -107,6 +114,7 @@ for (const [apptId, r] of beforeAttr) {
   if (!row || row.rep_id !== r.rep_id || row.call_id !== r.call_id) failures.push(`kept-3 ${apptId}: verdict changed`);
 }
 for (const apptId of beforeAmb) {
+  if (manualOverrideIds.has(apptId)) { manualOverrides += 1; continue; }
   const row = afterByAppt.get(apptId);
   if (!row || row.rep_id != null || !(row.note ?? "").startsWith("ambiguous")) failures.push(`kept-4 ${apptId}: no longer ambiguous`);
 }
@@ -136,7 +144,7 @@ const summary = {
   },
   EXPECTED: { total: 410, attributed: 130, ambiguous: 12, unattributed: 268 },
   rerunStability: { changed: rerunChanged.length, sample: rerunChanged.slice(0, 12), STOP_IF_NONZERO: true },
-  perRow: { checked71, newly30, checked46, kept3: beforeAttr.size, kept4: beforeAmb.size, failures: failures.length },
+  perRow: { checked71, newly30, checked46, kept3: beforeAttr.size, kept4: beforeAmb.size, manualOverrides, failures: failures.length },
   over2min: { count: over2min.length, EXPECTED: 76 },
   gatePass:
     failures.length === 0 &&

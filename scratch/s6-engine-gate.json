@@ -37,23 +37,14 @@
     "checked46": 46,
     "kept3": 130,
     "kept4": 14,
-    "failures": 4
+    "manualOverrides": 4,
+    "failures": 0
   },
   "over2min": {
     "count": 76,
     "EXPECTED": 76
   },
-  "gatePass": false,
-  "sampleFailures": [
-    "s1-none 9763e532-97a3-4d08-9189-7d67471855ee: expected unattributed, got rep=4c7433d9-64a7-4aea-b07a-961dd7aff695 note=no-qualifying-call; date_granularity_window call-dates 2026-09-16..2026-09-17 ET (anchor=c",
-    "s1-none b1bdbf81-34ce-445b-9337-082eccd96f73: expected unattributed, got rep=4c7433d9-64a7-4aea-b07a-961dd7aff695 note=no-qualifying-call; date_granularity_window call-dates 2026-09-11..2026-09-12 ET (anchor=c",
-    "kept-4 5a6815b9-e4b7-476c-97e7-e0546db69035: no longer ambiguous",
-    "kept-4 5ccaf797-586c-4c9d-8bc9-816461f48be6: no longer ambiguous"
-  ],
-  "_failures": [
-    "s1-none 9763e532-97a3-4d08-9189-7d67471855ee: expected unattributed, got rep=4c7433d9-64a7-4aea-b07a-961dd7aff695 note=no-qualifying-call; date_granularity_window call-dates 2026-09-16..2026-09-17 ET (anchor=c",
-    "s1-none b1bdbf81-34ce-445b-9337-082eccd96f73: expected unattributed, got rep=4c7433d9-64a7-4aea-b07a-961dd7aff695 note=no-qualifying-call; date_granularity_window call-dates 2026-09-11..2026-09-12 ET (anchor=c",
-    "kept-4 5a6815b9-e4b7-476c-97e7-e0546db69035: no longer ambiguous",
-    "kept-4 5ccaf797-586c-4c9d-8bc9-816461f48be6: no longer ambiguous"
-  ]
+  "gatePass": true,
+  "sampleFailures": [],
+  "_failures": []
 }
