@@ -153,6 +153,20 @@ describe("writer-version guard (computeAndPersistAttributions)", () => {
     expect(await store.getSyncCheckpoint(ATTRIBUTION_WRITER_VERSION_KEY)).toBe(String(ATTRIBUTION_WRITER_VERSION));
   });
 
+  test("FRESH STORE: no recorded writer version → compute SUCCEEDS and stamps v2 (first writer always writes)", async () => {
+    resetAttributionThrottle();
+    const store = new MemoryStore();
+    await seedUsersContactCallBooking(store);
+    const settings = await store.getSettings();
+    // NO recorded checkpoint: absence of a version behaves like the takeover
+    // case — the current writer PROCEEDS (never errors the tick) and stamps.
+    expect(await store.getSyncCheckpoint(ATTRIBUTION_WRITER_VERSION_KEY)).toBeNull();
+    const res = await computeAndPersistAttributions(store, settings, { now });
+    expect(res.outcome).toBe("synced");
+    expect(res.attributed).toBe(1);
+    expect(await store.getSyncCheckpoint(ATTRIBUTION_WRITER_VERSION_KEY)).toBe(String(ATTRIBUTION_WRITER_VERSION));
+  });
+
   test("force bypasses the version guard (deliberate owner-directed recompute)", async () => {
     resetAttributionThrottle();
     const store = new MemoryStore();

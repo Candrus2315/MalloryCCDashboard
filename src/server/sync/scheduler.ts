@@ -54,10 +54,10 @@ export interface SchedulerTickResult {
 }
 
 /** Attribution recompute wrapped in its own sync_runs row (visible in the Sync Center). */
-async function runAttributionRun(store: Store, settings: AppSettings): Promise<number> {
+async function runAttributionRun(store: Store, settings: AppSettings, opts?: { force?: boolean }): Promise<number> {
   const runId = await store.insertSyncRun("attribution");
   try {
-    const n = await recomputeAttributions(store, settings);
+    const n = await recomputeAttributions(store, settings, opts);
     await store.finishSyncRun(runId, "success", n, null);
     return n;
   } catch (e) {
@@ -112,10 +112,17 @@ async function highlevelTick(options?: {
         ? { sheetsAdapter: options.liveAdapters.sheets, highlevelAdapter: options.liveAdapters.highlevel }
         : {};
       const acuityOpt = options && "acuityAdapter" in options ? { acuityAdapter: options.acuityAdapter } : {};
-      const full = await runDemoSync({ store, settings, ...adapterOpts, ...acuityOpt });
+      // BOOTSTRAP = the fresh-writer takeover (owner directive 2026-09-27): on
+      // a store with NO watermark there are no production verdicts to protect
+      // — the table (if any) holds demo-computed rows the live sync is
+      // replacing wholesale. The current writer's first write on a fresh store
+      // always writes: pass force so the degradation guard's stale-writer
+      // shape cannot brick the bootstrap. SYNC NOW / incremental paths never
+      // set this — the guard stays fully enforced there.
+      const full = await runDemoSync({ store, settings, ...adapterOpts, ...acuityOpt, attributionForce: true });
       const hlError = full.providers.find((p) => p.provider === "highlevel")?.error ?? null;
       if (hlError) return { outcome: "error", mode: "full", error: hlError };
-      const after = await runAttributionRun(store, settings);
+      const after = await runAttributionRun(store, settings, { force: true });
       return { outcome: "synced", mode: "full", attributions: after };
     }
 

@@ -43,9 +43,13 @@ async function runProvider(
  * PURE engine (metrics/attribution.ts), appointmentInScope applied, manual
  * overrides preserved.
  */
-export async function recomputeAttributions(store: Store, settings: AppSettings): Promise<number> {
+export async function recomputeAttributions(
+  store: Store,
+  settings: AppSettings,
+  options?: { force?: boolean },
+): Promise<number> {
   const { computeAndPersistAttributions } = await import("./attribution-tick");
-  const res = await computeAndPersistAttributions(store, settings);
+  const res = await computeAndPersistAttributions(store, settings, options);
   return (res.attributed ?? 0) + (res.unattributed ?? 0);
 }
 
@@ -70,6 +74,11 @@ export async function runDemoSync(options?: {
   sheetsAdapter?: GoogleSheetsAdapter | null;
   highlevelAdapter?: LiveHighLevelAdapter | null;
   acuityAdapter?: AcuityLiveAdapter | null;
+  /** BOOTSTRAP ONLY (set by the scheduler's watermark-less branch): the
+   * full-sync attribution recompute may replace demo-computed verdicts
+   * wholesale — the fresh-writer takeover, not a stale-writer shape. Never
+   * set on the manual SYNC NOW / incremental paths (guard stays enforced). */
+  attributionForce?: boolean;
 }): Promise<SyncResult> {
   const startedAt = new Date().toISOString();
   const store = options?.store ?? (await getStore());
@@ -405,7 +414,7 @@ export async function runDemoSync(options?: {
 
   // --- Attributions (engine over STORED rows; re-runs replace, manual overrides preserved by store) ---
   const attrRes = await runProvider(store, "attribution", async () => {
-    const attributions = await recomputeAttributions(store, settings);
+    const attributions = await recomputeAttributions(store, settings, { force: options?.attributionForce === true });
     return { count: attributions };
   });
   results.push({ provider: "attribution", count: attrRes.count, error: attrRes.error ?? null });

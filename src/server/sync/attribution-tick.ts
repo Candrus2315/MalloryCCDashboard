@@ -174,9 +174,13 @@ export async function computeAndPersistAttributions(
   // WRITER-VERSION GUARD: an outdated build must never rewrite the table with
   // old semantics. The latest writer version is stored machinery state
   // (sync_checkpoints — no settings/UI entanglement, no schema change).
+  // ABSENCE of a recorded checkpoint is the fresh-store case and behaves like
+  // the takeover case: this writer PROCEEDS and stamps its version below —
+  // the first writer on a fresh store always writes. Only a RECORDED version
+  // newer than this build refuses (outdated writer).
   const storedVersionRaw = await store.getSyncCheckpoint(ATTRIBUTION_WRITER_VERSION_KEY);
-  const storedVersion = storedVersionRaw != null ? Number(storedVersionRaw) : 0;
-  if (!options?.force && Number.isFinite(storedVersion) && storedVersion > ATTRIBUTION_WRITER_VERSION) {
+  const storedVersion = storedVersionRaw != null ? Number(storedVersionRaw) : null;
+  if (!options?.force && storedVersion != null && Number.isFinite(storedVersion) && storedVersion > ATTRIBUTION_WRITER_VERSION) {
     throw new Error(
       `writer-version guard: stored writer v${storedVersion} is newer than this writer v${ATTRIBUTION_WRITER_VERSION} — refusing to upsert (outdated writer; deploy the current build, or recompute with force)`,
     );
