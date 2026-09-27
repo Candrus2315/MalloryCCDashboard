@@ -277,3 +277,136 @@ export function attentionNotes(rows: RepPerformanceRow[], reportDate: string): A
   scored.sort((a, b) => a.group - b.group || b.score - a.score);
   return scored.slice(0, 5).map(({ severity, text, rep }) => ({ severity, text, rep }));
 }
+
+// ---------- OWNER DIRECTIVE (2026-09-27): pooled rate benchmarking ----------
+//
+// The old "vs team" columns were arithmetic averages of individual rates
+// (buildTeamAverages semantics) plus raw-booking % differences — replaced per
+// the owner's directive with POOLED rates: sum(other reps' numerators) ÷
+// sum(other reps' denominators). Not-yet-active reps are excluded from BOTH
+// sums. These are presentation-side compositions of numbers
+// buildRepPerformanceRows already produced — no metric redefinition.
+
+export interface PooledRate {
+  /** Sum of the contributing reps' numerators. */
+  numerator: number;
+  /** Sum of the contributing reps' denominators. */
+  denominator: number;
+  /** The pooled rate; null when the pooled denominator is 0 (renders "—"). */
+  rate: number | null;
+  /** How many reps contributed (active, non-excluded). */
+  reps: number;
+}
+
+export type PooledMetric = "conversation" | "assignedLead";
+
+/**
+ * The numerator/denominator pair a pooled rate sums, straight off the existing
+ * RepPerformanceRow aggregates:
+ *   conversation  = bookings from calls >120s ÷ calls >120s
+ *   assignedLead  = total bookings ÷ assigned leads
+ */
+function pooledPair(row: RepPerformanceRow, metric: PooledMetric): [number, number] {
+  return metric === "conversation"
+    ? [row.bookingsFromOverThreshold, row.callsOverThreshold]
+    : [row.totalBookings, row.assignedLeads];
+}
+
+/**
+ * Pooled benchmark over all OTHER ACTIVE reps (both sums exclude the selected
+ * rep AND every not-yet-active rep). Denominator 0 → rate null ("—" with no
+ * pts delta — never a 0% fiction).
+ */
+export function pooledBenchmarkExcluding(
+  rows: RepPerformanceRow[],
+  repId: string,
+  metric: PooledMetric,
+): PooledRate {
+  let numerator = 0;
+  let denominator = 0;
+  let reps = 0;
+  for (const r of rows) {
+    if (r.repId === repId || r.operatingState !== "active") continue;
+    const [n, d] = pooledPair(r, metric);
+    numerator += n;
+    denominator += d;
+    reps += 1;
+  }
+  return { numerator, denominator, rate: denominator > 0 ? numerator / denominator : null, reps };
+}
+
+/**
+ * Rep rate vs pooled benchmark in PERCENTAGE POINTS; null when either side is
+ * null (no data, or the pooled denominator is 0 after exclusions).
+ */
+export function pooledPtsDelta(
+  repRate: number | null,
+  pooledRate: number | null,
+): number | null {
+  if (repRate == null || pooledRate == null) return null;
+  return (repRate - pooledRate) * 100;
+}
+
+/** "−33.0 pts" / "+4.2 pts" / "0.0 pts" — null hides the line entirely. */
+export function formatPtsDelta(delta: number | null): string | null {
+  if (delta == null) return null;
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(1)} pts`;
+}
+
+// ---------- OWNER DIRECTIVE (2026-09-27): combined Goal Progress ----------
+//
+// One component per active rep: "8 / 10 · [bar] · 80%" plus an above/below
+// goal line. Replaces the old unrelated Goal % + Actual/Goal columns and the
+// raw-bookings "vs team" % deltas. Never invents a goal: no goal set →
+// "No goal set"; not-yet-active reps render "—" (never 0%).
+
+export interface GoalProgressView {
+  state: "progress" | "no-goal" | "inactive";
+  actual: number;
+  goal: number | null;
+  /** "80%" (0dp when whole, else 1dp); null outside "progress". */
+  pctText: string | null;
+  /** 0–100 capped bar fill; null = no bar. */
+  barPct: number | null;
+  hit: boolean;
+  /** "2 below goal" / "27 above goal" / "at goal"; null outside "progress". */
+  diffText: string | null;
+}
+
+export function goalProgressView(
+  actual: number,
+  goal: number,
+  operatingState: RepPerformanceRow["operatingState"],
+): GoalProgressView {
+  if (operatingState === "not-yet-active") {
+    return { state: "inactive", actual, goal: null, pctText: null, barPct: null, hit: false, diffText: null };
+  }
+  if (!(goal > 0)) {
+    return { state: "no-goal", actual, goal: null, pctText: null, barPct: null, hit: false, diffText: null };
+  }
+  const ratio = actual / goal;
+  const whole = Number.isInteger(ratio * 100);
+  const diff = actual - goal;
+  return {
+    state: "progress",
+    actual,
+    goal,
+    pctText: `${((ratio * 100).toFixed(whole ? 0 : 1))}%`,
+    barPct: Math.min(ratio, 1) * 100,
+    hit: ratio >= 1,
+    diffText: diff === 0 ? "at goal" : diff > 0 ? `${diff} above goal` : `${-diff} below goal`,
+  };
+}
+
+/**
+ * Reps-page URL preserving the Today page's reporting week (owner directive:
+ * row click carries the week). The Reps page already parses
+ * ?rep=&range=week-of&from=<monday>; week-of anchored on the CURRENT Monday
+ * is not historical (isHistoricalWeek), so the Reps page still shows its
+ * "Current Week" chip for the live week.
+ */
+export function repPerfLink(weekStart: string, repId: string): string {
+  const params = new URLSearchParams({ rep: repId, range: "week-of", from: weekStart });
+  return `/reps?${params.toString()}`;
+}
