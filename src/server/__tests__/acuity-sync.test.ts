@@ -21,8 +21,15 @@ import {
   availabilityTick,
   resolveAcuityAdapterForSync,
   writeAcuityConnection,
-  type AcuityLiveAdapter,
+  acuityWindow,
+  chunkDateRange,
+  ACUITY_LOOKBACK_DAYS,
+  ACUITY_LOOKAHEAD_DAYS,
+  ACUITY_CHUNK_DAYS,
+  ACUITY_MAX_PAGE,
+  AcuityLiveAdapter,
 } from "../sync/acuity-live";
+import { etToday, addDays } from "../date-logic";
 import { runDemoSync } from "../sync/run";
 import { schedulerTick } from "../sync/scheduler";
 import type { NormalizedAppointment } from "../sync/adapters";
@@ -337,5 +344,94 @@ describe("schedulerTick composition", () => {
     });
     expect(res.availability?.outcome).toBe("synced");
     expect(res.availability?.appointments).toBe(1);
+  });
+});
+
+// ---------- S7: widened sync window (35 back / 180 forward) ----------
+
+describe("S7 sync window (35 back / 180 forward)", () => {
+  test("acuityWindow pins the exact bounds (owner directive: 35 back / 180 forward)", () => {
+    expect(ACUITY_LOOKBACK_DAYS).toBe(35);
+    expect(ACUITY_LOOKAHEAD_DAYS).toBe(180);
+    expect(acuityWindow("2026-09-28")).toEqual({ minDate: "2026-08-24", maxDate: "2027-03-27" });
+  });
+
+  test("acuityWindow rolls over month and year boundaries in both directions", () => {
+    // look-back across a year boundary
+    expect(acuityWindow("2026-01-10")).toEqual({ minDate: "2025-12-06", maxDate: "2026-07-09" });
+    // look-ahead across a year boundary
+    expect(acuityWindow("2027-01-15")).toEqual({ minDate: "2026-12-11", maxDate: "2027-07-14" });
+  });
+
+  test("chunkDateRange splits the 216-day window into contiguous ≤90-day chunks", () => {
+    const chunks = chunkDateRange("2026-08-24", "2027-03-27", ACUITY_CHUNK_DAYS);
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]).toEqual({ minDate: "2026-08-24", maxDate: "2026-11-21" });
+    expect(chunks[1]).toEqual({ minDate: "2026-11-22", maxDate: "2027-02-19" });
+    expect(chunks[2]).toEqual({ minDate: "2027-02-20", maxDate: "2027-03-27" });
+    for (let i = 1; i < chunks.length; i++) {
+      expect(addDays(chunks[i - 1].maxDate, 1)).toBe(chunks[i].minDate); // no gaps, no overlaps
+    }
+  });
+
+  test("chunkDateRange: a range shorter than the chunk size is one chunk", () => {
+    expect(chunkDateRange("2026-09-01", "2026-09-30", 90)).toEqual([{ minDate: "2026-09-01", maxDate: "2026-09-30" }]);
+  });
+
+  test("fetchAppointments pulls the widened window in date chunks and parses every row", async () => {
+    const win = acuityWindow(etToday());
+    const expectedChunks = chunkDateRange(win.minDate, win.maxDate, ACUITY_CHUNK_DAYS);
+    const urls: string[] = [];
+    const fetchImpl = async (url: string) => {
+      urls.push(url);
+      const min = new URL(url).searchParams.get("minDate") ?? "";
+      return new Response(
+        JSON.stringify([{ ...RAW_APPT, id: Number(min.replaceAll("-", "")), datetime: `${min}T10:00:00-0400`, dateCreated: "September 20, 2026" }]),
+        { status: 200 },
+      );
+    };
+    const adapter = new AcuityLiveAdapter({ userId: "u", apiKey: "k" }, fetchImpl, async () => {});
+    const appts = await adapter.fetchAppointments();
+    expect(urls).toHaveLength(expectedChunks.length);
+    expect(urls.map((u) => new URL(u).searchParams.get("minDate"))).toEqual(expectedChunks.map((c) => c.minDate));
+    expect(urls.map((u) => new URL(u).searchParams.get("maxDate"))).toEqual(expectedChunks.map((c) => c.maxDate));
+    expect(urls.every((u) => new URL(u).searchParams.get("max") === String(ACUITY_MAX_PAGE))).toBe(true);
+    expect(appts).toHaveLength(expectedChunks.length);
+    expect(adapter.lastRun?.window).toEqual(win);
+    expect(adapter.lastRun?.requests).toBe(expectedChunks.length);
+    expect(adapter.lastRun?.truncated).toBe(false);
+  });
+
+  test("fetchAppointments splits a cap-full chunk instead of silently truncating", async () => {
+    const seen: string[] = [];
+    const win = acuityWindow(etToday());
+    const expectedChunks = chunkDateRange(win.minDate, win.maxDate, ACUITY_CHUNK_DAYS);
+    const spanDays = (url: string) => {
+      const p = new URL(url).searchParams;
+      return (Date.parse(`${p.get("maxDate")}T00:00:00Z`) - Date.parse(`${p.get("minDate")}T00:00:00Z`)) / 86_400_000 + 1;
+    };
+    const fetchImpl = async (url: string) => {
+      seen.push(url);
+      // any range wider than half a chunk fills the cap; narrower ones do not
+      if (spanDays(url) > ACUITY_CHUNK_DAYS / 2) {
+        return new Response(
+          JSON.stringify(Array.from({ length: ACUITY_MAX_PAGE }, (_, i) => ({ ...RAW_APPT, id: 900000 + i, dateCreated: "September 20, 2026" }))),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify([{ ...RAW_APPT, id: 177001, dateCreated: "September 20, 2026" }]), { status: 200 });
+    };
+    const adapter = new AcuityLiveAdapter({ userId: "u", apiKey: "k" }, fetchImpl, async () => {});
+    const appts = await adapter.fetchAppointments();
+    // every full chunk split into two halves → more requests than chunks; nothing truncated
+    expect(seen.length).toBeGreaterThan(expectedChunks.length);
+    // the first chunk's halves: [start, mid] and [mid+1, end] — mid = start + floor((days-1)/2)
+    const mid = addDays(expectedChunks[0].minDate, Math.floor((ACUITY_CHUNK_DAYS - 1) / 2));
+    expect(seen.some((u) => u.includes(`minDate=${expectedChunks[0].minDate}`) && u.includes(`maxDate=${mid}`))).toBe(true);
+    expect(seen.some((u) => u.includes(`minDate=${addDays(mid, 1)}`) && u.includes(`maxDate=${expectedChunks[0].maxDate}`))).toBe(true);
+    // duplicate ids across pages collapse to one row; the cap-full page contributes its 500
+    expect(appts.filter((a) => a.acuity_appointment_id === "177001")).toHaveLength(1);
+    expect(new Set(appts.map((a) => a.acuity_appointment_id)).size).toBe(appts.length);
+    expect(adapter.lastRun?.truncated).toBe(false);
   });
 });

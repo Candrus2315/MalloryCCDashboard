@@ -8,7 +8,8 @@
  * NEVER logged or serialized.
  *
  * Endpoints used (read-only):
- *   GET /appointments      — minDate/maxDate window (ET dates), max=500
+ *   GET /appointments      — minDate/maxDate window (ET dates), chunked
+ *                            pagination under the 500-response cap (S7)
  *   GET /appointment-types — catalog (smoke script + future Settings scope UI)
  *
  * Semantics the sync guarantees:
@@ -111,12 +112,70 @@ export function parseAcuityAppointmentType(raw: Record<string, unknown>): { id: 
   return { id, name, duration: parseAcuityDuration(raw.duration) };
 }
 
+// ---------- sync window (S7: 35 days back / 180 days forward) ----------
+
+/**
+ * S7 (owner-reported undercount, fixed 9/28): the appointments pull window.
+ * The old −1/+14 window made any booking whose SESSION date sat outside it
+ * invisible to the store — bookings MADE >14 days ahead never synced, so
+ * created-based weekly Total Bookings undercounted (24 stored vs Acuity's 63
+ * for the week of Sep 21). Look-back 35 days also keeps the owner's
+ * held-sessions history in every pull. ONLY the pull window changed — metric
+ * definitions, attribution logic and upsert semantics are untouched.
+ */
+export const ACUITY_LOOKBACK_DAYS = 35;
+export const ACUITY_LOOKAHEAD_DAYS = 180;
+/** Acuity hard cap on one appointments response (the `max` param). */
+export const ACUITY_MAX_PAGE = 500;
+/**
+ * Inclusive date-chunk size for paginated pulls. 90 days ≈ 190 appointments
+ * at current volume — comfortable headroom under the 500 cap; chunks merge
+ * by appointment id. A chunk that still fills the cap is split in half
+ * recursively (see fetchRange), so growth cannot silently truncate.
+ */
+export const ACUITY_CHUNK_DAYS = 90;
+
+/**
+ * Pure window math over ET calendar dates (inclusive both ends) — pinned by
+ * tests. Acuity interprets minDate/maxDate in the account's timezone (ET for
+ * this owner).
+ */
+export function acuityWindow(today: string): { minDate: string; maxDate: string } {
+  return { minDate: addDays(today, -ACUITY_LOOKBACK_DAYS), maxDate: addDays(today, ACUITY_LOOKAHEAD_DAYS) };
+}
+
+/** Days from a to b for YYYY-MM-DD strings (b ≥ a). */
+function dateDiffDays(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+}
+
+/**
+ * Split an inclusive date range into consecutive chunks of at most chunkDays
+ * days — no gaps, no overlaps (each chunk starts the day after the previous
+ * one ends). A range shorter than chunkDays yields a single chunk.
+ */
+export function chunkDateRange(
+  minDate: string,
+  maxDate: string,
+  chunkDays: number,
+): Array<{ minDate: string; maxDate: string }> {
+  const chunks: Array<{ minDate: string; maxDate: string }> = [];
+  let cursor = minDate;
+  while (cursor <= maxDate) {
+    const proposedEnd = addDays(cursor, chunkDays - 1);
+    const end = proposedEnd < maxDate ? proposedEnd : maxDate;
+    chunks.push({ minDate: cursor, maxDate: end });
+    cursor = addDays(end, 1);
+  }
+  return chunks;
+}
+
 // ---------- the live adapter ----------
 
 export interface AcuityLiveRunReport {
   requests: number;
   window: { minDate: string; maxDate: string };
-  /** Response hit the max cap — the window may be truncated (warn, don't guess). */
+  /** True only when a SINGLE-DAY page still filled the cap — the pull cannot be split further. */
   truncated: boolean;
   warnings: string[];
 }
@@ -170,22 +229,48 @@ export class AcuityLiveAdapter {
   }
 
   /**
-   * Fetch appointments for the rolling window (yesterday → +14 days, ET
+   * GET one date range. If the response fills the 500-appointment cap the
+   * range is split in half and each half re-pulled (a single-day range cannot
+   * split further — that is flagged truncated rather than silently short).
+   */
+  private async fetchRange(minDate: string, maxDate: string): Promise<Record<string, unknown>[]> {
+    const body = await this.getJson("appointments", { minDate, maxDate, max: String(ACUITY_MAX_PAGE) });
+    const list = Array.isArray(body) ? body : [];
+    if (list.length < ACUITY_MAX_PAGE) return list;
+    if (minDate >= maxDate) {
+      if (this.lastRun) {
+        this.lastRun.truncated = true;
+        this.lastRun.warnings.push(`Single day ${minDate} hit the ${ACUITY_MAX_PAGE}-appointment cap — response truncated`);
+      }
+      return list;
+    }
+    const mid = addDays(minDate, Math.floor((dateDiffDays(minDate, maxDate) - 1) / 2));
+    const lower = await this.fetchRange(minDate, mid);
+    const upper = await this.fetchRange(addDays(mid, 1), maxDate);
+    return [...lower, ...upper];
+  }
+
+  /**
+   * Fetch appointments for the rolling window (today−35 → today+180, ET
    * calendar dates — Acuity interprets the date params in the account's
-   * timezone, which is ET for this owner). Cancellations come back in the
-   * same list with canceled:true so their stored rows UPDATE.
+   * timezone, which is ET for this owner). Pulled in ≤90-day date chunks
+   * (see ACUITY_CHUNK_DAYS) and merged by appointment id, so the response
+   * cap cannot silently truncate the window. Cancellations come back in the
+   * same lists with canceled:true so their stored rows UPDATE.
    */
   async fetchAppointments(): Promise<NormalizedAppointment[]> {
-    const today = etToday();
-    const minDate = addDays(today, -1);
-    const maxDate = addDays(today, 14);
-    this.lastRun = { requests: 0, window: { minDate, maxDate }, truncated: false, warnings: [] };
-    const body = await this.getJson("appointments", { minDate, maxDate, max: "500" });
-    const list = Array.isArray(body) ? body : [];
-    if (list.length >= 500) {
-      this.lastRun.truncated = true;
-      this.lastRun.warnings.push("Response hit the 500-appointment cap — the window may be truncated");
+    const window = acuityWindow(etToday());
+    this.lastRun = { requests: 0, window, truncated: false, warnings: [] };
+    const chunks = chunkDateRange(window.minDate, window.maxDate, ACUITY_CHUNK_DAYS);
+    const byId = new Map<string, Record<string, unknown>>();
+    for (const chunk of chunks) {
+      for (const raw of await this.fetchRange(chunk.minDate, chunk.maxDate)) {
+        if (!raw || typeof raw !== "object") continue;
+        const id = (raw as Record<string, unknown>).id;
+        if (id != null && String(id) !== "") byId.set(String(id), raw as Record<string, unknown>);
+      }
     }
+    const list = [...byId.values()];
     const out: NormalizedAppointment[] = [];
     let fallbackCreated = 0;
     let missingDuration = 0;
