@@ -274,8 +274,17 @@ describe("schedulerTick S4 wiring", () => {
     const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl });
     expect(res.outcome).toBe("synced");
     expect(res.contactsWalk?.new).toBe(0);
-    // exactly ONE contacts-page request (early exit) + ONE limit=1 probe
-    expect(seen.filter((u) => u.includes("limit=100")).length).toBe(1); // ONE walk page; the limit=1 probe is separate
+    // CONTACTS requests: exactly ONE walk page (limit=100, early exit) + ONE
+    // limit=1 reconciliation probe. The conversations harvest's own limit=100
+    // page is NOT a contacts request (design §4: S4 adds 1-2 contact pages + 1
+    // probe per tick — nothing else; /conversations/search has used limit=100
+    // since before S4).
+    const contactsReq = seen.filter((u) => {
+      try { return new URL(u).pathname.endsWith("/contacts/"); } catch { return false; }
+    });
+    expect(contactsReq.length).toBe(2);
+    expect(contactsReq.filter((u) => new URL(u).searchParams.get("limit") === "100").length).toBe(1);
+    expect(contactsReq.filter((u) => new URL(u).searchParams.get("limit") === "1").length).toBe(1);
     const walkCkpt = JSON.parse((await store.getSyncCheckpoint("hl_contacts_incremental_v1")) ?? "{}");
     expect(walkCkpt.noNewStreak).toBe(1);
   });
