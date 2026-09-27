@@ -247,6 +247,117 @@ describe("computeDayAvailability (engine truth table)", () => {
   });
 });
 
+describe("TWO-BLOCK DAILY SCHEDULE (owner directive 2026-09-27: multiple hour-blocks per weekday)", () => {
+  // Real studio schedule, EVERY day: morning 09:00–13:00 (the 12:00 session
+  // runs to 1:00pm) + afternoon 13:30–18:30, hourly slots → exactly 9 starts.
+  // The rules array is deliberately listed out of time order: the engine must
+  // concatenate the blocks in TIME order regardless of storage order.
+  const TWO_BLOCK_RULES: AvailabilityRule[] = [
+    { weekday: 1, open_time: "13:30", close_time: "18:30", active: true },
+    { weekday: 1, open_time: "09:00", close_time: "13:00", active: true },
+  ];
+  const HOURLY = { slotIntervalMin: 60, durationMin: 60, paddingMin: 0 };
+  const EXPECTED_9 = [
+    "9:00 AM", "10:00 AM", "11:00 AM", "12:00 PM",
+    "1:30 PM", "2:30 PM", "3:30 PM", "4:30 PM", "5:30 PM",
+  ];
+
+  test("two-block day produces exactly the 9 expected start times, concatenated in time order", () => {
+    const day = computeDayAvailability({ date: MON, rules: TWO_BLOCK_RULES, blocked: [], appointments: [], ...HOURLY });
+    expect(day.openSlotTimes).toEqual(EXPECTED_9);
+    expect(day.totalCapacity).toBe(9);
+    expect(day.booked).toBe(0);
+    expect(day.blockedCount).toBe(0);
+    expect(day.utilization).toBe(0);
+  });
+
+  test("per-block invariants: morning-only 4 slots, afternoon-only 5, day = 4 + 5 = 9", () => {
+    const morningOnly = computeDayAvailability({ date: MON, rules: [TWO_BLOCK_RULES[1]], blocked: [], appointments: [], ...HOURLY });
+    const afternoonOnly = computeDayAvailability({ date: MON, rules: [TWO_BLOCK_RULES[0]], blocked: [], appointments: [], ...HOURLY });
+    expect(morningOnly.totalCapacity).toBe(4);
+    expect(morningOnly.openSlotTimes).toEqual(EXPECTED_9.slice(0, 4));
+    expect(afternoonOnly.totalCapacity).toBe(5);
+    expect(afternoonOnly.openSlotTimes).toEqual(EXPECTED_9.slice(4));
+    const both = computeDayAvailability({ date: MON, rules: TWO_BLOCK_RULES, blocked: [], appointments: [], ...HOURLY });
+    expect(both.totalCapacity).toBe(morningOnly.totalCapacity + afternoonOnly.totalCapacity);
+    expect(both.booked + both.blockedCount + both.openSlotTimes.length).toBe(both.totalCapacity);
+  });
+
+  test("a 12:00–13:00 booking (the session that runs to 1pm) removes ONLY its own slot; neither block corrupts", () => {
+    const day = computeDayAvailability({
+      date: MON, rules: TWO_BLOCK_RULES, blocked: [],
+      appointments: [appt("2026-09-28T16:00:00.000Z")], // 12:00 ET, 60 min
+      ...HOURLY,
+    });
+    expect(day.booked).toBe(1);
+    expect(day.openSlotTimes).toEqual(EXPECTED_9.filter((s) => s !== "12:00 PM"));
+    // morning block: 4 slots − 1 booked = 3 open; afternoon block untouched: 5 open
+    expect(day.totalCapacity).toBe(9);
+    expect(day.booked + day.blockedCount + day.openSlotTimes.length).toBe(day.totalCapacity);
+  });
+
+  test("a booking SPANNING the lunch gap (12:30–14:00, 90 min) removes exactly one slot per block", () => {
+    const day = computeDayAvailability({
+      date: MON, rules: TWO_BLOCK_RULES, blocked: [],
+      appointments: [appt("2026-09-28T16:30:00.000Z", { duration_minutes: 90 })], // 12:30–14:00 ET
+      ...HOURLY,
+    });
+    // overlaps the 12:00 slot (morning block) and the 1:30 slot (afternoon
+    // block); the gap itself holds no slot, so nothing else moves
+    expect(day.booked).toBe(2);
+    expect(day.openSlotTimes).toEqual(EXPECTED_9.filter((s) => s !== "12:00 PM" && s !== "1:30 PM"));
+    expect(day.booked + day.blockedCount + day.openSlotTimes.length).toBe(day.totalCapacity);
+  });
+
+  test("blocked time INSIDE the gap (13:00–13:30) touches no slot: counts stay exact", () => {
+    const day = computeDayAvailability({
+      date: MON, rules: TWO_BLOCK_RULES,
+      blocked: [ET(MON, "13:00", 30)],
+      appointments: [], ...HOURLY,
+    });
+    expect(day.blockedCount).toBe(0);
+    expect(day.openSlotTimes).toEqual(EXPECTED_9);
+    expect(day.totalCapacity).toBe(9);
+  });
+
+  test("a day with only ONE active block still works (the other inactive)", () => {
+    const morningOnly = computeDayAvailability({
+      date: MON,
+      rules: [
+        { weekday: 1, open_time: "09:00", close_time: "13:00", active: true },
+        { weekday: 1, open_time: "13:30", close_time: "18:30", active: false },
+      ],
+      blocked: [], appointments: [], ...HOURLY,
+    });
+    expect(morningOnly.totalCapacity).toBe(4);
+    expect(morningOnly.openSlotTimes).toEqual(EXPECTED_9.slice(0, 4));
+    const afternoonOnly = computeDayAvailability({
+      date: MON,
+      rules: [
+        { weekday: 1, open_time: "09:00", close_time: "13:00", active: false },
+        { weekday: 1, open_time: "13:30", close_time: "18:30", active: true },
+      ],
+      blocked: [], appointments: [], ...HOURLY,
+    });
+    expect(afternoonOnly.totalCapacity).toBe(5);
+    expect(afternoonOnly.openSlotTimes).toEqual(EXPECTED_9.slice(4));
+  });
+
+  test("both blocks inactive → honest closed day (capacity 0, utilization null)", () => {
+    const day = computeDayAvailability({
+      date: MON,
+      rules: [
+        { weekday: 1, open_time: "09:00", close_time: "13:00", active: false },
+        { weekday: 1, open_time: "13:30", close_time: "18:30", active: false },
+      ],
+      blocked: [], appointments: [], ...HOURLY,
+    });
+    expect(day.totalCapacity).toBe(0);
+    expect(day.utilization).toBeNull();
+    expect(day.openSlotTimes).toEqual([]);
+  });
+});
+
 describe("computeOpenSlots delegation (Today page parity)", () => {
   test("computeOpenSlots returns exactly the engine's openSlotTimes", () => {
     const appointments = [appt(MON_10ET)];
@@ -303,8 +414,13 @@ describe("availabilityPageData payload (playbook contract, MemoryStore + pinned 
     expect(data.today).toBe(MON);
     expect(data.days).toHaveLength(7);
     expect(data.days.map((d) => d.date)).toEqual(Array.from({ length: 7 }, (_, i) => addDays(MON, i)));
-    // Monday: 5 slots from the default studio hours
-    expect(data.days[0].totalCapacity).toBe(5);
+    // Monday: 9 slots from the DEFAULT two-block studio schedule (owner
+    // directive 2026-09-27: 09:00–13:00 + 13:30–18:30, 60-min interval/duration)
+    expect(data.days[0].totalCapacity).toBe(9);
+    expect(data.days[0].openSlotTimes).toEqual([
+      "9:00 AM", "10:00 AM", "11:00 AM", "12:00 PM",
+      "1:30 PM", "2:30 PM", "3:30 PM", "4:30 PM", "5:30 PM",
+    ]);
     expect(data.days[0].utilization).toBe(0);
     expect(data.connection).toEqual({ connected: false, mode: "disconnected", lastSyncAt: null, stale: false });
     // default scope is EMPTY = everything counts (owner rule) — the live
@@ -330,8 +446,14 @@ describe("availabilityPageData payload (playbook contract, MemoryStore + pinned 
     await store.upsertAppointments([{ ...base, appointment_datetime: MON_10ET }]);
     // no connection row yet → honest "disconnected" (we don't know the state)
     const noRow = await availabilityPageData({ store, today: MON });
-    expect(noRow.days[0].booked).toBe(1);
+    // default two-block hours carry 15-min padding: the 10:00–11:00 ET session
+    // busy window 9:45–11:15 removes the 9:00, 10:00 AND 11:00 morning slots
+    expect(noRow.days[0].booked).toBe(3);
     expect(noRow.days[0].openSlotTimes).not.toContain("10:00 AM");
+    expect(noRow.days[0].openSlotTimes).not.toContain("9:00 AM");
+    expect(noRow.days[0].openSlotTimes).not.toContain("11:00 AM");
+    // the afternoon block is untouched by a morning session
+    expect(noRow.days[0].openSlotTimes).toContain("1:30 PM");
     expect(noRow.connection.mode).toBe("disconnected");
 
     // demo-labeled connection row (demo dataset state) → mode demo, not connected

@@ -482,17 +482,31 @@ export const DEFAULT_SETTINGS: AppSettings = {
   rep_mappings: [],
   studio: {
     appointment_duration_min: 60,
-    slot_interval_min: 90,
+    // TWO-BLOCK DAILY SCHEDULE (owner directive 2026-09-27, supersedes the
+    // interim 50-min/10:00–18:00 workaround): EVERY day carries two active
+    // hour-blocks — 09:00–13:00 + 13:30–18:30, 60-min interval, 60-min
+    // duration → exactly 9 slot starts per day
+    // (9:00, 10:00, 11:00, 12:00 | 1:30, 2:30, 3:30, 4:30, 5:30).
+    // The engine runs EVERY active rule for the weekday; the 12:00 session
+    // runs to 1:00pm (close 13:00) and the next set starts 1:30pm.
+    slot_interval_min: 60,
     padding_min: 15,
     recurring_blocks: [],
     hours: [
-      { weekday: 1, open_time: "10:00", close_time: "18:00", active: true },
-      { weekday: 2, open_time: "10:00", close_time: "18:00", active: true },
-      { weekday: 3, open_time: "10:00", close_time: "18:00", active: true },
-      { weekday: 4, open_time: "10:00", close_time: "18:00", active: true },
-      { weekday: 5, open_time: "10:00", close_time: "18:00", active: true },
-      { weekday: 6, open_time: "10:00", close_time: "16:00", active: true },
-      { weekday: 0, open_time: "10:00", close_time: "16:00", active: false },
+      { weekday: 0, open_time: "09:00", close_time: "13:00", active: true },
+      { weekday: 0, open_time: "13:30", close_time: "18:30", active: true },
+      { weekday: 1, open_time: "09:00", close_time: "13:00", active: true },
+      { weekday: 1, open_time: "13:30", close_time: "18:30", active: true },
+      { weekday: 2, open_time: "09:00", close_time: "13:00", active: true },
+      { weekday: 2, open_time: "13:30", close_time: "18:30", active: true },
+      { weekday: 3, open_time: "09:00", close_time: "13:00", active: true },
+      { weekday: 3, open_time: "13:30", close_time: "18:30", active: true },
+      { weekday: 4, open_time: "09:00", close_time: "13:00", active: true },
+      { weekday: 4, open_time: "13:30", close_time: "18:30", active: true },
+      { weekday: 5, open_time: "09:00", close_time: "13:00", active: true },
+      { weekday: 5, open_time: "13:30", close_time: "18:30", active: true },
+      { weekday: 6, open_time: "09:00", close_time: "13:00", active: true },
+      { weekday: 6, open_time: "13:30", close_time: "18:30", active: true },
     ],
   },
   // SPEC sheet IDs + configurable column mapping/mode; acuity scope configurable.
@@ -675,6 +689,7 @@ export interface Store {
   getLeadCountAdjustments(dates: string[]): Promise<LeadCountAdjustmentRow[]>;
 
   // availability
+  /** Mirror refresh (REPLACE semantics): the list is the COMPLETE rule set; multi-block per weekday supported. */
   upsertAvailabilityRules(rows: AvailabilityRule[]): Promise<void>;
   getAvailabilityRules(): Promise<AvailabilityRule[]>;
   upsertBlockedTimes(rows: (BlockedTimeRow & { provider: string; external_id: string })[]): Promise<number>;

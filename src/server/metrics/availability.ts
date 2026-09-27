@@ -88,6 +88,15 @@ const overlaps = (s: number, e: number, intervals: Array<[number, number]>): boo
 /**
  * Full availability truth for ONE ET calendar date. Pure — the payload builder
  * feeds store rows; Today's computeOpenSlots delegates here for its slot list.
+ *
+ * TWO-BLOCK DAILY SCHEDULE (owner directive 2026-09-27): a weekday may carry
+ * SEVERAL active hour-blocks (e.g. morning 09:00–13:00 + afternoon 13:30–18:30).
+ * EVERY active rule for the weekday contributes its own slot run (slot_interval
+ * from open to close − duration); blocks concatenate in time order. The
+ * accounting is per-block: within each block every slot lands in exactly one of
+ * booked / blockedCount / open, so
+ *   booked + blockedCount + openSlotTimes.length === totalCapacity
+ * holds per block AND for the day (the day total is the sum over blocks).
  */
 export function computeDayAvailability(input: {
   date: string;
@@ -107,20 +116,25 @@ export function computeDayAvailability(input: {
     utilization: null,
     blockedCount: 0,
   };
-  const rule = input.rules.find((r) => r.weekday === weekday(input.date) && r.active);
-  if (!rule) return empty;
+  const toMin = (hhmm: string) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    return h * 60 + m;
+  };
+  // EVERY active rule for this weekday contributes its own slot run (not just
+  // the first). Sorted by open time so slots concatenate in time order even
+  // when the stored rule order differs. Degenerate windows (close <= open or
+  // unparseable times) contribute nothing.
+  const blocks = input.rules
+    .filter((r) => r.weekday === weekday(input.date) && r.active)
+    .map((r) => ({ openMin: toMin(r.open_time), closeMin: toMin(r.close_time) }))
+    .filter((b) => Number.isFinite(b.openMin) && Number.isFinite(b.closeMin) && b.closeMin > b.openMin)
+    .sort((a, b) => a.openMin - b.openMin || a.closeMin - b.closeMin);
+  if (blocks.length === 0) return empty;
 
   const dayStart = etDayStartUtc(input.date);
   const dayEnd = etDayStartUtc(addDays(input.date, 1));
   const dayStartMs = new Date(dayStart).getTime();
   const dayEndMs = new Date(dayEnd).getTime();
-
-  const toMin = (hhmm: string) => {
-    const [h, m] = hhmm.split(":").map(Number);
-    return h * 60 + m;
-  };
-  const openMin = toMin(rule.open_time);
-  const closeMin = toMin(rule.close_time);
 
   // busy intervals as minute-offsets within the ET day
   const apptBusy: Array<[number, number]> = [];
@@ -145,20 +159,25 @@ export function computeDayAvailability(input: {
   let booked = 0;
   let blockedCount = 0;
   const openSlotTimes: string[] = [];
-  for (let t = openMin; t + input.durationMin <= closeMin; t += input.slotIntervalMin) {
-    totalCapacity += 1;
-    // an appointment wins the slot (it is booked — the studio is using it);
-    // a block only removes slots NOT already counted as booked, so
-    // booked + blockedCount + openSlotTimes.length === totalCapacity always
-    if (overlaps(t, t + input.durationMin, apptBusy)) {
-      booked += 1;
-      continue;
+  for (const { openMin, closeMin } of blocks) {
+    // per-block run: within THIS block every slot lands in exactly one bucket
+    // (booked / blocked / open), so the invariant holds per block; the day
+    // total below is the sum over blocks.
+    for (let t = openMin; t + input.durationMin <= closeMin; t += input.slotIntervalMin) {
+      totalCapacity += 1;
+      // an appointment wins the slot (it is booked — the studio is using it);
+      // a block only removes slots NOT already counted as booked, so
+      // booked + blockedCount + openSlotTimes.length === totalCapacity always
+      if (overlaps(t, t + input.durationMin, apptBusy)) {
+        booked += 1;
+        continue;
+      }
+      if (overlaps(t, t + input.durationMin, blockBusy)) {
+        blockedCount += 1;
+        continue;
+      }
+      openSlotTimes.push(slotLabel(t));
     }
-    if (overlaps(t, t + input.durationMin, blockBusy)) {
-      blockedCount += 1;
-      continue;
-    }
-    openSlotTimes.push(slotLabel(t));
   }
 
   return {

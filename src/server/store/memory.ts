@@ -511,11 +511,14 @@ export class MemoryStore implements Store {
     return [...this.leadAdjustments.values()].filter((a) => set.has(a.work_date));
   }
 
+  /** REPLACE semantics (mirror == settings.studio.hours exactly); sorted read. */
   async upsertAvailabilityRules(rows: AvailabilityRule[]): Promise<void> {
     this.availabilityRules = rows.map((r) => ({ ...r }));
   }
   async getAvailabilityRules(): Promise<AvailabilityRule[]> {
-    return this.availabilityRules.map((r) => ({ ...r }));
+    return this.availabilityRules
+      .map((r) => ({ ...r }))
+      .sort((a, b) => a.weekday - b.weekday || a.open_time.localeCompare(b.open_time));
   }
   async upsertBlockedTimes(rows: BlockedExt[]): Promise<number> {
     for (const r of rows) this.blocked.set(`${r.provider}:${r.external_id}`, { ...r });

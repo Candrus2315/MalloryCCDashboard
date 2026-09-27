@@ -175,9 +175,15 @@ const DDL: string[] = [
     open_time text NOT NULL,
     close_time text NOT NULL,
     active boolean NOT NULL DEFAULT true,
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (weekday)
+    updated_at timestamptz NOT NULL DEFAULT now()
   )`,
+  // TWO-BLOCK DAILY SCHEDULE (owner directive 2026-09-27): a weekday carries
+  // SEVERAL hour-blocks (morning + afternoon), so the mirror's old per-weekday
+  // UNIQUE (weekday) must become a (weekday, open_time) key. The legacy
+  // constraint is dropped idempotently; a unique INDEX (ADD CONSTRAINT has no
+  // IF NOT EXISTS) gives the upsert its conflict target.
+  `ALTER TABLE availability_rules DROP CONSTRAINT IF EXISTS availability_rules_weekday_key`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS availability_rules_weekday_open_idx ON availability_rules (weekday, open_time)`,
   `CREATE TABLE IF NOT EXISTS blocked_times (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     provider text NOT NULL DEFAULT 'acuity',
@@ -1006,18 +1012,27 @@ export class PgStore implements Store {
     }));
   }
 
+  /**
+   * Mirror settings.studio.hours into availability_rules with REPLACE
+   * semantics: the passed list is the COMPLETE rule set (saveStudioRules sends
+   * every rule), so the mirror is refreshed to match it exactly — stale rows
+   * (e.g. a retired interim schedule) never survive a save. Multi-block safe:
+   * conflicts on (weekday, open_time) — the two-block schedule stores two rows
+   * per weekday.
+   */
   async upsertAvailabilityRules(rows: AvailabilityRule[]): Promise<void> {
     await this.ensureSchema();
+    await this.sql`DELETE FROM availability_rules`;
     for (const r of rows) {
       await this.sql`
         INSERT INTO availability_rules (weekday, open_time, close_time, active) VALUES (${r.weekday}, ${r.open_time}, ${r.close_time}, ${r.active})
-        ON CONFLICT (weekday) DO UPDATE SET open_time = EXCLUDED.open_time, close_time = EXCLUDED.close_time, active = EXCLUDED.active, updated_at = now()
+        ON CONFLICT (weekday, open_time) DO UPDATE SET close_time = EXCLUDED.close_time, active = EXCLUDED.active, updated_at = now()
       `;
     }
   }
   async getAvailabilityRules(): Promise<AvailabilityRule[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT weekday, open_time, close_time, active FROM availability_rules ORDER BY weekday`;
+    const rows = await this.sql`SELECT weekday, open_time, close_time, active FROM availability_rules ORDER BY weekday, open_time`;
     return rows.map((r) => ({ weekday: Number(r.weekday), open_time: String(r.open_time), close_time: String(r.close_time), active: Boolean(r.active) }));
   }
 
