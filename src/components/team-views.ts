@@ -460,3 +460,27 @@ export function restrainedDiff(diff: number | null, sampleDenominator: number | 
   if (sampleDenominator == null) return true;
   return sampleDenominator < TREND_MIN_DENOMINATOR;
 }
+
+// ---------- three-way booking attribution split (owner directive 2026-09-27, S5b) ----------
+/**
+ * THE three mutually exclusive attribution states, displayed as three separate
+ * numbers — Ambiguous is NEVER folded into Unattributed. Composes the metrics
+ * layer's bookingAttributionSplit (no new math): the line always shows all
+ * three states so Attributed + Ambiguous + Unattributed is checkable against
+ * Total Bookings at a glance; `withoutVerdict` (a booking with no stored
+ * verdict row yet) is appended as its own honest clause — never silently
+ * reported as unattributed.
+ */
+export interface BookingSplitLike {
+  attributed: number;
+  ambiguous: number;
+  unattributed: number;
+  withoutVerdict: number;
+}
+
+export function bookingSplitLine(split: BookingSplitLike): string {
+  const base = `${formatInt(split.attributed)} attributed · ${formatInt(split.ambiguous)} ambiguous · ${formatInt(split.unattributed)} unattributed`;
+  return split.withoutVerdict > 0
+    ? `${base} · ${formatInt(split.withoutVerdict)} without a verdict yet`
+    : base;
+}

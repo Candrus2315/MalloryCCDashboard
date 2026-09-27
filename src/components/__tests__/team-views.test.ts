@@ -10,6 +10,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   attentionNotes,
+  bookingSplitLine,
   compareRepRows,
   diffSampleDenominator,
   goalCell,
@@ -574,5 +575,24 @@ describe("compareRepRows (§7 sort: caret-only headers, nulls last preserved)", 
   test("all-null column → no reorder crash (ties return 0)", () => {
     const rows = [rep("a", "A"), rep("b", "B")];
     expect([...rows].sort((x, y) => compareRepRows(x, y, "avg-duration", false)).map((r) => r.id)).toEqual(["a", "b"]);
+  });
+});
+
+// ---------- three-way booking attribution split line (S5b) ----------
+describe("bookingSplitLine — three mutually exclusive states, never folded", () => {
+  test("shows all three states as separate numbers; ambiguous is its own clause", () => {
+    expect(bookingSplitLine({ attributed: 49, ambiguous: 4, unattributed: 71, withoutVerdict: 0 })).toBe(
+      "49 attributed · 4 ambiguous · 71 unattributed",
+    );
+  });
+  test("a booking without a verdict row is its own honest clause — never silently unattributed", () => {
+    expect(bookingSplitLine({ attributed: 3, ambiguous: 0, unattributed: 1, withoutVerdict: 2 })).toBe(
+      "3 attributed · 0 ambiguous · 1 unattributed · 2 without a verdict yet",
+    );
+  });
+  test("zero states stay visible (invariant checkable against Total at a glance)", () => {
+    expect(bookingSplitLine({ attributed: 0, ambiguous: 0, unattributed: 5, withoutVerdict: 0 })).toBe(
+      "0 attributed · 0 ambiguous · 5 unattributed",
+    );
   });
 });

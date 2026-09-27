@@ -36,6 +36,7 @@ import {
   buildRepDetail,
   buildTodayMetrics,
   buildDailyReportMetrics,
+  bookingAttributionSplit,
   compareWithTeam,
   computeOpenSlots,
   filterApptsCreatedInEtRange,
@@ -349,6 +350,14 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
       thresholdSeconds,
     });
 
+    // THREE-WAY ATTRIBUTION SPLIT (owner directive 2026-09-27, S5b) — the
+    // stored attribution states over this range's in-scope bookings, through
+    // the ONE metrics-layer classifier: Total = Attributed + Ambiguous +
+    // Unattributed (+ `withoutVerdict` surfaced separately when a booking has
+    // no stored verdict yet — e.g. older than the recompute window). Ambiguous
+    // is its OWN state here — never folded into Unattributed.
+    const bookingSplit = bookingAttributionSplit(appts, attributionsEligible);
+
     const repRows: RepStripRow[] = reps
       .map((r) => {
         const s = summaries.get(r.id);
@@ -411,6 +420,7 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
       thresholdSeconds,
       metrics,
       trends,
+      bookingSplit,
       repRows,
       warnings,
       teamGoalDefault: teamGoalByWeek.get(weeks[0]) ?? 79,

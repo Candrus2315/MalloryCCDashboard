@@ -185,3 +185,22 @@ export function connectionStatusView(
 export function unassignable(reason: string | null): boolean {
   return reason === "manually-assigned";
 }
+
+// ---------- manual-assignment queue row states (owner directive 2026-09-27, S5b) ----------
+/**
+ * THE queue's rows are two DIFFERENT data states, never one bucket: ambiguous
+ * verdicts (identity conflicts — e.g. "email resolves a different contact
+ * than the stored contact id") stay Ambiguous until Christopher assigns them;
+ * genuinely unattributed bookings (no qualifying call etc.) are the rest.
+ * Mutually exclusive by construction — the engine's per-row reason decides.
+ */
+export type QueueRowState = "ambiguous" | "unattributed";
+
+export function queueRowState(reason: string | null): QueueRowState {
+  return reason === "ambiguous" ? "ambiguous" : "unattributed";
+}
+
+export const QUEUE_STATE_LABELS: Record<QueueRowState, string> = {
+  ambiguous: "Ambiguous",
+  unattributed: "Unattributed",
+};

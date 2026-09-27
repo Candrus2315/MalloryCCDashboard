@@ -1329,38 +1329,115 @@ export function buildUnattributedQueue(input: {
 
 // ---------- booking-coverage invariants (SPEC: the totals must reconcile) ----------
 
+/**
+ * THE THREE ATTRIBUTION STATES (owner directive 2026-09-27, S5b) — MUTUALLY
+ * EXCLUSIVE everywhere they are computed and displayed:
+ *
+ *   Total Bookings = Attributed + Ambiguous + Unattributed
+ *
+ * Ambiguous is its OWN state, NEVER folded into Unattributed. Operationally
+ * both may need manual follow-up, but they are different data states and stay
+ * visibly separate. Ambiguous rows stay Ambiguous until Christopher assigns
+ * them by hand — they are never silently counted as cleanly unattributed.
+ */
+export type BookingAttributionState = "attributed" | "ambiguous" | "unattributed";
+
+/**
+ * How an ambiguous verdict is recognized on a STORED row. toAttributionRows
+ * persists the engine reason as the note's first token ("ambiguous — <detail>;
+ * …"), so the prefix IS the stored state marker — read through this one
+ * helper only, never re-derived ad hoc. Rows whose note does not start with
+ * it (and carry no rep) are genuinely unattributed.
+ */
+export const AMBIGUOUS_NOTE_PREFIX = "ambiguous";
+
+/** The ONE stored-row → state classifier (mutually exclusive by construction). */
+export function attributionStateOf(row: Pick<AttributionRow, "rep_id" | "note" | "manual_override">): BookingAttributionState {
+  // A rep on the row (manual assignment included) is attributed — the note is
+  // audit context only and never downgrades an owned booking.
+  if (row.rep_id !== null) return "attributed";
+  if ((row.note ?? "").startsWith(AMBIGUOUS_NOTE_PREFIX)) return "ambiguous";
+  return "unattributed";
+}
+
 export interface BookingCoverage {
   /** ALL qualifying (non-Zoom, non-cancelled) bookings in the period — attribution NOT required. */
   total: number;
   /** Bookings with an attribution row naming a rep (manual assignments included). */
   attributed: number;
-  /** total − attributed; ambiguous bookings sit here until manually assigned. */
+  /** Ambiguous verdicts (identity conflicts, multi-rep evidence) — their OWN state, never inside Unattributed. */
+  ambiguous: number;
+  /** Genuinely unattributed bookings — EXCLUDES ambiguous (three-way invariant). */
   unattributed: number;
 }
 
 /**
- * THE coverage invariant (owner-ratified): Attributed + Unattributed === Total,
- * where Total = every qualifying booking in the period regardless of identity
- * resolution. Total can NEVER shrink because identity resolution is
- * incomplete — incomplete identity only moves bookings from attributed to
- * unattributed (ambiguous bookings sit inside Unattributed until manually
- * assigned). Pure; the metrics layer is the one place this is computed.
+ * THE coverage invariant (owner directive 2026-09-27): Attributed + Ambiguous
+ * + Unattributed === Total, where Total = every qualifying booking in the
+ * period regardless of identity resolution. The three states are mutually
+ * exclusive BY CONSTRUCTION (attributionStateOf — each booking lands in
+ * exactly one), so Ambiguous can never silently inflate Unattributed. Total
+ * can NEVER shrink because identity resolution is incomplete — incomplete
+ * identity only moves bookings between states. Pure; the metrics layer is the
+ * one place this is computed.
  */
 export function bookingCoverage(appts: AppointmentRow[], attributions: AttributionRow[]): BookingCoverage {
+  const s = bookingAttributionSplit(appts, attributions);
+  return { total: s.total, attributed: s.attributed, ambiguous: s.ambiguous, unattributed: s.unattributed + s.withoutVerdict };
+}
+
+export interface BookingAttributionSplit extends BookingCoverage {
+  /**
+   * Qualifying bookings with NO stored verdict row at all (e.g. older than the
+   * attribution recompute window). A missing row is an HONEST gap, never
+   * silently reported as unattributed: Total = A + Am + U + withoutVerdict.
+   */
+  withoutVerdict: number;
+}
+
+/**
+ * The display-facing three-way split over one period's bookings, straight off
+ * the STORED attribution states (attributionStateOf — no recomputation, no
+ * guessing). Bookings without a stored verdict row surface as `withoutVerdict`
+ * so a page can say so instead of inventing a state.
+ */
+export function bookingAttributionSplit(appts: AppointmentRow[], attributions: AttributionRow[]): BookingAttributionSplit {
   const qualifying = appts.filter((a) => isBooking(a));
   const qualifyingIds = new Set(qualifying.map((a) => a.id));
-  const attributedIds = new Set(
-    attributions.filter((a) => a.rep_id !== null && qualifyingIds.has(a.appointment_id)).map((a) => a.appointment_id),
+  const rowByAppt = new Map(
+    attributions.filter((r) => qualifyingIds.has(r.appointment_id)).map((r) => [r.appointment_id, r]),
   );
-  const total = qualifying.length;
-  const attributed = attributedIds.size;
-  return { total, attributed, unattributed: total - attributed };
+  let attributed = 0;
+  let ambiguous = 0;
+  let unattributed = 0;
+  let withoutVerdict = 0;
+  for (const a of qualifying) {
+    const row = rowByAppt.get(a.id);
+    if (!row) {
+      withoutVerdict += 1;
+      continue;
+    }
+    switch (attributionStateOf(row)) {
+      case "attributed":
+        attributed += 1;
+        break;
+      case "ambiguous":
+        ambiguous += 1;
+        break;
+      case "unattributed":
+        unattributed += 1;
+        break;
+    }
+  }
+  return { total: qualifying.length, attributed, ambiguous, unattributed, withoutVerdict };
 }
 
 /**
  * Assert the coverage invariant for one evaluation:
  *   1. every qualifying booking carries EXACTLY ONE verdict row;
- *   2. Attributed + Unattributed equals the qualifying Total;
+ *   2. Attributed + Ambiguous + Unattributed equals the qualifying Total
+ *      (the three states are mutually exclusive — Ambiguous is never folded
+ *      into Unattributed);
  *   3. (when supplied) the engine produced a verdict for every booking.
  * Throws on violation — the sync records the error, never silently persists a
  * dishonest split.
@@ -1378,9 +1455,9 @@ export function assertBookingInvariant(
       `Booking invariant violated: ${cov.total} qualifying bookings carry ${rowsForQualifying.length} verdict rows (expected exactly one each)`,
     );
   }
-  if (cov.attributed + cov.unattributed !== cov.total) {
+  if (cov.attributed + cov.ambiguous + cov.unattributed !== cov.total) {
     throw new Error(
-      `Booking invariant violated: attributed(${cov.attributed}) + unattributed(${cov.unattributed}) must equal total(${cov.total})`,
+      `Booking invariant violated: attributed(${cov.attributed}) + ambiguous(${cov.ambiguous}) + unattributed(${cov.unattributed}) must equal total(${cov.total})`,
     );
   }
   if (verdicts && verdicts.engineAttributed + verdicts.engineUnattributed !== cov.total) {

@@ -7,14 +7,18 @@ import { WarningList } from "~/components/warnings";
 import {
   PASSPHRASE_WARNING_LEAD,
   PASSPHRASE_WARNING_REST,
+  QUEUE_STATE_LABELS,
   SETTINGS_SECTIONS,
   connectionStatusView,
   passphraseStatus,
   providerLabel,
+  queueRowState,
   sectionMeta,
   sectionNumber,
   unassignable,
 } from "~/components/settings-views";
+import { bookingSplitLine } from "~/components/team-views";
+import { formatInt } from "~/server/metrics/report-text";
 import {
   addBlockedTime,
   assignAttribution,
@@ -203,11 +207,21 @@ function SettingsPage() {
         </div>
         {/* (a) Roster mapping — eligibility correction, folded in as the first subsection */}
         <RosterMappingSection data={data} busy={busy} onSave={(mappings) => run("Roster mappings saved", () => saveRepMappings({ data: { mappings } }))} />
-        {/* (b) Unattributed bookings queue */}
+        {/* (b) Manual-assignment queue — THREE-WAY ATTRIBUTION SPLIT (owner
+            directive 2026-09-27, S5b): the split line shows the three mutually
+            exclusive states over the in-scope bookings; Ambiguous is its OWN
+            state, never folded into Unattributed. The queue itself (assign /
+            unassign) behaves exactly as before. */}
         <div className="space-y-3">
           <h3 className="section-heading">Unattributed Bookings</h3>
           <div className="card space-y-2">
-            <p className="kpi-label">Unattributed bookings — assign a rep manually</p>
+            <p className="kpi-label" data-testid="booking-attribution-split">
+              {bookingSplitLine(data.attributionSplit)}
+              <span className="text-stone-400"> · {formatInt(data.attributionSplit.total)} in-scope bookings</span>
+            </p>
+            <p className="text-[12px] text-stone-400">
+              {formatInt(data.unattributed.length)} booking{data.unattributed.length === 1 ? "" : "s"} need a manual decision — Ambiguous stays Ambiguous until assigned by hand.
+            </p>
             {data.unattributed.length === 0 ? (
               <p className="text-[13px] text-stone-400">Every active booking is attributed.</p>
             ) : (
@@ -218,7 +232,7 @@ function SettingsPage() {
                       <th className="text-left">Client</th>
                       <th className="text-left">Type</th>
                       <th className="text-left">Session</th>
-                      <th className="text-left">Why unattributed</th>
+                      <th className="text-left">State · why unattributed</th>
                       <th className="text-left">Suggested</th>
                       <th className="text-left">Call</th>
                       <th className="text-left">Assign to</th>
@@ -1114,7 +1128,8 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
         <span className="block text-[11px] text-stone-400">booked {new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
       </td>
       <td>
-        <span className="text-[12px] text-stone-600" title={row.reason ?? ""}>
+        <StatusChip kind={queueRowState(row.reason) === "ambiguous" ? "risk" : "neutral"} label={QUEUE_STATE_LABELS[queueRowState(row.reason)]} />
+        <span className="mt-1 block text-[12px] text-stone-600" title={row.reason ?? ""}>
           {row.reason ? (UNATTRIBUTED_REASON_LABELS[row.reason] ?? row.reason) : "—"}
         </span>
       </td>

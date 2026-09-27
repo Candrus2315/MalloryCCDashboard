@@ -239,7 +239,7 @@ describe("ambiguity → manual queue + booking-coverage invariant", () => {
     expect(single.repId).toBe("rep-1");
   });
 
-  test("invariant: Attributed + Unattributed === Total; Total NEVER shrinks when identity is incomplete", () => {
+  test("invariant: Attributed + Ambiguous + Unattributed === Total (three-way, S5b); Total NEVER shrinks when identity is incomplete", () => {
     const appts = [
       { id: "a1", contact_id: null, calendar_id: null, appointment_type: "Family", appointment_datetime: "2026-09-28T14:00:00.000Z", created_at: "2026-09-28T14:00:00.000Z", status: "scheduled", cancelled: false },
       { id: "a2", contact_id: null, calendar_id: null, appointment_type: "Family", appointment_datetime: "2026-09-28T15:00:00.000Z", created_at: "2026-09-28T15:00:00.000Z", status: "scheduled", cancelled: false },
@@ -249,12 +249,13 @@ describe("ambiguity → manual queue + booking-coverage invariant", () => {
       { id: "attr:a2", appointment_id: "a2", call_id: null, rep_id: null, method: "none", confidence: 0, manual_override: false },
     ];
     const cov = bookingCoverage(appts, partial);
-    expect(cov).toEqual({ total: 2, attributed: 1, unattributed: 1 });
+    expect(cov).toEqual({ total: 2, attributed: 1, ambiguous: 0, unattributed: 1 });
     expect(() => assertBookingInvariant(appts, partial, { engineAttributed: 1, engineUnattributed: 1 })).not.toThrow();
     // Identity resolution getting WORSE moves a1 to unattributed — Total stays 2.
     const cov2 = bookingCoverage(appts, [partial[1]]);
     expect(cov2.total).toBe(2);
     expect(cov2.attributed).toBe(0);
+    expect(cov2.ambiguous).toBe(0);
     expect(cov2.unattributed).toBe(2);
     // A wiring regression that loses a verdict row throws (never silent).
     expect(() => assertBookingInvariant(appts, [partial[0]], { engineAttributed: 1, engineUnattributed: 0 })).toThrow(/invariant/i);

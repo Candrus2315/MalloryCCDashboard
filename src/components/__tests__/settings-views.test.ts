@@ -9,10 +9,12 @@ import { describe, expect, test } from "bun:test";
 import {
   PASSPHRASE_WARNING_LEAD,
   PASSPHRASE_WARNING_REST,
+  QUEUE_STATE_LABELS,
   SETTINGS_SECTIONS,
   connectionStatusView,
   passphraseStatus,
   providerLabel,
+  queueRowState,
   sectionMeta,
   sectionNumber,
   unassignable,
@@ -183,5 +185,22 @@ describe("unassignable", () => {
     expect(unassignable("no-contact-identity")).toBe(false);
     expect(unassignable("bad-datetime")).toBe(false);
     expect(unassignable(null)).toBe(false);
+  });
+});
+
+// ---------- manual-assignment queue row states (S5b: three-way split) ----------
+describe("queueRowState — Ambiguous is its OWN state, never folded into Unattributed", () => {
+  test("the engine's ambiguous reason classifies ambiguous; everything else unattributed", () => {
+    expect(queueRowState("ambiguous")).toBe("ambiguous");
+    expect(queueRowState("no-qualifying-call")).toBe("unattributed");
+    expect(queueRowState("no-contact-identity")).toBe("unattributed");
+    expect(queueRowState("bad-datetime")).toBe("unattributed");
+    expect(queueRowState("manually-assigned")).toBe("unattributed"); // never shown as a queue row, but classified honestly
+    expect(queueRowState(null)).toBe("unattributed");
+  });
+  test("the two states render with DIFFERENT visible labels", () => {
+    expect(QUEUE_STATE_LABELS.ambiguous).toBe("Ambiguous");
+    expect(QUEUE_STATE_LABELS.unattributed).toBe("Unattributed");
+    expect(QUEUE_STATE_LABELS.ambiguous).not.toBe(QUEUE_STATE_LABELS.unattributed);
   });
 });

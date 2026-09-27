@@ -30,6 +30,7 @@ import {
 } from "./date-logic";
 import {
   type RepGoalInfo,
+  bookingAttributionSplit,
   buildTeamRangeMetrics,
   buildTeamTrends,
   buildUnattributedQueue,
@@ -133,6 +134,13 @@ export const getSettingsData = createServerFn().handler(async () => {
     matches: engineMatches,
   });
 
+  // THREE-WAY ATTRIBUTION SPLIT (owner directive 2026-09-27, S5b) — read off
+  // the STORED attribution states over the same in-scope booking set the
+  // engine evaluated: Total = Attributed + Ambiguous + Unattributed (+ any
+  // booking without a verdict row, surfaced separately). Ambiguous is its own
+  // state here — never folded into Unattributed.
+  const attributionSplit = bookingAttributionSplit(scopedAppts, attributions);
+
   // Observed per-date lead counts (before adjustments) for the count editor.
   const observedCounts = week.flatMap((d) => {
     return (["family", "animalia"] as const).map((sheet) => {
@@ -184,6 +192,7 @@ export const getSettingsData = createServerFn().handler(async () => {
     syncRuns: runs,
     overrides,
     unattributed,
+    attributionSplit,
     observedCounts,
     leadAdjustments,
     // lead work-date editor: recent cohort rows with ids (work-date + origin)

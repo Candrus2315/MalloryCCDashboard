@@ -46,6 +46,7 @@ import {
 } from "~/components/drawer-views";
 import {
   attentionNotes,
+  bookingSplitLine,
   compareRepRows,
   leadPacing,
   paceSummary,
@@ -646,6 +647,15 @@ function TeamPage() {
               tone={m.paceNeeded > 0 ? "neg" : "pos"}
             />
           </div>
+
+          {/* THREE-WAY ATTRIBUTION SPLIT (owner directive 2026-09-27, S5b) — the
+              three states are separate numbers, never folded together: Total
+              Bookings = Attributed + Ambiguous + Unattributed (a booking with
+              no stored verdict yet shows as its own honest clause). */}
+          <p className="mt-3 text-xs text-stone-500" data-testid="booking-attribution-split">
+            {bookingSplitLine(data.bookingSplit)}
+            <span className="text-stone-400"> · {formatInt(data.bookingSplit.total)} total bookings in range</span>
+          </p>
 
           <hr className="my-5 border-stone-100" />
 
