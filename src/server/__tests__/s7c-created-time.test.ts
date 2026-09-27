@@ -24,6 +24,7 @@ import {
   parseAcuityAppointment,
   parseAcuityDateCreatedCalendar,
 } from "../sync/acuity-live";
+import { normalizePgBusinessDate } from "../store/pg";
 import {
   attributionWindowDates,
   bookingCreationDateEt,
@@ -240,5 +241,19 @@ describe("S7c: attribution engine window = [created_business_date − 1, created
     const attributed = rows.filter((r) => r.rep_id).length;
     const ambiguous = rows.filter((r) => !r.rep_id && (r.note ?? "").startsWith("ambiguous")).length;
     expect(attributed + ambiguous + (rows.length - attributed - ambiguous)).toBe(3);
+  });
+
+  test("pg business-date normalization: postgres.js Date → YYYY-MM-DD, never 'Tue Sep 08'", () => {
+    // pg `date` columns arrive as JS Dates (UTC midnight). String(Date).slice(0,10)
+    // yields "Tue Sep 08" and silently breaks every DATE_ONLY_RE consumer.
+    expect(normalizePgBusinessDate(new Date("2026-09-08T00:00:00.000Z"))).toBe("2026-09-08");
+    expect(normalizePgBusinessDate(new Date("2025-11-21T00:00:00.000Z"))).toBe("2025-11-21");
+    expect(normalizePgBusinessDate("2026-09-08")).toBe("2026-09-08");
+    expect(normalizePgBusinessDate("2026-09-08T00:00:00.000Z")).toBe("2026-09-08");
+    expect(normalizePgBusinessDate(null)).toBeNull();
+    expect(normalizePgBusinessDate(undefined)).toBeNull();
+    expect(normalizePgBusinessDate("")).toBeNull();
+    expect(normalizePgBusinessDate("Tue Sep 08 2026 00:00:00 GMT+0000")).toBeNull();
+    expect(normalizePgBusinessDate(new Date("not a date"))).toBeNull();
   });
 });

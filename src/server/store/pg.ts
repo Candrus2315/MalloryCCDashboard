@@ -355,6 +355,24 @@ const DDL: string[] = [
   )`,
 ];
 
+/**
+ * S7c: normalize a pg `date` cell into the YYYY-MM-DD calendar string the
+ * metrics layer compares. postgres.js parses `date` columns into JS Date
+ * objects (midnight), so the value must go through ISO formatting — a bare
+ * String(date).slice(0,10) produces "Tue Sep 08" and every downstream
+ * DATE_ONLY_RE / range comparison silently fails. Strings already in
+ * YYYY-MM-DD shape pass through; anything else is null (never a guess).
+ */
+export function normalizePgBusinessDate(v: unknown): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    return v.toISOString().slice(0, 10);
+  }
+  const s = String(v);
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
+}
+
 export class PgStore implements Store {
   mode = "postgres" as const;
   private sql: ReturnType<typeof postgres>;
@@ -763,9 +781,11 @@ export class PgStore implements Store {
       appointment_type: String(r.appointment_type ?? ""),
       appointment_datetime: new Date(r.appointment_datetime as string).toISOString(),
       created_at: new Date(r.created_at as string).toISOString(),
-      // S7c: the ET business date arrives as a pg `date` (YYYY-MM-DD via
-      // toString) — normalized defensively to the calendar-date string.
-      created_business_date: r.created_business_date == null ? null : String(r.created_business_date).slice(0, 10),
+      // S7c: the ET business date arrives as a pg `date` — postgres.js parses
+      // that into a JS Date (UTC midnight), so String().slice(0,10) yields
+      // "Tue Sep 08" garbage and every downstream DATE_ONLY_RE check fails.
+      // Normalize to the YYYY-MM-DD calendar string the metrics layer compares.
+      created_business_date: normalizePgBusinessDate(r.created_business_date),
       created_time_source: r.created_time_source == null ? null : String(r.created_time_source),
       created_time_precision: r.created_time_precision == null ? null : String(r.created_time_precision),
       raw: (r.raw ?? null) as Record<string, unknown> | null,

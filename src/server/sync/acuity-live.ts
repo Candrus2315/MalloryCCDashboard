@@ -126,7 +126,7 @@ export function parseAcuityAppointment(raw: Record<string, unknown>): Normalized
   const datetimeCreatedRaw = typeof raw.datetimeCreated === "string" && raw.datetimeCreated.trim() !== "" ? raw.datetimeCreated.trim() : null;
   const dateCreatedRaw = typeof raw.dateCreated === "string" && raw.dateCreated.trim() !== "" ? raw.dateCreated.trim() : null;
   const datetimeCreatedInstant = datetimeCreatedRaw ? parseAcuityInstant(datetimeCreatedRaw) : null;
-  const dateCreatedInstant = !datetimeCreatedInstant && dateCreatedRaw ? parseAcuityInstant(dateCreatedRaw) : null;
+  const dateCreatedInstant = !datetimeCreatedInstant && dateCreatedRaw && dateCreatedRaw.includes("T") ? parseAcuityInstant(dateCreatedRaw) : null;
   const dateCreatedCalendar = dateCreatedRaw ? parseAcuityDateCreatedCalendar(dateCreatedRaw) : null;
 
   let createdAt: string;
