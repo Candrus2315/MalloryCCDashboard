@@ -53,7 +53,7 @@ export const Route = createFileRoute("/reps")({
 
 /** Null renders "—" in stone-300 (never 0) — same rule as the Today page. */
 function num(v: string) {
-  return v === "—" ? <span className="text-stone-300">—</span> : v;
+  return v === "—" ? <span className="text-(--text-faint)">—</span> : v;
 }
 
 /** Rep value in the comparison table: counts whole, rates 1-dp %, durations m/s. */
@@ -283,7 +283,7 @@ function RepsPage() {
       >
         <button type="button" className="th-sort-btn" onClick={() => sortBy(key)}>
           {label}
-          <span aria-hidden="true" className={active ? "text-stone-900" : "text-stone-400"}>
+          <span aria-hidden="true" className={active ? "text-(--text-primary)" : "text-(--text-muted)"}>
             {caret}
           </span>
         </button>
@@ -302,31 +302,31 @@ function RepsPage() {
       {/* header — matches the Today page: title — subtitle, context line, honesty banner */}
       <header>
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <h1 className="text-xl font-semibold tracking-tight text-stone-900">Reps</h1>
-          <span className="text-[15px] font-medium text-stone-300" aria-hidden="true">
+          <h1 className="text-xl font-semibold tracking-tight text-(--text-primary)">Reps</h1>
+          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
             —
           </span>
-          <span className="text-[15px] font-medium text-stone-500">Individual Rep Performance</span>
+          <span className="text-[15px] font-medium text-(--text-caption)">Individual Rep Performance</span>
         </div>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-stone-500">
-          <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-(--text-caption)">
+          <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
           <span>{rangeCaption}</span>
           {/* live-state indicator (owner hard rule): live vs historical is never ambiguous */}
           {data.range.isCurrentWeek ? (
-            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 font-semibold text-(--pos-text)">
+              <span className="h-1.5 w-1.5 rounded-full bg-(--dot-positive)" aria-hidden="true" />
               Current Week
             </span>
           ) : (
-            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-semibold text-amber-800">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-(--chip-risk-bg) bg-(--chip-risk-bg) px-2 py-0.5 font-semibold text-(--banner-fg)">
+              <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" />
               Historical · {data.range.label}
             </span>
           )}
         </p>
         {data.meta.mode === "memory" && (
           <div className="status-banner mt-2" role="status">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
             <span className="min-w-0 truncate">
               Demo data (in-memory) — database not connected
               {data.meta.dbReason ? `: ${data.meta.dbReason}` : ""}.
@@ -354,12 +354,12 @@ function RepsPage() {
           />
         )}
         {data.range.mode === "custom" && (
-          <span className="flex items-center gap-2 text-[13px] text-stone-500">
+          <span className="flex items-center gap-2 text-[13px] text-(--text-caption)">
             <input
               type="date"
               value={customFrom}
               onChange={(e) => setCustomFrom(e.target.value)}
-              className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[13px] text-stone-900 outline-none focus:border-stone-500"
+              className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border)"
               aria-label="From date"
             />
             <span>–</span>
@@ -367,13 +367,13 @@ function RepsPage() {
               type="date"
               value={customTo}
               onChange={(e) => setCustomTo(e.target.value)}
-              className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[13px] text-stone-900 outline-none focus:border-stone-500"
+              className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border)"
               aria-label="To date"
             />
             <button
               type="button"
               onClick={applyCustom}
-              className="rounded-lg bg-stone-900 px-3 py-1.5 font-medium text-white hover:bg-stone-700"
+              className="rounded-lg bg-(--accent-solid) px-3 py-1.5 font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover)"
             >
               Apply
             </button>
@@ -386,7 +386,7 @@ function RepsPage() {
         <aside aria-label="Rep selector">
           <p className="section-heading mb-2">Reps</p>
           <div className="card p-0">
-            <div className="flex gap-2 overflow-x-auto p-2 lg:block lg:space-y-0 lg:overflow-visible lg:p-0 lg:divide-y lg:divide-stone-100">
+            <div className="flex gap-2 overflow-x-auto p-2 lg:block lg:space-y-0 lg:overflow-visible lg:p-0 lg:divide-y lg:divide-(--table-border-weak)">
               {data.repList.map((r) => (
                 <button
                   key={r.id}
@@ -394,21 +394,21 @@ function RepsPage() {
                   onClick={() => selectRep(r.id)}
                   aria-pressed={r.isSelected}
                   className={
-                    "block w-full min-w-[190px] shrink-0 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 lg:min-w-0 lg:rounded-none " +
-                    (r.isSelected ? "bg-stone-100" : "hover:bg-stone-50")
+                    "block w-full min-w-[190px] shrink-0 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) lg:min-w-0 lg:rounded-none " +
+                    (r.isSelected ? "bg-(--surface-selected)" : "hover:bg-(--surface-hover)")
                   }
                 >
                   <span className="flex items-center gap-2">
                     <span
                       className={
                         "h-1.5 w-1.5 shrink-0 rounded-full " +
-                        (r.isSelected ? "bg-stone-900" : "bg-stone-300")
+                        (r.isSelected ? "bg-(--accent-solid)" : "bg-(--dot-muted)")
                       }
                       aria-hidden="true"
                     />
                     <span
                       className={
-                        "truncate text-[13px] " + (r.isSelected ? "font-semibold text-stone-900" : "font-medium text-stone-700")
+                        "truncate text-[13px] " + (r.isSelected ? "font-semibold text-(--text-primary)" : "font-medium text-(--text-body)")
                       }
                     >
                       {r.name}
@@ -417,7 +417,7 @@ function RepsPage() {
                   <span
                     className={
                       "mt-0.5 block pl-3.5 text-[11px] tabular-nums " +
-                      (r.isSelected ? "text-stone-500" : "text-stone-400")
+                      (r.isSelected ? "text-(--text-caption)" : "text-(--text-muted)")
                     }
                   >
                     {r.operatingState === "not-yet-active" ? (
@@ -429,7 +429,7 @@ function RepsPage() {
               ))}
             </div>
           </div>
-          <p className="mt-2 text-[11px] text-stone-400">Bookings · calls in the selected range.</p>
+          <p className="mt-2 text-[11px] text-(--text-muted)">Bookings · calls in the selected range.</p>
 
           {/* CALL-OWNERSHIP BUCKETS (design/data-terminology.md — three, mutually
               exclusive). "Non Roster Calls" = a KNOWN HL user outside the CC
@@ -442,15 +442,15 @@ function RepsPage() {
               <p className="section-heading mb-2">Non Roster Calls</p>
               <div className="card p-3">
                 {data.nonRoster.users.length === 0 ? (
-                  <p className="text-[12px] text-stone-500">No non-roster calls in this window.</p>
+                  <p className="text-[12px] text-(--text-caption)">No non-roster calls in this window.</p>
                 ) : (
-                  <ul className="divide-y divide-stone-100">
+                  <ul className="divide-y divide-(--table-border-weak)">
                     {data.nonRoster.users.map((u) => (
                       <li key={u.key} className="flex items-baseline justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
-                        <span className="min-w-0 truncate text-[12px] font-medium text-stone-700" title={u.key}>
+                        <span className="min-w-0 truncate text-[12px] font-medium text-(--text-body)" title={u.key}>
                           {u.name ?? u.key}
                         </span>
-                        <span className="shrink-0 tabular-nums text-[12px] text-stone-500">
+                        <span className="shrink-0 tabular-nums text-[12px] text-(--text-caption)">
                           {formatInt(u.calls)} call{u.calls === 1 ? "" : "s"} ·{" "}
                           {formatInt(u.overThreshold)} &gt;{data.thresholdSeconds}s
                         </span>
@@ -459,13 +459,13 @@ function RepsPage() {
                   </ul>
                 )}
                 {data.nonRoster.totalCalls > 0 && (
-                  <p className="mt-2 border-t border-stone-100 pt-2 text-[11px] tabular-nums text-stone-500">
+                  <p className="mt-2 border-t border-(--table-border-weak) pt-2 text-[11px] tabular-nums text-(--text-caption)">
                     Total: {formatInt(data.nonRoster.totalCalls)} calls ·{" "}
                     {formatInt(data.nonRoster.totalOverThreshold)} over threshold — excluded from roster and team
                     totals.
                   </p>
                 )}
-                <p className="mt-2 text-[11px] leading-relaxed text-stone-400">
+                <p className="mt-2 text-[11px] leading-relaxed text-(--text-muted)">
                   Calls from valid HighLevel users outside the CC roster. Fully visible and auditable but excluded from
                   CC rep metrics, team metrics, conversions, goal progress and coaching logic — unless the user is
                   mapped to the roster in Settings → Roster Mapping. Raw rows: Audit page → Non Roster Calls.
@@ -479,14 +479,14 @@ function RepsPage() {
               <p className="section-heading mb-2">Unattributed</p>
               <div className="card p-3">
                 {data.unattributed.totalCalls === 0 ? (
-                  <p className="text-[12px] text-stone-500">No unattributed calls in this window.</p>
+                  <p className="text-[12px] text-(--text-caption)">No unattributed calls in this window.</p>
                 ) : (
-                  <p className="text-[12px] tabular-nums text-stone-700">
+                  <p className="text-[12px] tabular-nums text-(--text-body)">
                     {formatInt(data.unattributed.totalCalls)} call{data.unattributed.totalCalls === 1 ? "" : "s"} ·{" "}
                     {formatInt(data.unattributed.totalOverThreshold)} &gt;{data.thresholdSeconds}s
                   </p>
                 )}
-                <p className="mt-2 text-[11px] leading-relaxed text-stone-400">
+                <p className="mt-2 text-[11px] leading-relaxed text-(--text-muted)">
                   Reserved EXCLUSIVELY for call records whose ownership genuinely cannot be determined (no HighLevel
                   user id). Never used for non-roster users; excluded from every roster and team total.
                 </p>
@@ -499,16 +499,16 @@ function RepsPage() {
           <div className="min-w-0 space-y-4">
             {/* summary header */}
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <p className="flex items-center gap-2 text-[15px] font-semibold text-stone-900">
+              <p className="flex items-center gap-2 text-[15px] font-semibold text-(--text-primary)">
                 {d.rep.name} — {RANGE_LABELS[data.range.mode]} performance
                 {data.selectedOperatingState === "not-yet-active" && (
                   <StatusChip kind="neutral" label="Not Yet Active" />
                 )}
               </p>
-              <p className="text-xs text-stone-400">Meaningful call threshold: {data.thresholdSeconds}s</p>
+              <p className="text-xs text-(--text-muted)">Meaningful call threshold: {data.thresholdSeconds}s</p>
             </div>
             {data.selectedOperatingState === "not-yet-active" && (
-              <p className="text-xs text-stone-500">
+              <p className="text-xs text-(--text-caption)">
                 {d.rep.name} is rostered but begins calling{" "}
                 {d.rep.call_start_date ? formatDateHuman(d.rep.call_start_date) : "on their start date"}. Zero calls
                 are expected before then — no performance flags apply, and normal monitoring begins that day.
@@ -517,7 +517,7 @@ function RepsPage() {
 
             {/* PRIMARY PERFORMANCE METRICS (spec: stronger typography) */}
             <section className="card" aria-label="Primary performance metrics">
-              <div className="grid grid-cols-1 gap-y-6 sm:grid-cols-3 sm:gap-y-0 sm:divide-x sm:divide-stone-100">
+              <div className="grid grid-cols-1 gap-y-6 sm:grid-cols-3 sm:gap-y-0 sm:divide-x sm:divide-(--table-border-weak)">
                 <div className="sm:pr-6">
                   <p className="kpi-label">Total Bookings</p>
                   <p className="kpi-hero mt-2">{formatInt(d.metrics.totalBookings)}</p>
@@ -535,12 +535,12 @@ function RepsPage() {
                 </div>
               </div>
 
-              <hr className="my-4 border-stone-100" />
+              <hr className="my-4 border-(--table-border-weak)" />
 
               {/* WEEKLY GOAL PROGRESS — always WTD vs the weekly goal (spec) */}
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                 <p className="section-heading">{weekScoped ? "Weekly Goal Progress" : "Goal Progress"}</p>
-                {d.goal?.note && <p className="text-xs text-stone-400">{d.goal.note}</p>}
+                {d.goal?.note && <p className="text-xs text-(--text-muted)">{d.goal.note}</p>}
               </div>
               {gp && goalViewRaw ? (
                 <>
@@ -550,7 +550,7 @@ function RepsPage() {
                       <p className="kpi-hero mt-2">
                         {formatInt(gp.wtd)}
                         {gp.goal != null && (
-                          <span className="text-2xl font-medium text-stone-400"> / {formatCount(gp.goal)}</span>
+                          <span className="text-2xl font-medium text-(--text-muted)"> / {formatCount(gp.goal)}</span>
                         )}
                       </p>
                       {goalViewRaw.sub && <p className="kpi-sub mt-1.5">{goalViewRaw.sub}</p>}
@@ -565,14 +565,14 @@ function RepsPage() {
                       <p
                         className={
                           "kpi-hero mt-2 " +
-                          (gp.remainingTone === "positive" ? "text-emerald-700" : "text-stone-900")
+                          (gp.remainingTone === "positive" ? "text-(--pos-text)" : "text-(--text-primary)")
                         }
                       >
                         {gp.remainingHero}
                       </p>
                       <p
                         className={
-                          "kpi-sub mt-1.5 " + (gp.remainingTone === "positive" ? "text-emerald-600" : "")
+                          "kpi-sub mt-1.5 " + (gp.remainingTone === "positive" ? "text-(--pos-text)" : "")
                         }
                       >
                         {gp.remainingSub}
@@ -580,9 +580,9 @@ function RepsPage() {
                     </div>
                   </div>
                   {gp.goal != null && barPct != null && (
-                    <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-stone-200" aria-hidden="true">
+                    <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
                       <div
-                        className={"h-1.5 rounded-full " + (goalHit ? "bg-emerald-600" : "bg-stone-900")}
+                        className={"h-1.5 rounded-full " + (goalHit ? "bg-(--dot-positive)" : "bg-(--bar-fill)")}
                         style={{ width: `${barPct}%` }}
                       />
                     </div>
@@ -613,7 +613,7 @@ function RepsPage() {
             </section>
           </div>
         ) : (
-          <div className="card flex items-center justify-center py-10 text-sm text-stone-400">
+          <div className="card flex items-center justify-center py-10 text-sm text-(--text-muted)">
             Select a rep to see their performance.
           </div>
         )}
@@ -624,12 +624,12 @@ function RepsPage() {
         <section className="card card-dense" aria-label="Coaching focus">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <p className="section-heading">Coaching Focus</p>
-            <p className="text-xs font-normal text-stone-400">
+            <p className="text-xs font-normal text-(--text-muted)">
               Rule-based from selected-range metrics — no scores.
             </p>
           </div>
           {observations.length === 0 ? (
-            <p className="mt-3 text-[13px] text-stone-700">
+            <p className="mt-3 text-[13px] text-(--text-body)">
               No major performance flags for the selected period.
             </p>
           ) : (
@@ -637,16 +637,16 @@ function RepsPage() {
               {observations.map((o, i) => (
                 <li
                   key={`${i}-${o.text.slice(0, 24)}`}
-                  className="flex items-start gap-2.5 border-b border-stone-100 py-2 first:pt-2.5 last:border-0 last:pb-0"
+                  className="flex items-start gap-2.5 border-b border-(--table-border-weak) py-2 first:pt-2.5 last:border-0 last:pb-0"
                 >
                   <span
                     className={
                       "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full " +
-                      (o.severity === "risk" ? "bg-amber-500" : "bg-emerald-600")
+                      (o.severity === "risk" ? "bg-(--dot-caution)" : "bg-(--dot-positive)")
                     }
                     aria-hidden="true"
                   />
-                  <span className="min-w-0 flex-1 text-[13px] text-stone-700">{o.text}</span>
+                  <span className="min-w-0 flex-1 text-[13px] text-(--text-body)">{o.text}</span>
                 </li>
               ))}
             </ul>
@@ -659,7 +659,7 @@ function RepsPage() {
         <section aria-label="Performance compared with team average">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <p className="section-heading">Performance Compared With Team Average</p>
-            <p className="text-xs font-normal text-stone-400">Team average excludes the selected rep.</p>
+            <p className="text-xs font-normal text-(--text-muted)">Team average excludes the selected rep.</p>
           </div>
           <div className="card mt-3 overflow-hidden p-0">
             <div className="overflow-x-auto">
@@ -683,19 +683,19 @@ function RepsPage() {
                       : false;
                     return (
                       <tr key={c.metric}>
-                        <td className="text-stone-700">{c.metric}</td>
-                        <td className="font-medium text-stone-900">{repCompareValue(c.rep, c.unit)}</td>
-                        <td className="text-stone-500">{teamCompareValue(c.teamAvg, c.unit)}</td>
+                        <td className="text-(--text-body)">{c.metric}</td>
+                        <td className="font-medium text-(--text-primary)">{repCompareValue(c.rep, c.unit)}</td>
+                        <td className="text-(--text-caption)">{teamCompareValue(c.teamAvg, c.unit)}</td>
                         <td
                           className={
                             "font-medium " +
                             (c.diff == null
-                              ? "text-stone-300"
+                              ? "text-(--text-faint)"
                               : restrained
-                                ? "font-normal text-stone-400"
+                                ? "font-normal text-(--text-muted)"
                                 : c.diff >= 0
-                                  ? "text-emerald-700"
-                                  : "text-red-700")
+                                  ? "text-(--pos-text)"
+                                  : "text-(--neg-text)")
                           }
                         >
                           {formatDiff(c.diff, c.unit)}
@@ -710,12 +710,12 @@ function RepsPage() {
           {sortedComparisons.some(
             (c) => c.diff != null && restrainedDiff(c.diff, diffSampleDenominator(c, d.metrics)),
           ) && (
-            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-stone-400">
-              <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-(--text-muted)">
+              <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
               {SMALL_SAMPLE_FOOTNOTE}
             </p>
           )}
-          <p className="mt-2 text-[11px] text-stone-400">
+          <p className="mt-2 text-[11px] text-(--text-muted)">
             Counts compare as % difference; conversion rates as percentage points (pp); durations in
             m/s. Team averages cover the {data.teamAverages.repCount} other active{" "}
             {data.teamAverages.repCount === 1 ? "rep" : "reps"}; rate averages include only reps with

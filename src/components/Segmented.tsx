@@ -19,7 +19,7 @@ export function Segmented<T extends string>({
     <div
       role="group"
       aria-label={ariaLabel}
-      className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg border border-stone-200 bg-white p-0.5"
+      className="inline-flex max-w-full flex-wrap items-center gap-0.5 rounded-lg border border-(--card-border) bg-(--card-bg) p-0.5"
     >
       {options.map((o) => (
         <button
@@ -28,8 +28,10 @@ export function Segmented<T extends string>({
           aria-pressed={o.value === value}
           onClick={() => onChange(o.value)}
           className={
-            "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 " +
-            (o.value === value ? "bg-stone-900 text-white" : "text-stone-600 hover:bg-stone-100")
+            "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) " +
+            (o.value === value
+              ? "bg-(--accent-solid) text-(--accent-solid-fg)"
+              : "text-(--chip-neutral-fg) hover:bg-(--surface-subtle)")
           }
         >
           {o.label}
@@ -70,8 +72,8 @@ export function WeekOfSelect({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={
-        "rounded-lg border border-stone-200 bg-white px-2.5 py-1.5 text-[13px] font-medium text-stone-900 outline-none focus:border-stone-500 " +
-        (known ? "" : "text-stone-400")
+        "rounded-lg border border-(--card-border) bg-(--card-bg) px-2.5 py-1.5 text-[13px] font-medium text-(--text-primary) outline-none focus:border-(--input-focus-border) " +
+        (known ? "" : "text-(--text-muted)")
       }
     >
       {!known && <option value={value}>Week of {label(value)}</option>}

@@ -1,12 +1,94 @@
 @import "tailwindcss";
 
-/* ---------- Chart + surface tokens (merged-build Phase 3) ----------
-   Light values defined here; Phase 5 (dark theme) adds .dark overrides under
-   these exact names. Charts and cards reference the vars instead of hardcoding
-   hex (trend-chart.tsx, DetailDrawer.tsx). */
+/* Dark variant keyed on the <html> class set by the pre-paint script in
+   __root.tsx (localStorage mallory-appearance, system fallback). Registered
+   but deliberately used in ≤3 places — theming routes through the vars. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------- Design tokens (merged-build §c + Phase-5 dark theme) ----------
+   Light values are the exact hardcoded values this UI shipped with, so light
+   stays pixel-identical. Dark pairs follow the §c conventions: warm stone
+   surfaces (never pure black), the same hue families at dark-safe shades,
+   amber banner/chip tints kept visibly warm (data-honesty), color-scheme on
+   both roots so native controls (date/time/select/scrollbars) follow. */
 :root {
+  color-scheme: light;
+
+  /* surfaces */
   --page-bg: #fafaf9; /* stone-50 */
   --card-bg: #ffffff;
+  --card-border: #e7e5e4; /* stone-200 */
+  --surface-hover: #fafaf9; /* stone-50 (all hover:bg-stone-50 sites) */
+  --surface-subtle: #f5f5f4; /* stone-100 / stone-200/60 */
+  --surface-selected: #f5f5f4; /* selected list rows (reps selector) */
+  --surface-inset: #fafaf9; /* expanded rows, sheet test panel */
+  --sticky-header-bg: rgba(255, 255, 255, 0.95); /* bg-white/95 */
+  --scrim: rgba(28, 25, 23, 0.3); /* drawer backdrop */
+
+  /* type ladder */
+  --text-primary: #1c1917; /* stone-900 */
+  --text-body: #44403c; /* stone-700/800 */
+  --text-caption: #78716c; /* stone-500 */
+  --text-muted: #a8a29e; /* stone-400 */
+  --text-faint: #d6d3d1; /* stone-300 */
+
+  /* tables */
+  --table-border-strong: #e7e5e4; /* thead underline */
+  --table-border-weak: #f5f5f4; /* row hairlines, dividers */
+  --hover-row: rgba(245, 245, 244, 0.5); /* bg-stone-100/50 */
+
+  /* honesty banner (demo/stale) — amber stays amber-warm in both themes */
+  --banner-border: rgba(253, 230, 138, 0.8); /* amber-200/80 */
+  --banner-bg: #fffbeb; /* amber-50 */
+  --banner-fg: #78350f; /* amber-900 */
+
+  /* status chips (chip class family) */
+  --chip-positive-bg: #ecfdf5; /* emerald-50 */
+  --chip-positive-fg: #047857; /* emerald-700 */
+  --chip-risk-bg: #fffbeb; /* amber-50 */
+  --chip-risk-fg: #92400e; /* amber-800 */
+  --chip-neutral-bg: #f5f5f4; /* stone-100 */
+  --chip-neutral-fg: #57534e; /* stone-600 */
+
+  /* semantic text (collapse decisions ① ②: one red, one green) */
+  --pos-text: #047857; /* emerald-700 — Field tone, copy states */
+  --neg-text: #b91c1c; /* red-600/700 collapsed */
+
+  /* status dots */
+  --dot-positive: #059669; /* emerald-600 (500 collapsed) */
+  --dot-caution: #f59e0b; /* amber-500 */
+  --dot-muted: #d6d3d1; /* stone-300 (400 collapsed) */
+  --dot-danger: #f87171; /* red-400 */
+
+  /* goal / meter bars */
+  --bar-track: #e7e5e4; /* stone-200 */
+  --bar-fill: #1c1917; /* stone-900 */
+  --bar-fill-hit: #059669; /* emerald-600 */
+
+  /* accent (nav pill, primary buttons, strong badge) */
+  --accent-solid: #1c1917; /* stone-900 */
+  --accent-solid-fg: #ffffff;
+  --accent-hover: #44403c; /* stone-700 */
+  --btn-success: #047857; /* emerald-700 — copied-flash confirmations */
+
+  /* focus + inputs */
+  --focus-ring: #1c1917; /* ring-stone-900 sites */
+  --input-bg: #ffffff;
+  --input-border: #d6d3d1; /* stone-300 */
+  --input-focus-border: #78716c; /* stone-500 */
+
+  /* settings current-week highlight + tinted sync/sheet chips */
+  --row-highlight: rgba(255, 251, 235, 0.4); /* amber-50/40 */
+  --chip-current-bg: #fef3c7; /* amber-100 */
+  --chip-current-fg: #92400e; /* amber-800 */
+  --chip-good-bg: #d1fae5; /* emerald-100 */
+  --chip-good-fg: #047857; /* emerald-700 */
+  --chip-bad-bg: #fee2e2; /* red-100 */
+  --chip-bad-fg: #b91c1c; /* red-700 */
+  --chip-plain-bg: #e7e5e4; /* stone-200 */
+  --chip-plain-fg: #57534e; /* stone-600 */
+
+  /* charts (trend-chart.tsx is 100% var-driven) */
   --chart-grid: #e7e5e4; /* hairline gridlines */
   --chart-line: #1c1917; /* series line */
   --chart-label: #a8a29e; /* axis labels */
@@ -16,10 +98,99 @@
   --chart-dot: #1c1917;
 }
 
+.dark {
+  color-scheme: dark;
+
+  /* surfaces */
+  --page-bg: #1c1917; /* stone-900 — warm charcoal, never pure black */
+  --card-bg: #292524; /* stone-800 */
+  --card-border: #44403c; /* stone-700 */
+  --surface-hover: rgba(41, 37, 36, 0.5);
+  --surface-subtle: rgba(68, 64, 60, 0.5);
+  --surface-selected: rgba(68, 64, 60, 0.5);
+  --surface-inset: rgba(41, 37, 36, 0.6);
+  --sticky-header-bg: rgba(28, 25, 23, 0.95);
+  --scrim: rgba(0, 0, 0, 0.6); /* heavier scrim carries elevation in dark */
+
+  /* type ladder */
+  --text-primary: #fafaf9;
+  --text-body: #d6d3d1;
+  --text-caption: #a8a29e;
+  --text-muted: #a8a29e;
+  --text-faint: #57534e;
+
+  /* tables */
+  --table-border-strong: #44403c;
+  --table-border-weak: #292524;
+  --hover-row: rgba(41, 37, 36, 0.5);
+
+  /* banner — amber tint stays visibly warm on dark (data-honesty) */
+  --banner-border: rgba(120, 53, 15, 0.65);
+  --banner-bg: rgba(120, 53, 15, 0.22);
+  --banner-fg: #fcd34d; /* amber-300 */
+
+  /* chips */
+  --chip-positive-bg: rgba(6, 78, 59, 0.4);
+  --chip-positive-fg: #6ee7b7; /* emerald-300 */
+  --chip-risk-bg: rgba(120, 53, 15, 0.35);
+  --chip-risk-fg: #fcd34d;
+  --chip-neutral-bg: rgba(68, 64, 60, 0.5);
+  --chip-neutral-fg: #d6d3d1;
+
+  /* semantic text */
+  --pos-text: #34d399; /* emerald-400 */
+  --neg-text: #f87171; /* red-400 */
+
+  /* status dots */
+  --dot-positive: #34d399;
+  --dot-caution: #fbbf24;
+  --dot-muted: #57534e;
+  --dot-danger: #f87171;
+
+  /* bars */
+  --bar-track: #44403c;
+  --bar-fill: #fafaf9;
+  --bar-fill-hit: #34d399;
+
+  /* accent */
+  --accent-solid: #fafaf9;
+  --accent-solid-fg: #1c1917;
+  --accent-hover: #e7e5e4;
+  --btn-success: #059669; /* emerald-600 */
+
+  /* focus + inputs */
+  --focus-ring: #fafaf9;
+  --input-bg: #292524;
+  --input-border: #57534e;
+  --input-focus-border: #a8a29e;
+
+  /* settings highlight + tinted chips */
+  --row-highlight: rgba(120, 53, 15, 0.2);
+  --chip-current-bg: rgba(120, 53, 15, 0.35);
+  --chip-current-fg: #fcd34d;
+  --chip-good-bg: rgba(6, 78, 59, 0.35);
+  --chip-good-fg: #6ee7b7;
+  --chip-bad-bg: rgba(127, 29, 29, 0.35);
+  --chip-bad-fg: #fca5a5;
+  --chip-plain-bg: rgba(68, 64, 60, 0.5);
+  --chip-plain-fg: #d6d3d1;
+
+  /* charts */
+  --chart-grid: #292524;
+  --chart-line: #fafaf9;
+  --chart-label: #78716c;
+  --chart-ref: #57534e;
+  --chart-ref-label: #a8a29e;
+  --chart-guide: #57534e;
+  --chart-dot: #fafaf9;
+}
+
 @layer base {
   html,
   body {
-    @apply bg-stone-50 text-stone-900 antialiased;
+    @apply antialiased;
+    background: var(--page-bg);
+    color: var(--text-primary);
     font-feature-settings: "tnum" 1;
   }
 }
@@ -27,15 +198,18 @@
 @layer components {
   /* Large KPI number — the core visual unit of the dashboard */
   .kpi-value {
-    @apply text-4xl font-semibold tracking-tight text-stone-900 tabular-nums;
+    @apply text-4xl font-semibold tracking-tight tabular-nums;
+    color: var(--text-primary);
   }
-  /* Label that names a number. Redesign spec §2 type scale: stone-500 (one
-     step darker than subtext) so label > number > subtext reads as a ladder. */
+  /* Label that names a number. Redesign spec §2 type scale: one step darker
+     than subtext so label > number > subtext reads as a ladder. */
   .kpi-label {
-    @apply text-[11px] font-medium uppercase tracking-[0.08em] text-stone-500;
+    @apply text-[11px] font-medium uppercase tracking-[0.08em];
+    color: var(--text-caption);
   }
   .kpi-sub {
-    @apply text-xs text-stone-400;
+    @apply text-xs;
+    color: var(--text-muted);
   }
 
   /* ---------- Design system (defined on the Today redesign, spec §5) ----------
@@ -44,50 +218,83 @@
 
   /* Hero KPI number — the primary booking-pace row */
   .kpi-hero {
-    @apply text-5xl font-semibold tracking-tight text-stone-900 tabular-nums leading-none;
+    @apply text-5xl font-semibold tracking-tight tabular-nums leading-none;
+    color: var(--text-primary);
   }
   /* Secondary / lead-block KPI number — visibly under the hero row */
   .kpi-mid {
-    @apply text-3xl font-semibold tracking-tight text-stone-900 tabular-nums;
+    @apply text-3xl font-semibold tracking-tight tabular-nums;
+    color: var(--text-primary);
   }
-  /* Section heading: dark sentence case, NOT an uppercase gray label */
+  /* Section heading: sentence case, NOT an uppercase gray label */
   .section-heading {
-    @apply text-[13px] font-semibold text-stone-900;
+    @apply text-[13px] font-semibold;
+    color: var(--text-primary);
   }
   /* vs-team delta under a table number — the sign carries direction, no color */
   .delta-line {
-    @apply text-[11px] text-stone-400 tabular-nums;
+    @apply text-[11px] tabular-nums;
+    color: var(--text-muted);
   }
   /* Slim demo/stale-warning banner (keeps every honesty phrase, tighter form) */
   .status-banner {
-    @apply flex items-center gap-2 rounded-lg border border-amber-200/80 bg-amber-50 px-3 py-1.5 text-xs text-amber-900;
+    @apply flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs;
+    border-color: var(--banner-border);
+    background: var(--banner-bg);
+    color: var(--banner-fg);
   }
   /* Status chips: text + dot, never color-only */
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium;
   }
   .chip-positive {
-    @apply bg-emerald-50 text-emerald-700;
+    background: var(--chip-positive-bg);
+    color: var(--chip-positive-fg);
   }
   .chip-risk {
-    @apply bg-amber-50 text-amber-800;
+    background: var(--chip-risk-bg);
+    color: var(--chip-risk-fg);
   }
   .chip-neutral {
-    @apply bg-stone-100 text-stone-600;
+    background: var(--chip-neutral-bg);
+    color: var(--chip-neutral-fg);
   }
-  /* Availability day card (reusable on the future Availability page) */
+  /* Availability day card (reusable on the Availability page) */
   .day-card {
-    @apply w-28 shrink-0 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-1;
+    @apply w-28 shrink-0 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1;
+  }
+  .day-card:focus-visible {
+    --tw-ring-color: var(--focus-ring);
   }
   .day-card-on {
-    @apply border-stone-200 bg-white shadow-sm ring-1 ring-stone-900;
+    border-color: var(--card-border);
+    background: var(--card-bg);
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    outline-color: var(--focus-ring);
+  }
+  .day-card-on:focus-visible {
+    --tw-ring-color: var(--focus-ring);
   }
   .day-card-off {
-    @apply border-stone-200/70 bg-stone-50 hover:border-stone-300;
+    background: var(--page-bg);
+    border-color: color-mix(in srgb, var(--card-border) 70%, transparent);
+  }
+  .day-card-off:hover {
+    border-color: var(--input-border);
+  }
+  .day-card-off:focus-visible {
+    --tw-ring-color: var(--focus-ring);
   }
   /* Sortable table header button (spec §3.6 mechanics) */
   .th-sort-btn {
-    @apply inline-flex cursor-pointer select-none items-center gap-1 rounded-sm text-[11px] font-medium uppercase tracking-[0.08em] transition-colors hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900 focus-visible:ring-offset-1;
+    @apply inline-flex cursor-pointer select-none items-center gap-1 rounded-sm text-[11px] font-medium uppercase tracking-[0.08em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1;
+    color: var(--text-muted);
+  }
+  .th-sort-btn:hover {
+    color: var(--text-body);
+  }
+  .th-sort-btn:focus-visible {
+    --tw-ring-color: var(--focus-ring);
   }
 
   /* Compact data table */
@@ -95,19 +302,26 @@
     @apply w-full text-[13px];
   }
   .data-table thead th {
-    @apply border-b border-stone-200 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.08em] text-stone-400;
+    @apply border-b pb-2 text-left text-[11px] font-medium uppercase tracking-[0.08em];
+    border-color: var(--table-border-strong);
+    color: var(--text-muted);
   }
   .data-table tbody td {
-    @apply border-b border-stone-100 py-2 text-stone-700 tabular-nums;
+    @apply border-b py-2 tabular-nums;
+    border-color: var(--table-border-weak);
+    color: var(--text-body);
   }
   .data-table tbody tr:hover {
-    @apply bg-stone-100/50;
+    background: var(--hover-row);
   }
   .section-title {
-    @apply text-[11px] font-medium uppercase tracking-[0.12em] text-stone-400;
+    @apply text-[11px] font-medium uppercase tracking-[0.12em];
+    color: var(--text-muted);
   }
   .card {
-    @apply rounded-xl border border-stone-200/80 bg-white p-5;
+    @apply rounded-xl border p-5;
+    border-color: var(--card-border);
+    background: var(--card-bg);
   }
   /* Card padding variant for dense panels (availability, attention). Declared
      AFTER .card so p-4 wins the cascade (equal specificity, later wins). */
@@ -115,6 +329,61 @@
     @apply p-4;
   }
   .accent-text {
-    @apply text-amber-700;
+    color: var(--pos-text);
+  }
+
+  /* ---------- Recurring one-off patterns hoisted to classes (P5) ----------
+     Only patterns that recur ≥3×; one-off colors stay inline via Tailwind's
+     var shorthand (bg-(--token)). Utilities at the call site (p-, text-)
+     still win the cascade over these component-layer classes. */
+
+  /* Solid primary button (bg-stone-900 text-white hover:bg-stone-700 sites) */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors;
+    background: var(--accent-solid);
+    color: var(--accent-solid-fg);
+  }
+  .btn-primary:hover {
+    background: var(--accent-hover);
+  }
+  .btn-primary:disabled {
+    @apply opacity-50;
+  }
+  /* Bordered secondary/ghost button (border-stone-200 text-stone-500 sites) */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1.5 text-[13px] font-medium transition-colors;
+    border-color: var(--card-border);
+    background: transparent;
+    color: var(--text-caption);
+  }
+  .btn-secondary:hover {
+    border-color: var(--input-border);
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+  .btn-secondary:disabled {
+    @apply opacity-50;
+  }
+  /* Native input baseline — explicit bg on ALL inputs so dark never leaks
+     the user-agent white (Settings' bg-less inputs were the biggest trap) */
+  .input-field {
+    @apply rounded-md border px-2.5 py-1.5 text-[13px] outline-none transition-colors;
+    border-color: var(--input-border);
+    background: var(--input-bg);
+    color: var(--text-primary);
+  }
+  .input-field:focus {
+    border-color: var(--input-focus-border);
+  }
+  /* Opaque sticky cell (left-column sticky during horizontal scroll) */
+  .sticky-cell {
+    background: var(--card-bg);
+  }
+  /* Row hover for tables built without .data-table */
+  .table-hover-row {
+    transition: background-color 0.15s ease;
+  }
+  .table-hover-row:hover {
+    background: var(--surface-hover);
   }
 }

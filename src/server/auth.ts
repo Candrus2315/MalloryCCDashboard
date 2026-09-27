@@ -178,18 +178,31 @@ export function lockScreenHtml(redirectTo: string, error?: string): string {
   const err = error
     ? `<p style="margin:14px 0 0;color:#b91c1c;font-size:13px">${error}</p>`
     : "";
+  // DECISION ③ (P5): prefers-color-scheme media-query dark ONLY — no localStorage
+  // reader here; the standalone doc stays minimal (key-name sync risk not worth
+  // it on this rare, pre-cookie surface). Colors mirror the app tokens.
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mallory CC Performance — Locked</title>
+<style>
+  @media (prefers-color-scheme: dark) {
+    body { background:#1c1917 !important; color:#fafaf9 !important; }
+    form { background:#292524 !important; border-color:#44403c !important; }
+    .sub { color:#a8a29e !important; }
+    .hint { color:#a8a29e !important; }
+    input[type="password"] { background:#292524 !important; color:#fafaf9 !important; border-color:#57534e !important; }
+    button[type="submit"] { background:#fafaf9 !important; color:#1c1917 !important; }
+  }
+</style>
 </head>
 <body style="margin:0;background:#fafaf9;color:#1c1917;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
   <form method="post" action="${LOGIN_PATH}" style="width:100%;max-width:22rem;background:#ffffff;border:1px solid #e7e5e4;border-radius:0.75rem;padding:2rem;box-shadow:0 1px 2px rgba(0,0,0,0.04)">
     <h1 style="margin:0;font-size:17px;font-weight:600;letter-spacing:-0.01em">Mallory Portraits</h1>
-    <p style="margin:2px 0 0;font-size:13px;color:#78716c">CC Performance Dashboard</p>
-    <p style="margin:18px 0 0;font-size:13px;color:#57534e">Enter the dashboard passphrase to continue.</p>
+    <p class="sub" style="margin:2px 0 0;font-size:13px;color:#78716c">CC Performance Dashboard</p>
+    <p class="hint" style="margin:18px 0 0;font-size:13px;color:#57534e">Enter the dashboard passphrase to continue.</p>
     <input type="hidden" name="redirectTo" value="${redirectTo.replace(/"/g, "&quot;")}">
     <input type="password" name="passphrase" required autofocus placeholder="Passphrase"
       style="margin-top:12px;width:100%;box-sizing:border-box;border:1px solid #d6d3d1;border-radius:0.5rem;padding:8px 12px;font-size:14px;outline:none"

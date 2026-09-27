@@ -35,7 +35,7 @@ function shortWeekday(dateStr: string): string {
 }
 /** Null renders "—" in stone-300 (never 0) per spec §5 polish. */
 function num(v: string) {
-  return v === "—" ? <span className="text-stone-300">—</span> : v;
+  return v === "—" ? <span className="text-(--text-faint)">—</span> : v;
 }
 
 type SortKey =
@@ -141,11 +141,11 @@ function TodayPage() {
       <th
         scope="col"
         aria-sort={active ? (sortAsc ? "ascending" : "descending") : undefined}
-        className={`sticky top-14 z-[1] bg-white/95 backdrop-blur-sm ${opts?.left ? "text-left" : "text-right"} ${opts?.hideBelowMd ? "hidden md:table-cell" : ""}`}
+        className={`sticky top-14 z-[1] bg-(--sticky-header-bg) backdrop-blur-sm ${opts?.left ? "text-left" : "text-right"} ${opts?.hideBelowMd ? "hidden md:table-cell" : ""}`}
       >
         <button type="button" className="th-sort-btn" onClick={() => sortBy(key)}>
           {label}
-          <span aria-hidden="true" className={active ? "text-stone-900" : "text-stone-400"}>
+          <span aria-hidden="true" className={active ? "text-(--text-primary)" : "text-(--text-muted)"}>
             {caret}
           </span>
         </button>
@@ -158,32 +158,32 @@ function TodayPage() {
       {/* 1 — header & context */}
       <header>
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <h1 className="text-xl font-semibold tracking-tight text-stone-900">Today</h1>
-          <span className="text-[15px] font-medium text-stone-300" aria-hidden="true">
+          <h1 className="text-xl font-semibold tracking-tight text-(--text-primary)">Today</h1>
+          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
             —
           </span>
-          <span className="text-[15px] font-medium text-stone-500">{formatDateHuman(m.date)}</span>
-          <span className="text-[15px] font-medium text-stone-300" aria-hidden="true">
+          <span className="text-[15px] font-medium text-(--text-caption)">{formatDateHuman(m.date)}</span>
+          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
             —
           </span>
-          <span className="text-[15px] font-medium text-stone-500">
+          <span className="text-[15px] font-medium text-(--text-caption)">
             Week of {formatDateHuman(m.weekStart)}
           </span>
           {/* live-state indicator (owner hard rule): Today is always the live week */}
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 text-xs font-semibold text-(--chip-positive-fg)">
+            <span className="h-1.5 w-1.5 rounded-full bg-(--dot-positive)" aria-hidden="true" />
             Current Week
           </span>
         </div>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-stone-500">
-          <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-(--text-caption)">
+          <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
           <span>
             {data.cohortNote} (America/New_York)
           </span>
         </p>
         {bannerMessages.length > 0 && (
           <div className="status-banner mt-2" role="status">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
             <span className="min-w-0 truncate" title={bannerMessages.join(" · ")}>
               {bannerMessages.join(" · ")}
             </span>
@@ -193,7 +193,7 @@ function TodayPage() {
 
       {/* 2 — primary performance KPI row (the 10-second answer) */}
       <section aria-label="Bookings and pace">
-        <div className="card grid grid-cols-2 gap-y-6 p-0 sm:grid-cols-3 xl:grid-cols-6 xl:gap-y-0 xl:divide-x xl:divide-stone-100">
+        <div className="card grid grid-cols-2 gap-y-6 p-0 sm:grid-cols-3 xl:grid-cols-6 xl:gap-y-0 xl:divide-x xl:divide-(--table-border-weak)">
           <KpiHero label="Bookings WTD" value={m.bookings.wtd} sub={`of ${m.bookings.weeklyGoal} goal`} pace={paceState ?? undefined} />
           <KpiHero label="Remaining" value={m.bookings.remaining} sub="bookings left" />
           <KpiHero
@@ -270,13 +270,13 @@ function TodayPage() {
       <section aria-label="Rep performance">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <p className="section-heading">Rep Performance — this week</p>
-          <p className="text-xs font-normal text-stone-400">
+          <p className="text-xs font-normal text-(--text-muted)">
             Team averages exclude each rep's own row · rule-based, no scores
           </p>
         </div>
         <div className="card mt-3 overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="data-table min-w-[960px] [&_td]:py-2.5 [&_tbody_tr:hover]:bg-stone-50">
+            <table className="data-table min-w-[960px] [&_td]:py-2.5 [&_tbody_tr:hover]:bg-(--surface-hover)">
               <thead>
                 <tr>
                   {th("name", "Rep", { left: true })}
@@ -299,12 +299,12 @@ function TodayPage() {
                     <tr key={r.repId}>
                       <td className="text-left align-top">
                         <span className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-stone-900">{r.name}</span>
+                          <span className="font-medium text-(--text-primary)">{r.name}</span>
                           {chip && <StatusChip kind={chip.kind} label={chip.label} />}
                         </span>
                       </td>
                       <td className="text-right align-top">
-                        <span className="font-semibold text-stone-900 tabular-nums">{r.totalBookings}</span>
+                        <span className="font-semibold text-(--text-primary) tabular-nums">{r.totalBookings}</span>
                         <DeltaLine rep={r.totalBookings} team={tm?.totalBookings ?? null} unit="pct" />
                       </td>
                       <td className="text-right align-top">
@@ -317,24 +317,24 @@ function TodayPage() {
                       </td>
                       <td className="text-right align-top">{num(pct(r.goalPercent, 0))}</td>
                       <td className="text-right align-top">
-                        <span className="font-semibold text-stone-900 tabular-nums">{r.actual}</span>
-                        <span className="text-stone-400"> / {r.goal > 0 ? r.goal : "—"}</span>
+                        <span className="font-semibold text-(--text-primary) tabular-nums">{r.actual}</span>
+                        <span className="text-(--text-muted)"> / {r.goal > 0 ? r.goal : "—"}</span>
                       </td>
                       <td className="hidden text-right align-top md:table-cell">
-                        <span className={r.totalCalls === 0 ? "text-stone-300" : "text-stone-500"}>{r.totalCalls}</span>
+                        <span className={r.totalCalls === 0 ? "text-(--text-faint)" : "text-(--text-caption)"}>{r.totalCalls}</span>
                       </td>
                       <td className="hidden text-right align-top md:table-cell">
-                        <span className={r.callsOverThreshold === 0 ? "text-stone-300" : "text-stone-500"}>
+                        <span className={r.callsOverThreshold === 0 ? "text-(--text-faint)" : "text-(--text-caption)"}>
                           {r.callsOverThreshold}
                         </span>
                       </td>
                       <td className="hidden text-right align-top md:table-cell">
-                        <span className={r.bookingsFromOverThreshold === 0 ? "text-stone-300" : "text-stone-500"}>
+                        <span className={r.bookingsFromOverThreshold === 0 ? "text-(--text-faint)" : "text-(--text-caption)"}>
                           {r.bookingsFromOverThreshold}
                         </span>
                       </td>
                       <td className="hidden text-right align-top md:table-cell">
-                        <span className={r.avgCallDurationSeconds == null ? "text-stone-300" : "text-stone-500"}>
+                        <span className={r.avgCallDurationSeconds == null ? "text-(--text-faint)" : "text-(--text-caption)"}>
                           {mins(r.avgCallDurationSeconds)}
                         </span>
                       </td>
@@ -367,7 +367,7 @@ function KpiHero({
       <p className="kpi-label flex items-center gap-1.5">
         {pace && (
           <span
-            className={`h-1.5 w-1.5 rounded-full ${pace === "on" ? "bg-emerald-600" : "bg-amber-500"}`}
+            className={`h-1.5 w-1.5 rounded-full ${pace === "on" ? "bg-(--dot-positive)" : "bg-(--dot-caution)"}`}
             title={pace === "on" ? "On pace for the weekly goal" : "Behind weekly pace"}
             aria-hidden="true"
           />
@@ -407,14 +407,14 @@ function BudgetTile({
   return (
     <div>
       <p className="kpi-label flex items-center gap-1.5">
-        {over && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />}
+        {over && <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" />}
         {label}
       </p>
       <p className="kpi-mid mt-2">{num(value)}</p>
       {percentUsed != null && (
-        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-stone-200" aria-hidden="true">
+        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
           <div
-            className={`h-1 rounded-full ${over ? "bg-amber-500" : "bg-stone-900"}`}
+            className={`h-1 rounded-full ${over ? "bg-(--dot-caution)" : "bg-(--bar-fill)"}`}
             style={{ width: `${Math.min(percentUsed, 1) * 100}%` }}
           />
         </div>

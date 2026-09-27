@@ -6,8 +6,8 @@
 export function WarningList({ items }: { items: string[] }) {
   if (items.length === 0) return null;
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-      <ul className="space-y-1 text-xs text-amber-800">
+    <div className="rounded-lg border border-(--banner-border) bg-(--banner-bg) px-4 py-3">
+      <ul className="space-y-1 text-xs text-(--banner-fg)">
         {items.map((w) => (
           <li key={w}>⚠ {w}</li>
         ))}

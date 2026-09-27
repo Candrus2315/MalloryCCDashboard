@@ -25,7 +25,7 @@ export const Route = createRootRoute({
     ],
     links: [{ rel: "stylesheet", href: appCss }],
   }),
-  notFoundComponent: () => <div className="p-10 text-stone-500">Page not found</div>,
+  notFoundComponent: () => <div className="p-10 text-(--text-caption)">Page not found</div>,
   component: RootComponent,
 });
 
@@ -49,12 +49,12 @@ function AppShell({ children }: { children: ReactNode }) {
   const path = location.pathname;
   const freshness = Route.useLoaderData();
   return (
-    <div className="min-h-dvh bg-stone-50 text-stone-900">
-      <header className="border-b border-stone-200/70 bg-stone-50/95 sticky top-0 z-10">
+    <div className="min-h-dvh bg-(--page-bg) text-(--text-primary)">
+      <header className="border-b border-(--card-border) bg-(--sticky-header-bg) sticky top-0 z-10">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-6 py-3">
           <div className="flex items-baseline gap-3">
             <span className="text-[15px] font-semibold tracking-tight">Mallory Portraits</span>
-            <span className="text-[13px] text-stone-400">CC Performance</span>
+            <span className="text-[13px] text-(--text-muted)">CC Performance</span>
           </div>
           <div className="flex items-center gap-4">
             <FreshnessIndicator initial={freshness} />
@@ -67,7 +67,9 @@ function AppShell({ children }: { children: ReactNode }) {
                     to={item.to}
                     className={
                       "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors " +
-                      (active ? "bg-stone-900 text-white" : "text-stone-500 hover:bg-stone-200/60 hover:text-stone-900")
+                      (active
+                        ? "bg-(--accent-solid) text-(--accent-solid-fg)"
+                        : "text-(--text-caption) hover:bg-(--surface-subtle) hover:text-(--text-primary)")
                     }
                   >
                     {item.label}
@@ -108,10 +110,10 @@ function FreshnessIndicator({ initial }: { initial: FreshnessData }) {
         ? "demo data"
         : "never synced";
   const dot = data.highlevel.status === "connected" && !data.highlevel.isDemo
-    ? "bg-emerald-500"
+    ? "bg-(--dot-positive)"
     : data.highlevel.status === "error"
-      ? "bg-red-400"
-      : "bg-stone-300";
+      ? "bg-(--dot-danger)"
+      : "bg-(--dot-muted)";
 
   const onRefresh = async () => {
     setBusy(true);
@@ -139,14 +141,14 @@ function FreshnessIndicator({ initial }: { initial: FreshnessData }) {
   return (
     <div className="flex items-center gap-2" title={data.highlevel.lastError ?? undefined}>
       <span className={"inline-block h-1.5 w-1.5 rounded-full " + dot} aria-hidden />
-      <span className="text-[12px] text-stone-400" suppressHydrationWarning>
+      <span className="text-[12px] text-(--text-muted)" suppressHydrationWarning>
         {label}
       </span>
       <button
         type="button"
         onClick={onRefresh}
         disabled={busy}
-        className="rounded-md border border-stone-200 px-2 py-0.5 text-[12px] text-stone-500 transition-colors hover:border-stone-300 hover:text-stone-900 disabled:opacity-50"
+        className="rounded-md border border-(--card-border) px-2 py-0.5 text-[12px] text-(--text-caption) transition-colors hover:border-(--input-border) hover:text-(--text-primary) disabled:opacity-50"
       >
         {busy ? "…" : "Refresh"}
       </button>
@@ -165,8 +167,18 @@ function formatAge(iso: string): string {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Appearance pre-paint (P5 no-flash): runs during head parse, BEFORE
+            any paint — toggles .dark on <html> from localStorage
+            (mallory-appearance) with prefers-color-scheme fallback. SSR emits
+            no class; the mismatch is absorbed by suppressHydrationWarning. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var p=localStorage.getItem('mallory-appearance');var d=p==='dark'||(p!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d)}catch(e){}})();",
+          }}
+        />
         <HeadContent />
       </head>
       <body>

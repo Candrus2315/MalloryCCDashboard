@@ -15,7 +15,7 @@ function Kpi({ label, value, sub }: { label: string; value: string | number; sub
   return (
     <div>
       <p className="kpi-label">{label}</p>
-      <p className="mt-1 text-4xl font-semibold tracking-tight tabular-nums text-stone-900">{value}</p>
+      <p className="mt-1 text-4xl font-semibold tracking-tight tabular-nums text-(--text-primary)">{value}</p>
       {sub && <p className="kpi-sub mt-1">{sub}</p>}
     </div>
   );
@@ -56,8 +56,8 @@ function CopyButton({ label, text }: { label: string; text: string }) {
       className={
         "rounded-lg px-4 py-2 text-[13px] font-medium transition-colors " +
         (state === "copied"
-          ? "bg-emerald-700 text-white"
-          : "bg-stone-900 text-white hover:bg-stone-700")
+          ? "bg-(--btn-success) text-white"
+          : "bg-(--accent-solid) text-(--accent-solid-fg) hover:bg-(--accent-hover)")
       }
     >
       {state === "copied" ? "Copied ✓" : state === "failed" ? "Copy failed — select the text below" : label}
@@ -92,19 +92,19 @@ function DailyReportPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Daily Report</h1>
-          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm text-stone-400">
+          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm text-(--text-muted)">
             <span>
               {formatDateHuman(m.reportDate)} · yesterday's performance + week of {formatDateHuman(m.weekStart)}
             </span>
             {/* live-state indicator (owner hard rule): the report is always the live week */}
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 text-xs font-semibold text-(--pos-text)">
+              <span className="h-1.5 w-1.5 rounded-full bg-(--dot-positive)" aria-hidden="true" />
               Current Week
             </span>
           </p>
         </div>
         {data.meta.mode === "memory" && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <div className="rounded-lg border border-(--chip-risk-bg) bg-(--chip-risk-bg) px-3 py-2 text-xs text-(--banner-fg)">
             <span className="font-medium">Demo data (in-memory).</span> Database not connected
             {data.meta.dbReason ? ` — ${data.meta.dbReason}` : ""}.
           </div>
@@ -133,7 +133,7 @@ function DailyReportPage() {
         </div>
       </section>
 
-      <hr className="border-stone-200/70" />
+      <hr className="border-(--card-border)" />
 
       {/* SECTION 2 — leads */}
       <section>
@@ -152,10 +152,10 @@ function DailyReportPage() {
             sub={m.paceWeekend ? "team is off — pace resumes Monday" : "pace to budget"}
           />
         </div>
-        <p className="mt-3 text-xs text-stone-400">{data.cohortNote} (America/New_York)</p>
+        <p className="mt-3 text-xs text-(--text-muted)">{data.cohortNote} (America/New_York)</p>
       </section>
 
-      <hr className="border-stone-200/70" />
+      <hr className="border-(--card-border)" />
 
       {/* SECTION 3 — Big 3 */}
       <section>
@@ -170,12 +170,12 @@ function DailyReportPage() {
               ] as const
             ).map(([n, value, set]) => (
               <div key={n} className="flex items-center gap-3">
-                <span className="w-5 text-sm font-semibold text-stone-400">{n}.</span>
+                <span className="w-5 text-sm font-semibold text-(--text-muted)">{n}.</span>
                 <input
                   value={value}
                   onChange={(e) => set(e.target.value)}
                   placeholder={`Priority ${n}`}
-                  className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 outline-none focus:border-stone-500"
+                  className="w-full rounded-lg border border-(--card-border) bg-(--card-bg) px-3 py-2 text-sm text-(--text-primary) outline-none focus:border-(--input-focus-border)"
                 />
               </div>
             ))}
@@ -185,17 +185,17 @@ function DailyReportPage() {
               type="button"
               onClick={save}
               disabled={saveState === "saving"}
-              className="rounded-lg bg-stone-900 px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-stone-700 disabled:opacity-50"
+              className="rounded-lg bg-(--accent-solid) px-4 py-2 text-[13px] font-medium text-(--accent-solid-fg) transition-colors hover:bg-(--accent-hover) disabled:opacity-50"
             >
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Save Big 3"}
             </button>
-            {saveState === "error" && <span className="text-xs text-red-600">Save failed — try again.</span>}
-            <span className="text-xs text-stone-400">Saved per date · shows in the copied report</span>
+            {saveState === "error" && <span className="text-xs text-(--neg-text)">Save failed — try again.</span>}
+            <span className="text-xs text-(--text-muted)">Saved per date · shows in the copied report</span>
           </div>
         </div>
       </section>
 
-      <hr className="border-stone-200/70" />
+      <hr className="border-(--card-border)" />
 
       {/* copy actions + preview */}
       <section>
@@ -206,7 +206,7 @@ function DailyReportPage() {
         </div>
         <div className="card mt-5">
           <p className="kpi-label">Report preview — exactly what COPY REPORT puts on your clipboard</p>
-          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-stone-700">
+          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-(--text-body)">
             {data.reportText}
           </pre>
         </div>

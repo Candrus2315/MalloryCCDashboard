@@ -22,10 +22,10 @@ export function AttentionPanel({
     <section className="card card-dense">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="section-heading">{title}</p>
-        <p className="text-xs font-normal text-stone-400">{subtitle}</p>
+        <p className="text-xs font-normal text-(--text-muted)">{subtitle}</p>
       </div>
       {notes.length === 0 ? (
-        <p className="mt-3 text-[13px] text-stone-700">
+        <p className="mt-3 text-[13px] text-(--text-body)">
           No attention items — no rep is behind pace or below team conversion.
         </p>
       ) : (
@@ -33,14 +33,14 @@ export function AttentionPanel({
           {notes.map((n, i) => (
             <li
               key={`${n.rep}-${i}`}
-              className="flex items-start gap-2.5 border-b border-stone-100 py-2 first:pt-2.5 last:border-0 last:pb-0"
+              className="flex items-start gap-2.5 border-b border-(--table-border-weak) py-2 first:pt-2.5 last:border-0 last:pb-0"
             >
               <span
-                className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${n.severity === "risk" ? "bg-amber-500" : "bg-emerald-600"}`}
+                className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${n.severity === "risk" ? "bg-(--dot-caution)" : "bg-(--dot-positive)"}`}
                 aria-hidden="true"
               />
-              <span className="min-w-0 flex-1 text-[13px] text-stone-700">{n.text}</span>
-              {n.rep && <span className="shrink-0 text-xs font-medium text-stone-500">{n.rep}</span>}
+              <span className="min-w-0 flex-1 text-[13px] text-(--text-body)">{n.text}</span>
+              {n.rep && <span className="shrink-0 text-xs font-medium text-(--text-caption)">{n.rep}</span>}
             </li>
           ))}
         </ul>

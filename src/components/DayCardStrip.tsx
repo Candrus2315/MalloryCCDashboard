@@ -37,13 +37,17 @@ export interface DayCardData {
  *   neutral  (Openings available) — stone, same family as slot chips
  *   attention(Needs bookings) — muted amber, management attention, NOT red
  *   muted    (Closed) — plain gray text, no badge background
+ *
+ * THE single five-tone map (P5): the Availability page's TONE_BADGE is this
+ * same constant — one shared definition, both call sites, var-driven so both
+ * themes come free. Do not fork it again.
  */
-const TONE_STYLES: Record<AvailabilityStatusView["tone"], { badge: string; dot: string | null }> = {
-  positive: { badge: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-600" },
-  strong: { badge: "bg-stone-900 text-white", dot: "bg-stone-300" },
-  neutral: { badge: "bg-stone-100 text-stone-500", dot: "bg-stone-400" },
-  attention: { badge: "bg-amber-50 text-amber-800", dot: "bg-amber-500" },
-  muted: { badge: "text-stone-400", dot: "bg-stone-300" },
+export const TONE_BADGE_STYLES: Record<AvailabilityStatusView["tone"], { badge: string; dot: string | null }> = {
+  positive: { badge: "bg-(--chip-positive-bg) text-(--chip-positive-fg)", dot: "bg-(--dot-positive)" },
+  strong: { badge: "bg-(--accent-solid) text-(--accent-solid-fg)", dot: "bg-(--dot-muted)" },
+  neutral: { badge: "bg-(--chip-neutral-bg) text-(--chip-neutral-fg)", dot: "bg-(--dot-muted)" },
+  attention: { badge: "bg-(--chip-risk-bg) text-(--chip-risk-fg)", dot: "bg-(--dot-caution)" },
+  muted: { badge: "text-(--text-muted)", dot: "bg-(--dot-muted)" },
 };
 
 export function DayCardStrip({ days }: { days: DayCardData[] }) {
@@ -69,7 +73,7 @@ export function DayCardStrip({ days }: { days: DayCardData[] }) {
       <div className="flex gap-2 overflow-x-auto pb-1">
         {days.map((d) => {
           const isSelected = d.key === selected;
-          const tone = TONE_STYLES[d.status.tone];
+          const tone = TONE_BADGE_STYLES[d.status.tone];
           return (
             <button
               key={d.key}
@@ -82,11 +86,11 @@ export function DayCardStrip({ days }: { days: DayCardData[] }) {
               onBlur={() => setPreview(null)}
               className={`day-card ${isSelected ? "day-card-on" : "day-card-off"}`}
             >
-              <span className="block text-[11px] font-medium uppercase tracking-wide text-stone-500">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-(--text-caption)">
                 {d.prefix} · {d.weekday}
               </span>
-              <span className="mt-2 block text-2xl font-semibold tracking-tight text-stone-900 tabular-nums">
-                {d.openCount} <span className="text-xs font-normal text-stone-400">open</span>
+              <span className="mt-2 block text-2xl font-semibold tracking-tight text-(--text-primary) tabular-nums">
+                {d.openCount} <span className="text-xs font-normal text-(--text-muted)">open</span>
               </span>
               <span
                 className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${tone.badge}`}
@@ -102,14 +106,17 @@ export function DayCardStrip({ days }: { days: DayCardData[] }) {
         <div className="mt-3">
           {shownMessage ? (
             <p
-              className={`text-sm ${shown.status.status === "closed" ? "text-stone-400" : "font-medium text-stone-700"}`}
+              className={`text-sm ${shown.status.status === "closed" ? "text-(--text-muted)" : "font-medium text-(--text-body)"}`}
             >
               {shownMessage}
             </p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {shown.slots.map((s) => (
-                <span key={s} className="rounded-md bg-stone-100 px-2 py-1 text-xs font-medium text-stone-600">
+                <span
+                  key={s}
+                  className="rounded-md bg-(--chip-neutral-bg) px-2 py-1 text-xs font-medium text-(--chip-neutral-fg)"
+                >
                   {s}
                 </span>
               ))}

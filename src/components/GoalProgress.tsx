@@ -16,32 +16,32 @@ export function GoalProgress(props: {
   const cell = goalCell(props.actual, props.goal);
   const big = props.size === "md";
   if (cell.goal == null) {
-    return <span className={"text-stone-300 " + (big ? "text-2xl" : "text-[13px]")}>—</span>;
+    return <span className={"text-(--text-faint) " + (big ? "text-2xl" : "text-[13px]")}>—</span>;
   }
   return (
     <span className={big ? "block" : "inline-block w-full max-w-[150px]"}>
       <span className="flex items-baseline justify-between gap-2">
         <span
           className={
-            "tabular-nums font-semibold tracking-tight text-stone-900 " + (big ? "text-2xl" : "text-[13px]")
+            "tabular-nums font-semibold tracking-tight text-(--text-primary) " + (big ? "text-2xl" : "text-[13px]")
           }
         >
           {cell.actual}{" "}
-          <span className={"font-normal text-stone-400 " + (big ? "text-lg" : "text-xs")}>/ {cell.goal}</span>
+          <span className={"font-normal text-(--text-muted) " + (big ? "text-lg" : "text-xs")}>/ {cell.goal}</span>
         </span>
         {cell.pct != null && (
-          <span className={"tabular-nums text-stone-500 " + (big ? "text-sm" : "text-[11px]")}>{cell.pct}</span>
+          <span className={"tabular-nums text-(--text-caption) " + (big ? "text-sm" : "text-[11px]")}>{cell.pct}</span>
         )}
       </span>
       {cell.barPct != null && (
         <span
           className={
-            "block w-full overflow-hidden rounded-full bg-stone-200 " + (big ? "mt-2 h-1.5" : "mt-1 h-1")
+            "block w-full overflow-hidden rounded-full bg-(--bar-track) " + (big ? "mt-2 h-1.5" : "mt-1 h-1")
           }
           aria-hidden="true"
         >
           <span
-            className={"block h-full rounded-full " + (cell.hit ? "bg-emerald-600" : "bg-stone-900")}
+            className={"block h-full rounded-full " + (cell.hit ? "bg-(--bar-fill-hit)" : "bg-(--bar-fill)")}
             style={{ width: `${cell.barPct}%` }}
           />
         </span>

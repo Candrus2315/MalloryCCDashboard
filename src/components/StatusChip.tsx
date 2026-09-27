@@ -6,9 +6,9 @@
 import type { ChipKind } from "./today-views";
 
 const STYLES: Record<ChipKind, { chip: string; dot: string }> = {
-  positive: { chip: "chip-positive", dot: "bg-emerald-600" },
-  risk: { chip: "chip-risk", dot: "bg-amber-500" },
-  neutral: { chip: "chip-neutral", dot: "bg-stone-400" },
+  positive: { chip: "chip-positive", dot: "bg-(--dot-positive)" },
+  risk: { chip: "chip-risk", dot: "bg-(--dot-caution)" },
+  neutral: { chip: "chip-neutral", dot: "bg-(--dot-muted)" },
 };
 
 export function StatusChip({ kind, label }: { kind: ChipKind; label: string }) {

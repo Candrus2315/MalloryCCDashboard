@@ -36,7 +36,7 @@ function Th({
     <th scope="col" aria-sort={active ? (sort.asc ? "ascending" : "descending") : undefined} className={left ? "text-left" : "text-right"}>
       <button type="button" className="th-sort-btn" onClick={() => onSort(sortKey)}>
         {label}
-        <span aria-hidden="true" className={active ? "text-stone-900" : "text-stone-400"}>
+        <span aria-hidden="true" className={active ? "text-(--text-primary)" : "text-(--text-muted)"}>
           {active ? (sort.asc ? "↑" : "↓") : "↓"}
         </span>
       </button>
@@ -84,19 +84,19 @@ function AuditPage() {
     <div className="space-y-4">
       <header>
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <h1 className="text-xl font-semibold tracking-tight text-stone-900">Audit</h1>
-          <span className="text-[15px] font-medium text-stone-300" aria-hidden="true">
+          <h1 className="text-xl font-semibold tracking-tight text-(--text-primary)">Audit</h1>
+          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
             —
           </span>
-          <span className="text-[15px] font-medium text-stone-500">Raw Call Audit (read-only)</span>
+          <span className="text-[15px] font-medium text-(--text-caption)">Raw Call Audit (read-only)</span>
         </div>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-stone-500">
-          <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />
+        <p className="mt-1 flex items-center gap-1.5 text-xs text-(--text-caption)">
+          <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
           <span>DB call rows for one rep × one day · America/New_York · also served as JSON at /api/audit</span>
         </p>
         {data.error && (
           <div className="status-banner mt-2" role="alert">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-400" aria-hidden="true" />
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-danger)" aria-hidden="true" />
             <span className="min-w-0 truncate">{data.error}</span>
           </div>
         )}
@@ -108,7 +108,7 @@ function AuditPage() {
           aria-label="Rep"
           value={search.rep ?? "all"}
           onChange={(e) => navigate(e.target.value, search.date ?? data.today ?? "")}
-          className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[13px] text-stone-900 outline-none focus:border-stone-500"
+          className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border)"
         >
           <option value="all">{data.picker?.allLabel ?? "All calls"}</option>
           <option value="non-roster">{data.picker?.nonRosterLabel ?? "Non Roster Calls"}</option>
@@ -125,7 +125,7 @@ function AuditPage() {
           aria-label="Date (ET)"
           value={search.date ?? data.today ?? ""}
           onChange={(e) => navigate(search.rep ?? "all", e.target.value)}
-          className="rounded-lg border border-stone-200 bg-white px-2 py-1.5 text-[13px] text-stone-900 outline-none focus:border-stone-500"
+          className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border)"
         />
         <span className="flex flex-wrap items-center gap-1" aria-label="Last 7 days">
           {days.map((d) => (
@@ -136,8 +136,8 @@ function AuditPage() {
               className={
                 "rounded-md px-2 py-1 text-[12px] font-medium transition-colors " +
                 ((search.date ?? data.today) === d
-                  ? "bg-stone-900 text-white"
-                  : "text-stone-500 hover:bg-stone-200/60 hover:text-stone-900")
+                  ? "bg-(--accent-solid) text-(--accent-solid-fg)"
+                  : "text-(--text-caption) hover:bg-(--bar-track)/60 hover:text-(--text-primary)")
               }
             >
               {formatDateHuman(d)}
@@ -147,7 +147,7 @@ function AuditPage() {
       </section>
 
       {p && (
-        <p className="text-xs text-stone-500">
+        <p className="text-xs text-(--text-caption)">
           {p.date_label} · {p.rep_label} · {formatInt(p.count)} call{p.count === 1 ? "" : "s"} ·{" "}
           {formatInt(p.over_threshold_count)} over {p.threshold_seconds}s · ET day {p.range.startUtc.slice(0, 10)}{" "}
           {p.range.startUtc.slice(11, 16)}Z → {p.range.endUtc.slice(11, 16)}Z
@@ -177,48 +177,48 @@ function AuditPage() {
               <tbody>
                 {sorted.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-8 text-center text-stone-400">
+                    <td colSpan={10} className="py-8 text-center text-(--text-muted)">
                       No call rows in the database for this rep and ET day.
                     </td>
                   </tr>
                 ) : (
                   sorted.map((r) => (
-                    <tr key={r.external_call_id} className="border-b border-stone-100 last:border-0">
-                      <td className="whitespace-nowrap tabular-nums text-stone-700">
+                    <tr key={r.external_call_id} className="border-b border-(--table-border-weak) last:border-0">
+                      <td className="whitespace-nowrap tabular-nums text-(--text-body)">
                         {r.et_date} {r.started_at_et}
                       </td>
                       <td className="text-left">
-                        <span className={r.rep_is_active ? "font-medium text-stone-900" : "text-stone-500"}>
+                        <span className={r.rep_is_active ? "font-medium text-(--text-primary)" : "text-(--text-caption)"}>
                           {r.rep_name ?? "(no user)"}
                         </span>
                         {r.rep_is_active === false && (
-                          <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-600">non-roster</span>
+                          <span className="ml-1.5 text-[10px] uppercase tracking-wide text-(--banner-fg)">non-roster</span>
                         )}
                       </td>
-                      <td className="tabular-nums text-stone-600">{r.direction ?? "—"}</td>
-                      <td className="tabular-nums text-stone-700">{formatInt(r.duration_seconds)}s</td>
+                      <td className="tabular-nums text-(--chip-neutral-fg)">{r.direction ?? "—"}</td>
+                      <td className="tabular-nums text-(--text-body)">{formatInt(r.duration_seconds)}s</td>
                       <td className="text-center">
                         <span
                           className={
                             "inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " +
-                            (r.over_threshold ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-400")
+                            (r.over_threshold ? "bg-(--chip-positive-bg) text-(--chip-positive-fg)" : "bg-(--chip-neutral-bg) text-(--chip-neutral-fg)")
                           }
                         >
                           {r.over_threshold ? "yes" : "no"}
                         </span>
                       </td>
-                      <td className="max-w-[220px] break-all font-mono text-[11px] text-stone-500">{r.external_call_id}</td>
-                      <td className="max-w-[220px] break-all font-mono text-[11px] text-stone-500">{r.conversation_id ?? "—"}</td>
-                      <td className="max-w-[160px] break-all font-mono text-[11px] text-stone-500">
+                      <td className="max-w-[220px] break-all font-mono text-[11px] text-(--text-caption)">{r.external_call_id}</td>
+                      <td className="max-w-[220px] break-all font-mono text-[11px] text-(--text-caption)">{r.conversation_id ?? "—"}</td>
+                      <td className="max-w-[160px] break-all font-mono text-[11px] text-(--text-caption)">
                         {r.provider_rep_external_id ?? "—"}
                       </td>
-                      <td className="text-left text-stone-600">
+                      <td className="text-left text-(--chip-neutral-fg)">
                         {r.contact_name ?? "—"}
                         {r.contact_external_id && (
-                          <span className="ml-1 font-mono text-[10px] text-stone-400">{r.contact_external_id}</span>
+                          <span className="ml-1 font-mono text-[10px] text-(--text-muted)">{r.contact_external_id}</span>
                         )}
                       </td>
-                      <td className="text-left text-stone-500">{r.call_status ?? "—"}</td>
+                      <td className="text-left text-(--text-caption)">{r.call_status ?? "—"}</td>
                     </tr>
                   ))
                 )}
@@ -226,7 +226,7 @@ function AuditPage() {
             </table>
           </div>
         </div>
-        <p className="mt-2 text-[11px] text-stone-400">
+        <p className="mt-2 text-[11px] text-(--text-muted)">
           Read-only rows from the normalized <code>calls</code> table — the same rows Reps/Team count. Over-threshold
           uses the live settings threshold ({p?.threshold_seconds ?? 120}s), the same rule as every page; no live
           HighLevel harvesting happens here. Buckets per the owner&apos;s terminology: <b>Non Roster Calls</b> = a known

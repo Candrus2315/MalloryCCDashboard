@@ -12,6 +12,7 @@ import {
   dayPrefix,
   slackAvailabilitySummary,
 } from "~/components/availability-views";
+import { TONE_BADGE_STYLES } from "~/components/DayCardStrip";
 
 export const Route = createFileRoute("/availability")({
   loader: () => getAvailabilityData(),
@@ -20,7 +21,7 @@ export const Route = createFileRoute("/availability")({
 
 /** Null renders "—" in stone-300 (never 0) — the Today/Team pages' rule. */
 function num(v: string) {
-  return v === "—" ? <span className="text-stone-300">—</span> : v;
+  return v === "—" ? <span className="text-(--text-faint)">—</span> : v;
 }
 function pctFmt(v: number | null): string {
   return v == null ? "—" : `${(v * 100).toFixed(1)}%`;
@@ -64,8 +65,8 @@ function CopyButton({
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const base =
     variant === "primary"
-      ? "bg-stone-900 text-white hover:bg-stone-700"
-      : "border border-stone-200 text-stone-500 hover:border-stone-300 hover:text-stone-900";
+      ? "bg-(--accent-solid) text-(--accent-solid-fg) hover:bg-(--accent-hover)"
+      : "border border-(--card-border) text-(--text-caption) hover:border-(--input-border) hover:text-(--text-primary)";
   return (
     <button
       type="button"
@@ -78,7 +79,7 @@ function CopyButton({
       }}
       className={
         "rounded-lg px-4 py-2 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
-        (state === "copied" ? "bg-emerald-700 text-white " : base)
+        (state === "copied" ? "bg-(--btn-success) text-white " : base)
       }
     >
       {state === "copied" ? "Copied ✓" : state === "failed" ? "Copy failed" : label}
@@ -87,17 +88,11 @@ function CopyButton({
 }
 
 /**
- * Capacity-status tone → chip classes. Same five-tone family as DayCardStrip
- * (quiet success, charcoal, stone, muted amber, plain gray) — no aggressive
- * red/green anywhere (spec §design language).
+ * Capacity-status tone → chip classes. THE shared five-tone map (P5): same
+ * constant DayCardStrip uses (quiet success, charcoal, stone, muted amber,
+ * plain gray) — no aggressive red/green anywhere (spec §design language).
  */
-const TONE_BADGE: Record<string, { badge: string; dot: string | null }> = {
-  positive: { badge: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-600" },
-  strong: { badge: "bg-stone-900 text-white", dot: "bg-stone-300" },
-  neutral: { badge: "bg-stone-100 text-stone-500", dot: "bg-stone-400" },
-  attention: { badge: "bg-amber-50 text-amber-800", dot: "bg-amber-500" },
-  muted: { badge: "text-stone-400", dot: null },
-};
+const TONE_BADGE = TONE_BADGE_STYLES;
 
 /**
  * The 7-day outlook strip — horizontally scrollable row of .day-card buttons,
@@ -138,16 +133,16 @@ function AvailabilityStrip({
             onClick={() => onSelect(d.date)}
             className={`day-card ${isSelected ? "day-card-on" : "day-card-off"}`}
           >
-            <span className="block text-[11px] font-medium uppercase tracking-wide text-stone-500">
+            <span className="block text-[11px] font-medium uppercase tracking-wide text-(--text-caption)">
               {dayPrefix(d.date, today)}
             </span>
-            <span className="block text-[10px] font-medium uppercase tracking-wide text-stone-400">
+            <span className="block text-[10px] font-medium uppercase tracking-wide text-(--text-muted)">
               {formatDateShort(d.date)}
             </span>
-            <span className="mt-2 block text-2xl font-semibold tracking-tight text-stone-900 tabular-nums">
-              {open} <span className="text-xs font-normal text-stone-400">open</span>
+            <span className="mt-2 block text-2xl font-semibold tracking-tight text-(--text-primary) tabular-nums">
+              {open} <span className="text-xs font-normal text-(--text-muted)">open</span>
             </span>
-            <span className="mt-1 block text-[11px] text-stone-400 tabular-nums">
+            <span className="mt-1 block text-[11px] text-(--text-muted) tabular-nums">
               {detail} · {util}
             </span>
             <span
@@ -203,27 +198,27 @@ function AvailabilityPage() {
       : "Scope — all calendars & appointment types (empty selection = everything counts)";
 
   const connDot =
-    conn.tone === "positive" ? "bg-emerald-500" : conn.tone === "attention" ? "bg-amber-500" : "bg-stone-300";
+    conn.tone === "positive" ? "bg-(--dot-positive)" : conn.tone === "attention" ? "bg-(--dot-caution)" : "bg-(--dot-muted)";
 
   return (
     <div className="space-y-5">
       {/* 1 — header & context */}
       <header>
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <h1 className="text-xl font-semibold tracking-tight text-stone-900">Availability</h1>
-          <span className="text-[15px] font-medium text-stone-300" aria-hidden="true">
+          <h1 className="text-xl font-semibold tracking-tight text-(--text-primary)">Availability</h1>
+          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
             —
           </span>
-          <span className="text-[15px] font-medium text-stone-500">Studio Appointment Availability</span>
+          <span className="text-[15px] font-medium text-(--text-caption)">Studio Appointment Availability</span>
         </div>
-        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-(--text-caption)">
           <span className="flex items-center gap-1.5">
-            <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />
+            <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
             <span>
               Today · {formatDateHuman(data.today)} · {OPERATIONAL_TIMEZONE}
             </span>
           </span>
-          <span className="text-stone-300" aria-hidden="true">
+          <span className="text-(--text-faint)" aria-hidden="true">
             ·
           </span>
           <span className="flex items-center gap-1.5" suppressHydrationWarning>
@@ -233,14 +228,14 @@ function AvailabilityPage() {
               {conn.lastSync ? ` · ${conn.lastSync}` : ""}
             </span>
           </span>
-          <span className="text-stone-300" aria-hidden="true">
+          <span className="text-(--text-faint)" aria-hidden="true">
             ·
           </span>
           <span>{scopeLine}</span>
         </p>
         {bannerMessages.length > 0 && (
           <div className="status-banner mt-2" role="status">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
             <span className="min-w-0 truncate" title={bannerMessages.join(" · ")}>
               {bannerMessages.join(" · ")}
             </span>
@@ -250,7 +245,7 @@ function AvailabilityPage() {
 
       {/* 2 — top KPI hierarchy: Open Today / Open Tomorrow dominant */}
       <section aria-label="Availability summary">
-        <div className="card grid grid-cols-2 gap-y-6 p-0 sm:grid-cols-3 xl:grid-cols-6 xl:gap-y-0 xl:divide-x xl:divide-stone-100">
+        <div className="card grid grid-cols-2 gap-y-6 p-0 sm:grid-cols-3 xl:grid-cols-6 xl:gap-y-0 xl:divide-x xl:divide-(--table-border-weak)">
           <KpiHero
             label="Open Slots Today"
             value={conn.unavailable ? "—" : String(k.openToday ?? "—")}
@@ -328,23 +323,23 @@ function AvailabilityPage() {
               <DetailStat label="Open" value={conn.unavailable ? "—" : String(selected.openSlotTimes.length)} />
               <DetailStat label="Utilization" value={conn.unavailable ? "—" : pctFmt(selected.utilization)} />
             </div>
-            <div className="mt-4 border-t border-stone-100 pt-3">
+            <div className="mt-4 border-t border-(--table-border-weak) pt-3">
               <p className="kpi-label">Open Times</p>
               <div className="mt-2">
                 {conn.unavailable ? (
-                  <p className="text-sm text-stone-400">
+                  <p className="text-sm text-(--text-muted)">
                     Acuity connection required — no slots are shown (none are invented) until Acuity connects.
                   </p>
                 ) : selected.totalCapacity === 0 ? (
-                  <p className="text-sm text-stone-400">Studio closed — no bookable slots configured for this day.</p>
+                  <p className="text-sm text-(--text-muted)">Studio closed — no bookable slots configured for this day.</p>
                 ) : selected.openSlotTimes.length === 0 ? (
-                  <p className="text-sm font-medium text-stone-700">Fully booked — no appointments remaining.</p>
+                  <p className="text-sm font-medium text-(--text-body)">Fully booked — no appointments remaining.</p>
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
                     {selected.openSlotTimes.map((s) => (
                       <span
                         key={s}
-                        className="rounded-md bg-stone-100 px-2 py-1 text-xs font-medium text-stone-600 tabular-nums"
+                        className="rounded-md bg-(--chip-neutral-bg) px-2 py-1 text-xs font-medium text-(--chip-neutral-fg) tabular-nums"
                       >
                         {s}
                       </span>
@@ -355,16 +350,16 @@ function AvailabilityPage() {
             </div>
             {/* Availability audit (spec: admin/debug, not prominent) */}
             <details className="mt-4">
-              <summary className="cursor-pointer select-none text-xs font-medium text-stone-400 hover:text-stone-600">
+              <summary className="cursor-pointer select-none text-xs font-medium text-(--text-muted) hover:text-(--chip-neutral-fg)">
                 Availability audit
               </summary>
-              <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs text-stone-600 sm:grid-cols-4">
+              <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-xs text-(--chip-neutral-fg) sm:grid-cols-4">
                 <AuditStat label="Configured Capacity" value={selected.totalCapacity} />
                 <AuditStat label="Acuity Booked" value={selected.booked} />
                 <AuditStat label="Blocked Slots" value={selected.blockedCount} />
                 <AuditStat label="Calculated Open" value={selected.openSlotTimes.length} />
               </div>
-              <p className="mt-2 text-[11px] text-stone-400">
+              <p className="mt-2 text-[11px] text-(--text-muted)">
                 booked + blocked + open = configured capacity · computed by the slot engine from studio hours,
                 appointments, blocks and padding
               </p>
@@ -374,19 +369,19 @@ function AvailabilityPage() {
 
         <div className="card card-dense">
           <p className="section-heading">Dates to Push</p>
-          <p className="mt-1 text-xs text-stone-400">
+          <p className="mt-1 text-xs text-(--text-muted)">
             Rule-based from actual open capacity — full and closed days excluded.
           </p>
           <div className="mt-3 space-y-2">
             {conn.unavailable ? (
-              <p className="text-sm text-stone-400">Acuity connection required — nothing to push yet.</p>
+              <p className="text-sm text-(--text-muted)">Acuity connection required — nothing to push yet.</p>
             ) : pushList.length === 0 ? (
-              <p className="text-sm text-stone-400">Nothing to push — every day is fully booked or closed.</p>
+              <p className="text-sm text-(--text-muted)">Nothing to push — every day is fully booked or closed.</p>
             ) : (
               pushList.map((p) => (
-                <div key={p.date} className="flex items-baseline justify-between gap-3 border-b border-stone-100 pb-2 last:border-0 last:pb-0">
-                  <span className="text-[13px] font-medium text-stone-900">{p.label}</span>
-                  <span className="text-[13px] text-stone-500 tabular-nums">
+                <div key={p.date} className="flex items-baseline justify-between gap-3 border-b border-(--table-border-weak) pb-2 last:border-0 last:pb-0">
+                  <span className="text-[13px] font-medium text-(--text-primary)">{p.label}</span>
+                  <span className="text-[13px] text-(--text-caption) tabular-nums">
                     {p.open} opening{p.open === 1 ? "" : "s"} · {pctFmt(p.utilization)} full
                   </span>
                 </div>
@@ -432,8 +427,8 @@ function DetailStat({ label, value }: { label: string; value: string }) {
 function AuditStat({ label, value }: { label: string; value: number }) {
   return (
     <p>
-      <span className="text-stone-400">{label}: </span>
-      <span className="font-medium text-stone-700 tabular-nums">{value}</span>
+      <span className="text-(--text-muted)">{label}: </span>
+      <span className="font-medium text-(--text-body) tabular-nums">{value}</span>
     </p>
   );
 }

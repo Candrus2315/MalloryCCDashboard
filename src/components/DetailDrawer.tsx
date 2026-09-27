@@ -47,21 +47,21 @@ export function DetailDrawer(props: {
   return (
     <div className="fixed inset-0 z-50">
       {/* backdrop click closes — the panel itself does not */}
-      <div className="absolute inset-0 bg-stone-900/30" aria-hidden="true" onClick={onClose} />
+      <div className="absolute inset-0 bg-(--scrim)" aria-hidden="true" onClick={onClose} />
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-stone-200 shadow-xl outline-none"
+        className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-(--card-border) shadow-xl outline-none"
         style={{ backgroundColor: "var(--card-bg)" }}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-stone-100 px-5 py-4">
+        <div className="flex items-start justify-between gap-3 border-b border-(--table-border-weak) px-5 py-4">
           <div className="min-w-0">
-            <p className="text-[15px] font-semibold tracking-tight text-stone-900">{title}</p>
+            <p className="text-[15px] font-semibold tracking-tight text-(--text-primary)">{title}</p>
             {contextLines.length > 0 && (
-              <p className="mt-1 text-[11px] leading-snug text-stone-500">
+              <p className="mt-1 text-[11px] leading-snug text-(--text-caption)">
                 {contextLines.map((line, i) => (
                   <span key={i} className="block">
                     {line}
@@ -74,7 +74,7 @@ export function DetailDrawer(props: {
             type="button"
             onClick={onClose}
             aria-label="Close detail panel"
-            className="shrink-0 rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700"
+            className="shrink-0 rounded-lg p-1.5 text-(--text-muted) hover:bg-(--surface-subtle) hover:text-(--text-body)"
           >
             <span aria-hidden="true" className="block text-sm leading-none">
               ✕
@@ -82,9 +82,9 @@ export function DetailDrawer(props: {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {loading && <p className="text-xs text-stone-400">Loading…</p>}
+          {loading && <p className="text-xs text-(--text-muted)">Loading…</p>}
           {!loading && emptyMessage && (
-            <p className="text-[13px] leading-relaxed text-stone-500">{emptyMessage}</p>
+            <p className="text-[13px] leading-relaxed text-(--text-caption)">{emptyMessage}</p>
           )}
           {children}
         </div>

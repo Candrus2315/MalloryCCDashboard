@@ -147,8 +147,8 @@ export function TrendCard({ title, points, unit, refLine, note, wide, meta, onPo
   return (
     <div className="card">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[13px] font-medium text-stone-600">{title}</p>
-        <p className="text-2xl font-semibold tracking-tight tabular-nums text-stone-900">
+        <p className="text-[13px] font-medium text-(--chip-neutral-fg)">{title}</p>
+        <p className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
           {latest == null ? "—" : fmt(latest, unit)}
         </p>
       </div>
@@ -324,22 +324,22 @@ export function TrendCard({ title, points, unit, refLine, note, wide, meta, onPo
         {/* HTML tooltip — clamped to the card edges, pointer-transparent */}
         {tip && (
           <div
-            className="pointer-events-none absolute top-1 z-10 min-w-[130px] max-w-[230px] -translate-x-1/2 rounded-lg border border-stone-200 px-2.5 py-1.5 shadow-md"
+            className="pointer-events-none absolute top-1 z-10 min-w-[130px] max-w-[230px] -translate-x-1/2 rounded-lg border border-(--card-border) bg-(--card-bg) px-2.5 py-1.5 shadow-md"
             style={{
               left: `clamp(74px, ${tipLeftPct}%, calc(100% - 74px))`,
               backgroundColor: "var(--card-bg)",
             }}
           >
-            <p className="text-[11px] font-semibold text-stone-900">{tip.title}</p>
+            <p className="text-[11px] font-semibold text-(--text-primary)">{tip.title}</p>
             {tip.lines.map((line, i) => (
-              <p key={i} className="mt-0.5 text-[11px] leading-snug tabular-nums text-stone-600">
+              <p key={i} className="mt-0.5 text-[11px] leading-snug tabular-nums text-(--chip-neutral-fg)">
                 {line}
               </p>
             ))}
           </div>
         )}
       </div>
-      {note && <p className="mt-1 text-[11px] leading-snug text-stone-400">{note}</p>}
+      {note && <p className="mt-1 text-[11px] leading-snug text-(--text-muted)">{note}</p>}
     </div>
   );
 }
