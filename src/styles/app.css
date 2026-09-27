@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* ---------- Chart + surface tokens (merged-build Phase 3) ----------
+   Light values defined here; Phase 5 (dark theme) adds .dark overrides under
+   these exact names. Charts and cards reference the vars instead of hardcoding
+   hex (trend-chart.tsx, DetailDrawer.tsx). */
+:root {
+  --page-bg: #fafaf9; /* stone-50 */
+  --card-bg: #ffffff;
+  --chart-grid: #e7e5e4; /* hairline gridlines */
+  --chart-line: #1c1917; /* series line */
+  --chart-label: #a8a29e; /* axis labels */
+  --chart-ref: #a8a29e; /* dashed reference line */
+  --chart-ref-label: #78716c;
+  --chart-guide: #a8a29e; /* hover-scrub guide line */
+  --chart-dot: #1c1917;
+}
+
 @layer base {
   html,
   body {

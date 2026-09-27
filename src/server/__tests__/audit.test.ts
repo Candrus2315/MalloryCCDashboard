@@ -355,3 +355,64 @@ describe("handleAuditQuery (orchestration — 400s + response shape)", () => {
       }
   });
 });
+
+// ---------- roster bucket (merged-build Phase 3, E3 — §16 drill-down set) ----------
+import { AUDIT_ROSTER, rosterEligibleRows } from "../audit-api";
+import { applyRosterEligibility, buildRosterEligibility } from "../roster";
+import type { RepMapping } from "../store/types";
+
+describe("roster bucket (§16 — one call returns exactly the rows the metrics count)", () => {
+  const users: AuditUserRef[] = [
+    { id: "u1", name: "Christy", is_active: true },
+    { id: "u2", name: "NonRoster User", is_active: false },
+  ];
+  const mappings: RepMapping[] = [{ external_user_id: "hl-9", rep_id: "u1" }];
+  const row = (id: string, repId: string | null, prov?: string | null) => ({
+    rep_id: repId,
+    provider_rep_external_id: prov ?? null,
+    external_call_id: id,
+  });
+
+  test("resolveAuditRepFilter accepts the roster bucket", () => {
+    const r = resolveAuditRepFilter(AUDIT_ROSTER, users);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.spec).toBe("roster");
+      expect(r.label).toContain("Roster");
+    }
+  });
+
+  test("rosterEligibleRows = active-roster linkage + mapping-resolved rows, nothing else", () => {
+    const rows = [
+      row("c1", "u1"), // active roster rep → counted
+      row("c2", "u2"), // inactive user → Non Roster, excluded
+      row("c3", null, "hl-9"), // raw HL user id mapped to u1 → counted
+      row("c4", null, null), // no owner at all → Unattributed, excluded
+      row("c5", null, "hl-404"), // unresolved provider id → excluded
+      row("c6", "u1", "hl-9"), // linkage first — one row, never double-counted
+    ];
+    const kept = rosterEligibleRows(rows, users, mappings);
+    expect(kept.map((r) => r.external_call_id)).toEqual(["c1", "c3", "c6"]);
+  });
+
+  test("§16 pin: identical output to the metrics layer's applyRosterEligibility", () => {
+    const rows = [
+      row("c1", "u1"),
+      row("c2", "u2"),
+      row("c3", null, "hl-9"),
+      row("c4", null, null),
+      row("c5", null, "hl-404"),
+    ];
+    const elig = buildRosterEligibility(users, mappings);
+    const viaMetrics = applyRosterEligibility(rows, elig);
+    expect(rosterEligibleRows(rows, users, mappings).map((r) => r.external_call_id)).toEqual(
+      viaMetrics.map((r) => r.external_call_id),
+    );
+  });
+
+  test("empty mappings behave exactly like keepRosterRepCalls (active linkage only)", () => {
+    const rows = [row("c1", "u1"), row("c2", "u2"), row("c3", null, "hl-9"), row("c4", null, null)];
+    const kept = rosterEligibleRows(rows, users, []);
+    expect(kept.map((r) => r.external_call_id)).toEqual(["c1"]);
+  });
+});

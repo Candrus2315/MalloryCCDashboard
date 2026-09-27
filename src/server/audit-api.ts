@@ -13,6 +13,11 @@
  *                       (no HL user). NEVER used for non-roster users.
  *   - "unassigned"    → legacy alias kept for backward compatibility; returns
  *                       the UNION of both buckets (the old combined view).
+ *   - "roster"        → Roster calls (merged-build Phase 3 §16 drill-down):
+ *                       exactly the roster-eligible rows the Team/Reps metrics
+ *                       count — resolved by the SAME roster.ts eligibility
+ *                       helper the metrics layer uses, so a drawer count can
+ *                       never diverge from the chart it reconciles to.
  *
  * ET day boundaries come from the CENTRALIZED date helpers (etDayStartUtc /
  * etDayEndUtc, America/New_York) — never the server's local timezone. The
@@ -26,12 +31,16 @@
  * The /audit page reads the same logic via getAuditData in queries.ts.
  */
 import { etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etToday, formatDateHumanFull } from "./date-logic";
-import type { AuditCallRow } from "./store/types";
+import { buildRosterEligibility, eligibleRepId } from "./roster";
+import type { AuditCallRow, RepMapping } from "./store/types";
 
 export const AUDIT_NON_ROSTER = "non-roster";
 export const AUDIT_UNATTRIBUTED = "unattributed";
 /** Legacy alias → the UNION of non-roster + unattributed (old combined view). */
 export const AUDIT_UNASSIGNED = "unassigned";
+/** §16 drill-down bucket → exactly the rows the CC-team metrics count. */
+export const AUDIT_ROSTER = "roster";
+export const LABEL_ROSTER = "Roster calls (CC team metrics)";
 export const AUDIT_ALL = "all";
 
 /** Exact owner terminology (design/data-terminology.md) — used everywhere. */
@@ -59,10 +68,10 @@ export interface AuditUserRef {
 
 /**
  * Pure rep-filter resolution. Accepts "all"/null (every call), the ownership
- * buckets ("non-roster", "unattributed", legacy alias "unassigned"), or an
- * internal user id — roster or not, the audit view can inspect ANY user's raw
- * rows. Raw view only: roster MAPPINGS change reporting eligibility, never
- * what these source rows show.
+ * buckets ("non-roster", "unattributed", legacy alias "unassigned", the §16
+ * "roster" metric set), or an internal user id — roster or not, the audit view
+ * can inspect ANY user's raw rows. Raw view only: roster MAPPINGS change
+ * reporting eligibility, never what these source rows show.
  */
 export function resolveAuditRepFilter(
   rep: string | null | undefined,
@@ -74,6 +83,7 @@ export function resolveAuditRepFilter(
   if (r === AUDIT_UNATTRIBUTED) return { ok: true, spec: AUDIT_UNATTRIBUTED, label: LABEL_UNATTRIBUTED };
   if (r === AUDIT_UNASSIGNED)
     return { ok: true, spec: AUDIT_UNASSIGNED, label: "Unassigned (legacy alias — Non Roster Calls + Unattributed)" };
+  if (r === AUDIT_ROSTER) return { ok: true, spec: AUDIT_ROSTER, label: LABEL_ROSTER };
   const u = users.find((x) => x.id === r);
   if (!u) {
     return {
@@ -82,6 +92,20 @@ export function resolveAuditRepFilter(
     };
   }
   return { ok: true, spec: u.id, label: `${u.name}${u.is_active ? "" : " (non-roster user)"}` };
+}
+
+/**
+ * §16 reconciliation set: filter rows down to EXACTLY the roster-eligible rows
+ * the metrics layer counts, using the SAME eligibility helper (roster.ts →
+ * buildRosterEligibility + eligibleRepId) the metrics pass runs. Pure — no
+ * store call, so both the memory and pg stores behave identically and the
+ * drawer count can never diverge from the chart it reconciles to.
+ */
+export function rosterEligibleRows<
+  T extends { rep_id: string | null; provider_rep_external_id?: string | null },
+>(rows: T[], users: AuditUserRef[], mappings: RepMapping[]): T[] {
+  const elig = buildRosterEligibility(users, mappings ?? []);
+  return rows.filter((r) => eligibleRepId(r, elig) !== null);
 }
 
 /** ET presentation fields for one audit row (ET date + human clock time). */
@@ -134,11 +158,19 @@ export async function handleAuditQuery(params: { rep?: string | null; date?: str
   if (!repFilter.ok) return { status: 400, body: { error: repFilter.error } };
 
   const threshold = settings.meaningful_call_threshold_seconds;
-  const rows = await store.getAuditCalls(day.startUtc, day.endUtc, repFilter.spec, threshold);
+  let rows: AuditCallRow[];
+  if (repFilter.spec === AUDIT_ROSTER) {
+    // §16 drill-down: fetch the full day once, then keep exactly the
+    // roster-eligible rows via the SAME helper the metrics layer runs.
+    const allRows = await store.getAuditCalls(day.startUtc, day.endUtc, null, threshold);
+    rows = rosterEligibleRows(allRows, users, settings.rep_mappings ?? []);
+  } else {
+    rows = await store.getAuditCalls(day.startUtc, day.endUtc, repFilter.spec, threshold);
+  }
 
-  // Echo the requested bucket back (all / non-roster / unattributed / unassigned)
+  // Echo the requested bucket back (all / non-roster / unattributed / unassigned / roster)
   const requested = params.rep == null || params.rep === "" ? AUDIT_ALL : params.rep;
-  const bucketEcho = [AUDIT_NON_ROSTER, AUDIT_UNATTRIBUTED, AUDIT_UNASSIGNED].includes(requested)
+  const bucketEcho = [AUDIT_NON_ROSTER, AUDIT_UNATTRIBUTED, AUDIT_UNASSIGNED, AUDIT_ROSTER].includes(requested)
     ? requested
     : AUDIT_ALL;
 

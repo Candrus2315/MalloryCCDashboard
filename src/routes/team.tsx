@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { WarningList } from "~/components/warnings";
 import { Link, useRouter } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
-import { getTeamData } from "~/server/queries";
+import { getAuditData, getTeamData } from "~/server/queries";
+import { auditRowView } from "~/server/audit-api";
 import {
   RANGE_LABELS,
   RANGE_MODES,
@@ -20,10 +21,27 @@ import {
   formatInt,
   formatPercent,
 } from "~/server/metrics/report-text";
-import { TrendCard } from "~/components/trend-chart";
+import { TrendCard, type TrendUnit } from "~/components/trend-chart";
 import { Segmented, WeekOfSelect } from "~/components/Segmented";
 import { StatusChip } from "~/components/StatusChip";
 import { AttentionPanel } from "~/components/AttentionPanel";
+import { DetailDrawer } from "~/components/DetailDrawer";
+import {
+  assignedConversionLines,
+  avgDurationLine,
+  BOOKINGS_DRILL_UNAVAILABLE,
+  buildTrendMeta,
+  callRowViews,
+  conversionComponents,
+  drawerContextLines,
+  drawerHeading,
+  LEADS_DRILL_NOTE,
+  leadCohortView,
+  overThresholdRows,
+  reconciliationText,
+  trendTooltip,
+  WEEK_BUCKET_DRILL_NOTE,
+} from "~/components/drawer-views";
 import { attentionNotes, leadPacing, paceSummary, repChips } from "~/components/team-views";
 
 export const Route = createFileRoute("/team")({
@@ -31,13 +49,30 @@ export const Route = createFileRoute("/team")({
     range: typeof search.range === "string" ? search.range : undefined,
     from: typeof search.from === "string" ? search.from : undefined,
     to: typeof search.to === "string" ? search.to : undefined,
+    // drawer state is URL state (§3): drill = metric key, date = TrendPoint key
+    drill: typeof search.drill === "string" ? search.drill : undefined,
+    date: typeof search.date === "string" ? search.date : undefined,
   }),
   loaderDeps: ({ search }) => ({
     range: search.range,
     from: search.from,
     to: search.to,
+    drill: search.drill,
+    date: search.date,
   }),
-  loader: ({ deps }) => getTeamData({ data: deps }),
+  loader: async ({ deps }) => {
+    const data = await getTeamData({ data: deps });
+    const drillMetric = typeof deps.drill === "string" ? deps.drill : null;
+    const drillDate = typeof deps.date === "string" ? deps.date : null;
+    // §16: record-level drill-down reconciles only for DAY buckets (ranges
+    // ≤ 31 days). Weekly buckets get aggregate-only content and NO audit
+    // fetch — a single day's rows must never masquerade as a week's records.
+    const audit =
+      drillMetric && drillDate && data.trends.bucketMode === "day"
+        ? await getAuditData({ data: { rep: "roster", date: drillDate } })
+        : null;
+    return { ...data, drill: { metric: drillMetric, date: drillDate, audit } };
+  },
   component: TeamPage,
 });
 
@@ -160,6 +195,275 @@ function TeamPage() {
   const leadNote =
     "Leads by work date (what the team works that day) · " +
     (t.bucketMode === "week" ? "dashed line = weekly lead budget." : "dashed line = budget pace (weekly budget ÷ 7 per day).");
+
+  // ---------- drill-down (§3/§12/§16): drawer state lives in the URL ----------
+  const drillMetric = data.drill.metric;
+  const drillDate = data.drill.date;
+  const drawerOpen = drillMetric != null && drillDate != null;
+  const drillPoint = drawerOpen ? (t.points.find((p) => p.key === drillDate) ?? null) : null;
+  const auditResult = data.drill.audit;
+  const auditError = auditResult?.error ?? null;
+  const auditPayload = auditResult && !auditResult.error ? auditResult.payload : null;
+  const drillRows = auditPayload?.rows ?? [];
+  const overRows = overThresholdRows(drillRows);
+  const weekMode = t.bucketMode === "week";
+
+  const openDrill = (metric: string, index: number) => {
+    const point = t.points[index];
+    if (!point) return;
+    // preserves range/from/to — closing later restores the identical search (§3)
+    router.navigate({ to: "/team", search: (prev) => ({ ...prev, drill: metric, date: point.key }) });
+  };
+  const closeDrill = () => {
+    router.navigate({ to: "/team", search: (prev) => ({ ...prev, drill: undefined, date: undefined }) });
+  };
+
+  // ---------- trend cards: one config, shared meta + tooltip + drill wiring ----------
+  interface CardDef {
+    key: string;
+    title: string;
+    pick: (p: TrendPoint) => number | null;
+    unit: TrendUnit;
+    noun?: string;
+    pctKind?: "conversation" | "assigned";
+    note?: string | null;
+    wide?: boolean;
+    refLine?: { value: number; label: string } | null;
+  }
+  const cardDefs: CardDef[] = [
+    { key: "bookings", title: "Bookings", pick: (p) => p.bookings, unit: "int", noun: "bookings" },
+    { key: "calls", title: "Calls", pick: (p) => p.calls, unit: "int", noun: "calls" },
+    {
+      key: "calls-over",
+      title: "Calls Over 2 Minutes",
+      pick: (p) => p.callsOverThreshold,
+      unit: "int",
+      noun: "calls over 2 min",
+      note: `duration > ${data.thresholdSeconds}s`,
+    },
+    {
+      key: "conv",
+      title: "Conversation Conversion",
+      pick: (p) => p.conversationConversion,
+      unit: "pct",
+      pctKind: "conversation",
+      note: sparseNote,
+    },
+    {
+      key: "assigned-conv",
+      title: "Assigned Lead Conversion",
+      pick: (p) => p.assignedLeadConversion,
+      unit: "pct",
+      pctKind: "assigned",
+      note: sparseNote,
+    },
+    { key: "avg-duration", title: "Average Call Duration", pick: (p) => p.avgCallDurationSeconds, unit: "duration" },
+    {
+      key: "leads",
+      title: "Leads by work date",
+      pick: (p) => p.leads,
+      unit: "int",
+      noun: "leads",
+      refLine,
+      note: leadNote,
+      wide: true,
+    },
+  ];
+  const cardByKey = new Map(cardDefs.map((c) => [c.key, c]));
+  const trendMeta = buildTrendMeta(t.points, data.today, t.bucketMode);
+
+  const tooltipFor = (c: CardDef) => (i: number) => {
+    const point = t.points[i];
+    if (!point) return null;
+    return trendTooltip({
+      value: c.pick(point),
+      label: point.label,
+      unit: c.unit,
+      noun: c.noun,
+      pctKind: c.pctKind,
+      point,
+      today: data.today,
+      bucketMode: t.bucketMode,
+    });
+  };
+
+  const renderTrendCard = (c: CardDef) => (
+    <TrendCard
+      title={c.title}
+      points={pointsOf(t.points, c.pick)}
+      unit={c.unit}
+      note={c.note}
+      wide={c.wide}
+      refLine={c.refLine}
+      meta={trendMeta}
+      tooltip={tooltipFor(c)}
+      onPointClick={(i) => openDrill(c.key, i)}
+    />
+  );
+
+  // ---------- drawer content per metric (day buckets reconcile; weeks stay aggregate) ----------
+  const drillNeedsRecords =
+    drillMetric === "calls" || drillMetric === "calls-over" || drillMetric === "conv" || drillMetric === "avg-duration";
+  const drawerLoading = drawerOpen && !weekMode && drillPoint != null && drillNeedsRecords && !auditPayload && !auditError;
+
+  const drawerEmpty = (() => {
+    if (drawerOpen && !drillPoint) return "That date is outside the selected range.";
+    if (auditError) return auditError;
+    if (drawerOpen && drillMetric === "bookings") return BOOKINGS_DRILL_UNAVAILABLE;
+    return undefined;
+  })();
+
+  const drawerContext = (() => {
+    if (!drawerOpen || !drillPoint) return [];
+    const count =
+      auditError || weekMode || !drillNeedsRecords
+        ? null
+        : drillMetric === "calls-over" || drillMetric === "conv"
+          ? overRows.length
+          : drillRows.length;
+    return drawerContextLines({
+      rangeLabel: data.range.label,
+      isHistorical: !data.range.isCurrentWeek,
+      thresholdSeconds: data.thresholdSeconds,
+      count,
+      scopeLabel: drillMetric === "leads" ? "Work-date cohort" : "Roster calls",
+    });
+  })();
+
+  const drawerTitle =
+    drawerOpen && drillPoint && drillMetric
+      ? drawerHeading(cardByKey.get(drillMetric)?.title ?? "Detail", drillPoint.label)
+      : "Detail";
+
+  const recordTable = (rows: typeof drillRows, reconcileAgainst: number) => {
+    const rec = reconciliationText(reconcileAgainst, rows.length);
+    return (
+      <>
+        {rows.length === 0 ? (
+          <p className="text-[13px] text-stone-500">No records for this day.</p>
+        ) : (
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="border-b border-stone-200 text-left text-[11px] text-stone-500">
+                <th scope="col" className="py-1.5 pr-2 font-medium">Time</th>
+                <th scope="col" className="py-1.5 pr-2 font-medium">Rep</th>
+                <th scope="col" className="py-1.5 pr-2 font-medium">Contact</th>
+                <th scope="col" className="py-1.5 pr-2 font-medium">Dir</th>
+                <th scope="col" className="py-1.5 pr-2 font-medium">Duration</th>
+                <th scope="col" className="py-1.5 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {callRowViews(rows.map(auditRowView)).map((r, i) => (
+                <tr key={rows[i].external_call_id ?? i} className="border-b border-stone-100 last:border-0">
+                  <td className="py-1.5 pr-2 tabular-nums text-stone-700">{r.time}</td>
+                  <td className="py-1.5 pr-2 text-stone-700">{r.rep}</td>
+                  <td className="py-1.5 pr-2 text-stone-700">{r.contact}</td>
+                  <td className="py-1.5 pr-2 text-stone-500">{r.direction}</td>
+                  <td className="py-1.5 pr-2 tabular-nums text-stone-700">{r.duration}</td>
+                  <td className="py-1.5 text-stone-500">{r.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className={"mt-3 text-[11px] " + (rec.ok ? "text-stone-500" : "text-amber-800")}>{rec.text}</p>
+      </>
+    );
+  };
+
+  const weekAggregate = (line: string) => (
+    <div>
+      <p className="text-[13px] font-medium text-stone-900">{line}</p>
+      <p className="mt-2 text-[11px] leading-snug text-stone-400">{WEEK_BUCKET_DRILL_NOTE}</p>
+    </div>
+  );
+
+  const drillBody = (() => {
+    if (drawerEmpty || !drillPoint || !drillMetric) return null;
+    switch (drillMetric) {
+      case "calls":
+        return weekMode
+          ? weekAggregate(`${formatInt(drillPoint.calls)} calls in this weekly bucket`)
+          : recordTable(drillRows, drillPoint.calls);
+      case "calls-over":
+        return weekMode
+          ? weekAggregate(`${formatInt(drillPoint.callsOverThreshold)} calls over 2 min in this weekly bucket`)
+          : recordTable(overRows, drillPoint.callsOverThreshold);
+      case "conv": {
+        return (
+          <div>
+            <p className="text-[13px] font-medium text-stone-900">
+              {conversionComponents(drillPoint.bookingsFromOverThreshold, drillPoint.callsOverThreshold)}
+            </p>
+            {weekMode ? (
+              <p className="mt-2 text-[11px] leading-snug text-stone-400">{WEEK_BUCKET_DRILL_NOTE}</p>
+            ) : (
+              <>
+                <p className="mt-2 text-[11px] leading-snug text-stone-400">
+                  Bookings (the numerator) are not record-loaded yet — the calls below are the denominator, over
+                  threshold only.
+                </p>
+                {recordTable(overRows, drillPoint.callsOverThreshold)}
+              </>
+            )}
+          </div>
+        );
+      }
+      case "avg-duration":
+        return weekMode ? (
+          weekAggregate(
+            drillPoint.avgCallDurationSeconds == null
+              ? "No calls in this weekly bucket"
+              : `${formatDuration(drillPoint.avgCallDurationSeconds)} average in this weekly bucket`,
+          )
+        ) : (
+          <div>
+            <p className="text-[13px] font-medium text-stone-900">{avgDurationLine(drillPoint)}</p>
+            <p className="mt-2 text-[11px] leading-snug text-stone-400">The calls behind the average:</p>
+            <div className="mt-1">{recordTable(drillRows, drillPoint.calls)}</div>
+          </div>
+        );
+      case "assigned-conv":
+        return (
+          <div>
+            {assignedConversionLines(drillPoint).map((line, i) => (
+              <p key={i} className="text-[13px] font-medium text-stone-900">
+                {line}
+              </p>
+            ))}
+            <p className="mt-2 text-[11px] leading-snug text-stone-400">
+              Record-level assigned-lead rows are not loaded yet — the components come from the metrics layer (bookings
+              ÷ assigned leads worked).
+            </p>
+          </div>
+        );
+      case "leads": {
+        const lc = leadCohortView(drillPoint, t.bucketMode);
+        return (
+          <div>
+            <p className="text-[13px] font-medium text-stone-900">{lc.split}</p>
+            {lc.cohort.length > 0 && (
+              <p className="mt-2 text-xs leading-relaxed text-stone-600">
+                Works leads from source dates: {lc.cohort.join(" · ")}
+              </p>
+            )}
+            <p className="mt-2 text-[11px] leading-snug text-stone-400">{LEADS_DRILL_NOTE}</p>
+          </div>
+        );
+      }
+      case "bookings":
+        return null; // drawerEmpty carries the honest unavailable state
+      default:
+        return null;
+    }
+  })();
+
+
+  const renderCard = (key: string) => {
+    const c = cardByKey.get(key);
+    return c ? renderTrendCard(c) : null;
+  };
 
   // sortable by-rep rows (native, no deps; missing values sort last, never as zero)
   const sortedRepRows = useMemo(() => {
@@ -396,35 +700,19 @@ function TeamPage() {
         </div>
         <p className="mt-3 text-xs font-semibold text-stone-500">Performance trends</p>
         <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <TrendCard title="Bookings" points={pointsOf(t.points, (p) => p.bookings)} unit="int" />
-          <TrendCard title="Calls" points={pointsOf(t.points, (p) => p.calls)} unit="int" />
-          <TrendCard
-            title="Calls Over 2 Minutes"
-            points={pointsOf(t.points, (p) => p.callsOverThreshold)}
-            unit="int"
-            note={`duration > ${data.thresholdSeconds}s`}
-          />
-          <TrendCard
-            title="Conversation Conversion"
-            points={pointsOf(t.points, (p) => p.conversationConversion)}
-            unit="pct"
-            note={sparseNote}
-          />
+          {renderCard("bookings")}
+          {renderCard("calls")}
+          {renderCard("calls-over")}
+          {renderCard("conv")}
         </div>
         <p className="mt-4 text-xs font-semibold text-stone-500">Lead &amp; efficiency trends</p>
         <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <TrendCard
-            title="Assigned Lead Conversion"
-            points={pointsOf(t.points, (p) => p.assignedLeadConversion)}
-            unit="pct"
-            note={sparseNote}
-          />
-          <TrendCard
-            title="Average Call Duration"
-            points={pointsOf(t.points, (p) => p.avgCallDurationSeconds)}
-            unit="duration"
-          />
+          {renderCard("assigned-conv")}
+          {renderCard("avg-duration")}
         </div>
+        <p className="mt-3 text-[11px] leading-snug text-stone-400">
+          Hover any point for exact values · click a point for that day's records.
+        </p>
       </section>
 
       {/* LEAD VOLUME & BUDGET PACING — answers "are we getting enough leads?" (spec §4) */}
@@ -452,16 +740,7 @@ function TeamPage() {
             <p className="text-[13px] text-stone-500">{formatInt(lp.leads)} leads in range</p>
           )}
         </div>
-        <div className="mt-2">
-          <TrendCard
-            wide
-            title="Leads by work date"
-            points={pointsOf(t.points, (p) => p.leads)}
-            unit="int"
-            refLine={refLine}
-            note={leadNote}
-          />
-        </div>
+        <div className="mt-2">{renderCard("leads")}</div>
       </section>
 
       {/* BY REP — sortable, chips rule-based from real metrics (spec §5) */}
@@ -544,6 +823,19 @@ function TeamPage() {
         subtitle="Rule-based from this range's metrics — no scores."
         notes={notes}
       />
+
+      {/* DETAIL DRAWER (§3/§12/§16) — open state is URL state; Escape/backdrop
+          close restores the identical search so the range context never moves */}
+      <DetailDrawer
+        open={drawerOpen}
+        onClose={closeDrill}
+        title={drawerTitle}
+        contextLines={drawerContext}
+        loading={drawerLoading}
+        emptyMessage={drawerEmpty}
+      >
+        {drillBody}
+      </DetailDrawer>
 
       <p className="text-[11px] leading-snug text-stone-400">
         Bookings counted by created_at (America/New_York) · leads by work_date · team goal = weekly goals summed over
