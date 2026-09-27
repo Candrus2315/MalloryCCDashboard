@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { WarningList } from "~/components/warnings";
 import { Link, useRouter } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { getAuditData, getTeamData } from "~/server/queries";
 import { auditRowView } from "~/server/audit-api";
 import {
@@ -12,6 +12,7 @@ import {
   recentMondays,
   weekStart,
   formatDateHumanFull,
+  formatDateHuman,
   type RangeMode,
 } from "~/server/date-logic";
 import { TREND_MIN_DENOMINATOR, type TrendPoint } from "~/server/metrics/compute";
@@ -26,6 +27,7 @@ import { Segmented, WeekOfSelect } from "~/components/Segmented";
 import { StatusChip } from "~/components/StatusChip";
 import { AttentionPanel } from "~/components/AttentionPanel";
 import { DetailDrawer } from "~/components/DetailDrawer";
+import { GoalProgress } from "~/components/GoalProgress";
 import {
   assignedConversionLines,
   avgDurationLine,
@@ -42,7 +44,14 @@ import {
   trendTooltip,
   WEEK_BUCKET_DRILL_NOTE,
 } from "~/components/drawer-views";
-import { attentionNotes, leadPacing, paceSummary, repChips } from "~/components/team-views";
+import {
+  attentionNotes,
+  compareRepRows,
+  leadPacing,
+  paceSummary,
+  repChips,
+  type RepSortKey,
+} from "~/components/team-views";
 
 export const Route = createFileRoute("/team")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -122,7 +131,21 @@ function pointsOf(points: TrendPoint[], pick: (p: TrendPoint) => number | null) 
   return points.map((p) => ({ label: p.label, value: pick(p) }));
 }
 
-type SortKey = "rep" | "bookings" | "calls" | "conv";
+type SortKey = RepSortKey;
+
+/**
+ * §12 row-click target: the EXACT search the rep-name Link has always used —
+ * a rep lands on the Reps page preselected with the identical range (custom
+ * range included), so Christopher never reselects rep + period.
+ */
+function repsSearch(r: { id: string }, range: { mode: RangeMode; start: string; end: string }) {
+  return {
+    rep: r.id,
+    range: range.mode,
+    from: range.mode === "custom" || range.mode === "week-of" ? range.start : undefined,
+    to: range.mode === "custom" ? range.end : undefined,
+  };
+}
 
 function TeamPage() {
   const data = Route.useLoaderData();
@@ -135,6 +158,7 @@ function TeamPage() {
   const [customTo, setCustomTo] = useState(search.to ?? "");
   const [sortKey, setSortKey] = useState<SortKey>("bookings");
   const [sortAsc, setSortAsc] = useState(false);
+  const [expandedRep, setExpandedRep] = useState<string | null>(null);
 
   const setRange = (mode: RangeMode) => {
     // week-of needs a Monday anchor: stay on the viewed week when it is
