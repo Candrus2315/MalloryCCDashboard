@@ -554,6 +554,29 @@ export async function todayPageData(deps?: PageDeps) {
     };
   });
 
+  // GOAL RESOLUTION (owner binding directive 2026-09-27): Today resolves every
+  // rep's weekly goal through the SAME resolveRepGoal the Reps page uses —
+  // rep goal when set (>0), else that week's team goal shared evenly across
+  // the active roster (default 79 when no team-goal row exists). Identical
+  // inputs to the Reps path: weeks=[ws], repGoalsByWeek from store.getRepGoals,
+  // teamGoalByWeek from store.getTeamGoal, repCount = active users length.
+  // No new goal table/field/default — one helper, one source of truth, so
+  // Today and Reps can never disagree for the same rep+week.
+  const todayReps = users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date }));
+  const teamGoalByWeek = new Map<string, number>();
+  if (teamGoal) teamGoalByWeek.set(teamGoal.week_start, teamGoal.booking_goal);
+  const resolvedRepGoals = todayReps.map((r) => {
+    const repGoalsByWeek = new Map<string, number>();
+    for (const g of repGoals) if (g.rep_id === r.id) repGoalsByWeek.set(g.week_start, g.goal);
+    const resolved = resolveRepGoal({ weeks: [ws], repGoalsByWeek, teamGoalByWeek, repCount: todayReps.length });
+    return {
+      rep_id: r.id,
+      week_start: ws,
+      goal: resolved?.value ?? 0,
+      goal_basis: resolved?.basis ?? null,
+      goal_note: resolved?.note ?? null,
+    };
+  });
   const metrics = buildTodayMetrics({
     reportDate: today,
     calls: rosterCallsToday,
@@ -569,8 +592,8 @@ export async function todayPageData(deps?: PageDeps) {
     weeklyLeadBudget,
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
     openSlotsByDay,
-    reps: users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date })),
-    repGoals: repGoals.map((g) => ({ rep_id: g.rep_id, week_start: g.week_start, goal: g.goal })),
+    reps: todayReps,
+    repGoals: resolvedRepGoals,
   });
 
   return {

@@ -171,6 +171,13 @@ export interface RepGoalRow {
   rep_id: string;
   week_start: string;
   goal: number;
+  /**
+   * PRESENTATION PASSTHROUGH ONLY — set only by the Today path after goal
+   * resolution (resolveRepGoal's basis/note, verbatim). Raw rep_goals rows
+   * leave these unset. No computation, no metric redefinition.
+   */
+  goal_basis?: GoalBasis | null;
+  goal_note?: string | null;
 }
 
 export interface Rep {
@@ -511,6 +518,14 @@ export interface RepPerformanceRow {
   actual: number;
   goalPercent: number | null;
   /**
+   * PRESENTATION PASSTHROUGH ONLY — resolveRepGoal's basis/note carried
+   * verbatim from the resolved rep_goals rows (undefined when the caller
+   * passes raw rows, e.g. tests). No computation here — the goal VALUE was
+   * already resolved upstream; these only label where it came from.
+   */
+  goalBasis?: GoalBasis | null;
+  goalNote?: string | null;
+  /**
    * Operating state from users.call_start_date vs the report date (ET):
    * "not-yet-active" reps are visible with zero calls EXPECTED — no activity
    * chips, no coaching/attention notes, no negative messaging. Chips and
@@ -649,12 +664,15 @@ export function buildRepPerformanceRows(input: {
     workEnd: input.weekEnd,
     thresholdSeconds: input.thresholdSeconds,
   });
-  const goalByRep = new Map(input.repGoals.map((g) => [g.rep_id, g.goal]));
+  // goal rows may carry the resolved basis/note (Today path) — keep the whole
+  // row so the passthrough survives; goal VALUE lookup semantics unchanged.
+  const goalByRep = new Map(input.repGoals.map((g) => [g.rep_id, g]));
   const today = input.today ?? input.weekEnd;
   return input.reps
     .map((rep) => {
       const s = summaries.get(rep.id)!;
-      const goal = goalByRep.get(rep.id) ?? 0;
+      const goalRow = goalByRep.get(rep.id);
+      const goal = goalRow?.goal ?? 0;
       return {
         repId: rep.id,
         name: rep.name,
@@ -667,6 +685,9 @@ export function buildRepPerformanceRows(input: {
         assignedLeadConversion: s.assignedLeadConversion,
         avgCallDurationSeconds: s.avgCallDurationSeconds,
         goal,
+        // PRESENTATION PASSTHROUGH — resolveRepGoal's basis/note, verbatim.
+        goalBasis: goalRow?.goal_basis ?? null,
+        goalNote: goalRow?.goal_note ?? null,
         actual: s.totalBookings,
         goalPercent: goalAchievement(s.totalBookings, goal),
         operatingState: repOperatingState(rep.call_start_date, today),

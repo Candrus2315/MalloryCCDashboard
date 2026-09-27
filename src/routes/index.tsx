@@ -496,6 +496,10 @@ function RepDetailPanel({
         {detailCell("Start Date", row.callStartDate ? formatDateHuman(row.callStartDate) : "—")}
       </div>
       <div className="space-y-1.5 text-[12px] leading-relaxed text-(--text-muted)">
+        {/* Goal basis (owner directive 2026-09-27): resolveRepGoal's note,
+            verbatim — where this week's goal came from. Omitted when the row
+            carries no resolution metadata (never invented here). */}
+        {row.goalNote && <p>Goal basis: {row.goalNote}</p>}
         <p>
           {benchLine("Conversation benchmark", conv, "bookings from >120s calls", "calls >120s")}
           {" · this rep: "}
