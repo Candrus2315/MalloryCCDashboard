@@ -204,3 +204,55 @@ export const QUEUE_STATE_LABELS: Record<QueueRowState, string> = {
   ambiguous: "Ambiguous",
   unattributed: "Unattributed",
 };
+
+// ---------- S4b no-rep reason categories (grouped queue counts) ----------
+/**
+ * The refined no-rep categories the attribution engine derives from its own
+ * signals (src/server/metrics/attribution.ts) and the sync persists to
+ * booking_attributions.reason_code. Labels are the owner-facing vocabulary;
+ * the codes are stable data. Ambiguous keeps its existing identity-conflict
+ * presentation (its reason stays "ambiguous"; the engine adds no category).
+ */
+export const NO_REP_REASON_LABELS: Record<string, string> = {
+  "no-window-interaction": "No rep activity in the booking window",
+  "interaction-without-roster-rep": "Activity in window — none tied to a roster rep",
+  "no-matching-contact": "No matching contact record",
+  "no-contact-identity": "No contact identity on the booking",
+  "bad-datetime": "Unreadable booking time",
+  ambiguous: "Ambiguous — identity conflict",
+};
+
+export interface QueueReasonBucket {
+  /** Stable category code (reason_code / engine reason). */
+  code: string;
+  label: string;
+  count: number;
+}
+
+/**
+ * Grouped count summary for the top of the manual-decision queue: one bucket
+ * per no-rep category (by reason_code, falling back to the engine reason when
+ * a row predates the S4b classification) plus a single Ambiguous bucket —
+ * ambiguous rows keep their own identity-conflict presentation and are never
+ * folded into a no-rep category. Sorted by count desc, then label. Rows for
+ * bookings without any engine verdict (reason_code and reason both null) are
+ * reported honestly as "Unclassified — rerun attribution".
+ */
+export function queueReasonBreakdown(rows: { reason: string | null; reason_code?: string | null }[]): QueueReasonBucket[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (queueRowState(r.reason) === "ambiguous") {
+      counts.set("ambiguous", (counts.get("ambiguous") ?? 0) + 1);
+      continue;
+    }
+    const code = r.reason_code ?? r.reason ?? "unclassified";
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([code, count]) => ({
+      code,
+      label: NO_REP_REASON_LABELS[code] ?? (code === "unclassified" ? "Unclassified — rerun attribution" : code),
+      count,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}

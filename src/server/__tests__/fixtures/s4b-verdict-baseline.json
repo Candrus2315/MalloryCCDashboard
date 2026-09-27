@@ -1,0 +1,440 @@
+{
+  "_meta": "S4b verdict baseline — captured from the PRE-S4b engine (commit b64041e). The verdict-invariance test asserts the engine still reproduces every match exactly after the reason-classification change.",
+  "scenarios": [
+    {
+      "name": "cid-attributed",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "contact_id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "cid-most-recent",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h2",
+          "repId": "u_r1",
+          "method": "contact_id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "cid-multi-rep-ambiguous",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "ambiguous",
+          "detail": "qualifying calls from 2 distinct roster reps in 2026-09-14..2026-09-15 ET",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "s1-below-threshold-call-owns",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "window_interaction",
+          "evidence": {
+            "id": "h1",
+            "source": "calls",
+            "started_at": "2026-09-15T15:00:00.000Z",
+            "duration_seconds": 30
+          },
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-window-interaction",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "no-qualifying-call",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "interaction-without-roster-rep-call",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "no-qualifying-call",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "interaction-without-roster-rep-call-over-threshold",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_x",
+          "method": "contact_id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "interaction-without-roster-rep-harvest",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "no-qualifying-call",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "s1-harvest-owns",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "m1",
+          "repId": "u_r1",
+          "method": "window_interaction",
+          "evidence": {
+            "id": "m1",
+            "source": "harvest",
+            "started_at": "2026-09-15T15:00:00.000Z",
+            "duration_seconds": 5
+          },
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "s1-harvest-multi-rep-ambiguous",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "ambiguous",
+          "detail": "s1 rep-ownership evidence spans 2 distinct roster reps in 2026-09-14..2026-09-15 ET",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-contact-identity",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "no-contact-identity"
+        }
+      ]
+    },
+    {
+      "name": "bad-datetime",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "bad-datetime"
+        }
+      ]
+    },
+    {
+      "name": "dangling-cid-no-window",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "no-qualifying-call",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "phone-no-matching-contact",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "no-qualifying-call",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "phone-attributed",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "phone",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "phone-multi-contact-ambiguous",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "ambiguous",
+          "detail": "phone matches 2 distinct contacts",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "phone-contradicts-cid-ambiguous",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "ambiguous",
+          "detail": "phone resolves a different contact than the stored contact id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "email-different-contact-than-cid-ambiguous",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "ambiguous",
+          "detail": "email resolves a different contact than the stored contact id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "phone-tier-wins-before-email-reached",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "phone",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "window-day-minus-one",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "contact_id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "window-day-minus-two-out",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "unattributed",
+          "reason": "no-qualifying-call",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "threshold-equal-out",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "window_interaction",
+          "evidence": {
+            "id": "h1",
+            "source": "calls",
+            "started_at": "2026-09-15T15:00:00.000Z",
+            "duration_seconds": 120
+          },
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "mapping-resolved-attributes",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": null,
+          "method": "contact_id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "cancelled-still-judged",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "contact_id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_business_date"
+          }
+        }
+      ]
+    },
+    {
+      "name": "legacy-date-only-anchor",
+      "matches": [
+        {
+          "appointmentId": "a1",
+          "status": "attributed",
+          "callExternalId": "h1",
+          "repId": "u_r1",
+          "method": "contact_id",
+          "window": {
+            "from": "2026-09-14",
+            "to": "2026-09-15",
+            "marker": "date_granularity_window",
+            "anchoredOn": "created_at"
+          }
+        }
+      ]
+    }
+  ]
+}

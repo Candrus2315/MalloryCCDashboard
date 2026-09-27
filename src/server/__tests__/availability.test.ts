@@ -123,10 +123,12 @@ describe("computeDayAvailability (engine truth table)", () => {
     expect(day.booked + day.blockedCount + day.openSlotTimes.length).toBe(day.totalCapacity);
   });
 
-  test("PADDING removes the adjacent slots around an appointment (turnover rule)", () => {
+  test("PADDING removes the adjacent slots around an appointment from OPEN as blockedCount — booked stays true occupancy (S4b hardening)", () => {
     // hourly grid, 60-minute appointment 11:00–12:00 ET: without padding only
-    // its own slot is booked; with 15 minutes of padding the busy interval
-    // (10:45–12:15) also removes the adjacent 10:00 and 12:00 slots
+    // its own slot is booked; with 15 minutes of padding the turnover buffer
+    // (10:45–12:15) also removes the adjacent 10:00 and 12:00 slots from open
+    // — as BLOCKED (turnover), never as booked (the owner-caught trap: 6 real
+    // bookings rendered 9/9 FULL when buffers inflated booked).
     const appt11 = appt("2026-09-28T15:00:00.000Z"); // 11:00 ET
     const hourly = { slotIntervalMin: 60, durationMin: 60, paddingMin: 0 };
     const without = computeDayAvailability({ date: MON, rules: WEEKDAY_RULES, blocked: [], appointments: [appt11], ...hourly });
@@ -137,7 +139,8 @@ describe("computeDayAvailability (engine truth table)", () => {
       date: MON, rules: WEEKDAY_RULES, blocked: [], appointments: [appt11],
       slotIntervalMin: 60, durationMin: 60, paddingMin: 15,
     });
-    expect(withPad.booked).toBe(3); // 10:00, 11:00, 12:00 all removed by the padded appointment
+    expect(withPad.booked).toBe(1); // ONLY the session's own slot is booked
+    expect(withPad.blockedCount).toBe(2); // 10:00 + 12:00 buffer-only slots
     expect(withPad.openSlotTimes).not.toContain("10:00 AM");
     expect(withPad.openSlotTimes).not.toContain("12:00 PM");
     expect(withPad.booked + withPad.blockedCount + withPad.openSlotTimes.length).toBe(withPad.totalCapacity);
@@ -447,8 +450,11 @@ describe("availabilityPageData payload (playbook contract, MemoryStore + pinned 
     // no connection row yet → honest "disconnected" (we don't know the state)
     const noRow = await availabilityPageData({ store, today: MON });
     // default two-block hours carry 15-min padding: the 10:00–11:00 ET session
-    // busy window 9:45–11:15 removes the 9:00, 10:00 AND 11:00 morning slots
-    expect(noRow.days[0].booked).toBe(3);
+    // books its OWN slot; the turnover buffer 9:45–11:15 removes the 9:00 and
+    // 11:00 morning slots from open as blockedCount (S4b hardening — booked
+    // is true occupancy, never buffer-inflated)
+    expect(noRow.days[0].booked).toBe(1);
+    expect(noRow.days[0].blockedCount).toBe(2);
     expect(noRow.days[0].openSlotTimes).not.toContain("10:00 AM");
     expect(noRow.days[0].openSlotTimes).not.toContain("9:00 AM");
     expect(noRow.days[0].openSlotTimes).not.toContain("11:00 AM");

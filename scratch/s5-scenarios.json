@@ -1,0 +1,1491 @@
+{
+  "baseline": {
+    "attributed": 49,
+    "ambiguous": 4,
+    "unattributed": 71,
+    "total": 124
+  },
+  "notAttributedPopulation": {
+    "count": 75,
+    "note": "124 - 49 = 75 = 4 ambiguous + 71 no-qualifying-call. 79 would double-count the 4 ambiguous: 49+75=124; 49+79=128≠124."
+  },
+  "scenarios": {
+    "s1_c1_within_window": {
+      "repAttributed": 79,
+      "ambiguous": 4,
+      "unattributed": 41,
+      "sum": 124
+    },
+    "s2_c1_plus_c2_alltime": {
+      "repAttributed": 88,
+      "ambiguous": 4,
+      "unattributed": 32,
+      "sum": 124
+    },
+    "s1_newly": 30,
+    "s2_newly": 39
+  },
+  "decisionMatrixNotAttributed": {
+    "c1-single-rep-in-window": 30,
+    "c2-single-rep-alltime": 9,
+    "ambiguous-identity-conflict-engine-queue": 4,
+    "ambiguous-multi-rep-workflow": 0,
+    "none-no-workflow-evidence": 32,
+    "sum-not-attributed": 75
+  },
+  "exclusions": {
+    "engineNoQualifyingCall": 71,
+    "newlyReachableOnlyWithoutThreshold": 39,
+    "ambiguousIdentityConflict": 4,
+    "ambiguousMultiRepWorkflow": 0,
+    "noWorkflowEvidenceAtAll": 32,
+    "fuzzyIdentitySkipped": 0
+  },
+  "chains": [
+    {
+      "apptId": "15fc2c49-4aa1-437a-9019-ffbc343bdd97",
+      "method": "c1-window-most-recent",
+      "rep": "Allison Wittner",
+      "evidence": {
+        "id": "VFRcnuopLWWBryhNSn03",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:12:50.491Z",
+        "dur": 30
+      },
+      "identity": {
+        "tiers": [
+          "contact_id"
+        ],
+        "contactHLId": "wvVWF4U5FxqyQr6NVe8W",
+        "phoneNormalized": "4848181587",
+        "emailNormalized": "matyldazaklicki@gmail.com"
+      },
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "dd05d9c2-39c8-4c87-becf-35097a0bc61a",
+      "method": "c2-alltime-most-recent",
+      "rep": "Allison Wittner",
+      "evidence": {
+        "id": "pO6BEbZgu4av5L8LugEg",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-18T15:55:12.065Z",
+        "dur": 0
+      },
+      "identity": {
+        "tiers": [
+          "contact_id"
+        ],
+        "contactHLId": "vEBZ0PSPQj6MZCGhvZXp",
+        "phoneNormalized": "2074235748",
+        "emailNormalized": "nconley13@yahoo.com"
+      },
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "f0f482e1-9712-439a-a6ad-df5942a9f3a3",
+      "method": "c2-alltime-most-recent",
+      "rep": "Allison Wittner",
+      "evidence": {
+        "id": "LUYM2jmS6ZM4Y8MOXpbA",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-26T19:51:18.625Z",
+        "dur": 0
+      },
+      "identity": {
+        "tiers": [
+          "contact_id"
+        ],
+        "contactHLId": "HbwBP0Zq0CZaD6Th04lp",
+        "phoneNormalized": "6179552510",
+        "emailNormalized": "chhayhong8@yahoo.com"
+      },
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "a052438a-82c2-42f0-8721-94493c9d05dd",
+      "method": "c1-window-most-recent",
+      "rep": "Allison Wittner",
+      "evidence": {
+        "id": "8QvB3nqzUPi9sBVkukuD",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:11:07.687Z",
+        "dur": 28
+      },
+      "identity": {
+        "tiers": [
+          "contact_id"
+        ],
+        "contactHLId": "oF5l4x2K17yPyfFWjycr",
+        "phoneNormalized": "4133350755",
+        "emailNormalized": "keshia.a.maxwell@gmail.com"
+      },
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "e61a64bf-4e7a-4882-b164-6be22d4316e7",
+      "method": "c1-window-most-recent",
+      "rep": "Carmine Morgano",
+      "evidence": {
+        "id": "Lz577EcTZtqdwGEYJrqn",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-18T14:13:14.351Z",
+        "dur": 27
+      },
+      "identity": {
+        "tiers": [
+          "contact_id"
+        ],
+        "contactHLId": "eeJS8UQTDGhAZa8vMaqu",
+        "phoneNormalized": "2074236122",
+        "emailNormalized": "andmck87r@yahoo.com"
+      },
+      "engineReason": "no-qualifying-call"
+    }
+  ],
+  "over2minSubsetRecheck": {
+    "holds": true,
+    "violations": []
+  },
+  "_outcomes": [
+    {
+      "apptId": "15fc2c49-4aa1-437a-9019-ffbc343bdd97",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "VFRcnuopLWWBryhNSn03",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:12:50.491Z",
+        "dur": 30
+      },
+      "c2": {
+        "id": "VFRcnuopLWWBryhNSn03",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:12:50.491Z",
+        "dur": 30
+      }
+    },
+    {
+      "apptId": "87dedb68-b9dd-48ff-ac40-8182778276e8",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "9aef04d8-5610-45fc-87ff-1c59be227a11",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "dd05d9c2-39c8-4c87-becf-35097a0bc61a",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "pO6BEbZgu4av5L8LugEg",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-18T15:55:12.065Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "f0f482e1-9712-439a-a6ad-df5942a9f3a3",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "LUYM2jmS6ZM4Y8MOXpbA",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-26T19:51:18.625Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "a052438a-82c2-42f0-8721-94493c9d05dd",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "8QvB3nqzUPi9sBVkukuD",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:11:07.687Z",
+        "dur": 28
+      },
+      "c2": {
+        "id": "8QvB3nqzUPi9sBVkukuD",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:11:07.687Z",
+        "dur": 28
+      }
+    },
+    {
+      "apptId": "645272f0-e7dc-4f67-b4e1-80869de0eb37",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "e61a64bf-4e7a-4882-b164-6be22d4316e7",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Carmine Morgano"
+      ],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "Lz577EcTZtqdwGEYJrqn",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-18T14:13:14.351Z",
+        "dur": 27
+      },
+      "c2": {
+        "id": "Lz577EcTZtqdwGEYJrqn",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-18T14:13:14.351Z",
+        "dur": 27
+      }
+    },
+    {
+      "apptId": "4c150222-d7c1-42ab-8bac-ebc3f0ffbae2",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "4NA6XqExNh7ywrOrwk1B",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-08T14:03:55.665Z",
+        "dur": 30
+      },
+      "c2": {
+        "id": "4NA6XqExNh7ywrOrwk1B",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-08T14:03:55.665Z",
+        "dur": 30
+      }
+    },
+    {
+      "apptId": "523f6e1e-897e-4c4a-9f95-297558e485f6",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "PiwCs9yFbjsEWHMfj4aX",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T15:28:31.882Z",
+        "dur": 27
+      },
+      "c2": {
+        "id": "PiwCs9yFbjsEWHMfj4aX",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T15:28:31.882Z",
+        "dur": 27
+      }
+    },
+    {
+      "apptId": "7021dbf0-6de8-42bb-9187-c7b468acedd4",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "663857a6-1dd9-48f4-94c7-1ec56ef2b8d0",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "7d25638b-5343-48a2-a6b1-f480f7eef73f",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "2270bca4-7ac5-486c-ba99-311dd44b2469",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "62a5f5ad-9c9e-4318-8ec9-52d8f65491de",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "D1KHSrcuTBP9kFintoXy",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-02T18:29:10.920Z",
+        "dur": 24
+      },
+      "c2": {
+        "id": "D1KHSrcuTBP9kFintoXy",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-02T18:29:10.920Z",
+        "dur": 24
+      }
+    },
+    {
+      "apptId": "57381f82-e6f4-4b10-b628-62a7b2d066a0",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "iIgmwTeJxextA2iuqTfe",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T12:44:40.748Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "iIgmwTeJxextA2iuqTfe",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T12:44:40.748Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "2f3b6498-c1d8-4df3-8a72-4d5da3b54228",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "eg3ODc7WlDmRUp9stK3M",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-24T18:14:35.123Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "eg3ODc7WlDmRUp9stK3M",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-24T18:14:35.123Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "21184476-0b7f-4e46-8db3-4bf5464053eb",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "512dc0e5-0d26-41c8-bf89-0f6a00585284",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "GIFMdkXLegJbq8OTMAc3",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T19:14:07.970Z",
+        "dur": 65
+      },
+      "c2": {
+        "id": "GIFMdkXLegJbq8OTMAc3",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T19:14:07.970Z",
+        "dur": 65
+      }
+    },
+    {
+      "apptId": "1c5958e2-2488-464d-9417-a8244a9924e6",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "j468Ax8wy4PKAhSKScZH",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-24T17:08:45.827Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "j468Ax8wy4PKAhSKScZH",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-24T17:08:45.827Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "ccdf2118-cce7-4a03-818a-865973c8eb73",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "0d641109-5705-4a9b-b605-05eec0d774d0",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "8046b67b-d0cf-4de0-8c29-ad1c4e6a5a49",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "1cec785d-499b-4154-8ee7-b79b7e78b87c",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "LBDXmbAr4PnwPmJIuiwD",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-23T14:51:59.262Z",
+        "dur": 28
+      },
+      "c2": {
+        "id": "LBDXmbAr4PnwPmJIuiwD",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-23T14:51:59.262Z",
+        "dur": 28
+      }
+    },
+    {
+      "apptId": "71c7f382-1801-4523-90ff-115f0f179a81",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "3fc0e0eb-f0df-45e3-87fc-c2f8917d3cce",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "a4eaac5a-3c67-49d1-820f-ae8703a751be",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "JuYDTKo0Da8SVCsmBMKz",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T14:10:29.207Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "Q8UXOKUAJAYJfoKOFPBb",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-25T13:12:51.217Z",
+        "dur": 34
+      }
+    },
+    {
+      "apptId": "38b16ea0-9294-46ba-a50b-d9411623a917",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "9a2bfb23-5b22-4762-832d-c4801a12a4c7",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "5f0aa935-b53e-4ca9-bc57-de4deb85914e",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "0f0679cc-dddb-4f73-b455-93dae37d9a33",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "CQW1BGqY2h4bg3CgRO3T",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-16T12:33:57.568Z",
+        "dur": 52
+      },
+      "c2": {
+        "id": "CQW1BGqY2h4bg3CgRO3T",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-16T12:33:57.568Z",
+        "dur": 52
+      }
+    },
+    {
+      "apptId": "37e63f6c-fc3d-4a16-b68d-98a2a8fb1acc",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "80d7529f-7a5a-477e-960a-32459acaaea8",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "Ku6oG1hEGgEaRj1GmreG",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-17T19:28:59.561Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "Ku6oG1hEGgEaRj1GmreG",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-17T19:28:59.561Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "22354d9b-f376-4e64-bf21-31504cfa115b",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "b6c46ed8-4f4a-46c3-a8c8-402ef5386783",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "xAGOkDy9GLshtju9OJX9",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-24T19:49:37.936Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "0d01c20c-f6d6-40cd-a71c-0d472496c3d2",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "PhC6Nb4fLbgPWHe6sbG0",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-24T13:36:13.784Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "2e5792b8-1900-43ec-a41c-39e7889b140e",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "eT3Yp8UGu217WhHjXr4j",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-23T18:18:08.887Z",
+        "dur": 60
+      },
+      "c2": {
+        "id": "eT3Yp8UGu217WhHjXr4j",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-23T18:18:08.887Z",
+        "dur": 60
+      }
+    },
+    {
+      "apptId": "9763e532-97a3-4d08-9189-7d67471855ee",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "2bc20e15-8c84-4382-8dc7-91c151fe68ff",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "0f0b4a4f-52bc-48bc-843f-1752a65fd632",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "75dee9af-5bab-4d5f-9c54-26c936a6cad4",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Carmine Morgano"
+      ],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "c6LqXcH7gpvmgkeO1IRT",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-25T19:14:21.169Z",
+        "dur": 5
+      },
+      "c2": {
+        "id": "c6LqXcH7gpvmgkeO1IRT",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-25T19:14:21.169Z",
+        "dur": 5
+      }
+    },
+    {
+      "apptId": "4d2286eb-a246-449e-bda3-f1204330bdbf",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "823e381a-489e-43e3-8b78-157ac220ef9a",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "JwYgH5KVGkZKtNHbLl9p",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-15T17:06:35.431Z",
+        "dur": 79
+      }
+    },
+    {
+      "apptId": "f0e66b3f-d951-4d1e-9712-29d5d723e3f5",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "sMx4O4oTI3b4uNAuNirI",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-21T15:01:29.371Z",
+        "dur": 38
+      },
+      "c2": {
+        "id": "sMx4O4oTI3b4uNAuNirI",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-21T15:01:29.371Z",
+        "dur": 38
+      }
+    },
+    {
+      "apptId": "964017bb-de59-43d1-b8fd-9ff5e02f8bf4",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Jennifer Stitt"
+      ],
+      "c2Reps": [
+        "Jennifer Stitt"
+      ],
+      "c1": {
+        "id": "aaJaYyi2m92Suclx3bta",
+        "src": "calls",
+        "rep": "7ee136e8-9eca-4bfb-9e90-a3a740775f37",
+        "startedAt": "2026-09-14T17:17:53.416Z",
+        "dur": 21
+      },
+      "c2": {
+        "id": "xsagWQQnqdFM2BTXGPoq",
+        "src": "calls",
+        "rep": "7ee136e8-9eca-4bfb-9e90-a3a740775f37",
+        "startedAt": "2026-09-23T14:40:52.194Z",
+        "dur": 22
+      }
+    },
+    {
+      "apptId": "564168e0-71f7-4df1-9d4b-506c194d3052",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "e47cfed7-9101-4698-bf39-9e21dc21a9bb",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner",
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "eShce87HRwsOyUga6lMA",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T13:33:10.720Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "eShce87HRwsOyUga6lMA",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T13:33:10.720Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "2228d0b6-b453-4ca5-8eb7-3b232d28ddc3",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Carmine Morgano"
+      ],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "6zDBdFsFqn6Tmvxmosls",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-17T17:04:59.175Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "I5i8IEn2ntKOlylfXdtk",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-24T14:05:11.139Z",
+        "dur": 147
+      }
+    },
+    {
+      "apptId": "a1504317-50e5-45f7-976f-ec822da6ea76",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "24GM231G3IAqdmLopHWL",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-17T14:05:20.221Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "426b7c64-a957-492b-a700-644386d0f1f6",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Carmine Morgano"
+      ],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "x7SgzxxADe7Z2TbssPBX",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-18T17:12:43.551Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "x7SgzxxADe7Z2TbssPBX",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-18T17:12:43.551Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "01adee96-ac67-4298-b927-a7e5d5b9fbbd",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "XWbdBaPQx7xe6hexltNW",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-25T16:47:55.606Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "XWbdBaPQx7xe6hexltNW",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-25T16:47:55.606Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "526f6fc7-3760-45ca-9110-4c9632414831",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Carmine Morgano"
+      ],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "JtIO9BjaduaEq21JKyLi",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-25T15:47:12.365Z",
+        "dur": 11
+      },
+      "c2": {
+        "id": "JtIO9BjaduaEq21JKyLi",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-25T15:47:12.365Z",
+        "dur": 11
+      }
+    },
+    {
+      "apptId": "ccb43292-19ed-45c3-8d7e-9f2b9458e863",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "5BRKmjAGlf5X8goEFTmf",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-25T19:26:25.761Z",
+        "dur": 112
+      }
+    },
+    {
+      "apptId": "daa71c2f-c017-4407-8023-c1e1990dd684",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "a940d035-8b64-4194-8400-d306b0369af9",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "irE1TG6drhGExXmoqWC7",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:08:02.085Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "94094ff7-2ec5-4ff0-9810-ae34a14a9768",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "Zcbw5Ur3gLc93e4W4STx",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-07T13:51:48.737Z",
+        "dur": 63
+      },
+      "c2": {
+        "id": "uy2X7TVG9KTCH3KwIIAz",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-25T17:22:26.075Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "9772d1bc-1525-4f85-8890-114d9e1a37d8",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "a21e7778-7248-4e54-ae4d-8a764159925e",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Carmine Morgano"
+      ],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "mexgBggxYnqqERnbduhU",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-14T20:55:36.056Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "zuT3CV0r1le4nsDsojFL",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-23T14:01:41.841Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "7db38c05-87a2-4b53-be8e-e95b9c676ec9",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "953b1be2-31cc-4015-ba27-b85de908fac3",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "b1bdbf81-34ce-445b-9337-082eccd96f73",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "8ceee819-4c6c-4d68-a636-956424c248cd",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "ExJVfy6f1uDl9fvxkpEM",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T21:08:49.776Z",
+        "dur": 0
+      },
+      "c2": {
+        "id": "ExJVfy6f1uDl9fvxkpEM",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T21:08:49.776Z",
+        "dur": 0
+      }
+    },
+    {
+      "apptId": "de4fa3c3-bf56-44cf-a02d-f6cb2eec168f",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "af9b3946-c08a-4c94-9743-e95027e9fe63",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": {
+        "id": "bAVS29nDGypXOFZbgAMo",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T16:11:39.796Z",
+        "dur": 49
+      }
+    },
+    {
+      "apptId": "b8c4ffbd-bec7-4446-9296-b1c85e05feee",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "8a1c188b-756f-4edd-aa88-df93a824806b",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "66e43045-a349-4a87-8202-e7b166b917fc",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [],
+      "c2Reps": [],
+      "c1": null,
+      "c2": null
+    },
+    {
+      "apptId": "1e2f211d-538f-47f8-be9c-a66f0cc4dcfb",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "lHbuR1CgufBfauR7HUIT",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T16:33:26.740Z",
+        "dur": 31
+      },
+      "c2": {
+        "id": "lHbuR1CgufBfauR7HUIT",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-14T16:33:26.740Z",
+        "dur": 31
+      }
+    },
+    {
+      "apptId": "d5835ceb-3061-4479-8f1c-50e91f16a799",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "z1lhpgK82KdKf6Hpf784",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-17T20:21:40.383Z",
+        "dur": 19
+      },
+      "c2": {
+        "id": "z1lhpgK82KdKf6Hpf784",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-17T20:21:40.383Z",
+        "dur": 19
+      }
+    },
+    {
+      "apptId": "25477cef-45f3-4853-a495-14b28d0b1127",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Allison Wittner"
+      ],
+      "c2Reps": [
+        "Allison Wittner"
+      ],
+      "c1": {
+        "id": "oETO7XL9T3cw3fn3N2gw",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-16T13:18:55.637Z",
+        "dur": 26
+      },
+      "c2": {
+        "id": "oETO7XL9T3cw3fn3N2gw",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-16T13:18:55.637Z",
+        "dur": 26
+      }
+    },
+    {
+      "apptId": "b1f5afd2-345a-4478-84f7-1f3aac182e75",
+      "engineReason": "no-qualifying-call",
+      "tiers": [
+        "contact_id"
+      ],
+      "c1Reps": [
+        "Carmine Morgano"
+      ],
+      "c2Reps": [
+        "Carmine Morgano"
+      ],
+      "c1": {
+        "id": "S96n5yJmJ4A6xt1qBmum",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-17T21:41:42.523Z",
+        "dur": 26
+      },
+      "c2": {
+        "id": "S96n5yJmJ4A6xt1qBmum",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-17T21:41:42.523Z",
+        "dur": 26
+      }
+    }
+  ]
+}

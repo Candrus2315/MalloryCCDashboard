@@ -1,0 +1,101 @@
+{
+  "liveSplit": {
+    "total": 410,
+    "attributed": 126,
+    "ambiguous": 14,
+    "unattributed": 284
+  },
+  "storedSplit": {
+    "total": 410,
+    "attributed": 130,
+    "ambiguous": 12,
+    "unattributed": 268
+  },
+  "unattributedByReason": {
+    "no-qualifying-call": 270,
+    "ambiguous": 14
+  },
+  "noQualifyingCallBreakdown": {
+    "C-no-window-interaction": 270
+  },
+  "detailSamples": [
+    {
+      "appt": "c5b961b6-fa42-4c5d-a638-3ec88e8946d2",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    },
+    {
+      "appt": "c5e7137a-a786-4438-80b2-0e9bb35e5992",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    },
+    {
+      "appt": "a5680531-fba3-4965-8720-d331cd0c680a",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    },
+    {
+      "appt": "b25fba0b-a791-41e2-83c5-41bddffaea46",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    },
+    {
+      "appt": "e4d22d3e-0223-4867-a3ae-830e9cfa7a47",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    },
+    {
+      "appt": "20c1105e-8f2a-45a2-a7bf-f50119f73f06",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    },
+    {
+      "appt": "7efecfc3-8142-4440-9579-fc31c4611cd3",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    },
+    {
+      "appt": "942c8856-d0f4-4e0a-989d-8f6bf5e9d7dc",
+      "signal": "ok",
+      "windowCallsNoRep": 0,
+      "windowCallsAnyRep": 0,
+      "windowHarvest": 0,
+      "candidateIds": 1,
+      "cat": "C-no-window-interaction"
+    }
+  ],
+  "counts": {
+    "appts": 410,
+    "calls": 4619,
+    "contacts": 116220,
+    "harvest": 4496
+  }
+}

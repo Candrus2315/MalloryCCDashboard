@@ -14,6 +14,7 @@ import {
   connectionStatusView,
   passphraseStatus,
   providerLabel,
+  queueReasonBreakdown,
   queueRowState,
   sectionMeta,
   sectionNumber,
@@ -202,5 +203,49 @@ describe("queueRowState — Ambiguous is its OWN state, never folded into Unattr
     expect(QUEUE_STATE_LABELS.ambiguous).toBe("Ambiguous");
     expect(QUEUE_STATE_LABELS.unattributed).toBe("Unattributed");
     expect(QUEUE_STATE_LABELS.ambiguous).not.toBe(QUEUE_STATE_LABELS.unattributed);
+  });
+});
+
+// ---------- S4b: grouped no-rep reason summary for the top of the queue ----------
+describe("queueReasonBreakdown — grouped counts at the top of the manual-decision queue", () => {
+  test("groups by the refined reason_code with owner-facing labels; Ambiguous is its own group", () => {
+    const buckets = queueReasonBreakdown([
+      { reason: "no-qualifying-call", reason_code: "no-window-interaction" },
+      { reason: "no-qualifying-call", reason_code: "no-window-interaction" },
+      { reason: "no-qualifying-call", reason_code: "interaction-without-roster-rep" },
+      { reason: "no-contact-identity", reason_code: "no-contact-identity" },
+      { reason: "ambiguous", reason_code: "ambiguous" },
+      { reason: "ambiguous", reason_code: null }, // pre-rerun ambiguous row: still grouped by STATE
+    ]);
+    expect(buckets).toEqual([
+      { code: "ambiguous", label: "Ambiguous — identity conflict", count: 2 },
+      { code: "no-window-interaction", label: "No rep activity in the booking window", count: 2 },
+      { code: "interaction-without-roster-rep", label: "Activity in window — none tied to a roster rep", count: 1 },
+      { code: "no-contact-identity", label: "No contact identity on the booking", count: 1 },
+    ]);
+  });
+
+  test("buckets sum to the queue length and sort by count desc then label", () => {
+    const rows = [
+      { reason: "no-qualifying-call", reason_code: "no-matching-contact" },
+      { reason: "bad-datetime", reason_code: "bad-datetime" },
+      { reason: "bad-datetime", reason_code: "bad-datetime" },
+      { reason: "bad-datetime", reason_code: "bad-datetime" },
+    ];
+    const buckets = queueReasonBreakdown(rows);
+    expect(buckets.map((b) => [b.label, b.count])).toEqual([
+      ["Unreadable booking time", 3],
+      ["No matching contact record", 1],
+    ]);
+    expect(buckets.reduce((n, b) => n + b.count, 0)).toBe(rows.length);
+  });
+
+  test("rows without any classification fall through to the legacy reason, and fully unclassified rows are reported honestly", () => {
+    expect(queueReasonBreakdown([{ reason: "no-qualifying-call", reason_code: null }])).toEqual([
+      { code: "no-qualifying-call", label: "no-qualifying-call", count: 1 }, // unknown code rendered verbatim, never relabeled
+    ]);
+    expect(queueReasonBreakdown([{ reason: null, reason_code: null }])).toEqual([
+      { code: "unclassified", label: "Unclassified — rerun attribution", count: 1 },
+    ]);
   });
 });

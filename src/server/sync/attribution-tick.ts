@@ -50,11 +50,15 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * takes over automatically — the recovery path). `force` bypasses for a
  * deliberate owner-directed recompute.
  *
- * v2 = s1 window-interaction ownership (this build). v1 = all builds before
- * s6 (they carry no version check — operationally retired by the 9/27
- * republish; from s6 on every shipped writer carries the guard).
+ * v3 = S4b reason_code persistence (the refined no-rep classification is
+ *      written to booking_attributions.reason_code; verdicts unchanged — the
+ *      version bump retires v2 writers, whose conflict-updates would leave
+ *      stale reason_code values behind).
+ * v2 = s1 window-interaction ownership. v1 = all builds before s6 (they carry
+ * no version check — operationally retired by the 9/27 republish; from s6 on
+ * every shipped writer carries the guard).
  */
-export const ATTRIBUTION_WRITER_VERSION = 2;
+export const ATTRIBUTION_WRITER_VERSION = 3;
 /** sync_checkpoints key holding the latest writer version that has written. */
 export const ATTRIBUTION_WRITER_VERSION_KEY = "attribution-writer-version";
 
@@ -133,6 +137,7 @@ export function toAttributionRows(
         confidence: CONFIDENCE[m.method ?? ""] ?? 0.5,
         manual_override: false,
         note,
+        reason_code: null,
       });
     } else {
       rows.push({
@@ -144,6 +149,10 @@ export function toAttributionRows(
         confidence: 0,
         manual_override: false,
         note: m.reason ? `${m.reason}${m.detail ? ` — ${m.detail}` : ""}${note ? `; ${note}` : ""}` : note,
+        // S4b triage category: the refined no-rep classification for
+        // no-qualifying-call rows; "ambiguous" rows carry their own marker so
+        // grouped queue counts cover the whole queue. NEVER the note's job.
+        reason_code: m.noRepReason ?? (m.reason === "ambiguous" ? "ambiguous" : null),
       });
     }
   }

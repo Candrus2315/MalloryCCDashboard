@@ -1,0 +1,14 @@
+import postgres from "postgres";
+const sql = postgres(process.env.Database_URL!, { ssl: { rejectUnauthorized: false }, max: 1 });
+const A = "2026-09-21T04:00:00Z", B = "2026-09-28T04:00:00Z";
+console.log("== sync freshness ==");
+console.log(await sql`select max(created_at) as max_created, max(appointment_datetime) as max_appt, count(*)::int as total_rows from appointments`);
+console.log("== BY CREATED date (Acuity dateCreated, ET) ==");
+console.log(await sql`select (created_at at time zone 'America/New_York')::date as d, count(*)::int n, sum(case when cancelled then 1 else 0 end)::int canc from appointments where created_at >= ${A} and created_at < ${B} group by 1 order by 1`);
+console.log("== BY APPOINTMENT date (scheduled, ET) ==");
+console.log(await sql`select (appointment_datetime at time zone 'America/New_York')::date as d, count(*)::int n, sum(case when cancelled then 1 else 0 end)::int canc from appointments where appointment_datetime >= ${A} and appointment_datetime < ${B} group by 1 order by 1`);
+console.log("== CREATED in week, non-cancelled, by type ==");
+console.log(await sql`select coalesce(appointment_type,'(none)') t, count(*)::int n from appointments where created_at >= ${A} and created_at < ${B} and not cancelled group by 1 order by n desc`);
+console.log("== CREATED in week, non-cancelled, by calendar ==");
+console.log(await sql`select coalesce(calendar_name,'(none)') c, count(*)::int n from appointments where created_at >= ${A} and created_at < ${B} and not cancelled group by 1 order by n desc`);
+await sql.end();

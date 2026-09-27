@@ -1,0 +1,771 @@
+{
+  "today": "2026-09-26",
+  "scopeCounts": {
+    "storedAppts": 125,
+    "inScopeNonCancelled": 124,
+    "storedCalls": 4594,
+    "storedAttrRows": 124
+  },
+  "settingsUsed": {
+    "meeting_threshold_seconds": 120,
+    "attribution_window_hours": 24,
+    "rep_mappings": [],
+    "activeRoster": [
+      "Allison Wittner:Pf0rllLIswGz28ljL5pZ",
+      "Carmine Morgano:Yeng4pAyV7QXR4WFXdCB",
+      "Dan McKillop:Op4wFV0kXNWTTt2kTngJ",
+      "Jennifer Stitt:eklAXY9RLkxPJ2QPCTAd",
+      "Laura Rivera:Q2fqPQvWalbJXhzhlMOm"
+    ]
+  },
+  "engineVerdicts": {
+    "byStatus": {
+      "unattributed": 75,
+      "attributed": 49
+    },
+    "unattributedByReason": {
+      "no-qualifying-call": 71,
+      "ambiguous": 4
+    },
+    "attributedByMethod": {
+      "contact_id": 49
+    }
+  },
+  "storedTable": {
+    "methodAttributed": 3,
+    "repSet": 3
+  },
+  "diffCount": 46,
+  "diffSample": [
+    {
+      "appointmentId": "6ac4d4cc-af6d-4bca-b660-fe8c5b17e01f",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "PC7MtZNWLA8Lnr0ijKAb"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-24..2026-09-25 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "236f1071-7492-4fe9-a5a3-7ba0f0b948a5",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "8uqKko4RQZAmTxB4ey1c"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-24..2026-09-25 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "36d123ca-e0c5-4a62-83ff-bf4efdee5b89",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "7ee136e8-9eca-4bfb-9e90-a3a740775f37",
+        "callExternalId": "769GTL6ofsxl4iBdFd1s"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-09..2026-09-10 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "65e2b036-c485-4c20-805d-6e9151a273a2",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "r1IEQ4ijSgMEWXSx1zXF"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-15..2026-09-16 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "450903d0-f15f-4977-afd1-165da9cd3fd6",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "qx3Aw8VGe6F22XU4YyFG"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-09..2026-09-10 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "7f04ec78-f981-4032-81e9-530f22239dcc",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "e085c9ab-8654-48c5-82cc-0139e44de244",
+        "callExternalId": "BYISt7DcLYDW0y16310e"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    }
+  ],
+  "_allDiff": [
+    {
+      "appointmentId": "6ac4d4cc-af6d-4bca-b660-fe8c5b17e01f",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "PC7MtZNWLA8Lnr0ijKAb"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-24..2026-09-25 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "236f1071-7492-4fe9-a5a3-7ba0f0b948a5",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "8uqKko4RQZAmTxB4ey1c"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-24..2026-09-25 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "36d123ca-e0c5-4a62-83ff-bf4efdee5b89",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "7ee136e8-9eca-4bfb-9e90-a3a740775f37",
+        "callExternalId": "769GTL6ofsxl4iBdFd1s"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-09..2026-09-10 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "65e2b036-c485-4c20-805d-6e9151a273a2",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "r1IEQ4ijSgMEWXSx1zXF"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-15..2026-09-16 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "450903d0-f15f-4977-afd1-165da9cd3fd6",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "qx3Aw8VGe6F22XU4YyFG"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-09..2026-09-10 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "7f04ec78-f981-4032-81e9-530f22239dcc",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "e085c9ab-8654-48c5-82cc-0139e44de244",
+        "callExternalId": "BYISt7DcLYDW0y16310e"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "a8c87766-9f42-4ede-b757-684b310542d8",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "CgBpB82WXbupHOEepyxe"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "64f88805-9908-4090-a8c9-227b6f3ffa06",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "Fx7JspqfmsZFQaudPZOI"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "f66ee544-632a-48b6-80ba-371515af5347",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "callExternalId": "umjlbTMkkcB3dNhVk4v9"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-16..2026-09-17 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "0581cad8-d48f-4aef-aa44-5e6131070291",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "dvKRLFZmTi8pWGBeq0Ei"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "eb0592db-597f-4d7f-beef-c9e1724e454e",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "WtCPvVSzi8GJ8EZUpPyt"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-24..2026-09-25 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "505bbaa8-2d78-4291-8d01-3d763f3baa52",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "Uy4BSAlmHH5w5APJIFWd"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "4221e58c-e462-4f6a-9961-1b1636b0641c",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "e085c9ab-8654-48c5-82cc-0139e44de244",
+        "callExternalId": "p6BFJgTfOarNqRBfvGsV"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-22..2026-09-23 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "72afd004-0dd1-44b9-be63-a663f1778719",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "1uusas79p2fBvaUJ6ytN"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "79a3e922-a294-4c1d-95b1-496e49b83fe4",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "fh34Bx7E8EW0qCBDGkUE"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "a571b7f7-8bdf-4b8e-82f7-d091cecd8fd3",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "Q9OHWo51dIcgMnqJoaVV"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "4c5da5d1-c35a-4414-bdcc-30f7e9af9dbe",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "BQMBi6YDCvcYVnRM8SAs"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "3a7f17f6-2c3a-42eb-bef1-9033b81711ea",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "e085c9ab-8654-48c5-82cc-0139e44de244",
+        "callExternalId": "DFAsP2iIiT7uDJrIEOEa"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-14..2026-09-15 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "14d67b07-aa83-404a-96d4-b1eb5f7377cc",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "Iq2E6Svdp43xANrqdmHb"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-14..2026-09-15 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "90a3a17e-edd8-4c77-8bf0-cb0466891166",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "I4WyQPlJg1BSXpXLvy1a"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-14..2026-09-15 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "8888df25-5ac4-4d8c-9c49-4e9f8cd6ef90",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "1ysPe1hMERZTOEsWLnQ0"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-15..2026-09-16 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "7971568c-79a8-45c1-937f-f5d83ae17d92",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "CCBqs2mxOFynwDRMYDBR"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "38a7eafc-f934-43a2-8847-a2e9e2453b5f",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "pJu0twZIjp23rK0NGcJz"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-21..2026-09-22 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "b7dd6339-9783-4d44-b16b-b6f65f474d35",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "KkiMNWdVrchPpPONO5Ec"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-16..2026-09-17 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "24849e3b-d5f4-428e-87fe-4cbb7acac2f9",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "7ee136e8-9eca-4bfb-9e90-a3a740775f37",
+        "callExternalId": "nF0JpNSSEumJN8NZ1Sjc"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-14..2026-09-15 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "e5171cb2-3011-4497-b680-d6c2ce33b2e0",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "Z6dzTh1ZFX4mG4SckUvD"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "4529aee9-1f9c-408d-b1f6-eb0c579eb0cf",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "cngCNmpA8ydhYHOoMwNK"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "2051bc6c-e4bd-4f5b-bab2-c64b47cb1023",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "7ee136e8-9eca-4bfb-9e90-a3a740775f37",
+        "callExternalId": "8mrxXQQF2DQmtnT6wmI1"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-22..2026-09-23 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "2b640555-5588-46ed-b8af-34cb2f3cfb99",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "1jQd6y0QkNNaYSGoUEdr"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-15..2026-09-16 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "7f1ad37c-cfaa-4fe8-8d76-8c38f31ad4f5",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "nKpjY9l5jctn1kyEMJ5V"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-08-30..2026-08-31 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "59ec1bee-d2f0-4322-b734-25a5f2e686fc",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "arwdMGWnxwqE6nohrUgi"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-02..2026-09-03 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "cc1b9adf-6349-4e08-b396-9e45b7450357",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "7ee136e8-9eca-4bfb-9e90-a3a740775f37",
+        "callExternalId": "5JmkMUe9TD6fPrkgi6NS"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "239ce303-c870-4976-bd37-b7706918f696",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "dFVvBEf3dee3vxGMtfRh"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-23..2026-09-24 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "09d63181-4d1a-4d24-9cbe-c31b0f1de1f1",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "callExternalId": "V7eySntSpHOtqqUnpgnt"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "3feca47e-191e-4d9d-8d2e-211f18687455",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "cV98OSRyoX5xnrDsN8Yr"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-21..2026-09-22 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "dc240ab4-53e8-4441-a107-de1c25f51715",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "jt1hL5dZXSgI06h7xspH"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "d6834a47-47c4-4d21-a96c-4b911ad2df36",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "onFy9beMjl2CHzMMvJze"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-23..2026-09-24 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "d2b2b684-c510-47a5-aa75-5bb27de86ab4",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "zSolGrBdd0PgdcBBwc3x"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-14..2026-09-15 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "33204eea-b328-46cf-beb5-9fe2fa76bb4a",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "callExternalId": "UelN8WQYI2mdXEmV0ZOI"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-22..2026-09-23 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "813387f8-7719-4fe4-bf3f-98ac42c89fca",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "Tr7KRiPBTgN1FvEEnPlO"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "646bf0bc-390d-41d2-849d-612dacdc4df2",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "h7FeohMdauS1UPL9aRH6"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "83be4ec9-7383-4451-9d8e-44c785084478",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "ZKuHnUvKl5w1LRX2U6D0"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "207f2bef-330e-40cb-8785-bca18a387842",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "eSPvBmBlsDYVCOA3phOS"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-21..2026-09-22 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "a8d22a47-9143-4e97-9a2e-8e2a2c8c4dda",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "nIe473UhvzqdIMZ2PQoO"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "e7bdd014-a5b0-4134-8d3b-78e32eafca66",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "callExternalId": "Uwz1Ui0tHJcNO1TuubK7"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-08..2026-09-09 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    },
+    {
+      "appointmentId": "48f8a2a6-c419-4613-8682-5d57aebe1fd2",
+      "engine": {
+        "status": "attributed",
+        "method": "contact_id",
+        "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "callExternalId": "qYvehDqyUlutvdT6ktfd"
+      },
+      "stored": {
+        "method": "none",
+        "rep_id": null,
+        "note": "date_granularity_window call-dates 2026-09-22..2026-09-23 ET (anchor=created_at; Acuity dateCreated is date-only)"
+      }
+    }
+  ]
+}

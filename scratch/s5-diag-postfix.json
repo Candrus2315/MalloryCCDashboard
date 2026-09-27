@@ -1,0 +1,628 @@
+{
+  "runs": [
+    {
+      "id": "0c6ad729-96db-49bf-8b3d-c3d2a97eb7a4",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:48:45.647Z",
+      "finished_at": "2026-09-27T02:48:55.667Z"
+    },
+    {
+      "id": "59af3ce6-2620-4224-86c3-44bef675504f",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:48:36.036Z",
+      "finished_at": "2026-09-27T02:48:45.231Z"
+    },
+    {
+      "id": "df95f49d-db8b-4d34-9187-55d505981f1c",
+      "provider": "highlevel",
+      "status": "running",
+      "records_upserted": 0,
+      "error": null,
+      "started_at": "2026-09-27T02:45:35.517Z",
+      "finished_at": null
+    },
+    {
+      "id": "4c58d6ee-50a0-4dde-868c-37b795352677",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:42:44.879Z",
+      "finished_at": "2026-09-27T02:42:55.134Z"
+    },
+    {
+      "id": "d7636596-1e5f-47ee-bc6a-5c61ac57cf70",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:42:33.849Z",
+      "finished_at": "2026-09-27T02:42:44.449Z"
+    },
+    {
+      "id": "d628a1ee-2172-464a-8fd1-b10fdf04f188",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:36:42.201Z",
+      "finished_at": "2026-09-27T02:36:52.199Z"
+    },
+    {
+      "id": "c0bbb1fb-a19b-47be-8139-e04cefadb0d6",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:36:31.788Z",
+      "finished_at": "2026-09-27T02:36:41.763Z"
+    },
+    {
+      "id": "872b7ae3-8812-44ab-9369-3c0d3764bc96",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:25:36.582Z",
+      "finished_at": "2026-09-27T02:25:46.266Z"
+    },
+    {
+      "id": "dbe12678-ddd5-4292-9772-30fb575d7f66",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:25:26.625Z",
+      "finished_at": "2026-09-27T02:25:36.153Z"
+    },
+    {
+      "id": "9b63b578-6d4e-4cf6-839e-118b14cbfe45",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:19:34.722Z",
+      "finished_at": "2026-09-27T02:19:44.802Z"
+    },
+    {
+      "id": "467811cd-6384-42ac-8049-5e6240dcedc6",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:19:24.508Z",
+      "finished_at": "2026-09-27T02:19:34.285Z"
+    },
+    {
+      "id": "e698babb-14e0-41d6-920e-319e2bd14395",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:13:31.753Z",
+      "finished_at": "2026-09-27T02:13:41.196Z"
+    },
+    {
+      "id": "de97e721-2c62-4bef-be34-73c502db01d8",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:13:22.494Z",
+      "finished_at": "2026-09-27T02:13:31.352Z"
+    },
+    {
+      "id": "e1b7cc73-a593-494c-b173-01eefed5901b",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:07:29.588Z",
+      "finished_at": "2026-09-27T02:07:39.257Z"
+    },
+    {
+      "id": "106ce241-ff12-48a3-8288-7a821e80ec41",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:07:20.457Z",
+      "finished_at": "2026-09-27T02:07:29.190Z"
+    }
+  ],
+  "attrStats": [
+    {
+      "method": "none",
+      "n": 75,
+      "first_write": "2026-09-27T02:54:53.006Z",
+      "last_write": "2026-09-27T02:55:01.045Z"
+    },
+    {
+      "method": "contact_id",
+      "n": 49,
+      "first_write": "2026-09-27T02:54:53.120Z",
+      "last_write": "2026-09-27T02:55:01.112Z"
+    }
+  ],
+  "noteStats": [
+    {
+      "reason_head": "no-qualifying-call",
+      "n": 71
+    },
+    {
+      "reason_head": "ambiguous — email resolves a different contact than the stored contact id",
+      "n": 4
+    }
+  ],
+  "recentNoneRows": [
+    {
+      "updated_at": "2026-09-27T02:55:01.045Z",
+      "acuity_appointment_id": "1769693686",
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-09-10..2026-09-11 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "updated_at": "2026-09-27T02:55:00.981Z",
+      "acuity_appointment_id": "1738902278",
+      "note": "ambiguous — email resolves a different contact than the stored contact id; date_granularity_window call-dates 2026-07-15..2026-07-16 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "updated_at": "2026-09-27T02:55:00.924Z",
+      "acuity_appointment_id": "1770244367",
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-09-11..2026-09-12 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "updated_at": "2026-09-27T02:55:00.867Z",
+      "acuity_appointment_id": "1771219389",
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    }
+  ],
+  "attributedRows": [
+    {
+      "acuity_appointment_id": "1771882414",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.024Z",
+      "external_call_id": "s12BjmKSVcdRDjqxjPn5",
+      "duration_seconds": 198,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1775196217",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:54.907Z",
+      "external_call_id": "Uy4BSAlmHH5w5APJIFWd",
+      "duration_seconds": 421,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1777577166",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:55.546Z",
+      "external_call_id": "WtCPvVSzi8GJ8EZUpPyt",
+      "duration_seconds": 509,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1776931796",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.587Z",
+      "external_call_id": "dFVvBEf3dee3vxGMtfRh",
+      "duration_seconds": 464,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771103360",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:55.280Z",
+      "external_call_id": "Fx7JspqfmsZFQaudPZOI",
+      "duration_seconds": 335,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1775101731",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:56.051Z",
+      "external_call_id": "BYISt7DcLYDW0y16310e",
+      "duration_seconds": 554,
+      "rep_name": "Laura Rivera"
+    },
+    {
+      "acuity_appointment_id": "1775124772",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:57.708Z",
+      "external_call_id": "fh34Bx7E8EW0qCBDGkUE",
+      "duration_seconds": 359,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1776418304",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:54.964Z",
+      "external_call_id": "p6BFJgTfOarNqRBfvGsV",
+      "duration_seconds": 244,
+      "rep_name": "Laura Rivera"
+    },
+    {
+      "acuity_appointment_id": "1773189660",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:55.806Z",
+      "external_call_id": "umjlbTMkkcB3dNhVk4v9",
+      "duration_seconds": 417,
+      "rep_name": "Carmine Morgano"
+    },
+    {
+      "acuity_appointment_id": "1777467225",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:53.244Z",
+      "external_call_id": "8uqKko4RQZAmTxB4ey1c",
+      "duration_seconds": 432,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771066243",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.138Z",
+      "external_call_id": "V7eySntSpHOtqqUnpgnt",
+      "duration_seconds": 1046,
+      "rep_name": "Carmine Morgano"
+    },
+    {
+      "acuity_appointment_id": "1771108728",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.271Z",
+      "external_call_id": "Z6dzTh1ZFX4mG4SckUvD",
+      "duration_seconds": 352,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771693024",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.398Z",
+      "external_call_id": "nF0JpNSSEumJN8NZ1Sjc",
+      "duration_seconds": 764,
+      "rep_name": "Jennifer Stitt"
+    },
+    {
+      "acuity_appointment_id": "1774973581",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.973Z",
+      "external_call_id": "5JmkMUe9TD6fPrkgi6NS",
+      "duration_seconds": 545,
+      "rep_name": "Jennifer Stitt"
+    },
+    {
+      "acuity_appointment_id": "1775008274",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:00.729Z",
+      "external_call_id": "ZKuHnUvKl5w1LRX2U6D0",
+      "duration_seconds": 351,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1772378563",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:57.570Z",
+      "external_call_id": "1ysPe1hMERZTOEsWLnQ0",
+      "duration_seconds": 325,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1768474754",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:01.112Z",
+      "external_call_id": "Uwz1Ui0tHJcNO1TuubK7",
+      "duration_seconds": 900,
+      "rep_name": "Carmine Morgano"
+    },
+    {
+      "acuity_appointment_id": "1771057181",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:55.736Z",
+      "external_call_id": "CgBpB82WXbupHOEepyxe",
+      "duration_seconds": 367,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1776244322",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.519Z",
+      "external_call_id": "8mrxXQQF2DQmtnT6wmI1",
+      "duration_seconds": 309,
+      "rep_name": "Jennifer Stitt"
+    },
+    {
+      "acuity_appointment_id": "1777479225",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:53.120Z",
+      "external_call_id": "PC7MtZNWLA8Lnr0ijKAb",
+      "duration_seconds": 660,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771883008",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:56.810Z",
+      "external_call_id": "DFAsP2iIiT7uDJrIEOEa",
+      "duration_seconds": 424,
+      "rep_name": "Laura Rivera"
+    },
+    {
+      "acuity_appointment_id": "1771584868",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:57.322Z",
+      "external_call_id": "I4WyQPlJg1BSXpXLvy1a",
+      "duration_seconds": 342,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1775076537",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:59.467Z",
+      "external_call_id": "jt1hL5dZXSgI06h7xspH",
+      "duration_seconds": 566,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1775616236",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:59.535Z",
+      "external_call_id": "cV98OSRyoX5xnrDsN8Yr",
+      "duration_seconds": 415,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1776163675",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:00.608Z",
+      "external_call_id": "UelN8WQYI2mdXEmV0ZOI",
+      "duration_seconds": 477,
+      "rep_name": "Carmine Morgano"
+    },
+    {
+      "acuity_appointment_id": "1775498522",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:56.615Z",
+      "external_call_id": "pJu0twZIjp23rK0NGcJz",
+      "duration_seconds": 308,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1770981240",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:54.647Z",
+      "external_call_id": "1uusas79p2fBvaUJ6ytN",
+      "duration_seconds": 577,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1772941765",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:56.235Z",
+      "external_call_id": "KkiMNWdVrchPpPONO5Ec",
+      "duration_seconds": 332,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1763515374",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.771Z",
+      "external_call_id": "nKpjY9l5jctn1kyEMJ5V",
+      "duration_seconds": 196,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771559528",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:00.099Z",
+      "external_call_id": "kJ75A0NsqOjmlUb4DOsC",
+      "duration_seconds": 202,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1772430560",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:54.078Z",
+      "external_call_id": "r1IEQ4ijSgMEWXSx1zXF",
+      "duration_seconds": 378,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1774840047",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:54.274Z",
+      "external_call_id": "dvKRLFZmTi8pWGBeq0Ei",
+      "duration_seconds": 318,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771000411",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:56.683Z",
+      "external_call_id": "Q9OHWo51dIcgMnqJoaVV",
+      "duration_seconds": 294,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1775502642",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:00.236Z",
+      "external_call_id": "eSPvBmBlsDYVCOA3phOS",
+      "duration_seconds": 382,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1775061368",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:58.341Z",
+      "external_call_id": "cngCNmpA8ydhYHOoMwNK",
+      "duration_seconds": 345,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1774918190",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:59.662Z",
+      "external_call_id": "nIe473UhvzqdIMZ2PQoO",
+      "duration_seconds": 136,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771573775",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:57.254Z",
+      "external_call_id": "Iq2E6Svdp43xANrqdmHb",
+      "duration_seconds": 417,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1765565448",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:59.087Z",
+      "external_call_id": "arwdMGWnxwqE6nohrUgi",
+      "duration_seconds": 344,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1772084917",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:53.381Z",
+      "external_call_id": "hwM7Z9HVSYu9nJ5AmlT9",
+      "duration_seconds": 362,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1772478363",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:59.346Z",
+      "external_call_id": "1jQd6y0QkNNaYSGoUEdr",
+      "duration_seconds": 541,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1776882580",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:59.851Z",
+      "external_call_id": "onFy9beMjl2CHzMMvJze",
+      "duration_seconds": 512,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1774982128",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:59.978Z",
+      "external_call_id": "h7FeohMdauS1UPL9aRH6",
+      "duration_seconds": 475,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771626431",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:00.293Z",
+      "external_call_id": "zSolGrBdd0PgdcBBwc3x",
+      "duration_seconds": 481,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771034002",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:00.797Z",
+      "external_call_id": "Tr7KRiPBTgN1FvEEnPlO",
+      "duration_seconds": 369,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1776125766",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:55:00.552Z",
+      "external_call_id": "qYvehDqyUlutvdT6ktfd",
+      "duration_seconds": 448,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1769040029",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:53.830Z",
+      "external_call_id": "769GTL6ofsxl4iBdFd1s",
+      "duration_seconds": 166,
+      "rep_name": "Jennifer Stitt"
+    },
+    {
+      "acuity_appointment_id": "1774976054",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:57.638Z",
+      "external_call_id": "CCBqs2mxOFynwDRMYDBR",
+      "duration_seconds": 400,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1769375661",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:54.217Z",
+      "external_call_id": "qx3Aw8VGe6F22XU4YyFG",
+      "duration_seconds": 206,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1775176354",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:54:57.765Z",
+      "external_call_id": "BQMBi6YDCvcYVnRM8SAs",
+      "duration_seconds": 398,
+      "rep_name": "Allison Wittner"
+    }
+  ]
+}

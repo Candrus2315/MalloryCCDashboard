@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { StatusChip } from "~/components/StatusChip";
 import { WarningList } from "~/components/warnings";
 import {
+  NO_REP_REASON_LABELS,
   PASSPHRASE_WARNING_LEAD,
   PASSPHRASE_WARNING_REST,
   QUEUE_STATE_LABELS,
@@ -14,6 +15,7 @@ import {
   connectionStatusView,
   passphraseStatus,
   providerLabel,
+  queueReasonBreakdown,
   queueRowState,
   sectionMeta,
   sectionNumber,
@@ -228,6 +230,16 @@ function SettingsPage() {
             <p className="text-[12px] text-(--text-muted)">
               {formatInt(data.unattributed.length)} booking{data.unattributed.length === 1 ? "" : "s"} need a manual decision — Ambiguous stays Ambiguous until assigned by hand.
             </p>
+            {/* S4b: grouped count summary — one bucket per honest no-rep
+                category (booking_attributions.reason_code), Ambiguous shown as
+                its own identity-conflict group, never folded in. */}
+            {data.unattributed.length > 0 && (
+              <p className="kpi-label" data-testid="queue-reason-breakdown">
+                {queueReasonBreakdown(data.unattributed)
+                  .map((b) => `${b.label}: ${formatInt(b.count)}`)
+                  .join(" · ")}
+              </p>
+            )}
             {data.unattributed.length === 0 ? (
               <p className="text-[13px] text-(--text-muted)">Every active booking is attributed.</p>
             ) : (
@@ -1198,7 +1210,7 @@ const UNATTRIBUTED_REASON_LABELS: Record<string, string> = {
 };
 
 function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
-  row: { appointment_id: string; client_name: string | null; client_phone: string | null; client_email: string | null; appointment_type: string; calendar_name: string | null; appointment_datetime: string; created_at: string; reason: string | null; suggested_rep_id: string | null; candidate_calls: { call_id: string; rep_id: string | null; started_at: string; duration_seconds: number }[] };
+  row: { appointment_id: string; client_name: string | null; client_phone: string | null; client_email: string | null; appointment_type: string; calendar_name: string | null; appointment_datetime: string; created_at: string; reason: string | null; reason_code: string | null; suggested_rep_id: string | null; candidate_calls: { call_id: string; rep_id: string | null; started_at: string; duration_seconds: number }[] };
   users: { id: string; name: string }[];
   busy: boolean;
   onAssign: (appointmentId: string, repId: string, callId?: string | null) => void;
@@ -1206,6 +1218,11 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
 }) {
   const [repId, setRepId] = useState(row.suggested_rep_id ?? row.candidate_calls[0]?.rep_id ?? "");
   const [callId, setCallId] = useState(row.candidate_calls[0]?.call_id ?? "");
+  // S4b: the refined no-rep category (reason_code) is the primary label — the
+  // legacy coarse reason is the fallback for rows predating the classification.
+  const reasonLabel = row.reason
+    ? NO_REP_REASON_LABELS[row.reason_code ?? ""] ?? UNATTRIBUTED_REASON_LABELS[row.reason] ?? row.reason
+    : "—";
   return (
     <tr>
       <td className="font-medium text-(--text-primary)">
@@ -1223,8 +1240,8 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
       </td>
       <td>
         <StatusChip kind={queueRowState(row.reason) === "ambiguous" ? "risk" : "neutral"} label={QUEUE_STATE_LABELS[queueRowState(row.reason)]} />
-        <span className="mt-1 block text-[12px] text-(--chip-neutral-fg)" title={row.reason ?? ""}>
-          {row.reason ? (UNATTRIBUTED_REASON_LABELS[row.reason] ?? row.reason) : "—"}
+        <span className="mt-1 block text-[12px] text-(--chip-neutral-fg)" title={row.reason_code ?? row.reason ?? ""}>
+          {reasonLabel}
         </span>
       </td>
       <td>{users.find((u) => u.id === row.suggested_rep_id)?.name ?? "—"}</td>

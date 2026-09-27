@@ -1,0 +1,584 @@
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"users\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"opportunities\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls_started_at_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appointments\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appt_created_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appt_datetime_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"booking_attributions\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"leads\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"leads_work_date_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"rep_goals\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"team_goals\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"availability_rules\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"blocked_times\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"blocked_times_range_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"daily_priorities\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"integration_connections\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"manual_overrides\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_runs\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_runs_provider_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"app_settings\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"lead_count_adjustments\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_watermarks\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_checkpoints\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"first_name\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"last_name\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"phone_raw\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"phone_normalized\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"email_raw\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"email_normalized\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"source_created_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"source_updated_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"last_synced_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts_phone_normalized_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts_email_normalized_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"call_start_date\" of relation \"users\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"provider_rep_external_id\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"conversation_id\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls_provider_rep_ext_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"contact_resolution_method\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"contact_resolved_at\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"note\" of relation \"booking_attributions\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_conversations\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hconv_lmd\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hconv_unvisited\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_progress\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_calls\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hcalls_user_day\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_runs\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  "baseline": {
+    "attributed": 49,
+    "ambiguous": 4,
+    "unattributed": 71,
+    "total": 124
+  },
+  "notAttributedPopulation": {
+    "count": 75,
+    "note": "124 - 49 = 75 (4 ambiguous + 71 no-qualifying-call). 79 would double-count the 4 ambiguous: 49+75=124; 49+79=128≠124."
+  },
+  "scenarios": {
+    "s1_c1_within_window": {
+      "repAttributed": 80,
+      "ambiguous": 4,
+      "unattributed": 44,
+      "sum": 128
+    },
+    "s2_c1_plus_c2_alltime": {
+      "repAttributed": 89,
+      "ambiguous": 4,
+      "unattributed": 35,
+      "sum": 128
+    },
+    "s1_newly": 31,
+    "s2_newly": 40
+  },
+  "decisionMatrixNotAttributed": {
+    "c1-single-rep-in-window": 31,
+    "c2-single-rep-alltime": 9,
+    "ambiguous-multi-rep": 4,
+    "none-no-workflow-evidence": 35,
+    "sum-not-attributed": 79
+  },
+  "exclusions": {
+    "engineNoQualifyingCall": 71,
+    "newlyReachableOnlyWithoutThreshold": 40,
+    "ambiguousMultiRep": 0,
+    "ambiguousIdentityAlreadyInQueue": 4,
+    "noWorkflowEvidenceAtAll": 35,
+    "fuzzyIdentitySkipped": 0
+  },
+  "chains": [
+    {
+      "apptId": "15fc2c49-4aa1-437a-9019-ffbc343bdd97",
+      "method": "c1-window-most-recent",
+      "rep": "Allison Wittner",
+      "chain": {
+        "id": "VFRcnuopLWWBryhNSn03",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:12:50.491Z",
+        "dur": 30
+      },
+      "identityTiers": [
+        "contact_id"
+      ],
+      "contactExt": "wvVWF4U5FxqyQr6NVe8W",
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "dd05d9c2-39c8-4c87-becf-35097a0bc61a",
+      "method": "c2-alltime-most-recent",
+      "rep": "Allison Wittner",
+      "chain": {
+        "id": "pO6BEbZgu4av5L8LugEg",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-18T15:55:12.065Z",
+        "dur": 0
+      },
+      "identityTiers": [
+        "contact_id"
+      ],
+      "contactExt": "vEBZ0PSPQj6MZCGhvZXp",
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "f0f482e1-9712-439a-a6ad-df5942a9f3a3",
+      "method": "c2-alltime-most-recent",
+      "rep": "Allison Wittner",
+      "chain": {
+        "id": "LUYM2jmS6ZM4Y8MOXpbA",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-26T19:51:18.625Z",
+        "dur": 0
+      },
+      "identityTiers": [
+        "contact_id"
+      ],
+      "contactExt": "HbwBP0Zq0CZaD6Th04lp",
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "a052438a-82c2-42f0-8721-94493c9d05dd",
+      "method": "c1-window-most-recent",
+      "rep": "Allison Wittner",
+      "chain": {
+        "id": "8QvB3nqzUPi9sBVkukuD",
+        "src": "calls",
+        "rep": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+        "startedAt": "2026-09-22T17:11:07.687Z",
+        "dur": 28
+      },
+      "identityTiers": [
+        "contact_id"
+      ],
+      "contactExt": "oF5l4x2K17yPyfFWjycr",
+      "engineReason": "no-qualifying-call"
+    },
+    {
+      "apptId": "e61a64bf-4e7a-4882-b164-6be22d4316e7",
+      "method": "c1-window-most-recent",
+      "rep": "Carmine Morgano",
+      "chain": {
+        "id": "Lz577EcTZtqdwGEYJrqn",
+        "src": "calls",
+        "rep": "da05649f-12d3-49bf-99a1-db82d6d227e9",
+        "startedAt": "2026-09-18T14:13:14.351Z",
+        "dur": 27
+      },
+      "identityTiers": [
+        "contact_id"
+      ],
+      "contactExt": "eeJS8UQTDGhAZa8vMaqu",
+      "engineReason": "no-qualifying-call"
+    }
+  ],
+  "over2minSubsetRecheck": {
+    "holds": true,
+    "violations": []
+  }
+}

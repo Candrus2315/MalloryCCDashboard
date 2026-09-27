@@ -1,0 +1,983 @@
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"users\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"opportunities\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls_started_at_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appointments\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appt_created_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appt_datetime_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"booking_attributions\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"leads\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"leads_work_date_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"rep_goals\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"team_goals\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"availability_rules\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"blocked_times\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"blocked_times_range_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"daily_priorities\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"integration_connections\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"manual_overrides\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_runs\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_runs_provider_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"app_settings\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"lead_count_adjustments\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_watermarks\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_checkpoints\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"first_name\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"last_name\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"phone_raw\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"phone_normalized\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"email_raw\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"email_normalized\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"source_created_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"source_updated_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"last_synced_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts_phone_normalized_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts_email_normalized_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"call_start_date\" of relation \"users\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"provider_rep_external_id\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"conversation_id\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls_provider_rep_ext_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"contact_resolution_method\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"contact_resolved_at\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"note\" of relation \"booking_attributions\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_conversations\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hconv_lmd\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hconv_unvisited\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_progress\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_calls\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hcalls_user_day\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_runs\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  "baseline": {
+    "inScopeNonCancelled": 124,
+    "attributed": 3,
+    "ambiguousQueue": 4,
+    "plainUnattributed": 117,
+    "thresholdSeconds": 120,
+    "activeRoster": [
+      "Allison Wittner (highlevel:Pf0rllLIswGz28ljL5pZ)",
+      "Carmine Morgano (highlevel:Yeng4pAyV7QXR4WFXdCB)",
+      "Dan McKillop (highlevel:Op4wFV0kXNWTTt2kTngJ)",
+      "Jennifer Stitt (highlevel:eklAXY9RLkxPJ2QPCTAd)",
+      "Laura Rivera (highlevel:Q2fqPQvWalbJXhzhlMOm)"
+    ],
+    "repMappings": [],
+    "contactsAssignedRepPopulated": 15928,
+    "harvestConversationsTotal": 20420,
+    "harvestCallsTotal": 4496,
+    "callsTotal": 4594
+  },
+  "decisionMatrixByFirstMethod": {
+    "a-calls": 74,
+    "b-conversation": 36,
+    "c1-window-most-recent": 1,
+    "none": 10
+  },
+  "scenarios": {
+    "s1_c1_only": {
+      "repAttributed": 114,
+      "ambiguous": 0,
+      "unattributed": 10,
+      "sum": 124
+    },
+    "s2_c1_plus_c2": {
+      "repAttributed": 114,
+      "ambiguous": 0,
+      "unattributed": 10,
+      "sum": 124
+    },
+    "s1_newlyAttributed": 111,
+    "s2_newlyAttributed": 111
+  },
+  "perMethodCounts": {
+    "a-calls": 74,
+    "a-harvest": 0,
+    "b-conversation": 36,
+    "c1-window-most-recent": 1,
+    "c2-alltime-most-recent": 0,
+    "e-assignment": 0
+  },
+  "noEvidenceUnattributed": [
+    {
+      "acuityId": "1738902278",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "3b649d31-5f28-494c-a6b1-a615b43a0f1f",
+          "bd2684a2-bfdd-479d-9e85-df205fbf7b87"
+        ],
+        "multi": true
+      },
+      "anchor": "2026-07-16",
+      "window": {
+        "from": "2026-07-15",
+        "to": "2026-07-16"
+      },
+      "note": "ambiguous — email resolves a different contact than the stor"
+    },
+    {
+      "acuityId": "1762191897",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "8c0da923-a6ca-4478-90b4-401c1de3dde6"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-08-28",
+      "window": {
+        "from": "2026-08-27",
+        "to": "2026-08-28"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    },
+    {
+      "acuityId": "1772913547",
+      "identity": {
+        "tiers": [
+          "contact_id"
+        ],
+        "candidateContacts": [
+          "3b649d31-5f28-494c-a6b1-a615b43a0f1f"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-09-17",
+      "window": {
+        "from": "2026-09-16",
+        "to": "2026-09-17"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    },
+    {
+      "acuityId": "1750360009",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "7137aa4a-041b-4af0-b937-277de0fce754"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-08-06",
+      "window": {
+        "from": "2026-08-05",
+        "to": "2026-08-06"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    },
+    {
+      "acuityId": "1750873191",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "12e2f960-0c87-4675-8f6a-949e845a4b1c"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-08-07",
+      "window": {
+        "from": "2026-08-06",
+        "to": "2026-08-07"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    },
+    {
+      "acuityId": "1578171342",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "3b7cf14d-e56d-474c-b503-41e5b0b0361c"
+        ],
+        "multi": false
+      },
+      "anchor": "2025-11-21",
+      "window": {
+        "from": "2025-11-20",
+        "to": "2025-11-21"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2025-"
+    },
+    {
+      "acuityId": "1733669160",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "6644b37d-8aaa-43cc-9c51-f8375b7836c0"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-07-07",
+      "window": {
+        "from": "2026-07-06",
+        "to": "2026-07-07"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    },
+    {
+      "acuityId": "1740474538",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "7769d134-4829-4dfe-81f4-42a97d8ded58"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-07-20",
+      "window": {
+        "from": "2026-07-19",
+        "to": "2026-07-20"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    },
+    {
+      "acuityId": "1765063767",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "6eed5720-3d2e-4914-97c5-63eb35a1e543"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-09-02",
+      "window": {
+        "from": "2026-09-01",
+        "to": "2026-09-02"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    },
+    {
+      "acuityId": "1770162653",
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "a164a0c9-89de-4ab3-9dc2-b610c72a3d04"
+        ],
+        "multi": false
+      },
+      "anchor": "2026-09-12",
+      "window": {
+        "from": "2026-09-11",
+        "to": "2026-09-12"
+      },
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-"
+    }
+  ],
+  "ambiguousRemainingDetail": [],
+  "fourCurrentlyAmbiguousBecome": [
+    {
+      "acuityId": "1775605934",
+      "note": "ambiguous — email resolves a different contact than the stored contact id; date_granularit",
+      "firstMethod": "a-calls",
+      "windowCallReps": [
+        "Allison Wittner(calls)"
+      ],
+      "convReps": [],
+      "c1": null,
+      "c2": null,
+      "assignedReps": [],
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "3b649d31-5f28-494c-a6b1-a615b43a0f1f",
+          "59d20412-ce39-442e-9bb4-6e5c5d1c4af7"
+        ],
+        "multi": true
+      }
+    },
+    {
+      "acuityId": "1759489859",
+      "note": "ambiguous — email resolves a different contact than the stored contact id; date_granularit",
+      "firstMethod": "b-conversation",
+      "windowCallReps": [],
+      "convReps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": null,
+      "assignedReps": [],
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "65245f55-e1ad-49f7-bc43-9a1f17cb3ff2",
+          "6093ce59-d420-4d12-b08b-f590108b3c55"
+        ],
+        "multi": true
+      }
+    },
+    {
+      "acuityId": "1738902278",
+      "note": "ambiguous — email resolves a different contact than the stored contact id; date_granularit",
+      "firstMethod": null,
+      "windowCallReps": [],
+      "convReps": [],
+      "c1": null,
+      "c2": null,
+      "assignedReps": [],
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "3b649d31-5f28-494c-a6b1-a615b43a0f1f",
+          "bd2684a2-bfdd-479d-9e85-df205fbf7b87"
+        ],
+        "multi": true
+      }
+    },
+    {
+      "acuityId": "1772848756",
+      "note": "ambiguous — email resolves a different contact than the stored contact id; date_granularit",
+      "firstMethod": "b-conversation",
+      "windowCallReps": [],
+      "convReps": [
+        "Allison Wittner"
+      ],
+      "c1": null,
+      "c2": null,
+      "assignedReps": [],
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "3b649d31-5f28-494c-a6b1-a615b43a0f1f",
+          "f6bd4aaa-9c6e-4dd5-bdaa-19e8626604f2"
+        ],
+        "multi": true
+      }
+    }
+  ],
+  "over2minRecheck": {
+    "attributedRowsChecked": 3,
+    "strictSubsetOfRepAttributedHolds": true,
+    "violations": [],
+    "bookingsWithOver120sWindowCallButNotRepAttributable": []
+  },
+  "acuityRawPayload": {
+    "distinctKeys": {},
+    "calendarDistribution": {
+      "MALLORY PORTRAITS | id=1335091": 124
+    }
+  },
+  "chainSample": [
+    {
+      "acuityId": "1775605934",
+      "method": "a-calls",
+      "window": {
+        "from": "2026-09-21",
+        "to": "2026-09-22"
+      },
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "3b649d31-5f28-494c-a6b1-a615b43a0f1f",
+          "59d20412-ce39-442e-9bb4-6e5c5d1c4af7"
+        ],
+        "multi": true
+      },
+      "chains": [
+        {
+          "method": "a-calls",
+          "evidenceId": "HXsJLg365fo4bxJt3WQU",
+          "evidenceSrc": "calls",
+          "conversationId": "W70iitZUpPKJQsIsk9t4",
+          "contactId": "59d20412-ce39-442e-9bb4-6e5c5d1c4af7",
+          "contactExt": "lKVF1Jrw82xCpNNYGsma",
+          "phone": "7742324067",
+          "email": "blchambers5089@westfield.ma.edu",
+          "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+          "repName": "Allison Wittner",
+          "startedAt": "2026-09-22T17:03:50.202Z",
+          "duration": 0
+        }
+      ]
+    },
+    {
+      "acuityId": "1775036315",
+      "method": "a-calls",
+      "window": {
+        "from": "2026-09-20",
+        "to": "2026-09-21"
+      },
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "01158dc4-9913-47a6-a8c8-5a8cf524ef06"
+        ],
+        "multi": false
+      },
+      "chains": [
+        {
+          "method": "a-calls",
+          "evidenceId": "sMx4O4oTI3b4uNAuNirI",
+          "evidenceSrc": "calls",
+          "conversationId": "oN9nd2nv4tH9lIgbPKeX",
+          "contactId": "01158dc4-9913-47a6-a8c8-5a8cf524ef06",
+          "contactExt": "boe0oR15JokFttHXFHi9",
+          "phone": "9784905269",
+          "email": "brittniobie53@gmail.com",
+          "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+          "repName": "Allison Wittner",
+          "startedAt": "2026-09-21T15:01:29.371Z",
+          "duration": 38
+        }
+      ]
+    },
+    {
+      "acuityId": "1759489859",
+      "method": "b-conversation",
+      "window": {
+        "from": "2026-08-23",
+        "to": "2026-08-24"
+      },
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "65245f55-e1ad-49f7-bc43-9a1f17cb3ff2",
+          "6093ce59-d420-4d12-b08b-f590108b3c55"
+        ],
+        "multi": true
+      },
+      "chains": [
+        {
+          "method": "b-conversation",
+          "evidenceId": "6OWn8tZLZr2ViIJLL4Wa",
+          "evidenceSrc": "harvest_conversations",
+          "conversationId": "6OWn8tZLZr2ViIJLL4Wa",
+          "contactId": "6093ce59-d420-4d12-b08b-f590108b3c55",
+          "contactExt": "PIpH01xQ6xfUKZUhyNbQ",
+          "phone": "7742480312",
+          "email": "knhadley93@gmail.com",
+          "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+          "repName": "Allison Wittner",
+          "startedAt": null,
+          "duration": null
+        }
+      ]
+    },
+    {
+      "acuityId": "1772848756",
+      "method": "b-conversation",
+      "window": {
+        "from": "2026-09-16",
+        "to": "2026-09-17"
+      },
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "email(1)"
+        ],
+        "candidateContacts": [
+          "3b649d31-5f28-494c-a6b1-a615b43a0f1f",
+          "f6bd4aaa-9c6e-4dd5-bdaa-19e8626604f2"
+        ],
+        "multi": true
+      },
+      "chains": [
+        {
+          "method": "b-conversation",
+          "evidenceId": "CLnmlBoyQuCk7Ws6si9t",
+          "evidenceSrc": "harvest_conversations",
+          "conversationId": "CLnmlBoyQuCk7Ws6si9t",
+          "contactId": "f6bd4aaa-9c6e-4dd5-bdaa-19e8626604f2",
+          "contactExt": "jaOpEJ8pp251WVa6Gd9M",
+          "phone": "2039476141",
+          "email": "john@nemrr.com",
+          "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+          "repName": "Allison Wittner",
+          "startedAt": null,
+          "duration": null
+        }
+      ]
+    },
+    {
+      "acuityId": "1775176354",
+      "method": "c1-window-most-recent",
+      "window": {
+        "from": "2026-09-20",
+        "to": "2026-09-21"
+      },
+      "identity": {
+        "tiers": [
+          "contact_id",
+          "phone(1)"
+        ],
+        "candidateContacts": [
+          "abc528f2-2ade-42f4-9576-7620e88089cb"
+        ],
+        "multi": false
+      },
+      "chains": [
+        {
+          "method": "c1",
+          "evidenceId": "BQMBi6YDCvcYVnRM8SAs",
+          "evidenceSrc": "calls",
+          "conversationId": "LJBhMpshObqOp0kMR5rT",
+          "contactId": "abc528f2-2ade-42f4-9576-7620e88089cb",
+          "contactExt": "9ssS5TiqKuKern3CRm1V",
+          "phone": "3102168176",
+          "email": null,
+          "repId": "4c7433d9-64a7-4aea-b07a-961dd7aff695",
+          "repName": "Allison Wittner",
+          "startedAt": "2026-09-21T22:05:12.920Z",
+          "duration": 398
+        }
+      ]
+    }
+  ]
+}

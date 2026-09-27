@@ -1,0 +1,122 @@
+{
+  "fortySix": [
+    {
+      "method": "none",
+      "has_rep": false,
+      "has_call": false,
+      "manual_override": false,
+      "n": 46
+    }
+  ],
+  "repSplit": [
+    {
+      "has_rep": false,
+      "n": 121
+    },
+    {
+      "has_rep": true,
+      "n": 3
+    }
+  ],
+  "noneRepRows": [
+    {
+      "appointment_id": "79a3e922-a294-4c1d-95b1-496e49b83fe4",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "appointment_id": "64f88805-9908-4090-a8c9-227b6f3ffa06",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "appointment_id": "505bbaa8-2d78-4291-8d01-3d763f3baa52",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "appointment_id": "eb0592db-597f-4d7f-beef-c9e1724e454e",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-24..2026-09-25 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "appointment_id": "7f04ec78-f981-4032-81e9-530f22239dcc",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "appointment_id": "239ce303-c870-4976-bd37-b7706918f696",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-23..2026-09-24 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "appointment_id": "f66ee544-632a-48b6-80ba-371515af5347",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-16..2026-09-17 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "appointment_id": "24849e3b-d5f4-428e-87fe-4cbb7acac2f9",
+      "rep_id": null,
+      "rep_name": null,
+      "call_id": null,
+      "external_call_id": null,
+      "duration_seconds": null,
+      "call_rep_id": null,
+      "provider_rep_external_id": null,
+      "note": "date_granularity_window call-dates 2026-09-14..2026-09-15 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    }
+  ],
+  "totals": [
+    {
+      "total_rows": 124,
+      "rep_set": 3,
+      "method_attributed": 3,
+      "none_with_rep": 0,
+      "ambiguous_notes": 4,
+      "noqual_notes": 71,
+      "none_repnull_other_note": 46
+    }
+  ]
+}

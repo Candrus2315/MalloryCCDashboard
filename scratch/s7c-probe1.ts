@@ -1,0 +1,13 @@
+import postgres from "postgres";
+const sql = postgres(process.env.Database_URL!, { ssl: { rejectUnauthorized: false }, max: 1 });
+const cols = await sql`select column_name, data_type from information_schema.columns where table_name='appointments' order by ordinal_position`;
+console.log("appointments cols:", cols.map((c: any) => `${c.column_name}:${c.data_type}`).join(", "));
+const r = await sql`select acuity_appointment_id, appointment_datetime, created_at, raw::text as raw, status, cancelled from appointments where created_at >= '2026-09-20' and created_at < '2026-09-27' order by created_at limit 5`;
+for (const row of r) console.log(JSON.stringify(row).slice(0, 400));
+const n = await sql`select count(*)::int as n from appointments`;
+console.log("total appointments:", n[0].n);
+const c = await sql`select column_name from information_schema.columns where table_name='appointments' and column_name in ('created_time_source','created_business_date','created_time_precision')`;
+console.log("new cols present:", c.length);
+const attr = await sql`select a.appointment_id, a.note from booking_attributions a join appointments ap on ap.id::text=a.appointment_id where ap.created_at >= '2026-09-20' and ap.created_at < '2026-09-27' and a.rep_id is not null limit 3`;
+for (const row of attr) console.log("attr:", row.appointment_id.slice(0,8), "|", (row.note ?? "").slice(0, 160));
+await sql.end();

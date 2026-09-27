@@ -146,6 +146,15 @@ export interface AttributionRow {
    * session date is never used and intra-day ordering is never assumed).
    */
   note?: string | null;
+  /**
+   * S4b refined no-rep classification (booking_attributions.reason_code) —
+   * the engine's triage category for UNATTRIBUTED rows ("no-window-interaction"
+   * | "interaction-without-roster-rep" | "no-matching-contact" |
+   * "no-contact-identity" | "bad-datetime") or "ambiguous" on ambiguous rows.
+   * NULL on attributed and manually-assigned rows. Grouped queue counts read
+   * this column; the audit note is never parsed for it.
+   */
+  reason_code?: string | null;
 }
 
 export interface LeadRow {
@@ -1289,6 +1298,16 @@ export interface UnattributedBookingRow {
    * supplied. Never guessed here; the queue renders what the engine said.
    */
   reason: string | null;
+  /**
+   * S4b refined no-rep category (booking_attributions.reason_code): the
+   * stored tick-time classification when the booking has a verdict row
+   * ("no-window-interaction" | "interaction-without-roster-rep" |
+   * "no-matching-contact" | "no-contact-identity" | "bad-datetime" |
+   * "ambiguous"), else the live engine match's noRepReason, else null. The
+   * grouped queue summary and the per-row reason label read THIS, never the
+   * freeform note.
+   */
+  reason_code: string | null;
   /** True when the stored attribution row for this appointment is a manual override. */
   manual: boolean;
 }
@@ -1314,11 +1333,12 @@ export function buildUnattributedQueue(input: {
    */
   windowHours?: number;
   /** Engine results (matchAppointmentsToCalls) — supply the per-appointment reason. */
-  matches?: { appointmentId: string; reason?: string }[];
+  matches?: { appointmentId: string; reason?: string; noRepReason?: string | null }[];
 }): UnattributedBookingRow[] {
   const attributed = new Set(input.attributions.filter((a) => a.rep_id).map((a) => a.appointment_id));
   const manualIds = new Set(input.attributions.filter((a) => a.manual_override).map((a) => a.appointment_id));
   const matchByAppt = new Map((input.matches ?? []).map((m) => [m.appointmentId, m]));
+  const storedByAppt = new Map(input.attributions.map((a) => [a.appointment_id, a]));
   const contactById = new Map(input.contacts.map((c) => [c.id, c]));
   const contactByPhone = new Map<string, (typeof input.contacts)[number]>();
   const contactByEmail = new Map<string, (typeof input.contacts)[number]>();
@@ -1372,6 +1392,13 @@ export function buildUnattributedQueue(input: {
       suggested_rep_id: contact?.assigned_rep_id ?? null,
       candidate_calls: candidates,
       reason: manualIds.has(a.id) ? "manually-assigned" : matchByAppt.get(a.id)?.reason ?? null,
+      // S4b: the STORED tick-time classification is the truth about why this
+      // booking has no rep (the queue's live engine run does not see the
+      // harvest interactions); the live match's refined reason is the
+      // fallback for bookings whose verdict row has not been written yet.
+      reason_code: manualIds.has(a.id)
+        ? null
+        : storedByAppt.get(a.id)?.reason_code ?? matchByAppt.get(a.id)?.noRepReason ?? null,
       manual: manualIds.has(a.id),
     });
   }

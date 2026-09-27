@@ -14,7 +14,11 @@
  *    time — the new slot is occupied, the old one is free.
  *  - Blocked times (manual, Acuity, recurring) NEVER appear as open; they are
  *    counted separately in blockedCount (not as booked, not as open).
- *  - Padding removes adjacent slots around each appointment (turnover rule).
+ *  - PADDING (S4b hardening, owner-caught): booked counts only slots the
+ *    appointment SESSION occupies. A slot overlapping just the turnover buffer
+ *    (padding around the session) is blockedCount — removed from open, never
+ *    inflated into booked. paddingMin = 0 reproduces the pre-S4b output
+ *    byte-for-byte.
  *  - Every instant is compared as an absolute UTC ms number; day membership is
  *    resolved with the centralized ET helpers (America/New_York, DST-safe) —
  *    never by string-slicing the ISO timestamp.
@@ -136,16 +140,23 @@ export function computeDayAvailability(input: {
   const dayStartMs = new Date(dayStart).getTime();
   const dayEndMs = new Date(dayEnd).getTime();
 
-  // busy intervals as minute-offsets within the ET day
-  const apptBusy: Array<[number, number]> = [];
+  // busy intervals as minute-offsets within the ET day. S4b PADDING HARDENING
+  // (owner-caught): booked counts slots the APPOINTMENT ITSELF occupies
+  // (apptReal — the session interval only); padding is a TURNOVER BUFFER, and
+  // a slot overlapping ONLY the buffer (not the session) is removed from open
+  // as blockedCount, never counted as booked. With paddingMin = 0 the buffer
+  // list is empty and output is byte-identical to the pre-S4b engine.
+  const apptReal: Array<[number, number]> = [];
+  const apptBuffer: Array<[number, number]> = [];
   for (const a of input.appointments) {
     if (!isBookingRow(a) || !appointmentInScope(a, input.scope)) continue;
     const start = Date.parse(a.appointment_datetime);
     const end = appointmentEndMs(a, input.durationMin);
     if (start == null || end == null || !Number.isFinite(start)) continue;
     if (end <= dayStartMs || start >= dayEndMs) continue;
+    apptReal.push([(start - dayStartMs) / 60_000, (end - dayStartMs) / 60_000]);
     const padMs = input.paddingMin * 60_000;
-    apptBusy.push([(start - padMs - dayStartMs) / 60_000, (end + padMs - dayStartMs) / 60_000]);
+    if (padMs > 0) apptBuffer.push([(start - padMs - dayStartMs) / 60_000, (end + padMs - dayStartMs) / 60_000]);
   }
   const blockBusy: Array<[number, number]> = [];
   for (const b of input.blocked) {
@@ -165,11 +176,17 @@ export function computeDayAvailability(input: {
     // total below is the sum over blocks.
     for (let t = openMin; t + input.durationMin <= closeMin; t += input.slotIntervalMin) {
       totalCapacity += 1;
-      // an appointment wins the slot (it is booked — the studio is using it);
-      // a block only removes slots NOT already counted as booked, so
+      // an appointment wins the slot when the SESSION itself overlaps it (it
+      // is booked — the studio is using it). A slot overlapping only the
+      // turnover BUFFER is removed from open as blockedCount, never booked.
+      // A block only removes slots NOT already counted as booked, so
       // booked + blockedCount + openSlotTimes.length === totalCapacity always
-      if (overlaps(t, t + input.durationMin, apptBusy)) {
+      if (overlaps(t, t + input.durationMin, apptReal)) {
         booked += 1;
+        continue;
+      }
+      if (overlaps(t, t + input.durationMin, apptBuffer)) {
+        blockedCount += 1;
         continue;
       }
       if (overlaps(t, t + input.durationMin, blockBusy)) {

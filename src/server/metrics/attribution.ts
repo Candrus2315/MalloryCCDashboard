@@ -228,6 +228,29 @@ export interface AttributionMatch {
    * guessed against a broken anchor).
    */
   reason?: string;
+  /**
+   * S4b REFINED NO-REP CLASSIFICATION — WHY no rep could be determined, as an
+   * honest category derived ONLY from signals the engine already computed.
+   * Present on UNATTRIBUTED matches only (never attributed, never ambiguous —
+   * ambiguous keeps its identity-conflict detail). One of:
+   *   - "no-window-interaction"       identity resolved to contact(s), but the
+   *     attribution window contains NO interaction of any kind for them (no
+   *     call, no harvested conversation message) — the team never touched
+   *     this client inside the window;
+   *   - "interaction-without-roster-rep"  in-window activity EXISTS (a call of
+   *     any duration and/or a harvested message touching the candidate
+   *     contacts) but none of it resolves to a VERIFIED ROSTER rep (inactive/
+   *     non-roster HL user, unmapped) — and no >threshold call with a
+   *     resolvable rep qualified. The work happened; the owner is unknown;
+   *   - "no-matching-contact"         the booking carries phone/email but no
+   *     contact record matches either (and there is no stored contact id) —
+   *     identity cannot be tied to a contact to hang evidence on;
+   *   - "no-contact-identity" / "bad-datetime" — the same cases as `reason`,
+   *     restated as the category for grouped queue counts.
+   * Persisted to booking_attributions.reason_code by the sync wiring (v3
+   * writer) — triage-groupable, without overloading the audit note.
+   */
+  noRepReason?: string;
   /** Evidence tier that produced an attribution (attributed only). */
   method?: AttributionMethod;
   /**
@@ -469,11 +492,22 @@ export function matchAppointmentsToCalls(
     else callsByContact.set(c.contact_id, [c]);
   }
   const harvestByContactExt = new Map<string, AttributionHarvestInteraction[]>();
+  // S4b: UNRESOLVED harvest rows (contact known, HL user not a verified roster
+  // rep) are kept in a parallel index — NOT evidence, but proof that
+  // in-window interaction happened whose owner the engine cannot determine
+  // (the "interaction-without-roster-rep" triage category).
+  const harvestUnresolvedByContactExt = new Map<string, AttributionHarvestInteraction[]>();
   for (const h of options.s1Interactions ?? []) {
-    if (!h.contact_external_id || !h.rep_id) continue;
-    const list = harvestByContactExt.get(h.contact_external_id);
-    if (list) list.push(h);
-    else harvestByContactExt.set(h.contact_external_id, [h]);
+    if (!h.contact_external_id) continue;
+    if (h.rep_id) {
+      const list = harvestByContactExt.get(h.contact_external_id);
+      if (list) list.push(h);
+      else harvestByContactExt.set(h.contact_external_id, [h]);
+    } else {
+      const list = harvestUnresolvedByContactExt.get(h.contact_external_id);
+      if (list) list.push(h);
+      else harvestUnresolvedByContactExt.set(h.contact_external_id, [h]);
+    }
   }
   const contactExtById = new Map(contacts.map((c) => [c.id, c.external_id ?? null]));
 
@@ -487,7 +521,12 @@ export function matchAppointmentsToCalls(
 
     // No identity at all → Unattributed queue with the honest reason.
     if (!apptContactId && !apptPhone && !apptEmail) {
-      out.push({ appointmentId: apptId, status: "unattributed", reason: "no-contact-identity" });
+      out.push({
+        appointmentId: apptId,
+        status: "unattributed",
+        reason: "no-contact-identity",
+        noRepReason: "no-contact-identity",
+      });
       continue;
     }
 
@@ -495,7 +534,12 @@ export function matchAppointmentsToCalls(
     // parseable creation/session time → honest "bad-datetime", never guessed.
     const anchor = bookingCreationDateEt(appt);
     if (!anchor) {
-      out.push({ appointmentId: apptId, status: "unattributed", reason: "bad-datetime" });
+      out.push({
+        appointmentId: apptId,
+        status: "unattributed",
+        reason: "bad-datetime",
+        noRepReason: "bad-datetime",
+      });
       continue;
     }
     const window = attributionWindowDates(anchor.date);
@@ -504,6 +548,48 @@ export function matchAppointmentsToCalls(
       to: window.to,
       marker: "date_granularity_window",
       anchoredOn: anchor.anchoredOn,
+    };
+
+    /**
+     * S4b NO-REP CLASSIFIER (triage metadata — NEVER a verdict input). Given
+     * the candidate contact ids the engine's identity tiers resolved, name the
+     * honest category for "why is there no rep". Runs only on paths that end
+     * unattributed with reason "no-qualifying-call" (the s1 layer already ran
+     * and found no verified roster-rep ownership). Reads exactly the signals
+     * the engine holds: the candidate set, the calls table index, the harvest
+     * index and the roster-eligibility machinery.
+     *
+     * Reaching here guarantees NO in-window call of any duration resolves to a
+     * roster rep (a resolvable >threshold call would have attributed in
+     * decideForContact; a resolvable interaction of any duration would have
+     * attributed in s1Verdict), so any in-window call or unresolved harvest
+     * message found here is by definition owner-less activity.
+     */
+    const noRepReasonFor = (candidates: string[]): string => {
+      if (candidates.length === 0) return "no-matching-contact";
+      const inWindow = (iso: string): boolean => {
+        const day = callDateEt(iso);
+        return day != null && day >= window.from && day <= window.to;
+      };
+      for (const cid of candidates) {
+        for (const c of callsByContact.get(cid) ?? []) {
+          if (inWindow(c.started_at)) {
+            // Defensive mirror of the guarantee above: a rep-resolving call
+            // here would mean s1Verdict should have attributed; classify by
+            // what the row actually is.
+            const resolvable = eligibleRepId(
+              { rep_id: c.rep_id, provider_rep_external_id: c.provider_rep_external_id ?? null },
+              elig,
+            );
+            if (!resolvable) return "interaction-without-roster-rep";
+          }
+        }
+        const ext = contactExtById.get(cid);
+        for (const h of (ext ? harvestUnresolvedByContactExt.get(ext) : undefined) ?? []) {
+          if (inWindow(h.started_at)) return "interaction-without-roster-rep";
+        }
+      }
+      return "no-window-interaction";
     };
 
     /**
@@ -637,7 +723,12 @@ export function matchAppointmentsToCalls(
       if (!apptPhone && !apptEmail) {
         // s1: no >threshold call, but a verified roster-rep interaction (ANY
         // duration) within the window still owns the booking.
-        out.push(s1Verdict(unionCandidates(apptContactId)) ?? match);
+        out.push(
+          s1Verdict(unionCandidates(apptContactId)) ?? {
+            ...match,
+            noRepReason: noRepReasonFor(unionCandidates(apptContactId)),
+          },
+        );
         continue;
       }
     }
@@ -732,7 +823,8 @@ export function matchAppointmentsToCalls(
           // s1: email-tier no-qual → the union of every resolved identity
           // tier's contact is the candidate set (exactly the scenario
           // machinery's cands accumulation).
-          out.push(s1Verdict(unionCandidates(apptContactId, phoneContactId, contactId)) ?? match);
+          const emailUnion = unionCandidates(apptContactId, phoneContactId, contactId);
+          out.push(s1Verdict(emailUnion) ?? { ...match, noRepReason: noRepReasonFor(emailUnion) });
           continue;
         }
         out.push(match);
@@ -741,11 +833,13 @@ export function matchAppointmentsToCalls(
     }
 
     // Identity known (or skipped as ambiguous-free) but nothing qualified.
+    const finalUnion = unionCandidates(apptContactId, phoneContactId, emailContactId);
     out.push(
-      s1Verdict(unionCandidates(apptContactId, phoneContactId, emailContactId)) ?? {
+      s1Verdict(finalUnion) ?? {
         appointmentId: apptId,
         status: "unattributed",
         reason: "no-qualifying-call",
+        noRepReason: noRepReasonFor(finalUnion),
         window: windowMarker,
       },
     );

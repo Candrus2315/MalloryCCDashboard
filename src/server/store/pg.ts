@@ -297,6 +297,12 @@ const DDL: string[] = [
   // Attribution audit/debug note: the window limitation is persisted ON the
   // row ("date_granularity_window" + the exact window dates evaluated).
   `ALTER TABLE booking_attributions ADD COLUMN IF NOT EXISTS note text`,
+  // S4b refined no-rep classification: the engine's triage category for
+  // unattributed rows ("no-window-interaction" | "interaction-without-roster-rep" |
+  // "no-matching-contact" | "no-contact-identity" | "bad-datetime") and
+  // "ambiguous" on ambiguous rows; NULL on attributed/manual rows. A structured
+  // column (not the freeform note) because the queue groups and counts by it.
+  `ALTER TABLE booking_attributions ADD COLUMN IF NOT EXISTS reason_code text`,
   // Resumable HighLevel call harvest (uncapped accuracy layer — see
   // src/server/sync/call-harvest.ts). Conversations discovered by dateAdded
   // binary partitioning; visited flags make a stopped run resume exactly.
@@ -903,12 +909,12 @@ export class PgStore implements Store {
         // appointment_id is UNIQUE — re-syncs replace attributions instead of duplicating.
         // Never overwrite a manual override automatically.
         await tx`
-        INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note)
-        VALUES (${r.appointment_id}::uuid, ${r.call_id}, ${r.rep_id}, ${r.method}, ${r.confidence}, ${r.manual_override}, ${r.note ?? null})
+        INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note, reason_code)
+        VALUES (${r.appointment_id}::uuid, ${r.call_id}, ${r.rep_id}, ${r.method}, ${r.confidence}, ${r.manual_override}, ${r.note ?? null}, ${r.reason_code ?? null})
         ON CONFLICT (appointment_id) DO UPDATE SET
           call_id = EXCLUDED.call_id, rep_id = EXCLUDED.rep_id, method = EXCLUDED.method,
           confidence = EXCLUDED.confidence, manual_override = booking_attributions.manual_override,
-          note = EXCLUDED.note, updated_at = now()
+          note = EXCLUDED.note, reason_code = EXCLUDED.reason_code, updated_at = now()
         WHERE booking_attributions.manual_override = false
       `;
       }
@@ -917,7 +923,7 @@ export class PgStore implements Store {
   }
   async getAttributions(): Promise<AttributionRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text, appointment_id::text, call_id::text, rep_id::text, method, confidence, manual_override, note FROM booking_attributions`;
+    const rows = await this.sql`SELECT id::text, appointment_id::text, call_id::text, rep_id::text, method, confidence, manual_override, note, reason_code FROM booking_attributions`;
     return rows.map((r) => ({
       id: String(r.id),
       appointment_id: String(r.appointment_id),
@@ -927,18 +933,20 @@ export class PgStore implements Store {
       confidence: Number(r.confidence),
       manual_override: Boolean(r.manual_override),
       note: r.note == null ? null : String(r.note),
+      reason_code: r.reason_code == null ? null : String(r.reason_code),
     }));
   }
   async setManualAttribution(row: AttributionRow): Promise<void> {
     await this.ensureSchema();
     // Manual assignment wins over the engine and survives re-syncs (engine
-    // upserts skip rows with manual_override = true).
+    // upserts skip rows with manual_override = true). The triage category is
+    // CLEARED: an assigned booking is no longer waiting on a manual decision.
     await this.sql`
-      INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override)
-      VALUES (${row.appointment_id}::uuid, ${row.call_id}, ${row.rep_id}, 'manual', 1, true)
+      INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, reason_code)
+      VALUES (${row.appointment_id}::uuid, ${row.call_id}, ${row.rep_id}, 'manual', 1, true, NULL)
       ON CONFLICT (appointment_id) DO UPDATE SET
         call_id = EXCLUDED.call_id, rep_id = EXCLUDED.rep_id, method = 'manual',
-        confidence = 1, manual_override = true, updated_at = now()
+        confidence = 1, manual_override = true, reason_code = NULL, updated_at = now()
     `;
   }
   async deleteAttribution(appointmentId: string): Promise<void> {

@@ -1,0 +1,480 @@
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"users\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"opportunities\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls_started_at_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appointments\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appt_created_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"appt_datetime_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"booking_attributions\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"leads\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"leads_work_date_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"rep_goals\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"team_goals\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"availability_rules\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"blocked_times\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"blocked_times_range_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"daily_priorities\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"integration_connections\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"manual_overrides\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_runs\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_runs_provider_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"app_settings\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"lead_count_adjustments\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_watermarks\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"sync_checkpoints\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"first_name\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"last_name\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"phone_raw\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"phone_normalized\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"email_raw\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"email_normalized\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"source_created_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"source_updated_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"last_synced_at\" of relation \"contacts\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts_phone_normalized_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"contacts_email_normalized_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"call_start_date\" of relation \"users\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"provider_rep_external_id\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"conversation_id\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"calls_provider_rep_ext_idx\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"contact_resolution_method\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"contact_resolved_at\" of relation \"calls\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42701",
+  message: "column \"note\" of relation \"booking_attributions\" already exists, skipping",
+  file: "tablecmds.c",
+  line: "7688",
+  routine: "check_for_column_name_collision",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_conversations\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hconv_lmd\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hconv_unvisited\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_progress\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_calls\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"idx_hcalls_user_day\" already exists, skipping",
+  file: "index.c",
+  line: "898",
+  routine: "index_create",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "42P07",
+  message: "relation \"harvest_runs\" already exists, skipping",
+  file: "parse_utilcmd.c",
+  line: "208",
+  routine: "transformCreateStmt",
+}
+{
+  "apiStatus": 200,
+  "apiMetaTotalNow": 116173,
+  "walkTimeSourceTotal": 116168,
+  "db": {
+    "rows": 116155,
+    "distinct_ext": 116155,
+    "null_ext": 0
+  },
+  "deltaNow": 18,
+  "deltaAtWalk": 13,
+  "checkpoint": {
+    "upserted": 116152,
+    "pagesDone": 1163,
+    "updatedAt": "2026-09-27T00:57:04.049Z",
+    "failedPages": [],
+    "nextPageUrl": null,
+    "sourceTotal": 116168
+  },
+  "integrity": {
+    "inScopeAppts": 124,
+    "apptContactRefs": 124,
+    "apptContactRefsMissingFromDB": 0,
+    "callContactRefs": 4552,
+    "callContactRefsMissingFromDB": 0,
+    "unresolvedCallsNoRep": 307,
+    "unresolvedWithContact": 307,
+    "unresolvedContactMissingFromDB": 0
+  }
+}

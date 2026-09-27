@@ -1,0 +1,64 @@
+{
+  "storedSplit": {
+    "total": 410,
+    "attributed": 126,
+    "ambiguous": 14,
+    "unattributed": 270
+  },
+  "enumeration": {
+    "outcome71": 71,
+    "engine46": 46,
+    "kept4": 4,
+    "distinctApptIds": 121,
+    "expectedAttributed": 76,
+    "expectedAmbiguous": 4,
+    "expectedUnattributed": 41,
+    "changed": 0,
+    "changedList": [],
+    "kept3Note": "3 pre-S5 stored rows: S6+S7 gate kept3 checks row-for-row (failures=0) + this session's rerun before/after full-table diff"
+  },
+  "byDaySep21_27": {
+    "rawStatedOffsetLocalDate": {
+      "2026-09-23": 12,
+      "2026-09-25": 9,
+      "2026-09-22": 13,
+      "2026-09-24": 14,
+      "2026-09-21": 15
+    },
+    "createdBusinessDate": {
+      "2026-09-23": 12,
+      "2026-09-25": 9,
+      "2026-09-22": 13,
+      "2026-09-24": 14,
+      "2026-09-21": 15
+    },
+    "weeklyTotal": 63
+  },
+  "flips": {
+    "count": 0,
+    "list": []
+  },
+  "offsets": {
+    "-05:00": 451,
+    "-06:00": 7
+  },
+  "neg6Rows": [
+    "1578171342 src=\"2025-11-21T17:54:48-0600\" stated-local=2025-11-21 ET=2025-11-21",
+    "1605726357 src=\"2025-12-29T09:05:19-0600\" stated-local=2025-12-29 ET=2025-12-29",
+    "1645551350 src=\"2026-02-25T14:35:35-0600\" stated-local=2026-02-25 ET=2026-02-25",
+    "1601124340 src=\"2025-12-18T16:01:05-0600\" stated-local=2025-12-18 ET=2025-12-18",
+    "1617278540 src=\"2026-01-15T11:29:55-0600\" stated-local=2026-01-15 ET=2026-01-15",
+    "1653848705 src=\"2026-03-03T17:59:05-0600\" stated-local=2026-03-03 ET=2026-03-03",
+    "1634614736 src=\"2026-02-11T14:16:22-0600\" stated-local=2026-02-11 ET=2026-02-11"
+  ],
+  "precision": {
+    "full": 458
+  },
+  "rawMissing": 0,
+  "srcMissing": 0,
+  "over2min": 76,
+  "scope": {
+    "live": 458,
+    "today": "2026-09-27"
+  }
+}

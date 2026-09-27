@@ -1,0 +1,238 @@
+{
+  "runs": [
+    {
+      "id": "e1b7cc73-a593-494c-b173-01eefed5901b",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:07:29.588Z",
+      "finished_at": "2026-09-27T02:07:39.257Z"
+    },
+    {
+      "id": "106ce241-ff12-48a3-8288-7a821e80ec41",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:07:20.457Z",
+      "finished_at": "2026-09-27T02:07:29.190Z"
+    },
+    {
+      "id": "d18ea65e-55c1-4f16-b1db-cdff2e820bf1",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T02:01:14.304Z",
+      "finished_at": "2026-09-27T02:01:24.177Z"
+    },
+    {
+      "id": "30298534-13df-4969-88ca-5ae906db090a",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T02:01:04.826Z",
+      "finished_at": "2026-09-27T02:01:13.894Z"
+    },
+    {
+      "id": "6e534b71-57bd-4e1c-b5a1-e4cc02dc25bf",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T01:55:15.846Z",
+      "finished_at": "2026-09-27T01:55:25.671Z"
+    },
+    {
+      "id": "ddee573e-800e-49c1-88f9-3fb255eb2409",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T01:53:45.430Z",
+      "finished_at": "2026-09-27T01:53:54.835Z"
+    },
+    {
+      "id": "2b01caf8-51c6-4f6d-9b19-7a7fe08b52c1",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T01:49:13.706Z",
+      "finished_at": "2026-09-27T01:49:22.820Z"
+    },
+    {
+      "id": "b6169487-8df3-45a3-8ca2-33af5c6184ba",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T01:47:43.373Z",
+      "finished_at": "2026-09-27T01:47:52.940Z"
+    },
+    {
+      "id": "9c009093-acc8-40f7-a25e-4cab9fd02b27",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T01:45:16.109Z",
+      "finished_at": "2026-09-27T01:45:27.850Z"
+    },
+    {
+      "id": "aa0f0b22-76b7-4797-a90b-cf2f4fcfdcae",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T01:43:36.889Z",
+      "finished_at": "2026-09-27T01:43:47.911Z"
+    },
+    {
+      "id": "3e6301d1-46b2-422a-899c-b781c04b9470",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T01:43:24.942Z",
+      "finished_at": "2026-09-27T01:43:36.357Z"
+    },
+    {
+      "id": "8d111a77-ab64-4718-a715-13a611c4dbe5",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T01:41:22.352Z",
+      "finished_at": "2026-09-27T01:41:32.854Z"
+    },
+    {
+      "id": "f25ea8ef-85d0-41b2-957d-73136c205f56",
+      "provider": "acuity",
+      "status": "success",
+      "records_upserted": 125,
+      "error": null,
+      "started_at": "2026-09-27T01:41:12.436Z",
+      "finished_at": "2026-09-27T01:41:21.918Z"
+    },
+    {
+      "id": "7bab83d5-8c3e-4378-ada0-8a5773219649",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T01:39:09.359Z",
+      "finished_at": "2026-09-27T01:39:20.284Z"
+    },
+    {
+      "id": "e25aa2cd-f0a6-4993-a5b7-a21e1312bd25",
+      "provider": "attribution",
+      "status": "success",
+      "records_upserted": 124,
+      "error": null,
+      "started_at": "2026-09-27T01:35:21.404Z",
+      "finished_at": "2026-09-27T01:35:31.495Z"
+    }
+  ],
+  "attrStats": [
+    {
+      "method": "none",
+      "n": 121,
+      "first_write": "2026-09-27T02:07:31.411Z",
+      "last_write": "2026-09-27T02:07:39.125Z"
+    },
+    {
+      "method": "contact_id",
+      "n": 3,
+      "first_write": "2026-09-27T02:07:31.772Z",
+      "last_write": "2026-09-27T02:07:39.195Z"
+    }
+  ],
+  "noteStats": [
+    {
+      "reason_head": "no-qualifying-call",
+      "n": 71
+    },
+    {
+      "reason_head": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at",
+      "n": 12
+    },
+    {
+      "reason_head": "date_granularity_window call-dates 2026-09-13..2026-09-14 ET (anchor=created_at",
+      "n": 7
+    },
+    {
+      "reason_head": "date_granularity_window call-dates 2026-09-14..2026-09-15 ET (anchor=created_at",
+      "n": 5
+    },
+    {
+      "reason_head": "ambiguous — email resolves a different contact than the stored contact id",
+      "n": 4
+    },
+    {
+      "reason_head": "date_granularity_window call-dates 2026-09-22..2026-09-23 ET (anchor=created_at",
+      "n": 4
+    },
+    {
+      "reason_head": "date_granularity_window call-dates 2026-09-24..2026-09-25 ET (anchor=created_at",
+      "n": 3
+    },
+    {
+      "reason_head": "date_granularity_window call-dates 2026-09-21..2026-09-22 ET (anchor=created_at",
+      "n": 3
+    }
+  ],
+  "recentNoneRows": [
+    {
+      "updated_at": "2026-09-27T02:07:39.125Z",
+      "acuity_appointment_id": "1751370886",
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-08-07..2026-08-08 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "updated_at": "2026-09-27T02:07:39.069Z",
+      "acuity_appointment_id": "1774982128",
+      "note": "date_granularity_window call-dates 2026-09-20..2026-09-21 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "updated_at": "2026-09-27T02:07:39.012Z",
+      "acuity_appointment_id": "1773189027",
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-09-16..2026-09-17 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    },
+    {
+      "updated_at": "2026-09-27T02:07:38.955Z",
+      "acuity_appointment_id": "1772357408",
+      "note": "no-qualifying-call; date_granularity_window call-dates 2026-09-15..2026-09-16 ET (anchor=created_at; Acuity dateCreated is date-only)"
+    }
+  ],
+  "attributedRows": [
+    {
+      "acuity_appointment_id": "1772084917",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:07:31.772Z",
+      "external_call_id": "hwM7Z9HVSYu9nJ5AmlT9",
+      "duration_seconds": 362,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771882414",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:07:36.241Z",
+      "external_call_id": "395DrgR4bPVhJ5i2Mbde",
+      "duration_seconds": 273,
+      "rep_name": "Allison Wittner"
+    },
+    {
+      "acuity_appointment_id": "1771559528",
+      "method": "contact_id",
+      "confidence": 1,
+      "updated_at": "2026-09-27T02:07:39.195Z",
+      "external_call_id": "kJ75A0NsqOjmlUb4DOsC",
+      "duration_seconds": 202,
+      "rep_name": "Allison Wittner"
+    }
+  ]
+}
