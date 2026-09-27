@@ -496,6 +496,14 @@ export interface RepPerformanceRow {
   callsOverThreshold: number;
   bookingsFromOverThreshold: number;
   totalBookings: number;
+  /**
+   * Assigned leads this week (raw count). PRESENTATION PASSTHROUGH ONLY — the
+   * exact number repRangeSummaries already computed (it is the denominator of
+   * assignedLeadConversion); exposed so the Today detail panel can show the
+   * count and the pooled benchmark's numerator/denominator without recomputing
+   * anything. No metric redefinition.
+   */
+  assignedLeads: number;
   conversationConversion: number | null;
   assignedLeadConversion: number | null;
   avgCallDurationSeconds: number | null;
@@ -654,6 +662,7 @@ export function buildRepPerformanceRows(input: {
         callsOverThreshold: s.callsOverThreshold,
         bookingsFromOverThreshold: s.bookingsFromOverThreshold,
         totalBookings: s.totalBookings,
+        assignedLeads: s.assignedLeads,
         conversationConversion: s.conversationConversion,
         assignedLeadConversion: s.assignedLeadConversion,
         avgCallDurationSeconds: s.avgCallDurationSeconds,

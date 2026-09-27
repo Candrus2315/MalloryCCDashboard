@@ -25,6 +25,7 @@ const row = (o: Partial<RepPerformanceRow>): RepPerformanceRow => ({
   callsOverThreshold: 0,
   bookingsFromOverThreshold: 0,
   totalBookings: 0,
+  assignedLeads: 0,
   conversationConversion: null,
   assignedLeadConversion: null,
   avgCallDurationSeconds: null,
@@ -277,5 +278,123 @@ describe("availability status ladder (owner directive)", () => {
     expect(view("2026-09-25", 8).status).toBe("needs-bookings");
     // Saturday with zero slots: CLOSED, never "fully booked".
     expect(view("2026-09-26", 0).status).toBe("closed");
+  });
+});
+
+// ---------- OWNER DIRECTIVE (2026-09-27): pooled benchmarks + Goal Progress ----------
+import {
+  formatPtsDelta,
+  goalProgressView,
+  pooledBenchmarkExcluding,
+  pooledPtsDelta,
+  repPerfLink,
+} from "~/components/today-views";
+
+describe("pooled benchmark (owner directive 2026-09-27)", () => {
+  // THE pin: pooled = sum(num) ÷ sum(den) — NOT the arithmetic average of the
+  // individual percentages. Excluding A, the others are B: 8÷10 = 80% and
+  // C: 1÷2 = 50%. Arithmetic average would be 65% — explicitly wrong per the
+  // directive. Pooled: 9 ÷ 12 = 75%.
+  const threeRep = [
+    row({ repId: "a", name: "A", bookingsFromOverThreshold: 4, callsOverThreshold: 5 }),
+    row({ repId: "b", name: "B", bookingsFromOverThreshold: 8, callsOverThreshold: 10 }),
+    row({ repId: "c", name: "C", bookingsFromOverThreshold: 1, callsOverThreshold: 2 }),
+  ];
+  test("pooled rate is sum÷sum over OTHER reps, not the average of percentages", () => {
+    const p = pooledBenchmarkExcluding(threeRep, "a", "conversation");
+    expect(p.numerator).toBe(9); // only B + C contribute (self excluded)
+    expect(p.denominator).toBe(12);
+    expect(p.rate).toBeCloseTo(0.75);
+    // The explicitly wrong construct, pinned as wrong: arithmetic average of
+    // the other reps' individual rates would be (0.8 + 0.5) / 2 = 0.65.
+    expect(p.rate).not.toBeCloseTo(0.65);
+    const pB = pooledBenchmarkExcluding(threeRep, "b", "conversation");
+    expect(pB.numerator).toBe(5); // A + C
+    expect(pB.denominator).toBe(7);
+    expect(pB.rate).toBeCloseTo(5 / 7);
+  });
+  test("not-yet-active reps are excluded from BOTH benchmark sums", () => {
+    const rows = [
+      ...threeRep,
+      row({ repId: "d", name: "Dan", operatingState: "not-yet-active", bookingsFromOverThreshold: 50, callsOverThreshold: 50 }),
+    ];
+    const p = pooledBenchmarkExcluding(rows, "a", "conversation");
+    expect(p.numerator).toBe(9);
+    expect(p.denominator).toBe(12);
+    expect(p.reps).toBe(2); // Dan contributed to neither sum nor the rep count
+  });
+  test("zero pooled denominator after exclusions → rate null (renders '—', no pts delta)", () => {
+    const rows = [
+      row({ repId: "a", name: "A", callsOverThreshold: 5, bookingsFromOverThreshold: 0 }),
+      row({ repId: "b", name: "B", callsOverThreshold: 0, bookingsFromOverThreshold: 0 }),
+    ];
+    const p = pooledBenchmarkExcluding(rows, "a", "conversation");
+    expect(p.rate).toBeNull();
+    expect(pooledPtsDelta(0.25, p.rate)).toBeNull();
+  });
+  test("pts delta is rep rate minus pooled rate in percentage points", () => {
+    // 9.7% vs a 42.7% pooled benchmark → −33.0 pts (owner's exact example).
+    expect(pooledPtsDelta(0.097, 0.427)).toBeCloseTo(-33, 6);
+    expect(formatPtsDelta(pooledPtsDelta(0.097, 0.427))).toBe("-33.0 pts");
+    expect(formatPtsDelta(pooledPtsDelta(0.5, 0.458))).toBe("+4.2 pts");
+    expect(formatPtsDelta(null)).toBeNull();
+    expect(pooledPtsDelta(null, 0.5)).toBeNull();
+  });
+  test("assigned-lead pooling uses bookings ÷ assigned leads over other ACTIVE reps", () => {
+    const rows = [
+      row({ repId: "a", name: "A", totalBookings: 8, assignedLeads: 20 }),
+      row({ repId: "b", name: "B", totalBookings: 3, assignedLeads: 5 }),
+      row({ repId: "d", name: "Dan", operatingState: "not-yet-active", totalBookings: 99, assignedLeads: 1 }),
+    ];
+    const p = pooledBenchmarkExcluding(rows, "a", "assignedLead");
+    expect(p.numerator).toBe(3); // Dan's 99 bookings excluded
+    expect(p.denominator).toBe(5);
+    expect(p.rate).toBeCloseTo(0.6);
+  });
+});
+
+describe("goal progress view (owner directive 2026-09-27)", () => {
+  test("active rep with goal: combined view — actual/goal, pct, below-goal text", () => {
+    const v = goalProgressView(8, 10, "active");
+    expect(v.state).toBe("progress");
+    expect(v.pctText).toBe("80%");
+    expect(v.barPct).toBe(80);
+    expect(v.hit).toBe(false);
+    expect(v.diffText).toBe("2 below goal");
+  });
+  test("above goal: '27 above goal', bar caps at 100, pct keeps real math", () => {
+    const v = goalProgressView(37, 10, "active");
+    expect(v.diffText).toBe("27 above goal");
+    expect(v.hit).toBe(true);
+    expect(v.barPct).toBe(100);
+    expect(v.pctText).toBe("370%");
+  });
+  test("exactly at goal renders 'at goal' (never '0 below/above')", () => {
+    const v = goalProgressView(10, 10, "active");
+    expect(v.diffText).toBe("at goal");
+    expect(v.pctText).toBe("100%");
+  });
+  test("fractional achievement renders 1dp (58.3%)", () => {
+    expect(goalProgressView(7, 12, "active").pctText).toBe("58.3%");
+  });
+  test("no goal set → state 'no-goal' (component renders 'No goal set'), never an invented goal", () => {
+    const v = goalProgressView(8, 0, "active");
+    expect(v.state).toBe("no-goal");
+    expect(v.pctText).toBeNull();
+    expect(v.barPct).toBeNull();
+    expect(v.diffText).toBeNull();
+  });
+  test("not-yet-active rep → '—' (state 'inactive'): no goal pct, no diff text, never 0%", () => {
+    const v = goalProgressView(0, 10, "not-yet-active");
+    expect(v.state).toBe("inactive");
+    expect(v.pctText).toBeNull();
+    expect(v.diffText).toBeNull();
+    expect(v.barPct).toBeNull();
+  });
+});
+
+describe("row-click week preservation (owner directive 2026-09-27)", () => {
+  test("rep row links to the Reps page carrying the reporting week (range=week-of&from)", () => {
+    expect(repPerfLink("2026-09-21", "R2")).toBe("/reps?rep=R2&range=week-of&from=2026-09-21");
   });
 });
