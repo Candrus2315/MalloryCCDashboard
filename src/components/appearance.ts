@@ -35,9 +35,21 @@ function readStoredPref(): AppearancePref {
   }
 }
 
+/**
+ * Applies the resolved theme to a DOM element's class list. The force flag
+ * MUST be a boolean: classList.toggle(name, force) coerces its second arg —
+ * a truthy STRING ("light"!) would add the dark class (the Light-switch bug).
+ * Exported + test-pinned for exactly that reason.
+ */
+export function applyThemeClass(
+  el: { classList: { toggle(name: string, force?: boolean): void } },
+  theme: "light" | "dark",
+) {
+  el.classList.toggle("dark", theme === "dark");
+}
+
 function applyTheme(pref: AppearancePref) {
-  const dark = resolveTheme(pref, window.matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.classList.toggle("dark", dark);
+  applyThemeClass(document.documentElement, resolveTheme(pref, window.matchMedia("(prefers-color-scheme: dark)").matches));
 }
 
 export function useAppearance(): { pref: AppearancePref; setPref: (p: AppearancePref) => void } {
