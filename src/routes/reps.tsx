@@ -28,6 +28,11 @@ import {
   goalProgress,
   type CoachingObservation,
 } from "~/components/reps-views";
+import {
+  diffSampleDenominator,
+  restrainedDiff,
+  SMALL_SAMPLE_FOOTNOTE,
+} from "~/components/team-views";
 
 export const Route = createFileRoute("/reps")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -668,29 +673,48 @@ function RepsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedComparisons.map((c) => (
-                    <tr key={c.metric}>
-                      <td className="text-stone-700">{c.metric}</td>
-                      <td className="font-medium text-stone-900">{repCompareValue(c.rep, c.unit)}</td>
-                      <td className="text-stone-500">{teamCompareValue(c.teamAvg, c.unit)}</td>
-                      <td
-                        className={
-                          "font-medium " +
-                          (c.diff == null
-                            ? "text-stone-300"
-                            : c.diff >= 0
-                              ? "text-emerald-700"
-                              : "text-red-700")
-                        }
-                      >
-                        {formatDiff(c.diff, c.unit)}
-                      </td>
-                    </tr>
-                  ))}
+                  {sortedComparisons.map((c) => {
+                    // §11 restraint: a diff standing on a thin sample (rate
+                    // denominators below 3, or a tiny count basis like "4 vs an
+                    // average of 0.5 = +700%") keeps its exact math but renders
+                    // muted — no color emphasis, reference only.
+                    const restrained = d
+                      ? restrainedDiff(c.diff, diffSampleDenominator(c, d.metrics))
+                      : false;
+                    return (
+                      <tr key={c.metric}>
+                        <td className="text-stone-700">{c.metric}</td>
+                        <td className="font-medium text-stone-900">{repCompareValue(c.rep, c.unit)}</td>
+                        <td className="text-stone-500">{teamCompareValue(c.teamAvg, c.unit)}</td>
+                        <td
+                          className={
+                            "font-medium " +
+                            (c.diff == null
+                              ? "text-stone-300"
+                              : restrained
+                                ? "font-normal text-stone-400"
+                                : c.diff >= 0
+                                  ? "text-emerald-700"
+                                  : "text-red-700")
+                          }
+                        >
+                          {formatDiff(c.diff, c.unit)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
+          {sortedComparisons.some(
+            (c) => c.diff != null && restrainedDiff(c.diff, diffSampleDenominator(c, d.metrics)),
+          ) && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-stone-400">
+              <span className="h-1 w-1 shrink-0 rounded-full bg-stone-300" aria-hidden="true" />
+              {SMALL_SAMPLE_FOOTNOTE}
+            </p>
+          )}
           <p className="mt-2 text-[11px] text-stone-400">
             Counts compare as % difference; conversion rates as percentage points (pp); durations in
             m/s. Team averages cover the {data.teamAverages.repCount} other active{" "}

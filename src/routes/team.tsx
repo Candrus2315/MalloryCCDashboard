@@ -490,19 +490,10 @@ function TeamPage() {
   };
 
   // sortable by-rep rows (native, no deps; missing values sort last, never as zero)
-  const sortedRepRows = useMemo(() => {
-    const rows = [...data.repRows];
-    rows.sort((a, b) => {
-      if (sortKey === "rep") return a.name.localeCompare(b.name) * (sortAsc ? 1 : -1);
-      const av = sortKey === "bookings" ? a.totalBookings : sortKey === "calls" ? a.callsOverThreshold : a.conversationConversion;
-      const bv = sortKey === "bookings" ? b.totalBookings : sortKey === "calls" ? b.callsOverThreshold : b.conversationConversion;
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      return (av - bv) * (sortAsc ? 1 : -1);
-    });
-    return rows;
-  }, [data.repRows, sortKey, sortAsc]);
+  const sortedRepRows = useMemo(
+    () => [...data.repRows].sort((a, b) => compareRepRows(a, b, sortKey, sortAsc)),
+    [data.repRows, sortKey, sortAsc],
+  );
 
   const sortBy = (key: SortKey) => {
     if (key === sortKey) setSortAsc(!sortAsc);
@@ -512,6 +503,10 @@ function TeamPage() {
     }
   };
 
+  // Sticky header (index.tsx's `sticky top-14` pattern): rows scroll UNDER the
+  // caret-only header. The rep header cell is sticky left too (opaque bg so
+  // horizontal scroll keeps rep identity, §6/§15) and sits above the other
+  // header cells; body rep cells get z-[1].
   const th = (key: SortKey, label: string, opts?: { left?: boolean }) => {
     const active = sortKey === key;
     const caret = active ? (sortAsc ? "↑" : "↓") : key === "rep" ? "↑" : "↓";
@@ -519,7 +514,11 @@ function TeamPage() {
       <th
         scope="col"
         aria-sort={active ? (sortAsc ? "ascending" : "descending") : undefined}
-        className={"pb-2 " + (opts?.left ? "text-left" : "text-right")}
+        className={
+          opts?.left
+            ? "sticky left-0 top-14 z-[3] bg-white pb-2 text-left"
+            : "sticky top-14 z-[2] bg-white/95 pb-2 text-right backdrop-blur-sm"
+        }
       >
         <button type="button" className="th-sort-btn normal-case tracking-normal text-xs text-stone-500" onClick={() => sortBy(key)}>
           {label}
@@ -775,57 +774,107 @@ function TeamPage() {
         </div>
         <div className="card mt-2 overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[620px] text-[13px]">
+            <table className="w-full min-w-[760px] text-[13px]">
               <thead>
                 <tr className="border-b border-stone-200">
                   {th("rep", "Rep", { left: true })}
                   {th("bookings", "Bookings")}
                   {th("calls", "Calls > 2 Min")}
                   {th("conv", "Conversation Conversion")}
+                  {th("avg-duration", "Avg Duration")}
                 </tr>
               </thead>
               <tbody>
                 {sortedRepRows.map((r) => {
                   const chip = chips.get(r.id);
+                  const expanded = expandedRep === r.id;
                   return (
-                    <tr key={r.id} className="border-b border-stone-100 last:border-0 hover:bg-stone-50">
-                      <td className="py-2.5 pr-4">
-                        <Link
-                          to="/reps"
-                          search={{
-                            rep: r.id,
-                            range: data.range.mode,
-                            from:
-                              data.range.mode === "custom" || data.range.mode === "week-of"
-                                ? data.range.start
-                                : undefined,
-                            to: data.range.mode === "custom" ? data.range.end : undefined,
-                          }}
-                          className="font-medium text-stone-900 hover:underline"
-                        >
-                          {r.name}
-                        </Link>
-                        {chip && (
-                          <span className="ml-2 inline-flex align-middle">
-                            <StatusChip kind={chip.kind} label={chip.label} />
+                    <Fragment key={r.id}>
+                      {/* §12: the whole row is clickable (the name Link stays the
+                          accessible affordance; chevron/stopPropagation keep the
+                          toggle and link from double-firing the navigation) */}
+                      <tr
+                        className="group cursor-pointer border-b border-stone-100 hover:bg-stone-50"
+                        onClick={() => router.navigate({ to: "/reps", search: repsSearch(r, data.range) })}
+                      >
+                        <td className="sticky left-0 z-[1] bg-white py-2.5 pr-4 group-hover:bg-stone-50">
+                          <span className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              aria-expanded={expanded}
+                              aria-label={expanded ? `Hide details for ${r.name}` : `Show details for ${r.name}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedRep(expanded ? null : r.id);
+                              }}
+                              className="shrink-0 rounded p-0.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-900"
+                            >
+                              <span
+                                aria-hidden="true"
+                                className={"block text-[10px] leading-none transition-transform " + (expanded ? "rotate-90" : "")}
+                              >
+                                ▶
+                              </span>
+                            </button>
+                            <Link
+                              to="/reps"
+                              search={repsSearch(r, data.range)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="font-medium text-stone-900 hover:underline"
+                            >
+                              {r.name}
+                            </Link>
+                            {chip && <StatusChip kind={chip.kind} label={chip.label} />}
                           </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-4 text-right font-medium tabular-nums text-stone-900">
-                        {formatInt(r.totalBookings)}
-                      </td>
-                      <td className="py-2.5 pr-4 text-right tabular-nums text-stone-900">
-                        {formatInt(r.callsOverThreshold)}
-                      </td>
-                      <td className="py-2.5 text-right tabular-nums text-stone-700">
-                        {num(formatPercent(r.conversationConversion, 1))}
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="py-2.5 pr-4 text-right">
+                          <GoalProgress actual={r.totalBookings} goal={r.goal?.value ?? null} />
+                        </td>
+                        <td className="py-2.5 pr-4 text-right tabular-nums text-stone-900">
+                          {formatInt(r.callsOverThreshold)}
+                        </td>
+                        <td className="py-2.5 pr-4 text-right tabular-nums text-stone-700">
+                          {num(formatPercent(r.conversationConversion, 1))}
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums text-stone-700">
+                          {num(formatDuration(r.avgCallDurationSeconds))}
+                        </td>
+                      </tr>
+                      {/* expanded row — secondary strip (§7: reduce columns before
+                          readability; every displaced metric stays reachable) */}
+                      {expanded && (
+                        <tr className="border-b border-stone-100 bg-stone-50/60 last:border-0">
+                          <td colSpan={5} className="px-4 py-3">
+                            <dl className="flex flex-wrap gap-x-10 gap-y-2 text-[12px]">
+                              <div>
+                                <dt className="text-[11px] text-stone-400">Total Calls</dt>
+                                <dd className="mt-0.5 tabular-nums text-stone-700">{formatInt(r.totalCalls)}</dd>
+                              </div>
+                              <div className="min-w-0">
+                                <dt className="text-[11px] text-stone-400">Goal basis</dt>
+                                <dd className="mt-0.5 text-stone-700">
+                                  {r.goal?.note ?? "No booking goal for this range"}
+                                </dd>
+                              </div>
+                              {r.operatingState === "not-yet-active" && (
+                                <div>
+                                  <dt className="text-[11px] text-stone-400">Status</dt>
+                                  <dd className="mt-0.5 text-stone-700">
+                                    Not Yet Active
+                                    {r.callStartDate ? ` — begins calling ${formatDateHuman(r.callStartDate)}` : ""}
+                                  </dd>
+                                </div>
+                              )}
+                            </dl>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
                 {data.repRows.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-6 text-center text-stone-400">
+                    <td colSpan={5} className="py-6 text-center text-stone-400">
                       No reps found — sync HighLevel users.
                     </td>
                   </tr>
@@ -837,7 +886,8 @@ function TeamPage() {
         <p className="mt-2 text-[11px] leading-snug text-stone-400">
           Chips are rule-based from these columns — top bookings, conversion above team average (≥
           {TREND_MIN_DENOMINATOR} reps with a value), calls but no bookings, or no recorded activity; no grades.
-          Assigned Lead Conversion per rep lives on each rep's page.
+          Assigned Lead Conversion per rep lives on each rep's page. Expand a row (▸) for calls, goal basis and start
+          date.
         </p>
       </section>
 

@@ -10,9 +10,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   attentionNotes,
+  compareRepRows,
+  diffSampleDenominator,
+  goalCell,
   leadPacing,
   paceSummary,
   repChips,
+  restrainedDiff,
+  SMALL_SAMPLE_FOOTNOTE,
 } from "~/components/team-views";
 import type { TeamRangeMetrics, TrendPoint } from "~/server/metrics/compute";
 import type { RepStripRow } from "~/server/queries";
@@ -402,5 +407,172 @@ describe("attentionNotes (spec §6: rule-based, 3–5, risks first)", () => {
     if (firstPositive >= 0) {
       expect(notes.slice(firstPositive).every((n) => n.severity === "positive")).toBe(true);
     }
+  });
+});
+
+describe("goalCell (§7 Bookings cell: exact numbers, bar as §8 supplement)", () => {
+  test("partial progress → '8 / 15.8' + '50.6%' + partial bar", () => {
+    const c = goalCell(8, 15.8);
+    expect(c.actual).toBe("8");
+    expect(c.goal).toBe("15.8");
+    expect(c.pct).toBe("50.6%");
+    expect(c.barPct).toBeCloseTo(50.63, 1);
+    expect(c.hit).toBe(false);
+  });
+
+  test("zero actual → 0.0%, bar at 0 (honest, not hidden)", () => {
+    const c = goalCell(0, 15.8);
+    expect(c.actual).toBe("0");
+    expect(c.pct).toBe("0.0%");
+    expect(c.barPct).toBe(0);
+    expect(c.hit).toBe(false);
+  });
+
+  test("exactly at goal → 100.0%, bar full, hit", () => {
+    const c = goalCell(15.8, 15.8);
+    expect(c.pct).toBe("100.0%");
+    expect(c.barPct).toBe(100);
+    expect(c.hit).toBe(true);
+  });
+
+  test("over goal → pct keeps the real math, bar capped at 100", () => {
+    const c = goalCell(20, 15.8);
+    expect(c.pct).toBe("126.6%");
+    expect(c.barPct).toBe(100);
+    expect(c.hit).toBe(true);
+  });
+
+  test("null goal → numbers only, no bar, no pct (never an invented goal)", () => {
+    const c = goalCell(8, null);
+    expect(c.actual).toBe("8");
+    expect(c.goal).toBeNull();
+    expect(c.pct).toBeNull();
+    expect(c.barPct).toBeNull();
+    expect(c.hit).toBe(false);
+  });
+
+  test("literal 0 goal → '8 / 0' honestly, but ratio never renders as ∞", () => {
+    const c = goalCell(8, 0);
+    expect(c.goal).toBe("0");
+    expect(c.pct).toBeNull();
+    expect(c.barPct).toBeNull();
+  });
+});
+
+describe("restrainedDiff (§11: thin-sample diffs are reference, not verdicts)", () => {
+  test("truth table: denominators 0/1/2 restrain, ≥3 keep normal emphasis", () => {
+    expect(restrainedDiff(700, 0)).toBe(true);
+    expect(restrainedDiff(700, 1)).toBe(true);
+    expect(restrainedDiff(700, 2)).toBe(true);
+    expect(restrainedDiff(700, 3)).toBe(false);
+    expect(restrainedDiff(700, 10)).toBe(false);
+  });
+
+  test("null diff → restrained-neutral (nothing to emphasize)", () => {
+    expect(restrainedDiff(null, 10)).toBe(true);
+  });
+
+  test("unknown denominator → restrained (never shout on an unclear basis)", () => {
+    expect(restrainedDiff(700, null)).toBe(true);
+  });
+
+  test("negative diffs obey the same rule", () => {
+    expect(restrainedDiff(-93, 2)).toBe(true);
+    expect(restrainedDiff(-8.8, 30)).toBe(false);
+  });
+});
+
+describe("diffSampleDenominator (the sample a diff's basis rests on)", () => {
+  const counts = {
+    totalCalls: 40,
+    callsOverThreshold: 12,
+    bookingsFromOverThreshold: 5,
+    totalBookings: 4,
+    assignedLeads: 2,
+  };
+  const row = (metric: string, teamAvg: number | null, unit: "pct" | "pp" | "seconds" = "pct") => ({
+    metric,
+    teamAvg,
+    diff: null,
+    unit,
+  });
+
+  test("§11 pin: Rep 4 bookings vs team avg 0.5 → +700% rests on a 0.5 basis → restrained", () => {
+    const d = diffSampleDenominator(row("Total Bookings", 0.5), counts);
+    expect(d).toBe(0.5);
+    expect(restrainedDiff(700, d)).toBe(true);
+  });
+
+  test("healthy count basis → not restrained (the smaller side governs)", () => {
+    expect(diffSampleDenominator(row("Total Bookings", 30), { ...counts, totalBookings: 40 })).toBe(30);
+    expect(diffSampleDenominator(row("Calls", 68), { ...counts, totalCalls: 74 })).toBe(68);
+  });
+
+  test("rate rows use the rep's own rate denominator", () => {
+    expect(diffSampleDenominator(row("Conversation Conversion", 0.5, "pp"), counts)).toBe(12);
+    expect(diffSampleDenominator(row("Assigned Lead Conversion", 0.4, "pp"), counts)).toBe(2);
+  });
+
+  test("duration rows use the calls behind the average", () => {
+    expect(diffSampleDenominator(row("Average Call Duration", 180, "seconds"), counts)).toBe(40);
+  });
+
+  test("over-2-min and bookings-from rows use the smaller of rep count and team average", () => {
+    expect(diffSampleDenominator(row("Calls Over 2 Min", 1), counts)).toBe(1);
+    expect(diffSampleDenominator(row("Bookings From Calls Over 2 Minutes", 9), counts)).toBe(5);
+  });
+
+  test("unknown metric label → null → restrained (never shout on an unknown basis)", () => {
+    const d = diffSampleDenominator(row("Something Else", 5), counts);
+    expect(d).toBeNull();
+    expect(restrainedDiff(10, d)).toBe(true);
+  });
+
+  test("shared footnote text is exact (one line under the comparison table)", () => {
+    expect(SMALL_SAMPLE_FOOTNOTE).toBe("Small sample — difference shown for reference.");
+  });
+});
+
+describe("compareRepRows (§7 sort: caret-only headers, nulls last preserved)", () => {
+  test("bookings desc default → higher first", () => {
+    const rows = [rep("a", "A", { totalBookings: 3 }), rep("b", "B", { totalBookings: 9 }), rep("c", "C", { totalBookings: 5 })];
+    const sorted = [...rows].sort((x, y) => compareRepRows(x, y, "bookings", false));
+    expect(sorted.map((r) => r.id)).toEqual(["b", "c", "a"]);
+  });
+
+  test("missing values sort LAST in both directions, never as zero", () => {
+    const rows = [
+      rep("a", "A", { avgCallDurationSeconds: 120 }),
+      rep("b", "B"), // null duration
+      rep("c", "C", { avgCallDurationSeconds: 60 }),
+    ];
+    const desc = [...rows].sort((x, y) => compareRepRows(x, y, "avg-duration", false));
+    const asc = [...rows].sort((x, y) => compareRepRows(x, y, "avg-duration", true));
+    expect(desc.map((r) => r.id)).toEqual(["a", "c", "b"]);
+    expect(asc.map((r) => r.id)).toEqual(["c", "a", "b"]);
+  });
+
+  test("null conversation conversion sorts last; ties stay stable", () => {
+    const rows = [
+      rep("a", "A", { conversationConversion: 0.4 }),
+      rep("b", "B"),
+      rep("c", "C", { conversationConversion: 0.2 }),
+      rep("d", "D"),
+    ];
+    const sorted = [...rows].sort((x, y) => compareRepRows(x, y, "conv", false));
+    expect(sorted.map((r) => r.id)).toEqual(["a", "c", "b", "d"]);
+  });
+
+  test("rep name compares lexicographically, direction-aware", () => {
+    const rows = [rep("a", "Wittner"), rep("b", "McKillop"), rep("c", "Ash")];
+    const asc = [...rows].sort((x, y) => compareRepRows(x, y, "rep", true));
+    const desc = [...rows].sort((x, y) => compareRepRows(x, y, "rep", false));
+    expect(asc.map((r) => r.name)).toEqual(["Ash", "McKillop", "Wittner"]);
+    expect(desc.map((r) => r.name)).toEqual(["Wittner", "McKillop", "Ash"]);
+  });
+
+  test("all-null column → no reorder crash (ties return 0)", () => {
+    const rows = [rep("a", "A"), rep("b", "B")];
+    expect([...rows].sort((x, y) => compareRepRows(x, y, "avg-duration", false)).map((r) => r.id)).toEqual(["a", "b"]);
   });
 });

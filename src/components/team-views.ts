@@ -17,6 +17,7 @@ import { isWorkday } from "~/server/date-logic";
 import {
   MIN_CONVERSION_SAMPLE,
   TREND_MIN_DENOMINATOR,
+  type ComparisonUnit,
   type TeamRangeMetrics,
   type TrendBucketMode,
   type TrendPoint,
@@ -321,4 +322,141 @@ export function attentionNotes(input: {
   const risks = notes.filter((n) => n.severity === "risk");
   const positives = notes.filter((n) => n.severity === "positive");
   return [...risks, ...positives].slice(0, 5);
+}
+
+// ---------- By-Rep table (merged-build Phase 4: §7 five-column management table) ----------
+
+/** Sortable By-Rep columns — the §7 primary five. */
+export type RepSortKey = "rep" | "bookings" | "calls" | "conv" | "avg-duration";
+
+function repSortValue(r: RepStripRow, key: RepSortKey): number | string | null {
+  switch (key) {
+    case "rep":
+      return r.name;
+    case "bookings":
+      return r.totalBookings;
+    case "calls":
+      return r.callsOverThreshold;
+    case "conv":
+      return r.conversationConversion;
+    case "avg-duration":
+      return r.avgCallDurationSeconds;
+  }
+}
+
+/**
+ * Native comparator for the By-Rep table. Rep name compares
+ * lexicographically (direction-aware); every metric numerically. Missing
+ * values sort LAST in both directions — never as zero (existing rule).
+ */
+export function compareRepRows(a: RepStripRow, b: RepStripRow, key: RepSortKey, asc: boolean): number {
+  if (key === "rep") return a.name.localeCompare(b.name) * (asc ? 1 : -1);
+  const av = repSortValue(a, key);
+  const bv = repSortValue(b, key);
+  if (av == null && bv == null) return 0;
+  if (av == null) return 1;
+  if (bv == null) return -1;
+  return ((av as number) - (bv as number)) * (asc ? 1 : -1);
+}
+
+/** Goal-cell math for the §7 Bookings column — exact numbers, bar as supplement (§8). */
+export interface GoalCellView {
+  /** Actual, whole ("8"). */
+  actual: string;
+  /** Goal with the explaining decimal ("15.8") — null when there is no goal. */
+  goal: string | null;
+  /** "50.6%" (1dp) — null when the ratio is undefined (no positive goal). */
+  pct: string | null;
+  /** 0–100 capped (over-achievement fills, never overflows) — null = no bar. */
+  barPct: number | null;
+  hit: boolean;
+}
+
+/**
+ * "8 / 15.8" + 4px bar + "50.6%". A null goal → no bar, no pct ("—", never an
+ * invented goal); a literal 0 goal renders "8 / 0" honestly but no pct (the
+ * ratio is undefined, never ∞). E-strip payload (RepStripRow.goal) feeds it.
+ */
+export function goalCell(actual: number, goal: number | null): GoalCellView {
+  if (goal == null) {
+    return { actual: formatInt(actual), goal: null, pct: null, barPct: null, hit: false };
+  }
+  if (!(goal > 0)) {
+    return { actual: formatInt(actual), goal: formatCount(goal), pct: null, barPct: null, hit: false };
+  }
+  const ratio = actual / goal;
+  return {
+    actual: formatInt(actual),
+    goal: formatCount(goal),
+    pct: formatPercent(ratio, 1),
+    barPct: Math.min(ratio, 1) * 100,
+    hit: ratio >= 1,
+  };
+}
+
+// ---------- §11 restraint: thin-sample comparison diffs read as reference ----
+
+/** Shared footnote for the comparison table when any diff is restrained. */
+export const SMALL_SAMPLE_FOOTNOTE = "Small sample — difference shown for reference.";
+
+/** The comparison-table row shape (compute.ts TeamComparison, structurally). */
+export interface ComparisonRowLike {
+  metric: string;
+  teamAvg: number | null;
+  diff: number | null;
+  unit: ComparisonUnit;
+}
+
+/** The rep-side counts a diff's basis can rest on (compute.ts RepRangeMetrics fields). */
+export interface RepSampleCounts {
+  totalCalls: number;
+  callsOverThreshold: number;
+  bookingsFromOverThreshold: number;
+  totalBookings: number;
+  assignedLeads: number;
+}
+
+/**
+ * The sample size a comparison row's diff rests on, from real payload counts:
+ *  - count rows ("pct"): the SMALLER of rep count and team average — the
+ *    "+700% vs an average of 0.5" case is exactly the misleading one, so the
+ *    tiny side governs;
+ *  - rate rows ("pp"): the rep's own rate denominator (qualifying calls for
+ *    Conversation Conversion, assigned leads for Assigned Lead Conversion);
+ *  - duration rows: the calls behind the rep's average.
+ * Unknown metric labels → null (restrained — never shout on an unknown basis).
+ */
+export function diffSampleDenominator(row: ComparisonRowLike, rep: RepSampleCounts): number | null {
+  const smaller = (a: number, b: number | null): number | null => (b == null ? a : Math.min(a, b));
+  switch (row.metric) {
+    case "Calls":
+      return smaller(rep.totalCalls, row.teamAvg);
+    case "Calls Over 2 Min":
+      return smaller(rep.callsOverThreshold, row.teamAvg);
+    case "Bookings From Calls Over 2 Minutes":
+      return smaller(rep.bookingsFromOverThreshold, row.teamAvg);
+    case "Conversation Conversion":
+      return rep.callsOverThreshold;
+    case "Total Bookings":
+      return smaller(rep.totalBookings, row.teamAvg);
+    case "Assigned Lead Conversion":
+      return rep.assignedLeads;
+    case "Average Call Duration":
+      return rep.totalCalls;
+    default:
+      return null;
+  }
+}
+
+/**
+ * §11: a diff whose basis is a thin sample renders muted (stone-400, no
+ * color/arrow emphasis — exact math kept) plus the shared footnote. Rate
+ * denominators below TREND_MIN_DENOMINATOR (= 3), tiny count bases, and a
+ * null diff (nothing to emphasize) all restrain. The "+700%" case stays valid
+ * math with a restrained visual.
+ */
+export function restrainedDiff(diff: number | null, sampleDenominator: number | null): boolean {
+  if (diff == null) return true;
+  if (sampleDenominator == null) return true;
+  return sampleDenominator < TREND_MIN_DENOMINATOR;
 }
