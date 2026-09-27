@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Mallory Portraits CC Performance — M monogram, warm stone palette (matches app.css) -->
+  <rect width="64" height="64" rx="14" fill="#1c1917"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="12.5" fill="none" stroke="#fafaf9" stroke-opacity="0.14" stroke-width="2"/>
+  <path d="M 15 46 L 15 20 L 32 38 L 49 20 L 49 46" fill="none" stroke="#fafaf9" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="48" r="4" fill="#d9a441"/>
+</svg>
