@@ -108,18 +108,11 @@ export function rosterEligibleRows<
   return rows.filter((r) => eligibleRepId(r, elig) !== null);
 }
 
-/** ET presentation fields for one audit row (ET date + human clock time). */
-export function auditRowView(r: AuditCallRow): AuditCallRow & { et_date: string; started_at_et: string } {
-  const ms = Date.parse(r.started_at);
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(ms));
-  return { ...r, et_date: etDateStrFromInstant(ms), started_at_et: parts };
-}
+/** ET presentation fields — implementation lives in date-logic (client-safe, so
+ *  routes can import it without dragging server runtime into the client bundle);
+ *  imported here for local use and re-exported for server consumers. */
+import { auditRowView } from "./date-logic";
+export { auditRowView };
 
 export interface AuditOkBody {
   date: string;

@@ -469,3 +469,24 @@ export function mondaysInRange(start: string, end: string): string[] {
 export function etRangeBounds(start: string, end: string): { startUtc: string; endUtc: string } {
   return { startUtc: etDayStartUtc(start), endUtc: etDayEndUtc(end) };
 }
+
+/**
+ * ET presentation fields for one audit/call row (ET date + human clock time).
+ * Lives here (not in a server-runtime module) so BOTH server code and client
+ * bundles can import it — the vite build externalizes node builtins, and a
+ * routes->server-runtime import drags the pg driver into the client graph.
+ * Generic over anything carrying started_at; type flows through the map.
+ */
+export function auditRowView<T extends { started_at: string }>(
+  r: T,
+): T & { et_date: string; started_at_et: string } {
+  const ms = Date.parse(r.started_at);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(ms));
+  return { ...r, et_date: etDateStrFromInstant(ms), started_at_et: parts };
+}
