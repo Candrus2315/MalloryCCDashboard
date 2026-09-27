@@ -35,12 +35,15 @@
  *     and the scheduled session date is NEVER used as the anchor;
  *   - all date math is America/New_York (date-logic.ts), midnight crossings
  *     included.
- * The parser stores a date-only dateCreated as UTC midnight, so a created_at
- * of exactly 00:00:00.000Z is read back as a CALENDAR DATE, not as an ET
- * instant (reading it as ET would shift the anchor a day early). Rows whose
- * created_at is a real timestamp use its ET date. A legacy row with no
- * created_at falls back to the session datetime and the match is MARKED
- * `anchoredOn: "session-fallback"` — visible, never silent.
+ * S7c (owner directive 2026-09-28): the anchor is now the AUTHORITATIVE ET
+ * BUSINESS DATE (created_business_date) the sync derives from Acuity's full
+ * `datetimeCreated` (ISO 8601 with offset → the true instant → ET), falling
+ * back to the dateCreated CALENDAR DATE for date-only rows — the window is
+ * [created_business_date − 1, created_business_date] exactly, no longer
+ * inferred from how the created_at instant happened to be encoded. The
+ * created_at fallbacks below remain for legacy rows without the column.
+ * A legacy row with no created_at falls back to the session datetime and the
+ * match is MARKED `anchoredOn: "session-fallback"` — visible, never silent.
  *
  * Constraints on every candidate call:
  *   - duration_seconds is a real number STRICTLY GREATER than
@@ -128,6 +131,14 @@ export interface AttributionAppointment {
    * session datetime only for legacy rows without one (marked in the result).
    */
   created_at?: string;
+  /**
+   * S7c AUTHORITATIVE ANCHOR (owner directive 2026-09-28): the booking's
+   * creation BUSINESS DATE in America/New_York (created_at → ET, or the
+   * dateCreated CALENDAR DATE for date-only rows). Preferred over every
+   * created_at encoding when present — the window math becomes exact instead
+   * of inferring the date from how the instant was stored.
+   */
+  created_business_date?: string | null;
   cancelled?: boolean;
   status?: string;
 }
@@ -192,8 +203,12 @@ export interface WindowMarker {
   to: string;
   /** Fixed marker: the window is DATE-GRANULARITY, not exact-hours. */
   marker: "date_granularity_window";
-  /** Which row supplied the anchor: the booking creation, or a legacy session fallback. */
-  anchoredOn: "created_at" | "session-fallback";
+  /**
+   * Which row supplied the anchor: the authoritative ET business date
+   * (created_business_date, S7c), the stored created_at instant/date encoding,
+   * or a legacy session fallback.
+   */
+  anchoredOn: "created_business_date" | "created_at" | "session-fallback";
 }
 
 export interface AttributionMatch {
@@ -245,17 +260,23 @@ export interface AttributionMatch {
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * The booking's CREATION date (ET, YYYY-MM-DD) from the stored created_at.
- * Date-only encodings stay dates (Acuity dateCreated has no time — the parser
- * stores it as exactly UTC midnight, which must NOT be re-read as an ET
- * instant, or the anchor shifts a day early). Real timestamps become their ET
- * calendar date. Never uses the scheduled session date while created_at
- * exists; returns null only when nothing is parseable.
+ * The booking's CREATION date (ET, YYYY-MM-DD) for the window anchor.
+ *
+ * S7c (owner directive 2026-09-28): `created_business_date` — the ingestion
+ * layer's authoritative ET business date (created_at → America/New_York, or
+ * the dateCreated CALENDAR DATE for date-only rows) — is THE anchor when
+ * present; the window math no longer infers the date from the created_at
+ * encoding. Legacy rows without the column fall back to the pre-S7c logic:
+ * date-only encodings (created_at at exactly UTC midnight) stay calendar
+ * dates, real timestamps become their ET calendar date. Never uses the
+ * scheduled session date while a creation time exists; returns null only when
+ * nothing is parseable.
  */
 export function bookingCreationDateEt(appt: {
   created_at?: string | null;
+  created_business_date?: string | null;
   appointment_datetime?: string | null;
-}): { date: string; anchoredOn: "created_at" | "session-fallback" } | null {
+}): { date: string; anchoredOn: "created_business_date" | "created_at" | "session-fallback" } | null {
   const tryParse = (raw: string): string | null => {
     if (DATE_ONLY_RE.test(raw)) return raw; // already a calendar date
     const ms = Date.parse(raw);
@@ -268,6 +289,9 @@ export function bookingCreationDateEt(appt: {
     }
     return etDateStrFromInstant(ms);
   };
+  if (appt.created_business_date && DATE_ONLY_RE.test(appt.created_business_date)) {
+    return { date: appt.created_business_date, anchoredOn: "created_business_date" };
+  }
   if (appt.created_at) {
     const d = tryParse(appt.created_at);
     if (d) return { date: d, anchoredOn: "created_at" };

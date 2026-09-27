@@ -29,7 +29,7 @@
  *    paced ≥1.1s apart (injectable sleep for tests).
  */
 import { getSecret } from "../env";
-import { addDays, etToday } from "../date-logic";
+import { addDays, etDateStrFromInstant, etToday } from "../date-logic";
 import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics/attribution";
 import type { Store } from "../store/types";
 import type { NormalizedAppointment } from "./adapters";
@@ -64,21 +64,102 @@ export function parseAcuityDuration(raw: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
+const MONTHS: Record<string, number> = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+  jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9,
+  oct: 10, nov: 11, dec: 12,
+};
+
+/**
+ * S7c (owner directive 2026-09-28): parse the date-only `dateCreated` display
+ * string ("September 21, 2026", also "Sep 21, 2026" / "2026-09-21") as a
+ * CALENDAR DATE — never through Date.parse (whose timezone interpretation is
+ * implementation-defined and would shift the day) and never UTC-converted.
+ * Returns YYYY-MM-DD or null.
+ */
+export function parseAcuityDateCreatedCalendar(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const m = /^([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})$/.exec(s);
+  if (m) {
+    const month = MONTHS[m[1].toLowerCase()];
+    const day = Number(m[2]);
+    const year = Number(m[3]);
+    if (month && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+  return null;
+}
+
 /**
  * One Acuity API appointment row → the normalized sync shape (same interface
  * the demo adapter produces, so the sync runner code path is identical).
  * Returns null for rows without an id or an unparseable datetime — never a
  * guessed row.
+ *
+ * S7c AUTHORITATIVE CREATION TIME (owner directive 2026-09-28):
+ *  - `datetimeCreated` (ISO 8601 with stated offset, e.g. "2026-09-21T11:27:31-0500")
+ *    is the authoritative creation instant → stored as created_at (the stated
+ *    offset is respected to get the true UTC instant) and the original string
+ *    is kept verbatim in created_time_source; precision "full".
+ *  - created_business_date = that instant converted to America/New_York (ET).
+ *    The stated offsets are FIXED (-0500/-0600) while ET is DST-aware, so an
+ *    ~11 PM–midnight edge can land the ET business date one day later than the
+ *    stated local date — that is the correct instant→ET rule, not an error.
+ *  - Date-only fallback (datetimeCreated missing): dateCreated is parsed as a
+ *    CALENDAR DATE — created_business_date is exactly that date (never shifted
+ *    by a UTC conversion), created_at carries the documented midnight-UTC
+ *    display encoding, precision "date_only". No hour/minute precision is
+ *    ever fabricated.
+ *  - Neither field: fall back to the session datetime (a real timestamp) with
+ *    precision "session_fallback" and a caller-visible warning flag.
  */
 export function parseAcuityAppointment(raw: Record<string, unknown>): NormalizedAppointment | null {
   const id = raw.id != null ? String(raw.id) : "";
   if (!id) return null;
   const datetime = parseAcuityInstant(raw.datetime);
   if (!datetime) return null;
-  // dateCreated = when the booking was MADE (drives booking-created metrics);
-  // fall back to the session datetime (a real timestamp) with a caller-visible
-  // warning flag rather than inventing anything.
-  const createdAt = parseAcuityInstant(raw.dateCreated) ?? datetime;
+  const datetimeCreatedRaw = typeof raw.datetimeCreated === "string" && raw.datetimeCreated.trim() !== "" ? raw.datetimeCreated.trim() : null;
+  const dateCreatedRaw = typeof raw.dateCreated === "string" && raw.dateCreated.trim() !== "" ? raw.dateCreated.trim() : null;
+  const datetimeCreatedInstant = datetimeCreatedRaw ? parseAcuityInstant(datetimeCreatedRaw) : null;
+  const dateCreatedInstant = !datetimeCreatedInstant && dateCreatedRaw ? parseAcuityInstant(dateCreatedRaw) : null;
+  const dateCreatedCalendar = dateCreatedRaw ? parseAcuityDateCreatedCalendar(dateCreatedRaw) : null;
+
+  let createdAt: string;
+  let createdBusinessDate: string | null;
+  let precision: "full" | "date_only" | "session_fallback";
+  let source: string | null;
+  if (datetimeCreatedInstant) {
+    // Authoritative instant: the STATED OFFSET decides the true UTC instant;
+    // the ET business date is that instant converted to America/New_York.
+    createdAt = datetimeCreatedInstant;
+    createdBusinessDate = etDateStrFromInstant(Date.parse(datetimeCreatedInstant));
+    precision = "full";
+    source = datetimeCreatedRaw;
+  } else if (dateCreatedInstant) {
+    // Non-standard variant: dateCreated itself carries a full timestamp —
+    // still full hour/minute precision, honest instant math.
+    createdAt = dateCreatedInstant;
+    createdBusinessDate = etDateStrFromInstant(Date.parse(dateCreatedInstant));
+    precision = "full";
+    source = dateCreatedRaw;
+  } else if (dateCreatedCalendar) {
+    // Date-only display date → calendar date, never UTC-shifted; created_at
+    // keeps the legacy midnight-UTC encoding (documented, precision-marked).
+    createdAt = `${dateCreatedCalendar}T00:00:00.000Z`;
+    createdBusinessDate = dateCreatedCalendar;
+    precision = "date_only";
+    source = dateCreatedRaw;
+  } else {
+    createdAt = datetime;
+    createdBusinessDate = etDateStrFromInstant(Date.parse(datetime));
+    precision = "session_fallback";
+    source = null;
+  }
   const canceled = raw.canceled === true || raw.canceled === "true";
   const first = typeof raw.firstName === "string" ? raw.firstName : "";
   const last = typeof raw.lastName === "string" ? raw.lastName : "";
@@ -90,8 +171,11 @@ export function parseAcuityAppointment(raw: Record<string, unknown>): Normalized
     appointmentType: typeof raw.type === "string" ? raw.type : "",
     appointmentDatetime: datetime,
     createdAt,
+    createdAtBusinessDate: createdBusinessDate,
+    createdTimeSource: source,
+    createdTimePrecision: precision,
     status: canceled ? "cancelled" : "scheduled",
-    canceledAndFallbackCreated: parseAcuityInstant(raw.dateCreated) == null,
+    canceledAndFallbackCreated: datetimeCreatedInstant == null && dateCreatedCalendar == null,
     cancelled: canceled,
     clientName: `${first} ${last}`.trim(),
     // Contact identities NORMALIZED AT THE SOURCE (one definition lives in the
@@ -102,6 +186,7 @@ export function parseAcuityAppointment(raw: Record<string, unknown>): Normalized
     clientEmail: normalizeAttributionEmail(typeof raw.email === "string" ? raw.email : "") ?? "",
     durationMinutes: duration ?? 60,
     durationMissing: duration == null,
+    raw,
   } as NormalizedAppointment & { canceledAndFallbackCreated?: boolean; durationMissing?: boolean };
 }
 
@@ -365,6 +450,13 @@ export async function upsertAcuityAppointments(store: Store, appts: NormalizedAp
         appointment_datetime: a.appointmentDatetime,
         duration_minutes: a.durationMinutes,
         created_at: a.createdAt,
+        // S7c authoritative creation time: ET business date + source string +
+        // precision marker + the FULL provider object (forensics gap closed —
+        // appointments.raw was never populated before S7c).
+        created_business_date: a.createdAtBusinessDate ?? null,
+        created_time_source: a.createdTimeSource ?? null,
+        created_time_precision: a.createdTimePrecision ?? "session_fallback",
+        raw: a.raw ?? null,
         status: a.status,
         cancelled: a.cancelled,
         client_name: a.clientName,

@@ -8,7 +8,7 @@
  *  - ASSIGNED LEAD CONVERSION = Total Bookings / Assigned Leads
  *  - GOAL ACHIEVEMENT = Actual Bookings / Booking Goal
  *  - A "booking" = a non-cancelled appointment, counted by the day it was
- *    CREATED (created_at, ET) — the studio tracks sales made, not session date.
+ *    CREATED (created_business_date, ET business date) — the studio tracks sales made, not session date.
  *  - "Bookings From Calls Over Threshold" = bookings attributed to a call whose
  *    duration exceeds the meaningful-call threshold AND created within the
  *    attribution window (enforced by the attribution engine at sync time;
@@ -110,9 +110,24 @@ export interface AppointmentRow {
   acuity_appointment_id?: string | null;
   appointment_type: string;
   appointment_datetime: string; // ISO UTC (session time)
-  created_at: string; // ISO UTC (when booked)
+  created_at: string; // ISO UTC (authoritative creation instant from Acuity datetimeCreated; date-only rows carry the documented midnight-UTC display encoding)
   status: string; // scheduled | cancelled | completed
   cancelled: boolean;
+  /**
+   * S7c AUTHORITATIVE CREATION TIME (owner directive 2026-09-28): the ET
+   * business date the booking was MADE on (YYYY-MM-DD) — created_at converted
+   * to America/New_York, or the dateCreated CALENDAR DATE for date-only rows
+   * (never UTC-shifted). THE created-based metrics bucket (daily/weekly/goal
+   * pacing) reads THIS column; created_at stays the exact instant and
+   * Appointments Scheduled stays on appointment_datetime.
+   */
+  created_business_date?: string | null;
+  /** Original source string the creation time came from (datetimeCreated or dateCreated). */
+  created_time_source?: string | null;
+  /** full = datetimeCreated existed; date_only = calendar date from dateCreated; session_fallback = neither. */
+  created_time_precision?: string | null;
+  /** FULL provider object as Acuity returned it (forensics; written by the live sync). */
+  raw?: Record<string, unknown> | null;
 }
 
 export interface AttributionRow {
@@ -193,12 +208,37 @@ export function filterCallsInEtRange(calls: CallRow[], start: string, end: strin
   return filterInstantsInEtRange(calls, (c) => c.started_at, start, end);
 }
 
+/**
+ * S7c: the ET BUSINESS DATE a booking was MADE on — THE created-based bucket
+ * key. `created_business_date` (written by the S7c sync from Acuity
+ * datetimeCreated / the dateCreated calendar date) is authoritative; a row
+ * without it (legacy store row not yet re-synced) falls back to the SAME
+ * derivation the attribution engine's anchor uses for legacy rows: a
+ * midnight-UTC created_at is read as a CALENDAR DATE (the date-only display
+ * encoding — never UTC-shifted), a real timestamp becomes its ET date. Rows
+ * with neither parseable field bucket nowhere (never guessed into a day).
+ */
+export function createdBusinessDateOf(appt: Pick<AppointmentRow, "created_at" | "created_business_date">): string | null {
+  return bookingCreationDateEt({
+    created_at: appt.created_at,
+    created_business_date: appt.created_business_date,
+  })?.date ?? null;
+}
+
 export function filterApptsCreatedInEtRange(
   appts: AppointmentRow[],
   start: string,
   end: string,
 ): AppointmentRow[] {
-  return filterInstantsInEtRange(appts, (a) => a.created_at, start, end);
+  // S7c: the created-based bucket is the ET BUSINESS DATE (created_business_date
+  // — the booking-MADE calendar date in America/New_York), compared as calendar
+  // dates inclusive both ends. The old instant bounds on created_at mis-bucketed
+  // every booking whose instant encoding was date-only (midnight UTC → the
+  // previous ET day).
+  return appts.filter((r) => {
+    const d = createdBusinessDateOf(r);
+    return d != null && d >= start && d <= end;
+  });
 }
 
 /** Assemble one rep's full performance model for the Reps page detail panel. */
@@ -257,10 +297,17 @@ export function isBooking(a: AppointmentRow): boolean {
   return !a.cancelled && a.status !== "cancelled";
 }
 
-/** Count bookings (non-cancelled) whose created_at falls in [startUtc, endUtc). */
-export function countBookingsCreatedBetween(appts: AppointmentRow[], startUtc: string, endUtc: string): number {
+/**
+ * Count bookings (non-cancelled) whose ET BUSINESS DATE (created_business_date)
+ * falls in [start, end] inclusive — both bounds are YYYY-MM-DD ET calendar
+ * dates (S7c: bucketing is the booking-MADE ET date, never an instant window).
+ */
+export function countBookingsCreatedBetween(appts: AppointmentRow[], start: string, end: string): number {
   return appts.filter(
-    (a) => isBooking(a) && a.created_at >= startUtc && a.created_at < endUtc,
+    (a) => {
+      const d = createdBusinessDateOf(a);
+      return isBooking(a) && d != null && d >= start && d <= end;
+    },
   ).length;
 }
 
@@ -910,7 +957,7 @@ export interface TeamRangeMetrics {
  * Team-level aggregates over an arbitrary date range — the Team page KPI
  * block's single source of truth. Same conversions-on-own-period-data rules
  * as the rep layer; leads use work_date cohorting; bookings are non-cancelled
- * appointments counted by created_at. Rows must already be ET-range-filtered
+ * appointments counted by ET business date (created_business_date — S7c). Rows must already be ET-range-filtered
  * (the query applies etRangeBounds; the pure filters re-check the same bounds).
  */
 export function buildTeamRangeMetrics(input: {
@@ -1081,10 +1128,15 @@ export function buildTeamTrends(input: {
   }
 
   const points = buckets.map((b) => {
+    // S7c: bookings bucket by ET BUSINESS DATE (created_business_date) — the
+    // calendar dates the bookings were made on; calls stay instant-bounded.
     const startUtc = etDayStartOf(b.start);
     const endUtc = etDayEndUtc(b.end);
     const bCalls = input.calls.filter((c) => c.started_at >= startUtc && c.started_at < endUtc);
-    const bAppts = input.appts.filter((a) => a.created_at >= startUtc && a.created_at < endUtc);
+    const bAppts = input.appts.filter((a) => {
+      const d = createdBusinessDateOf(a);
+      return d != null && d >= b.start && d <= b.end;
+    });
     const bLeads = input.leads.filter((l) => l.work_date >= b.start && l.work_date <= b.end);
     const bAdjustment = (input.leadCountAdjustments ?? [])
       .filter((a) => a.work_date >= b.start && a.work_date <= b.end)

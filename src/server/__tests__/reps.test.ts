@@ -103,21 +103,22 @@ describe("date-ranged aggregation: boundary days in/out (ET)", () => {
     const kept = filterCallsInEtRange(calls, "2026-09-24", "2026-09-25");
     expect(kept.map((c) => c.id).sort()).toEqual(["first-minute", "inside", "last-minute"]);
   });
-  test("appointment created_at uses the same ET bounds", () => {
-    const appt = (id: string, createdAt: string): AppointmentRow => ({
+  test("appointment created bucket uses the ET BUSINESS DATE (created_business_date, S7c)", () => {
+    const appt = (id: string, createdAt: string, businessDate: string): AppointmentRow => ({
       id,
       contact_id: "k1",
       calendar_id: "cal-1",
       appointment_type: "Family Portrait Session",
       appointment_datetime: "2026-10-01T14:00:00.000Z",
       created_at: createdAt,
+      created_business_date: businessDate,
       status: "scheduled",
       cancelled: false,
     });
     const appts = [
-      appt("day-before", "2026-09-23T20:00:00.000Z"),
-      appt("in-range", ET("2026-09-25", "12:00")),
-      appt("day-after", "2026-09-26T12:00:00.000Z"),
+      appt("day-before", "2026-09-23T20:00:00.000Z", "2026-09-23"),
+      appt("in-range", ET("2026-09-25", "12:00"), "2026-09-25"),
+      appt("day-after", "2026-09-26T12:00:00.000Z", "2026-09-26"),
     ];
     expect(filterApptsCreatedInEtRange(appts, "2026-09-24", "2026-09-25").map((a) => a.id)).toEqual([
       "in-range",
@@ -138,9 +139,9 @@ describe("repRangeSummaries (date-ranged per-rep aggregation)", () => {
     { id: "cOut", rep_id: "r1", contact_id: "k5", started_at: "2026-09-23T20:00:00.000Z", duration_seconds: 300, over_two_minutes: true },
   ];
   const appts: AppointmentRow[] = [
-    { id: "a1", contact_id: "k2", calendar_id: "c", appointment_type: "t", appointment_datetime: "2026-10-01T14:00:00.000Z", created_at: ET("2026-09-25", "09:30"), status: "scheduled", cancelled: false },
-    { id: "a2", contact_id: "k4", calendar_id: "c", appointment_type: "t", appointment_datetime: "2026-10-01T14:00:00.000Z", created_at: ET("2026-09-25", "10:30"), status: "scheduled", cancelled: false },
-    { id: "a3", contact_id: "k1", calendar_id: "c", appointment_type: "t", appointment_datetime: "2026-10-01T14:00:00.000Z", created_at: ET("2026-09-25", "11:30"), status: "cancelled", cancelled: true },
+    { id: "a1", contact_id: "k2", calendar_id: "c", appointment_type: "t", appointment_datetime: "2026-10-01T14:00:00.000Z", created_at: ET("2026-09-25", "09:30"), created_business_date: "2026-09-25", status: "scheduled", cancelled: false },
+    { id: "a2", contact_id: "k4", calendar_id: "c", appointment_type: "t", appointment_datetime: "2026-10-01T14:00:00.000Z", created_at: ET("2026-09-25", "10:30"), created_business_date: "2026-09-25", status: "scheduled", cancelled: false },
+    { id: "a3", contact_id: "k1", calendar_id: "c", appointment_type: "t", appointment_datetime: "2026-10-01T14:00:00.000Z", created_at: ET("2026-09-25", "11:30"), created_business_date: "2026-09-25", status: "cancelled", cancelled: true },
   ];
   const attributions: AttributionRow[] = [
     { id: "at1", appointment_id: "a1", call_id: "c2", rep_id: "r1", method: "contact_id", confidence: 1, manual_override: false },

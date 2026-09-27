@@ -583,9 +583,21 @@ export interface Store {
       client_name?: string | null;
       client_phone?: string | null;
       client_email?: string | null;
+      /** S7c: ET business date of the authoritative creation instant. */
+      created_business_date?: string | null;
+      created_time_source?: string | null;
+      created_time_precision?: string | null;
+      /** S7c: FULL provider object (appointments.raw). */
+      raw?: Record<string, unknown> | null;
     })[],
   ): Promise<number>;
-  getAppointmentsCreatedBetween(startUtc: string, endUtc: string): Promise<AppointmentRow[]>;
+  /**
+   * S7c: appointments CREATED on an ET BUSINESS DATE in [start, end] — the
+   * created-based metrics bucket reads created_business_date (booking-MADE ET
+   * calendar date), inclusive both ends. Replaces the old instant-bounds
+   * created_at window that mis-bucketed date-only bookings one ET day early.
+   */
+  getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]>;
   getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]>;
   getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]>;
   /** Appointments with client contact fields joined (unattributed-bookings queue). */

@@ -108,13 +108,15 @@ export function toAttributionRows(
       continue;
     }
     // Audit/debug note: persist the window limitation ON the row — the marker
-    // plus the exact window dates the match was evaluated against (Acuity
-    // dateCreated is date-only; the session date is never used and intra-day
-    // ordering is never assumed). s1 window-interaction rows PREPEND their
-    // evidence (source table + HL message id + duration) so every ownership
-    // under the ANY-duration rule is auditable on the stored row.
+    // plus the exact window dates the match was evaluated against. S7c: the
+    // anchor is the AUTHORITATIVE ET business date (created_business_date from
+    // Acuity datetimeCreated; date-only rows keep the calendar date), so the
+    // window is exact rather than inferred from a stored instant encoding.
+    // s1 window-interaction rows PREPEND their evidence (source table + HL
+    // message id + duration) so every ownership under the ANY-duration rule is
+    // auditable on the stored row.
     const windowNote = m.window
-      ? `${m.window.marker} call-dates ${m.window.from}..${m.window.to} ET (anchor=${m.window.anchoredOn}; Acuity dateCreated is date-only)`
+      ? `${m.window.marker} call-dates ${m.window.from}..${m.window.to} ET (anchor=${m.window.anchoredOn})`
       : null;
     const s1Note =
       m.method === "window_interaction" && m.evidence

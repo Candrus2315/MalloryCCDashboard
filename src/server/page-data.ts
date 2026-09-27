@@ -87,7 +87,9 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers] = await Promise.all([
       store.getUsers(),
       store.getCallsBetween(startUtc, endUtc),
-      store.getAppointmentsCreatedBetween(startUtc, endUtc),
+      // S7c: the created-based bucket reads the ET BUSINESS DATE column —
+      // calendar-date bounds, inclusive both ends.
+      store.getAppointmentsCreatedBusinessDateBetween(range.start, range.end),
       store.getAttributions(),
       store.getLeadsByWorkDates(dateRange(range.start, range.end)),
       // look-back before the range so attribution joins can reach the call
@@ -267,7 +269,9 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, teamGoalRows, repGoalRows] = await Promise.all([
       store.getUsers(),
       store.getCallsBetween(startUtc, endUtc),
-      store.getAppointmentsCreatedBetween(startUtc, endUtc),
+      // S7c: the created-based bucket reads the ET BUSINESS DATE column —
+      // calendar-date bounds, inclusive both ends.
+      store.getAppointmentsCreatedBusinessDateBetween(range.start, range.end),
       store.getAttributions(),
       store.getLeadsByWorkDates(dateRange(range.start, range.end)),
       // look-back before the range so attribution joins can reach the call
@@ -477,9 +481,10 @@ export async function todayPageData(deps?: PageDeps) {
       store.getCallsBetween(todayStart, todayEnd),
       store.getCallsBetween(weekStartUtc, todayEnd),
       store.getAllCallsSince(weekStartUtc),
-      store.getAppointmentsCreatedBetween(todayStart, todayEnd),
-      store.getAppointmentsCreatedBetween(yesterdayStart, todayStart),
-      store.getAppointmentsCreatedBetween(weekStartUtc, todayEnd),
+      // S7c: created-based buckets read created_business_date (ET calendar dates).
+      store.getAppointmentsCreatedBusinessDateBetween(today, today),
+      store.getAppointmentsCreatedBusinessDateBetween(yesterday, yesterday),
+      store.getAppointmentsCreatedBusinessDateBetween(ws, today),
       store.getAvailabilityRules(),
       // leads worked this week so far: cohorts for each day Mon..today (work_date)
       store.getLeadsByWorkDates(
@@ -599,8 +604,9 @@ export async function dailyReportPageData(deps?: PageDeps) {
   const [callsYesterday, apptsYesterday, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
     await Promise.all([
       store.getCallsBetween(yesterdayStart, todayStart),
-      store.getAppointmentsCreatedBetween(yesterdayStart, todayStart),
-      store.getAppointmentsCreatedBetween(weekStartUtc, todayEnd),
+      // S7c: created-based buckets read created_business_date (ET calendar dates).
+      store.getAppointmentsCreatedBusinessDateBetween(yesterday, yesterday),
+      store.getAppointmentsCreatedBusinessDateBetween(ws, today),
       store.getAllCallsSince(weekStartUtc),
       // all leads worked this week so far (work_date Mon..today) — covers both
       // today's cohort and yesterday's for the conversion denominators

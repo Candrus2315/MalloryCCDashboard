@@ -30,13 +30,14 @@ const call = (id: string, rep: string, contact: string, startedAt: string, dur: 
   over_two_minutes: dur > 120,
 });
 
-const appt = (id: string, contact: string, createdAt: string, status = "scheduled"): AppointmentRow => ({
+const appt = (id: string, contact: string, createdAt: string, status = "scheduled", createdBusinessDate?: string): AppointmentRow => ({
   id,
   contact_id: contact,
   calendar_id: "cal-1",
   appointment_type: "Family Portrait Session",
   appointment_datetime: "2026-10-01T14:00:00.000Z",
   created_at: createdAt,
+  created_business_date: createdBusinessDate ?? createdAt.slice(0, 10),
   status,
   cancelled: status === "cancelled",
 });
@@ -58,15 +59,15 @@ describe("summarizeCalls", () => {
 
 describe("bookings", () => {
   const appts = [
-    appt("a1", "k1", "2026-09-25T10:00:00.000Z"),
-    appt("a2", "k2", "2026-09-25T11:00:00.000Z"),
-    appt("a3", "k3", "2026-09-25T12:00:00.000Z", "cancelled"), // cancelled → not a booking
-    appt("a4", "k4", "2026-09-24T12:00:00.000Z"), // outside today range
+    appt("a1", "2026-09-25T10:00:00.000Z", "2026-09-25"),
+    appt("a2", "2026-09-25T11:00:00.000Z", "2026-09-25"),
+    appt("a3", "2026-09-25T12:00:00.000Z", "2026-09-25", "cancelled"), // cancelled → not a booking
+    appt("a4", "2026-09-24T12:00:00.000Z", "2026-09-24"), // outside today range
   ];
 
-  test("cancelled appointments do not count as bookings", () => {
+  test("cancelled appointments do not count as bookings (bucketed by ET business date)", () => {
     expect(
-      countBookingsCreatedBetween(appts, "2026-09-25T00:00:00.000Z", "2026-09-26T00:00:00.000Z"),
+      countBookingsCreatedBetween(appts, "2026-09-25", "2026-09-25"),
     ).toBe(2);
   });
 

@@ -13,6 +13,7 @@ import {
   type CallRow,
   type LeadRow,
   attributionDegradation,
+  createdBusinessDateOf,
 } from "../metrics/compute";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
@@ -368,9 +369,17 @@ export class MemoryStore implements Store {
     const { acuity_appointment_id: _a, client_name: _n, client_phone: _p, client_email: _e, ...rest } = a;
     return rest;
   }
-  async getAppointmentsCreatedBetween(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
+  async getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
+    // S7c: created-based metrics bucket on the ET BUSINESS DATE column —
+    // identical semantics to the pg store (the SQL path filters the column;
+    // production rows all carry it after the S7c re-pull). The memory path
+    // shares ONE derivation helper (createdBusinessDateOf) so the stores can
+    // never diverge, including for legacy rows without the column.
     return [...this.appointments.values()]
-      .filter((a) => a.created_at >= startUtc && a.created_at < endUtc)
+      .filter((a) => {
+        const d = createdBusinessDateOf(a);
+        return d != null && d >= start && d <= end;
+      })
       .map((a) => this.stripAppt(a));
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {

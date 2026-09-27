@@ -6,7 +6,7 @@
  * the demo sync produces the SAME provider IDs → the upsert layer replaces
  * rows instead of duplicating. New days add new rows; history accumulates.
  */
-import { addDays, etDayEndUtc, etDayStartUtc, etToday, getWorkDate, weekday } from "../date-logic";
+import { addDays, etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etToday, getWorkDate, weekday } from "../date-logic";
 import type { AppointmentRow, AttributionRow, AvailabilityRule } from "../metrics/compute";
 import { computeAttributions } from "../attribution";
 import type { BlockedTimeRow } from "../metrics/compute";
@@ -205,6 +205,9 @@ export function generateDemoBatch(opts: { days?: number; now?: number; todayOver
       appointmentType: types[Math.floor(arng() * types.length)],
       appointmentDatetime: sessionDate.toISOString(),
       createdAt: new Date(createdMs).toISOString(),
+      createdAtBusinessDate: etDateStrFromInstant(createdMs),
+      createdTimeSource: new Date(createdMs).toISOString(),
+      createdTimePrecision: "full",
       status: cancelled ? "cancelled" : "scheduled",
       cancelled,
       clientName: isContact?.name ?? "Unknown Client",
@@ -227,6 +230,9 @@ export function generateDemoBatch(opts: { days?: number; now?: number; todayOver
       appointmentType: isFamily ? FAMILY_TYPES[0] : ANIMALIA_TYPES[0],
       appointmentDatetime: new Date(createdMs + 3 * 86400_000).toISOString(),
       createdAt: new Date(createdMs).toISOString(),
+      createdAtBusinessDate: etDateStrFromInstant(createdMs),
+      createdTimeSource: new Date(createdMs).toISOString(),
+      createdTimePrecision: "full",
       status: "scheduled",
       cancelled: false,
       clientName: `Direct Booking ${i + 1}`,

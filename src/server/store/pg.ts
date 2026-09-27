@@ -115,6 +115,15 @@ const DDL: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS appt_created_idx ON appointments (created_at)`,
   `CREATE INDEX IF NOT EXISTS appt_datetime_idx ON appointments (appointment_datetime)`,
+  // S7c AUTHORITATIVE CREATION TIME (owner directive 2026-09-28): the ET
+  // business date the booking was made on + the original source string +
+  // precision marker. created_at becomes the authoritative instant (Acuity
+  // datetimeCreated with its stated offset); date-only rows keep the
+  // documented midnight-UTC display encoding and are precision-marked.
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS created_business_date date`,
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS created_time_source text`,
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS created_time_precision text`,
+  `CREATE INDEX IF NOT EXISTS appt_created_bdate_idx ON appointments (created_business_date)`,
   `CREATE TABLE IF NOT EXISTS booking_attributions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     appointment_id uuid NOT NULL UNIQUE REFERENCES appointments(id) ON DELETE CASCADE,
@@ -728,16 +737,18 @@ export class PgStore implements Store {
     return { appointments: Number(appointments), blocked: Number(blocked) };
   }
 
-  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null })[]): Promise<number> {
+  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null })[]): Promise<number> {
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
-        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, status, cancelled, client_name, client_phone, client_email)
-        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.status}, ${r.cancelled}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
+        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, raw, status, cancelled, client_name, client_phone, client_email)
+        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.raw ? JSON.stringify(r.raw) : null}, ${r.status}, ${r.cancelled}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
         ON CONFLICT (acuity_appointment_id) DO UPDATE SET
           contact_id = EXCLUDED.contact_id, calendar_id = EXCLUDED.calendar_id, calendar_name = EXCLUDED.calendar_name,
           appointment_type = EXCLUDED.appointment_type, appointment_datetime = EXCLUDED.appointment_datetime,
           duration_minutes = EXCLUDED.duration_minutes, created_at = EXCLUDED.created_at,
+          created_business_date = EXCLUDED.created_business_date, created_time_source = EXCLUDED.created_time_source,
+          created_time_precision = EXCLUDED.created_time_precision, raw = EXCLUDED.raw,
           status = EXCLUDED.status, cancelled = EXCLUDED.cancelled,
           client_name = EXCLUDED.client_name, client_phone = EXCLUDED.client_phone, client_email = EXCLUDED.client_email, updated_at = now()
       `;
@@ -752,13 +763,20 @@ export class PgStore implements Store {
       appointment_type: String(r.appointment_type ?? ""),
       appointment_datetime: new Date(r.appointment_datetime as string).toISOString(),
       created_at: new Date(r.created_at as string).toISOString(),
+      // S7c: the ET business date arrives as a pg `date` (YYYY-MM-DD via
+      // toString) — normalized defensively to the calendar-date string.
+      created_business_date: r.created_business_date == null ? null : String(r.created_business_date).slice(0, 10),
+      created_time_source: r.created_time_source == null ? null : String(r.created_time_source),
+      created_time_precision: r.created_time_precision == null ? null : String(r.created_time_precision),
+      raw: (r.raw ?? null) as Record<string, unknown> | null,
       status: String(r.status),
       cancelled: Boolean(r.cancelled),
     };
   }
-  async getAppointmentsCreatedBetween(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
+  async getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, status, cancelled FROM appointments WHERE created_at >= ${startUtc} AND created_at < ${endUtc}`;
+    // S7c: created-based metrics bucket on the ET BUSINESS DATE column.
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, raw FROM appointments WHERE created_business_date >= ${start}::date AND created_business_date <= ${end}::date`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
@@ -791,7 +809,7 @@ export class PgStore implements Store {
     calendar_name: string | null;
   })[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, created_at, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => ({
       ...this.apptRow(r as Record<string, unknown>),
       acuity_appointment_id: r.acuity_appointment_id ? String(r.acuity_appointment_id) : null,

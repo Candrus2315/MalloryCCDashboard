@@ -48,6 +48,14 @@ export interface NormalizedAppointment {
   appointmentType: string;
   appointmentDatetime: string;
   createdAt: string;
+  /** S7c: ET business date the booking was made on (authoritative anchor). */
+  createdAtBusinessDate?: string | null;
+  /** S7c: original source string (datetimeCreated / dateCreated) for forensics. */
+  createdTimeSource?: string | null;
+  /** S7c: full | date_only | session_fallback. */
+  createdTimePrecision?: string;
+  /** S7c: FULL provider row as received (stored to appointments.raw). */
+  raw?: Record<string, unknown> | null;
   status: string;
   cancelled: boolean;
   clientName: string;
