@@ -19,6 +19,7 @@ import type {
   AuditCallRow,
   CallContactBackfillUpdate,
   ConnectionRow,
+  ContactExternalIdRow,
   ContactRow,
   DailyPrioritiesRow,
   HarvestCallRow,
@@ -551,6 +552,23 @@ export class PgStore implements Store {
       source_updated_at: r.source_updated_at == null ? null : String(r.source_updated_at),
       last_synced_at: r.last_synced_at == null ? null : String(r.last_synced_at),
     })) as unknown as ContactRow[];
+  }
+  async countContacts(provider: string): Promise<number> {
+    await this.ensureSchema();
+    const [{ n }] = await this.sql`SELECT count(*)::int AS n FROM contacts WHERE provider = ${provider}`;
+    return Number(n);
+  }
+  async getContactExternalIds(provider: string, only?: string[]): Promise<ContactExternalIdRow[]> {
+    await this.ensureSchema();
+    // Two columns only — the S4 per-tick read that retires the full-row
+    // materialization. `only` narrows to specific external ids (targeted
+    // linkage lookup; empty list → empty result, never a full scan).
+    const rows = only
+      ? only.length
+        ? await this.sql`SELECT id::text AS id, external_id FROM contacts WHERE provider = ${provider} AND external_id = ANY(${only})`
+        : []
+      : await this.sql`SELECT id::text AS id, external_id FROM contacts WHERE provider = ${provider}`;
+    return (rows as Record<string, unknown>[]).map((r) => ({ id: String(r.id), external_id: String(r.external_id) }));
   }
 
   async upsertCalls(

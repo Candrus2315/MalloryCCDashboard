@@ -219,7 +219,7 @@ export function serializableConnections(connections: { provider: string; status:
 }
 
 /** Human-readable stale-data warnings from integration_connections — shared by every page. */
-export function syncStaleWarnings(connections: { provider: string; status: string; last_successful_sync_at: string | null; last_error?: string | null }[]): string[] {
+export function syncStaleWarnings(connections: { provider: string; status: string; last_successful_sync_at: string | null; last_error?: string | null; config?: Record<string, unknown> | null }[]): string[] {
   const out: string[] = [];
   const LABELS: Record<string, string> = { highlevel: "HighLevel", acuity: "Acuity", google_sheets: "Google Sheets" };
   for (const c of connections) {
@@ -228,6 +228,15 @@ export function syncStaleWarnings(connections: { provider: string; status: strin
     if (c.status === "error") out.push(`${label} reported a sync error — its numbers may be incomplete; check the Sync Center in Settings.`);
     else if (c.status === "connected" && c.last_error) out.push(`${label} synced partially — some sheets/sources failed (see Settings → Sync Center); its numbers may be incomplete.`);
     else if (!c.last_successful_sync_at) out.push(`${label} has never synced successfully — run SYNC NOW in Settings.`);
+    // S4 contacts-reconciliation tripwire (every-tick meta.total vs DB count):
+    // warn ONLY on a real measured drift — written by the scheduler tick into
+    // the connection config (warn=true ⇒ the numbers below are measured).
+    if (c.provider === "highlevel" && c.status === "connected") {
+      const recon = (c.config?.contactsReconciliation ?? null) as { warn?: boolean; sourceTotal?: number | null; dbCount?: number | null } | null;
+      if (recon?.warn === true) {
+        out.push(`Contact coverage: HighLevel reports ${recon.sourceTotal ?? "?"} contacts, dashboard holds ${recon.dbCount ?? "?"} — run SYNC NOW in Settings to catch up.`);
+      }
+    }
   }
   return out;
 }

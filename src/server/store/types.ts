@@ -84,6 +84,15 @@ export interface OpportunityRow {
   source_updated_at: string | null;
 }
 
+/**
+ * S4: light contact identity pair — (internal id, provider external id).
+ * The per-tick linkage map + walk frontier read ONLY these two columns;
+ * the FULL row materialization (getContacts) is a full-sync concern.
+ */
+export interface ContactExternalIdRow {
+  id: string;
+  external_id: string;
+}
 /** Raw joined call record for the audit endpoint (source = normalized DB). */
 export interface AuditCallRow {
   /** HighLevel call-message id (the calls table's external_call_id). */
@@ -536,6 +545,20 @@ export interface Store {
   getAllUsers(): Promise<UserRow[]>;
   upsertContacts(rows: ContactRow[]): Promise<number>;
   getContacts(): Promise<ContactRow[]>;
+  /**
+   * S4: cheap population count for ONE provider — the every-tick contacts
+   * reconciliation tripwire (meta.total vs stored count) without any
+   * materialization.
+   */
+  countContacts(provider: string): Promise<number>;
+  /**
+   * S4: light (id, external_id) pairs for ONE provider's contacts — the
+   * per-tick replacement for the FULL getContacts() materialization (18
+   * columns × ~116k rows every tick only ever fed the external-id→id linkage
+   * map and the contacts walk's known-id set). `only` filters to specific
+   * external ids (targeted linkage lookup for rows just upserted this tick).
+   */
+  getContactExternalIds(provider: string, only?: string[]): Promise<ContactExternalIdRow[]>;
   /**
    * Call upsert (keyed by provider + external_call_id — duplicates never
    * duplicate rows). provider_rep_external_id preserves the RAW HighLevel

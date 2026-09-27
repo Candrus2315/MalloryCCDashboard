@@ -21,6 +21,7 @@ import type {
   AuditCallRow,
   CallContactBackfillUpdate,
   ConnectionRow,
+  ContactExternalIdRow,
   ContactRow,
   DailyPrioritiesRow,
   HarvestCallRow,
@@ -205,6 +206,16 @@ export class MemoryStore implements Store {
   }
   async getContacts(): Promise<ContactRow[]> {
     return [...this.contacts.values()];
+  }
+  async countContacts(provider: string): Promise<number> {
+    return [...this.contacts.values()].filter((c) => c.provider === provider).length;
+  }
+  async getContactExternalIds(provider: string, only?: string[]): Promise<ContactExternalIdRow[]> {
+    // Mirror of the PG store: two light columns, provider-scoped, optionally
+    // narrowed to specific external ids.
+    return [...this.contacts.values()]
+      .filter((c) => c.provider === provider && (!only || only.includes(c.external_id)))
+      .map((c) => ({ id: c.id, external_id: c.external_id }));
   }
 
   async upsertCalls(rows: CallExt[]): Promise<number> {

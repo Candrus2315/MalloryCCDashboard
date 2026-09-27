@@ -256,6 +256,17 @@ export async function runDemoSync(options?: {
   // (demo runs leave the watermark untouched; they never fetched live data).
   if (hlRes.live === true && !hlRes.error) {
     await store.setSyncWatermark("highlevel", startedAt);
+    // S4: a successful FULL sync also refreshes the contacts walk checkpoint —
+    // the full-sync contact upsert resets any no-new streak (the walk itself
+    // resumes from page 1 every tick; the deep backfill cursor is never reused).
+    await store.setSyncCheckpoint("hl_contacts_incremental_v1", JSON.stringify({
+      lastRunAt: new Date().toISOString(),
+      lastNewCount: null,
+      pagesLastRun: 0,
+      noNewStreak: 0,
+      note: "full-sync",
+      updatedAt: new Date().toISOString(),
+    }));
   }
 
   // --- Rep goals for the current week (idempotent; only seeded if missing) ---

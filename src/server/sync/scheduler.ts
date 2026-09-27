@@ -24,6 +24,14 @@ import type { AppSettings } from "../store/types";
 import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
+import {
+  CONTACTS_INCREMENTAL_CHECKPOINT_KEY,
+  CONTACTS_RECONCILIATION_CHECKPOINT_KEY,
+  harvestContactsIncremental,
+  parseReconciliationCheckpoint,
+  reconcileContacts,
+  type ContactsReconciliationCheckpoint,
+} from "./contacts-incremental";
 import { recomputeAttributions, runDemoSync } from "./run";
 import { availabilityTick, type AvailabilityTickResult } from "./acuity-live";
 import { attributionTick, type AttributionTickResult } from "./attribution-tick";
@@ -51,6 +59,10 @@ export interface SchedulerTickResult {
   availability?: AvailabilityTickResult;
   /** Independent attribution recompute piggy-backed on the same tick (never fails the tick). */
   attribution?: AttributionTickResult;
+  /** S4: the per-tick contacts differential walk (new rows stored this tick). */
+  contactsWalk?: { new: number; pages: number; truncated: boolean };
+  /** S4: meta.total-vs-DB reconciliation tripwire outcome. */
+  contactsReconciliation?: { dbCount: number | null; sourceTotal: number | null; delta: number | null; status: string };
 }
 
 /** Attribution recompute wrapped in its own sync_runs row (visible in the Sync Center). */
@@ -129,6 +141,22 @@ async function highlevelTick(options?: {
     // --- incremental: only activity newer than the watermark (minus overlap) ---
     const runId = await store.insertSyncRun("highlevel");
     try {
+      // S4 (design §3a): the contacts walk runs FIRST so contacts created in
+      // HighLevel without any harvested call still enter the DB this tick, and
+      // so the call→contact linkage map below already contains them.
+      // Light identity read (2 columns) replaces the old full getContacts()
+      // 18-column materialization of ~116k rows EVERY tick: it feeds both the
+      // walk's known-id frontier and the linkage map below.
+      const storedContactIds = await store.getContactExternalIds("highlevel");
+      const knownExternalIds = new Set(storedContactIds.map((c) => c.external_id));
+      const contactIdByExt = new Map(storedContactIds.map((c) => [c.external_id, c.id]));
+      const walk = await harvestContactsIncremental({
+        creds,
+        fetchImpl: options?.fetchImpl ?? fetch,
+        sleep: options?.sleep,
+        knownExternalIds,
+      });
+
       const sinceMs = Date.parse(watermark) - WATERMARK_OVERLAP_SECONDS * 1000;
       const harvest = await harvestIncremental({
         creds,
@@ -137,10 +165,11 @@ async function highlevelTick(options?: {
         sinceMs: Number.isFinite(sinceMs) ? sinceMs : 0,
       });
 
-      // Upsert users → contacts → calls (same ordering/linking as the full sync).
-      // ROSTER RULE: active iff name AND email match settings.active_roster —
-      // the full users snapshot arrives every tick, so roster changes apply
-      // without any manual step. Non-matching users keep their rows (inactive).
+      // Upsert users → contacts (walk first, then call-referenced) → calls
+      // (same ordering/linking as the full sync). ROSTER RULE: active iff name
+      // AND email match settings.active_roster — the full users snapshot
+      // arrives every tick, so roster changes apply without any manual step.
+      // Non-matching users keep their rows (inactive).
       await store.upsertUsers(
         harvest.users.map((u) => ({
           id: "",
@@ -155,6 +184,22 @@ async function highlevelTick(options?: {
       // keep their rep references — raw rows stay resolvable for future needs.
       const storedUsers = await store.getAllUsers();
       const userIdByExt = new Map(storedUsers.map((u) => [`${u.provider}:${u.external_id}`, u.id]));
+      // Walk rows first: brand-new contacts (often zero, ~1 page when growth
+      // happened since the last tick). COALESCE-protected upserts cannot
+      // clobber backfill identity fields; hl_contacts_backfill_v1 is untouched.
+      if (walk.rows.length) {
+        await store.upsertContacts(
+          walk.rows.map((c) => ({
+            id: "",
+            provider: "highlevel",
+            external_id: c.external_id,
+            name: c.name,
+            phone: c.phone,
+            email: c.email,
+            assigned_rep_id: c.assignedRepExternalId ? userIdByExt.get(`highlevel:${c.assignedRepExternalId}`) ?? null : null,
+          })),
+        );
+      }
       if (harvest.contacts.length) {
         await store.upsertContacts(
           harvest.contacts.map((c) => ({
@@ -168,15 +213,21 @@ async function highlevelTick(options?: {
           })),
         );
       }
-      const storedContacts = await store.getContacts();
-      const contactIdByExt = new Map(storedContacts.map((c) => [`${c.provider}:${c.external_id}`, c.id]));
+      // Resolve internal ids for every contact touched this tick (walk + call-
+      // referenced) with ONE targeted 2-column query — never a full re-read.
+      const touchedExternalIds = [...new Set([...walk.rows, ...harvest.contacts].map((c) => c.external_id))];
+      if (touchedExternalIds.length) {
+        for (const row of await store.getContactExternalIds("highlevel", touchedExternalIds)) {
+          contactIdByExt.set(row.external_id, row.id);
+        }
+      }
       if (harvest.calls.length) {
         await store.upsertCalls(
           harvest.calls.map((c) => ({
             provider: "highlevel",
             external_call_id: c.external_call_id,
             rep_id: userIdByExt.get(`highlevel:${c.repExternalId}`) ?? null,
-            contact_id: contactIdByExt.get(`highlevel:${c.contactExternalId}`) ?? null,
+            contact_id: contactIdByExt.get(c.contactExternalId) ?? null,
             started_at: c.startedAt,
             duration_seconds: c.durationSeconds,
             over_two_minutes: c.durationSeconds > settings.meaningful_call_threshold_seconds,
@@ -186,7 +237,89 @@ async function highlevelTick(options?: {
         );
       }
 
-      const records = harvest.calls.length + harvest.contacts.length + harvest.users.length;
+      // S4 checkpoint — written ONLY after the successful walk upsert (the
+      // scheduler owns it; the walk module itself never persists).
+      const walkCkptRaw = await store.getSyncCheckpoint(CONTACTS_INCREMENTAL_CHECKPOINT_KEY);
+      let previousNoNewStreak = 0;
+      try {
+        const parsed = walkCkptRaw ? (JSON.parse(walkCkptRaw) as { noNewStreak?: number }) : null;
+        previousNoNewStreak = typeof parsed?.noNewStreak === "number" && Number.isFinite(parsed.noNewStreak) ? parsed.noNewStreak : 0;
+      } catch {
+        previousNoNewStreak = 0;
+      }
+      await store.setSyncCheckpoint(CONTACTS_INCREMENTAL_CHECKPOINT_KEY, JSON.stringify({
+        lastRunAt: now().toISOString(),
+        lastNewCount: walk.newCount,
+        pagesLastRun: walk.pagesFetched,
+        noNewStreak: walk.newCount === 0 ? previousNoNewStreak + 1 : 0,
+        sourceTotalSeen: walk.sourceTotalSeen,
+        updatedAt: now().toISOString(),
+      }));
+
+      // S4 late-contact heal (design §5, bounded + best-effort): when the walk
+      // inserted contacts, refill NULL contact_id on RECENT calls whose ledger
+      // entry (harvest_calls) names an inserted contact — fill-null-only, so a
+      // pre-existing link can never be overwritten. Failure never fails the tick.
+      let healedCalls = 0;
+      if (walk.rows.length) {
+        try {
+          const sinceIso = new Date(Date.parse(tickStartIso) - 7 * 86_400_000).toISOString();
+          const insertedExternalIds = new Set(walk.rows.map((c) => c.external_id));
+          const ledger = (await store.getHarvestCallsSince(sinceIso)).filter(
+            (h) => h.contact_external_id != null && insertedExternalIds.has(h.contact_external_id),
+          );
+          if (ledger.length) {
+            const ledgerByMessageId = new Map(ledger.map((h) => [h.message_id, h.contact_external_id as string]));
+            const nullCalls = (await store.getAllCallsSince(sinceIso)).filter(
+              (c) => c.contact_id == null && c.external_call_id != null && ledgerByMessageId.has(c.external_call_id as string),
+            );
+            const updates = nullCalls
+              .map((c) => ({
+                call_id: c.id,
+                contact_id: contactIdByExt.get(ledgerByMessageId.get(c.external_call_id as string) as string) ?? null,
+                resolution_method: "direct_message_contact" as const,
+                contact_resolved_at: now().toISOString(),
+              }))
+              .filter((u) => u.contact_id != null);
+            if (updates.length) {
+              await store.applyCallContactBackfill(updates);
+              healedCalls = updates.length;
+            }
+          }
+        } catch {
+          healedCalls = 0; // heal is opportunistic; next walk heals again
+        }
+      }
+
+      const records = harvest.calls.length + walk.newCount + harvest.contacts.length + harvest.users.length;
+
+      // S4 every-tick reconciliation tripwire (design §3c): meta.total vs
+      // countContacts. Warn-only; a probe failure never fails the tick and
+      // never warns (no invented numbers).
+      const dbCount = await store.countContacts("highlevel");
+      const reconPreviousRaw = await store.getSyncCheckpoint(CONTACTS_RECONCILIATION_CHECKPOINT_KEY);
+      const reconPrevious: ContactsReconciliationCheckpoint | null = parseReconciliationCheckpoint(reconPreviousRaw);
+      let recon: ContactsReconciliationCheckpoint;
+      let reconWarn = false;
+      let reconMessage: string | null = null;
+      try {
+        const r = await reconcileContacts({
+          creds,
+          fetchImpl: options?.fetchImpl ?? fetch,
+          sleep: options?.sleep,
+          dbCount,
+          previous: reconPrevious,
+        });
+        recon = r.checkpoint;
+        reconWarn = r.warn;
+        reconMessage = r.message;
+        await store.setSyncCheckpoint(CONTACTS_RECONCILIATION_CHECKPOINT_KEY, JSON.stringify(r.checkpoint));
+      } catch (e) {
+        recon = { lastCheckedAt: now().toISOString(), sourceTotal: null, dbCount, delta: null, status: "probe_failed", driftStreak: 0, updatedAt: now().toISOString() };
+        reconMessage = null;
+        void e;
+      }
+
       await store.finishSyncRun(runId, "success", records, null);
 
       // Roster hygiene: purge any demo rows that predate the live connection
@@ -209,16 +342,21 @@ async function highlevelTick(options?: {
         config: {
           ...(previous?.config ?? {}),
           source: "highlevel-api",
-          note: `Incremental sync (${options?.trigger ?? "background"}): +${harvest.calls.length} calls, ${harvest.conversationsVisited} conversations${purgedTotal > 0 ? ` · demo rows purged: ${purgedTotal}` : ""}${harvest.warnings.length ? ` · ${harvest.warnings[0]}` : ""}`.slice(0, 500),
+          note: `Incremental sync (${options?.trigger ?? "background"}): +${harvest.calls.length} calls, +${walk.newCount} contacts (walk ${walk.pagesFetched}p${healedCalls ? `, ${healedCalls} call links healed` : ""})${reconWarn && reconMessage ? ` · ${reconMessage}` : ""}${purgedTotal > 0 ? ` · demo rows purged: ${purgedTotal}` : ""}${harvest.warnings.length ? ` · ${harvest.warnings[0]}` : ""}`.slice(0, 500),
+          // S4 reconciliation tripwire surfaces here (syncStaleWarnings reads
+          // this field; Settings → Sync Center shows the note).
+          contactsReconciliation: { ...recon, warn: reconWarn },
         },
       });
       return {
         outcome: "synced",
         mode: "incremental",
         calls: harvest.calls.length,
-        contacts: harvest.contacts.length,
+        contacts: walk.newCount + harvest.contacts.length,
         users: harvest.users.length,
         attributions,
+        contactsWalk: { new: walk.newCount, pages: walk.pagesFetched, truncated: walk.truncated },
+        contactsReconciliation: { dbCount: recon.dbCount, sourceTotal: recon.sourceTotal, delta: recon.delta, status: recon.status },
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
