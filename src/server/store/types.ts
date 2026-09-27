@@ -598,7 +598,17 @@ export interface Store {
   })[]>;
 
   // attributions
-  upsertAttributions(rows: AttributionRow[]): Promise<number>;
+  /**
+   * Replace-attribution upsert (the ONE engine persist path). WRITER
+   * PROTECTION (owner directive 2026-09-27): the write runs under a PG
+   * advisory lock (one writer at a time; no-op in the memory store) and the
+   * DEGRADATION GUARD — a write that would strip attribution from a large
+   * share of the currently-attributed rows it touches (the 49→3 stale-writer
+   * shape) throws and the table is left untouched. `force` bypasses the
+   * degradation guard for a deliberate recovery recompute (manual_override
+   * rows are still skipped, always).
+   */
+  upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number>;
   getAttributions(): Promise<AttributionRow[]>;
   /** Manual assignment from the overrides UI — force-writes method="manual", manual_override=true. */
   setManualAttribution(row: AttributionRow): Promise<void>;
@@ -668,6 +678,8 @@ export interface Store {
   upsertHarvestCalls(rows: HarvestCallRow[]): Promise<number>;
   /** Call-message ledger rows for the given HL message ids (direct-contact resolution). */
   getHarvestCallsByMessageIds(messageIds: string[]): Promise<HarvestCallRow[]>;
+  /** Harvest ledger rows started at/after startUtc (s1 window-interaction evidence read). */
+  getHarvestCallsSince(startUtc: string): Promise<HarvestCallRow[]>;
   /**
    * Call→contact restoration verdicts, FILL-NULL-ONLY: an existing non-null
    * calls.contact_id is never touched (direct source data always wins); only

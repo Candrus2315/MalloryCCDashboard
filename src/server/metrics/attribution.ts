@@ -153,11 +153,36 @@ export interface AttributionContact {
   id: string;
   phone?: string | null;
   email?: string | null;
+  /** HL contact id — links s1 harvest interactions to this contact. */
+  external_id?: string | null;
 }
 
 // ---------- output ----------
 
-export type AttributionMethod = "contact_id" | "phone" | "email";
+export type AttributionMethod = "contact_id" | "phone" | "email" | "window_interaction";
+
+/**
+ * ONE s1 window interaction (owner-frozen s1 rule, 2026-09-27): a VERIFIED
+ * ROSTER-REP interaction — a normalized call (rep resolved through the roster
+ * machinery) or a harvested conversation call message whose parent
+ * conversation is owned by an active roster user. Duration is IRRELEVANT for
+ * OWNERSHIP (a 30-second dial is workflow evidence); the >120s threshold
+ * lives ONLY in the "Bookings From Calls >2 Minutes" metric. The caller
+ * pre-resolves rep_id (the caller owns roster truth — same convention as the
+ * engine's users option); rows without a resolved rep are NOT evidence.
+ */
+export interface AttributionHarvestInteraction {
+  /** HL message id (stable audit evidence id). */
+  id: string;
+  /** HL contact id — linked to candidates through contacts.external_id. */
+  contact_external_id: string | null;
+  /** Resolved roster rep (internal user id) or null (not verified evidence). */
+  rep_id: string | null;
+  /** ISO UTC. */
+  started_at: string;
+  /** Any value (including null/0) qualifies for OWNERSHIP. */
+  duration_seconds: number | null;
+}
 
 /** Audit/debug record of the window the match was evaluated against. */
 export interface WindowMarker {
@@ -195,6 +220,18 @@ export interface AttributionMatch {
    * which identity conflicted and how. Never present on attributed rows.
    */
   detail?: string;
+  /**
+   * s1 evidence audit (window_interaction rows only): the exact interaction
+   * that owns the booking — id, source table, start, duration. Persisted in
+   * the attribution row's note by the sync wiring, so every s1 ownership is
+   * auditable without re-deriving.
+   */
+  evidence?: {
+    id: string;
+    source: "calls" | "harvest";
+    started_at: string;
+    duration_seconds: number | null;
+  };
   /**
    * Audit/debug: the exact window dates the match was evaluated against plus
    * the date_granularity_window marker (the limitation is persisted on the
@@ -255,6 +292,13 @@ export function callDateEt(startedAt: string): string | null {
 
 // ---------- engine ----------
 
+/** Identity-tier candidate union: dedup, drop empties (stable order). */
+function unionCandidates(...ids: Array<string | null>): string[] {
+  const out: string[] = [];
+  for (const id of ids) if (id && !out.includes(id)) out.push(id);
+  return out;
+}
+
 export interface AttributionSettings {
   meeting_threshold_seconds: number;
   /**
@@ -282,6 +326,14 @@ export interface AttributionOptions {
    * store.getAllUsers()).
    */
   users?: { id: string; is_active: boolean }[];
+  /**
+   * s1 window interactions harvested from the HL conversation ledger
+   * (harvest_calls; parent-conversation user ownership). The caller
+   * pre-resolves rep_id through the roster machinery and passes ONLY rows it
+   * could resolve — the engine treats a non-null rep_id as a VERIFIED
+   * ROSTER-REP interaction. Pure input: the engine never fetches.
+   */
+  s1Interactions?: AttributionHarvestInteraction[];
 }
 
 interface Candidate {
@@ -380,6 +432,27 @@ export function matchAppointmentsToCalls(
     return applied.rep_id;
   };
 
+  // ---- s1 evidence indexes (built once over the call set) ----
+  // Calls grouped by contact (ANY duration is s1-eligible) and harvest
+  // interactions grouped by HL contact id. Harvest rows are pre-resolved by
+  // the caller: a row without rep_id is not verified roster evidence and is
+  // dropped here.
+  const callsByContact = new Map<string, AttributionCall[]>();
+  for (const c of calls) {
+    if (!c.contact_id) continue;
+    const list = callsByContact.get(c.contact_id);
+    if (list) list.push(c);
+    else callsByContact.set(c.contact_id, [c]);
+  }
+  const harvestByContactExt = new Map<string, AttributionHarvestInteraction[]>();
+  for (const h of options.s1Interactions ?? []) {
+    if (!h.contact_external_id || !h.rep_id) continue;
+    const list = harvestByContactExt.get(h.contact_external_id);
+    if (list) list.push(h);
+    else harvestByContactExt.set(h.contact_external_id, [h]);
+  }
+  const contactExtById = new Map(contacts.map((c) => [c.id, c.external_id ?? null]));
+
   const out: AttributionMatch[] = [];
 
   for (const appt of appointments) {
@@ -407,6 +480,79 @@ export function matchAppointmentsToCalls(
       to: window.to,
       marker: "date_granularity_window",
       anchoredOn: anchor.anchoredOn,
+    };
+
+    /**
+     * s1 OWNERSHIP LAYER (owner-frozen rule, 2026-09-27). Fires ONLY when the
+     * >threshold rule produced NO verdict (no-qualifying-call): rep ownership
+     * = the most-recent VERIFIED ROSTER-REP interaction within the SAME
+     * date-granularity window, REGARDLESS of duration — a 30-second dial is
+     * workflow evidence. Evidence = normalized calls (rep resolved through
+     * the roster machinery, the same eligibleRepId path as qualifying calls)
+     * + harvested conversation interactions (parent-conversation user
+     * ownership, pre-resolved by the caller). NO all-time fallback (s2 stays
+     * diagnostic-only), NO fuzzy identity, NO auto-assigned web/self-service
+     * bookings. Multi-rep evidence is AMBIGUOUS — manual queue, never a
+     * silent most-recent pick. Returns null when there is no evidence at all
+     * (the caller keeps the honest no-qualifying-call verdict).
+     */
+    const s1Verdict = (candidates: string[]): AttributionMatch | null => {
+      const inter: Array<{
+        rep: string;
+        ms: number;
+        id: string;
+        source: "calls" | "harvest";
+        started_at: string;
+        dur: number | null;
+      }> = [];
+      for (const cid of candidates) {
+        for (const c of callsByContact.get(cid) ?? []) {
+          const rep = eligibleRepId(
+            { rep_id: c.rep_id, provider_rep_external_id: c.provider_rep_external_id ?? null },
+            elig,
+          );
+          if (!rep) continue;
+          const ms = Date.parse(c.started_at);
+          if (!Number.isFinite(ms)) continue;
+          const day = callDateEt(c.started_at);
+          if (!day || day < window.from || day > window.to) continue;
+          inter.push({ rep, ms, id: c.external_call_id, source: "calls", started_at: c.started_at, dur: c.duration_seconds });
+        }
+        const ext = contactExtById.get(cid);
+        for (const h of (ext ? harvestByContactExt.get(ext) : undefined) ?? []) {
+          if (!h.rep_id) continue;
+          const ms = Date.parse(h.started_at);
+          if (!Number.isFinite(ms)) continue;
+          const day = callDateEt(h.started_at);
+          if (!day || day < window.from || day > window.to) continue;
+          inter.push({ rep: h.rep_id, ms, id: h.id, source: "harvest", started_at: h.started_at, dur: h.duration_seconds });
+        }
+      }
+      if (inter.length === 0) return null;
+      const reps = new Set(inter.map((i) => i.rep));
+      if (reps.size > 1) {
+        return {
+          appointmentId: apptId,
+          status: "unattributed",
+          reason: "ambiguous",
+          detail: `s1 rep-ownership evidence spans ${reps.size} distinct roster reps in ${window.from}..${window.to} ET`,
+          window: windowMarker,
+        };
+      }
+      // Most recent wins; deterministic tie-break by evidence id (stable re-runs).
+      let best = inter[0];
+      for (const i of inter.slice(1)) {
+        if (i.ms > best.ms || (i.ms === best.ms && i.id > best.id)) best = i;
+      }
+      return {
+        appointmentId: apptId,
+        status: "attributed",
+        callExternalId: best.id,
+        repId: best.rep,
+        method: "window_interaction",
+        evidence: { id: best.id, source: best.source, started_at: best.started_at, duration_seconds: best.dur },
+        window: windowMarker,
+      };
     };
 
     /**
@@ -465,7 +611,9 @@ export function matchAppointmentsToCalls(
       // no-qualifying-call at this tier: weaker tiers may still resolve a
       // DIFFERENT contact (the id may point at a contact with no stored calls).
       if (!apptPhone && !apptEmail) {
-        out.push(match);
+        // s1: no >threshold call, but a verified roster-rep interaction (ANY
+        // duration) within the window still owns the booking.
+        out.push(s1Verdict(unionCandidates(apptContactId)) ?? match);
         continue;
       }
     }
@@ -474,6 +622,7 @@ export function matchAppointmentsToCalls(
     // hard stop — never fall through to weaker evidence past an unclear
     // stronger identity (the guess the SPEC forbids).
     let phoneContactId: string | null = null;
+    let emailContactId: string | null = null;
     if (apptPhone) {
       const hit = byPhone.get(apptPhone) ?? [];
       const distinct = new Set(hit);
@@ -510,6 +659,8 @@ export function matchAppointmentsToCalls(
           out.push(match);
           continue;
         }
+        // phone-tier no-qual: fall through — the email tier (if any) may still
+        // resolve; the s1 layer runs at the final fallback with the union.
       }
     }
 
@@ -551,19 +702,29 @@ export function matchAppointmentsToCalls(
           });
           continue;
         }
+        emailContactId = contactId;
         const match = decideForContact(contactId, "email");
+        if (match.status === "unattributed" && match.reason === "no-qualifying-call") {
+          // s1: email-tier no-qual → the union of every resolved identity
+          // tier's contact is the candidate set (exactly the scenario
+          // machinery's cands accumulation).
+          out.push(s1Verdict(unionCandidates(apptContactId, phoneContactId, contactId)) ?? match);
+          continue;
+        }
         out.push(match);
         continue;
       }
     }
 
     // Identity known (or skipped as ambiguous-free) but nothing qualified.
-    out.push({
-      appointmentId: apptId,
-      status: "unattributed",
-      reason: "no-qualifying-call",
-      window: windowMarker,
-    });
+    out.push(
+      s1Verdict(unionCandidates(apptContactId, phoneContactId, emailContactId)) ?? {
+        appointmentId: apptId,
+        status: "unattributed",
+        reason: "no-qualifying-call",
+        window: windowMarker,
+      },
+    );
   }
 
   return out;

@@ -33,10 +33,30 @@ import { addDays, etDateStrFromInstant, etDayStartUtc } from "../date-logic";
 import { appointmentInScope } from "../metrics/availability";
 import { matchAppointmentsToCalls, type AttributionMatch } from "../metrics/attribution";
 import { assertBookingInvariant, type AttributionRow } from "../metrics/compute";
+import { buildRosterEligibility } from "../roster";
 import type { AppSettings, Store } from "../store/types";
 
 /** Minimum gap between BACKGROUND attribution recomputes (manual skips it). */
 export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * WRITER VERSION (owner directive 2026-09-27 — stale/multi-writer protection).
+ * Bump on every semantic change to the attribution engine. A writer whose
+ * version is LOWER than the latest recorded in sync_checkpoints refuses to
+ * upsert and records an error sync_run — an outdated build can never silently
+ * rewrite the attribution table with old semantics (the 9/26 stale-writer
+ * incident: a pre-engine deployed process rewrote 49→3/121 every 2–5 min).
+ * A writer with an EQUAL OR HIGHER version always proceeds (a fresh deploy
+ * takes over automatically — the recovery path). `force` bypasses for a
+ * deliberate owner-directed recompute.
+ *
+ * v2 = s1 window-interaction ownership (this build). v1 = all builds before
+ * s6 (they carry no version check — operationally retired by the 9/27
+ * republish; from s6 on every shipped writer carries the guard).
+ */
+export const ATTRIBUTION_WRITER_VERSION = 2;
+/** sync_checkpoints key holding the latest writer version that has written. */
+export const ATTRIBUTION_WRITER_VERSION_KEY = "attribution-writer-version";
 
 export interface AttributionTickResult {
   outcome: "synced" | "skipped" | "error";
@@ -77,7 +97,7 @@ export function toAttributionRows(
   const manualByAppt = new Map(
     existingAttributions.filter((r) => r.manual_override).map((r) => [r.appointment_id, r]),
   );
-  const CONFIDENCE: Record<string, number> = { contact_id: 1, phone: 0.8, email: 0.8 };
+  const CONFIDENCE: Record<string, number> = { contact_id: 1, phone: 0.8, email: 0.8, window_interaction: 0.6 };
   const rows: AttributionRow[] = [];
   const manuallyAssignedIds: string[] = [];
   for (const m of matches) {
@@ -90,10 +110,17 @@ export function toAttributionRows(
     // Audit/debug note: persist the window limitation ON the row — the marker
     // plus the exact window dates the match was evaluated against (Acuity
     // dateCreated is date-only; the session date is never used and intra-day
-    // ordering is never assumed).
-    const note = m.window
+    // ordering is never assumed). s1 window-interaction rows PREPEND their
+    // evidence (source table + HL message id + duration) so every ownership
+    // under the ANY-duration rule is auditable on the stored row.
+    const windowNote = m.window
       ? `${m.window.marker} call-dates ${m.window.from}..${m.window.to} ET (anchor=${m.window.anchoredOn}; Acuity dateCreated is date-only)`
       : null;
+    const s1Note =
+      m.method === "window_interaction" && m.evidence
+        ? `s1 window-interaction src=${m.evidence.source} evidence=${m.evidence.id} dur=${m.evidence.duration_seconds ?? "unknown"}`
+        : null;
+    const note = [s1Note, windowNote].filter((n): n is string => !!n).join("; ") || null;
     if (m.status === "attributed") {
       rows.push({
         id: `attr:${m.appointmentId}`,
@@ -125,25 +152,49 @@ export function toAttributionRows(
  * The ONE engine-invocation-and-persist path: run matchAppointmentsToCalls
  * over the stored window and upsert the results. Used by the background tick,
  * the full sync (run.ts) and manual SYNC NOW — one source of truth.
+ *
+ * WRITER PROTECTION (owner directive 2026-09-27):
+ *  - writer-version guard — refuse when the latest recorded writer version is
+ *    NEWER than this build's (outdated writer; error sync_run, no upsert);
+ *  - the store's upsertAttributions additionally holds a PG advisory lock
+ *    (one writer at a time) and a degradation guard (refuse a write that
+ *    strips a large share of currently-attributed rows — the 49→3 shape);
+ *  - options.force bypasses the version check for a deliberate recovery
+ *    recompute; the degradation guard's bypass lives on the store call.
+ * On any guard refusal the tick records an error sync_run — visible in
+ * Settings sync status, never silent.
  */
 export async function computeAndPersistAttributions(
   store: Store,
   settings: AppSettings,
-  options?: { now?: () => Date },
+  options?: { now?: () => Date; force?: boolean },
 ): Promise<AttributionComputationResult> {
   const today = etDateStrFromInstant((options?.now ?? (() => new Date()))().getTime());
+
+  // WRITER-VERSION GUARD: an outdated build must never rewrite the table with
+  // old semantics. The latest writer version is stored machinery state
+  // (sync_checkpoints — no settings/UI entanglement, no schema change).
+  const storedVersionRaw = await store.getSyncCheckpoint(ATTRIBUTION_WRITER_VERSION_KEY);
+  const storedVersion = storedVersionRaw != null ? Number(storedVersionRaw) : 0;
+  if (!options?.force && Number.isFinite(storedVersion) && storedVersion > ATTRIBUTION_WRITER_VERSION) {
+    throw new Error(
+      `writer-version guard: stored writer v${storedVersion} is newer than this writer v${ATTRIBUTION_WRITER_VERSION} — refusing to upsert (outdated writer; deploy the current build, or recompute with force)`,
+    );
+  }
+
   // Look-back: the 30-day appointment window PLUS the call window. The
   // owner-ratified window is DATE-GRANULARITY (call ET date == booking
   // creation ET date or the day before — at most 2 ET days back), so 2 days
   // is the real requirement; the legacy hour-based setting can only widen the
   // margin, never narrow it below 2.
   const since = etDayStartUtc(addDays(today, -(30 + Math.max(2, Math.ceil(settings.attribution_window_hours / 24)))));
-  const [storedAppts, storedCalls, storedContacts, allUsers, existing] = await Promise.all([
+  const [storedAppts, storedCalls, storedContacts, allUsers, existing, harvestCalls] = await Promise.all([
     store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30))),
     store.getAllCallsSince(since),
     store.getContacts(),
     store.getAllUsers(),
     store.getAttributions(),
+    store.getHarvestCallsSince(since),
   ]);
 
   // OWNER DIRECTIVE: only in-scope Acuity calendars/types may feed attribution
@@ -155,16 +206,40 @@ export async function computeAndPersistAttributions(
     (a) => appointmentInScope(a, settings.acuity) && a.status !== "cancelled" && !a.cancelled,
   );
 
+  // s1 harvest interactions (parent-conversation user ownership): a harvested
+  // conversation call message is VERIFIED ROSTER evidence only when its HL
+  // user resolves to an ACTIVE roster user (or an owner-configured
+  // rep_mapping). Everything else passes rep_id null and is never evidence.
+  // Resolving here keeps the engine pure — the caller owns roster truth.
+  const activeHlUserByExt = new Map(
+    allUsers
+      .filter((u) => u.provider === "highlevel" && u.external_id && u.is_active)
+      .map((u) => [u.external_id as string, u.id]),
+  );
+  const harvestElig = buildRosterEligibility(
+    allUsers.map((u) => ({ id: u.id, is_active: u.is_active })),
+    settings.rep_mappings ?? [],
+  );
+  const s1Interactions = harvestCalls.map((h) => ({
+    id: h.message_id,
+    contact_external_id: h.contact_external_id,
+    rep_id:
+      (h.user_external_id ? activeHlUserByExt.get(h.user_external_id) : undefined) ??
+      (h.user_external_id ? harvestElig.mapping.get(h.user_external_id) ?? null : null),
+    started_at: h.started_at,
+    duration_seconds: h.duration_seconds,
+  }));
+
   const matches = matchAppointmentsToCalls(
     appts,
     storedCalls,
-    storedContacts.map((c) => ({ id: c.id, phone: c.phone, email: c.email })),
+    storedContacts.map((c) => ({ id: c.id, phone: c.phone, email: c.email, external_id: c.external_id })),
     {
       meeting_threshold_seconds: settings.meaningful_call_threshold_seconds,
       attribution_window_hours: settings.attribution_window_hours,
       rep_mappings: settings.rep_mappings,
     },
-    { today, users: allUsers.map((u) => ({ id: u.id, is_active: u.is_active })) },
+    { today, users: allUsers.map((u) => ({ id: u.id, is_active: u.is_active })), s1Interactions },
   );
 
   const callIdByExternalId = new Map(
@@ -180,7 +255,13 @@ export async function computeAndPersistAttributions(
   const unattributedCount = matches.filter((m) => m.status === "unattributed").length;
   assertBookingInvariant(appts, rows, { engineAttributed: attributedCount, engineUnattributed: unattributedCount });
 
-  await store.upsertAttributions(rows);
+  await store.upsertAttributions(rows, { force: options?.force ?? false });
+
+  // STAMP: this writer's version is now the latest that has written (takeover
+  // — a fresh deploy always takes over; equal versions are idempotent).
+  if (storedVersion !== ATTRIBUTION_WRITER_VERSION) {
+    await store.setSyncCheckpoint(ATTRIBUTION_WRITER_VERSION_KEY, String(ATTRIBUTION_WRITER_VERSION));
+  }
 
   return {
     outcome: "synced",

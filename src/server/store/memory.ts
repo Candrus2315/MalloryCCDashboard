@@ -12,6 +12,7 @@ import {
   type BlockedTimeRow,
   type CallRow,
   type LeadRow,
+  attributionDegradation,
 } from "../metrics/compute";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
@@ -412,7 +413,20 @@ export class MemoryStore implements Store {
       }));
   }
 
-  async upsertAttributions(rows: AttributionRow[]): Promise<number> {
+  async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
+    // WRITER PROTECTION (owner directive 2026-09-27): the SAME degradation
+    // guard as the PG store (one shared pure function — identical semantics;
+    // the advisory lock is a PG-only concern, the memory store is
+    // single-process). A write that would strip a large share of the
+    // currently-attributed rows it touches is refused, never applied.
+    if (!opts?.force) {
+      const degrade = attributionDegradation([...this.attributions.values()], rows);
+      if (degrade) {
+        throw new Error(
+          `attribution degradation guard: this write would strip ${degrade.stripped} of ${degrade.touched} currently-attributed bookings — refusing the rewrite (stale/buggy writer shape). Recovery: fix the writer, bump the writer version, or pass force.`,
+        );
+      }
+    }
     for (const r of rows) {
       // mirror the PG store: never overwrite a manual override automatically
       const existing = this.attributions.get(r.appointment_id);
@@ -639,6 +653,12 @@ export class MemoryStore implements Store {
     if (!messageIds.length) return [];
     const set = new Set(messageIds);
     return [...this.harvestCalls.values()].filter((r) => set.has(r.message_id)).map((r) => ({ ...r }));
+  }
+  async getHarvestCallsSince(startUtc: string): Promise<HarvestCallRow[]> {
+    const startMs = Date.parse(startUtc);
+    return [...this.harvestCalls.values()]
+      .filter((r) => Number.isFinite(Date.parse(r.started_at)) && Date.parse(r.started_at) >= startMs)
+      .map((r) => ({ ...r }));
   }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
     for (const r of rows) {

@@ -11,6 +11,7 @@ import {
   type BlockedTimeRow,
   type CallRow,
   type LeadRow,
+  attributionDegradation,
 } from "../metrics/compute";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
@@ -801,12 +802,45 @@ export class PgStore implements Store {
     }));
   }
 
-  async upsertAttributions(rows: AttributionRow[]): Promise<number> {
+  async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
     await this.ensureSchema();
-    for (const r of rows) {
-      // appointment_id is UNIQUE — re-syncs replace attributions instead of duplicating.
-      // Never overwrite a manual override automatically.
-      await this.sql`
+    if (rows.length === 0) return 0;
+    // WRITER PROTECTION (owner directive 2026-09-27): ONE advisory-locked
+    // transaction holds the read-check-write, so concurrent writers serialize
+    // (no interleaved rewrites, no check-then-write race) and a write that
+    // would strip a large share of currently-attributed rows (the 49→3
+    // stale-writer shape) is REFUSED — the table keeps its verdicts and the
+    // caller (the tick) records an error sync_run. Blocking lock, no busy
+    // loop; it releases at transaction end.
+    const ids = rows.map((r) => r.appointment_id);
+    await this.sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(72240901)`;
+      const existingRows = await tx`
+        SELECT appointment_id::text, rep_id::text, manual_override
+        FROM booking_attributions WHERE appointment_id = ANY(${ids}::uuid[])`;
+      if (!opts?.force) {
+        const degrade = attributionDegradation(
+          existingRows.map((r: Record<string, unknown>) => ({
+            id: "",
+            appointment_id: String(r.appointment_id),
+            call_id: null,
+            rep_id: r.rep_id == null ? null : String(r.rep_id),
+            method: "",
+            confidence: 0,
+            manual_override: Boolean(r.manual_override),
+          })),
+          rows,
+        );
+        if (degrade) {
+          throw new Error(
+            `attribution degradation guard: this write would strip ${degrade.stripped} of ${degrade.touched} currently-attributed bookings — refusing the rewrite (stale/buggy writer shape). Recovery: fix the writer, bump the writer version, or pass force.`,
+          );
+        }
+      }
+      for (const r of rows) {
+        // appointment_id is UNIQUE — re-syncs replace attributions instead of duplicating.
+        // Never overwrite a manual override automatically.
+        await tx`
         INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note)
         VALUES (${r.appointment_id}::uuid, ${r.call_id}, ${r.rep_id}, ${r.method}, ${r.confidence}, ${r.manual_override}, ${r.note ?? null})
         ON CONFLICT (appointment_id) DO UPDATE SET
@@ -815,7 +849,8 @@ export class PgStore implements Store {
           note = EXCLUDED.note, updated_at = now()
         WHERE booking_attributions.manual_override = false
       `;
-    }
+      }
+    });
     return rows.length;
   }
   async getAttributions(): Promise<AttributionRow[]> {
@@ -1215,6 +1250,22 @@ export class PgStore implements Store {
     const rows = await this.sql`
       SELECT message_id, conversation_id, user_external_id, contact_external_id, started_at::text AS started_at, duration_seconds, direction, call_status
       FROM harvest_calls WHERE message_id = ANY(${messageIds})`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      message_id: String(r.message_id),
+      conversation_id: (r.conversation_id as string | null) ?? null,
+      user_external_id: (r.user_external_id as string | null) ?? null,
+      contact_external_id: (r.contact_external_id as string | null) ?? null,
+      started_at: new Date(r.started_at as string).toISOString(),
+      duration_seconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
+      direction: (r.direction as string | null) ?? null,
+      call_status: (r.call_status as string | null) ?? null,
+    }));
+  }
+  async getHarvestCallsSince(startUtc: string): Promise<HarvestCallRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT message_id, conversation_id, user_external_id, contact_external_id, started_at::text AS started_at, duration_seconds, direction, call_status
+      FROM harvest_calls WHERE started_at >= ${startUtc}::timestamptz`;
     return (rows as Record<string, unknown>[]).map((r) => ({
       message_id: String(r.message_id),
       conversation_id: (r.conversation_id as string | null) ?? null,

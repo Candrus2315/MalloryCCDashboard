@@ -1466,6 +1466,46 @@ export function assertBookingInvariant(
     );
   }
 }
+// ---------- writer protection (owner directive 2026-09-27) ----------
+/**
+ * DEGRADATION GUARD — the 49→3 failure shape. The stale-writer incident
+ * (9/26–9/27): an outdated deployed process rewrote booking_attributions with
+ * old semantics every 2–5 min, silently re-classifying 46 engine-attributed
+ * rows to unattributed (49→3). This guard makes that shape a LOUD refusal:
+ * a write that would strip attribution from more than
+ * ATTRIBUTION_DEGRADE_MAX_STRIP_FRACTION of the currently-attributed,
+ * non-manual rows it touches (and touches at least
+ * ATTRIBUTION_DEGRADE_MIN_TOUCHED of them) is refused by the store — the
+ * tick records an error sync_run and the table keeps its verdicts.
+ *
+ * Pure: both store implementations call this ONE function, so memory and PG
+ * enforce identical semantics. Deliberate changes recover via documented
+ * paths (higher writer version takes over; `force` on the store call;
+ * per-booking manual assignment is never guarded — it IS a recovery path).
+ */
+export const ATTRIBUTION_DEGRADE_MIN_TOUCHED = 10;
+export const ATTRIBUTION_DEGRADE_MAX_STRIP_FRACTION = 0.2;
+export function attributionDegradation(
+  existing: AttributionRow[],
+  incoming: AttributionRow[],
+): { stripped: number; touched: number } | null {
+  const incomingByAppt = new Map(incoming.map((r) => [r.appointment_id, r]));
+  let touched = 0;
+  let stripped = 0;
+  for (const ex of existing) {
+    if (ex.manual_override) continue; // manual rows are skipped by the upsert — never strippable
+    if (ex.rep_id === null) continue; // only attributed rows can be stripped
+    const inc = incomingByAppt.get(ex.appointment_id);
+    if (!inc) continue; // not touched by this write
+    touched += 1;
+    if (inc.rep_id === null) stripped += 1; // attributed → rep-less (unattributed or ambiguous)
+  }
+  if (touched < ATTRIBUTION_DEGRADE_MIN_TOUCHED) return null;
+  if (stripped > 0 && stripped / touched > ATTRIBUTION_DEGRADE_MAX_STRIP_FRACTION) {
+    return { stripped, touched };
+  }
+  return null;
+}
 
 // ---------- daily report (SPEC: Daily CC Report) ----------
 /**
