@@ -34,6 +34,10 @@ import { sheetsTick, SHEETS_MIN_INTERVAL_MS } from "../sync/sheets-tick";
 import { reapStaleSyncRuns, schedulerTick, STALE_RUN_REAP_MINUTES } from "../sync/scheduler";
 import { hlRequest } from "../sync/highlevel-live";
 import { getWorkDate, addDays } from "../date-logic";
+import type { SyncRunRow } from "../store/types";
+/** Backdoor into MemoryStore's private syncRuns — backdate started_at (see zombie-run-reaper.test.ts). */
+const syncRunsOf = (store: MemoryStore): SyncRunRow[] =>
+  (store as unknown as { syncRuns: SyncRunRow[] }).syncRuns;
 
 const countLead = (l: NormalizedLead): NormalizedLead => l; // type helper
 
@@ -300,6 +304,30 @@ describe("schedulerTick × sheets + stale-run reaper", () => {
     expect(zombie.status).toBe("error");
     expect(res.outcome).toBe("skipped"); // HighLevel skipped (no creds), but…
     // …the reaper already unblocked the provider for the NEXT tick with credentials.
+  });
+  test("SHEETS ZOMBIE (killed mid-run): a stale google_sheets 'running' row is reaped and the same tick proceeds", async () => {
+    const store = new MemoryStore();
+    // The incident: a sheets sync process killed mid-run leaves its row behind.
+    const zombieId = await store.insertSyncRun("google_sheets");
+    syncRunsOf(store).find((r) => r.id === zombieId)!.started_at = new Date(
+      Date.now() - (STALE_RUN_REAP_MINUTES + 5) * 60_000,
+    ).toISOString();
+    // The bounded guard already sees through it (never a false "sync-in-progress").
+    expect(await store.getRunningSyncRun("google_sheets")).toBeNull();
+    // One real tick — reaper runs FIRST, REAL clock (the zombie's age alone makes it stale):
+    const res = await schedulerTick({
+      store,
+      creds: null,
+      liveAdapters: { sheets: liveStub(["2026-09-27"]) },
+      trigger: "background",
+    });
+    expect(res.reaped).toBe(1); // google_sheets IS a reapable provider
+    const zombie = (await store.getSyncRuns(10)).find((r) => r.id === zombieId)!;
+    expect(zombie.status).toBe("error");
+    expect(zombie.error).toContain("stale-run reaper");
+    // …and the tick was NOT blocked: the sheets sync ran through.
+    expect(res.sheets?.outcome).toBe("synced");
+    expect(res.sheets?.leads).toBe(12);
   });
 });
 
