@@ -67,7 +67,12 @@ function parsePaidFlag(v: unknown): boolean | null {
  * Derive the payment state from ONE retained raw Acuity appointment payload.
  * Pure; null/undefined raw → unknown (no evidence, never invented).
  */
-export function derivePaymentState(raw: Record<string, unknown> | null | undefined): PaymentDerivation {
+export function derivePaymentState(raw: unknown): PaymentDerivation {
+  // The pg driver may hand jsonb back as an object OR (some builds/paths) a
+  // JSON string — parse defensively so evidence is never misread as absent.
+  if (typeof raw === "string") {
+    try { raw = JSON.parse(raw); } catch { raw = null; }
+  }
   if (raw == null || typeof raw !== "object") {
     return { state: "unknown", paid: null, price: null, priceSold: null, amountPaid: null, paymentTimestamp: null };
   }
