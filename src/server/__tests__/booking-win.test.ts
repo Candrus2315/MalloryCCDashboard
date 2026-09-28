@@ -229,6 +229,30 @@ describe("payment-state derivation (payments.ts)", () => {
     expect(derivePaymentState(undefined).paid).toBeNull();
   });
 
+  test("RAW AS JSON STRING (pg driver variance): evidence parsed, never misread as absent", () => {
+    // The pg driver hands jsonb back as an object on most paths but as a JSON
+    // string on others — the string form must derive the identical verdict.
+    const obj = raw("yes", "300.00", "0.00");
+    const asString = JSON.stringify(obj);
+    const fromString = derivePaymentState(asString);
+    expect(fromString).toEqual(derivePaymentState(obj));
+    expect(fromString.state).toBe("paid");
+    expect(fromString.paid).toBe(true);
+    expect(fromString.amountPaid).toBe(0);
+    // a non-JSON string is NOT evidence — unknown, never invented
+    expect(derivePaymentState("not-json").state).toBe("unknown");
+    // full derivation from a string raw: paid verdict + first-seen win date
+    const d = deriveBookingPaymentFields({
+      raw: JSON.stringify(raw("yes", "300.00", "300.00")),
+      createdBusinessDate: "2026-09-28",
+      nowIso: "2026-09-28T20:30:00.000Z",
+    });
+    expect(d.payment_state).toBe("paid");
+    expect(d.booking_win_business_date).toBe("2026-09-28");
+    expect(d.payment_business_date_source).toBe("first-seen");
+    expect(d.first_seen_paid_at).toBe("2026-09-28T20:30:00.000Z");
+  });
+
   test("first-seen stamp: created-date proxy, precision-marked, and idempotent (never moves)", () => {
     const first = deriveBookingPaymentFields({
       raw: raw("yes", "300.00", "300.00"),

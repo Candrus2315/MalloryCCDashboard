@@ -116,7 +116,8 @@ export interface DerivedBookingPaymentFields {
  * so the first-seen stamp is precision-marked "first-seen").
  */
 export function deriveBookingPaymentFields(input: {
-  raw: Record<string, unknown> | null | undefined;
+  /** jsonb as object OR JSON string (pg driver variance) — parsed defensively. */
+  raw: unknown;
   existing?: {
     booking_win_business_date?: string | null;
     payment_business_date_source?: string | null;
