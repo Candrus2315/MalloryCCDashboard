@@ -1651,13 +1651,27 @@ export function bookingAttributionSplit(appts: AppointmentRow[], attributions: A
 
 /**
  * Assert the coverage invariant for one evaluation:
- *   1. every qualifying booking carries EXACTLY ONE verdict row;
+ *   1. every qualifying (paid / Booking Win) booking carries EXACTLY ONE
+ *      verdict row;
  *   2. Attributed + Ambiguous + Unattributed equals the qualifying Total
  *      (the three states are mutually exclusive — Ambiguous is never folded
  *      into Unattributed);
- *   3. (when supplied) the engine produced a verdict for every booking.
+ *   3. (when supplied — the sync path) the engine produced a verdict for
+ *      EVERY appointment it was asked to classify, and each carries exactly
+ *      one row.
  * Throws on violation — the sync records the error, never silently persists a
  * dishonest split.
+ *
+ * POPULATION NOTE (the PR-#9 regression): since Booking Win (rev 12), the
+ * coverage split counts PAID bookings only, while the attribution engine is —
+ * by design — run over EVERY in-scope, non-cancelled appointment, paid AND
+ * pending (a pending booking needs its verdict row ready for the day the
+ * deposit lands; pending rows never count toward performance but they do hold
+ * attribution). The engine census (check 3) must therefore be compared against
+ * the engine's INPUT POPULATION (appts.length), never against the paid subset.
+ * Comparing it to cov.total made every pending appointment look like a lost
+ * verdict and aborted the 9/28 night tick (415 engine verdicts vs 411 paid —
+ * Jenna Van Deventer, Marybeth O'Keefe, Stefanie Korobkin, Brian Pacheco).
  */
 export function assertBookingInvariant(
   appts: AppointmentRow[],
@@ -1677,10 +1691,27 @@ export function assertBookingInvariant(
       `Booking invariant violated: attributed(${cov.attributed}) + ambiguous(${cov.ambiguous}) + unattributed(${cov.unattributed}) must equal total(${cov.total})`,
     );
   }
-  if (verdicts && verdicts.engineAttributed + verdicts.engineUnattributed !== cov.total) {
-    throw new Error(
-      `Booking invariant violated: engine verdicts attributed(${verdicts.engineAttributed}) + unattributed(${verdicts.engineUnattributed}) must equal total(${cov.total})`,
-    );
+  if (verdicts) {
+    // ENGINE CENSUS — verdicts vanish only if the engine drops an appointment
+    // or the wiring loses one; pending appointments are PART of the engine's
+    // population and are never "missing" verdicts.
+    if (verdicts.engineAttributed + verdicts.engineUnattributed !== appts.length) {
+      throw new Error(
+        `Booking invariant violated: engine verdicts attributed(${verdicts.engineAttributed}) + unattributed(${verdicts.engineUnattributed}) must equal the engine population(${appts.length} appointments = ${cov.total} paid + ${appts.length - cov.total} pending)`,
+      );
+    }
+    // Every engine-population appointment carries EXACTLY ONE verdict row —
+    // the "verdicts vanish during recompute" catch over the FULL population
+    // (manual-override rows included: they are carried verbatim, so each
+    // appointment is still rowed exactly once).
+    const apptIds = new Set(appts.map((a) => a.id));
+    const rowsForEngine = attributions.filter((r) => apptIds.has(r.appointment_id));
+    const distinct = new Set(rowsForEngine.map((r) => r.appointment_id)).size;
+    if (rowsForEngine.length !== appts.length || distinct !== appts.length) {
+      throw new Error(
+        `Booking invariant violated: ${appts.length} engine appointments carry ${rowsForEngine.length} verdict rows (${distinct} distinct) — expected exactly one each`,
+      );
+    }
   }
 }
 // ---------- writer protection (owner directive 2026-09-27) ----------

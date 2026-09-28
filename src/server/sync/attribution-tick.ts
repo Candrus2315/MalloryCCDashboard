@@ -287,10 +287,13 @@ export async function computeAndPersistAttributions(
   );
   const { rows, manuallyAssignedIds } = toAttributionRows(matches, existing, callIdByExternalId);
 
-  // METRIC INVARIANT (owner-ratified): attributed + unattributed must equal
-  // the qualifying total — Total NEVER shrinks because identity resolution is
-  // incomplete. A violation is a wiring/engine regression: record it as a
-  // sync error, never persist a dishonest split.
+  // METRIC INVARIANT (owner-ratified): the engine must produce exactly one
+  // verdict per in-scope, non-cancelled appointment — attributed +
+  // unattributed equals the ENGINE POPULATION (paid AND pending; pending
+  // bookings keep their verdict row ready for the day the deposit lands,
+  // while the coverage split counts Booking Wins = paid only). A violation is
+  // a wiring/engine regression: record it as a sync error, never persist a
+  // dishonest split.
   const attributedCount = matches.filter((m) => m.status === "attributed").length;
   const unattributedCount = matches.filter((m) => m.status === "unattributed").length;
   assertBookingInvariant(appts, rows, { engineAttributed: attributedCount, engineUnattributed: unattributedCount });
