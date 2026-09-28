@@ -209,11 +209,11 @@ export function lockScreenHtml(redirectTo: string, error?: string): string {
     <p class="hint" style="margin:18px 0 0;font-size:13px;color:#57534e">Enter the dashboard passphrase to continue.</p>
     <input type="hidden" name="redirectTo" value="${redirectTo.replace(/"/g, "&quot;")}">
     <input type="password" name="passphrase" required autofocus placeholder="Passphrase"
-      style="margin-top:12px;width:100%;box-sizing:border-box;border:1px solid #d6d3d1;border-radius:0.5rem;padding:8px 12px;font-size:14px;outline:none"
+      style="margin-top:12px;width:100%;box-sizing:border-box;border:1px solid #d6d3d1;border-radius:0.5rem;padding:11px 12px;font-size:16px;outline:none"
       onfocus="this.style.borderColor='#78716c'" onblur="this.style.borderColor='#d6d3d1'">
     ${err}
     <button type="submit"
-      style="margin-top:16px;width:100%;background:#1c1917;color:#ffffff;border:0;border-radius:0.5rem;padding:8px 12px;font-size:14px;font-weight:500;cursor:pointer"
+      style="margin-top:16px;width:100%;background:#1c1917;color:#ffffff;border:0;border-radius:0.5rem;padding:11px 12px;font-size:15px;font-weight:500;cursor:pointer"
       onmouseover="this.style.background='#44403c'" onmouseout="this.style.background='#1c1917'">Unlock dashboard</button>
   </form>
 </body>

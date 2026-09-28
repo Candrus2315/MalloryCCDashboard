@@ -148,14 +148,18 @@ function TodayPage() {
 
   // Real <button> sort headers with aria-sort (spec §3.6); idle caret hints the
   // direction the next click applies (name ascends, numbers descend).
-  const th = (key: SortKey, label: string, opts?: { left?: boolean; hideBelowMd?: boolean }) => {
+  // Mobile shell header is 68px tall — sticky offsets pair via top-[68px]
+  // md:top-14. The rep column is sticky LEFT too (opaque bg, team.tsx pattern)
+  // so horizontal scroll on phones never loses row identity (stickyLeft on the
+  // FIRST column only; `left` remains pure text alignment).
+  const th = (key: SortKey, label: string, opts?: { left?: boolean; hideBelowMd?: boolean; stickyLeft?: boolean }) => {
     const active = sortKey === key;
     const caret = active ? (sortAsc ? "↑" : "↓") : key === "name" ? "↑" : "↓";
     return (
       <th
         scope="col"
         aria-sort={active ? (sortAsc ? "ascending" : "descending") : undefined}
-        className={`sticky top-14 z-[1] bg-(--sticky-header-bg) backdrop-blur-sm ${opts?.left ? "text-left" : "text-right"} ${opts?.hideBelowMd ? "hidden md:table-cell" : ""}`}
+        className={`sticky top-[68px] z-[2] md:top-14 ${opts?.stickyLeft ? "left-0 z-[3] bg-(--card-bg)" : "bg-(--sticky-header-bg) backdrop-blur-sm"} ${opts?.left ? "text-left" : "text-right"} ${opts?.hideBelowMd ? "hidden md:table-cell" : ""}`}
       >
         <button type="button" className="th-sort-btn" onClick={() => sortBy(key)}>
           {label}
@@ -294,10 +298,10 @@ function TodayPage() {
         </div>
         <div className="card mt-3 overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="data-table min-w-[900px] [&_tbody_tr]:scroll-mt-24 [&_td]:py-2.5">
+            <table className="data-table min-w-[760px] md:min-w-[900px] [&_tbody_tr]:scroll-mt-24 [&_td]:py-2.5">
               <thead>
                 <tr>
-                  {th("name", "Rep", { left: true })}
+                  {th("name", "Rep", { left: true, stickyLeft: true })}
                   {th("totalBookings", "Bookings / Goal", { left: true })}
                   {th("callsOverThreshold", "Calls >2 Min")}
                   {th("conversationConversion", "Conv. Conversion")}
@@ -320,9 +324,9 @@ function TodayPage() {
                       <tr
                         key={r.repId}
                         onClick={open}
-                        className={"cursor-pointer " + (expanded ? "bg-(--surface-selected)" : "")}
+                        className={"group cursor-pointer " + (expanded ? "bg-(--surface-selected)" : "")}
                       >
-                        <td className="text-left align-top">
+                        <td className="sticky left-0 z-[1] bg-(--card-bg) text-left align-top group-hover:bg-(--surface-hover)">
                           <a
                             href={repPerfLink(m.weekStart, r.repId)}
                             onClick={(e) => {

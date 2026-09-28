@@ -192,6 +192,36 @@
     background: var(--page-bg);
     color: var(--text-primary);
     font-feature-settings: "tnum" 1;
+    /* Prevent any accidental page-level horizontal scroll on phones (tables
+       and strips scroll inside their own overflow containers). */
+    overflow-x: clip;
+  }
+}
+
+/* ---------- Mobile pass (owner: "It's like a web version on mobile") ----------
+   Phones only (the 68px mobile shell header lives in __root.tsx; in-page
+   sticky offsets pair with it via top-[68px] md:top-14). Tap-target and
+   input-font rules keep every number, label and phrase identical — this is
+   touch ergonomics, not content. */
+@media (max-width: 767px) {
+  /* 44px minimum tap targets for every interactive control; 16px input font
+     stops iOS Safari's focus-zoom (which would otherwise jump the viewport
+     on every Settings form field). */
+  button,
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    min-height: 44px;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  /* Denser cards on small screens (p-5 → p-4); explicit p-0/p-* utilities at
+     call sites still win over this component-layer default. */
+  .card {
+    padding: 1rem;
   }
 }
 

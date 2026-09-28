@@ -504,10 +504,11 @@ function TeamPage() {
     }
   };
 
-  // Sticky header (index.tsx's `sticky top-14` pattern): rows scroll UNDER the
-  // caret-only header. The rep header cell is sticky left too (opaque bg so
-  // horizontal scroll keeps rep identity, §6/§15) and sits above the other
-  // header cells; body rep cells get z-[1].
+  // Sticky header (index.tsx pattern, offsets pair with the shell header:
+  // top-[68px] on phones where the header is 68px, md:top-14 on desktop).
+  // The rep header cell is sticky left too (opaque bg so horizontal scroll
+  // keeps rep identity, §6/§15) and sits above the other header cells; body
+  // rep cells get z-[1].
   const th = (key: SortKey, label: string, opts?: { left?: boolean }) => {
     const active = sortKey === key;
     const caret = active ? (sortAsc ? "↑" : "↓") : key === "rep" ? "↑" : "↓";
@@ -517,8 +518,8 @@ function TeamPage() {
         aria-sort={active ? (sortAsc ? "ascending" : "descending") : undefined}
         className={
           opts?.left
-            ? "sticky left-0 top-14 z-[3] bg-(--card-bg) pb-2 text-left"
-            : "sticky top-14 z-[2] bg-(--sticky-header-bg) pb-2 text-right backdrop-blur-sm"
+            ? "sticky left-0 top-[68px] z-[3] bg-(--card-bg) pb-2 text-left md:top-14"
+            : "sticky top-[68px] z-[2] bg-(--sticky-header-bg) pb-2 text-right backdrop-blur-sm md:top-14"
         }
       >
         <button type="button" className="th-sort-btn normal-case tracking-normal text-xs text-(--text-caption)" onClick={() => sortBy(key)}>
