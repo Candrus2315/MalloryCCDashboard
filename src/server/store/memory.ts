@@ -474,6 +474,35 @@ export class MemoryStore implements Store {
       if (lead.provider === "google_sheets" && lead.source_sheet === sourceSheet) this.leads.delete(key);
     }
   }
+  async getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null })[]> {
+    return [...this.leads.values()]
+      .filter((l) => l.provider === provider)
+      .map((l) => ({
+        id: l.id,
+        source_id: l.source_id,
+        provider: l.provider,
+        lead_type: l.lead_type,
+        source_date: l.source_date,
+        work_date: l.work_date,
+        name: l.name ?? null,
+        phone: l.phone ?? null,
+        email: l.email ?? null,
+        contact_id: l.contact_id,
+        assigned_rep_id: l.assigned_rep_id,
+        source_sheet: l.source_sheet,
+      }));
+  }
+  async deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number> {
+    const set = new Set(sourceIds);
+    let n = 0;
+    for (const [key, lead] of this.leads) {
+      if (lead.provider === provider && set.has(lead.source_id)) {
+        this.leads.delete(key);
+        n++;
+      }
+    }
+    return n;
+  }
   async upsertLeads(rows: LeadExt[]): Promise<number> {
     for (const r of rows) {
       const key = `${r.provider}:${r.source_id}`;
