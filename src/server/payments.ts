@@ -70,8 +70,11 @@ function parsePaidFlag(v: unknown): boolean | null {
 export function derivePaymentState(raw: unknown): PaymentDerivation {
   // The pg driver may hand jsonb back as an object OR (some builds/paths) a
   // JSON string — parse defensively so evidence is never misread as absent.
-  if (typeof raw === "string") {
-    try { raw = JSON.parse(raw); } catch { raw = null; }
+  // Rows written before the store stopped pre-stringifying raw can be wrapped
+  // MORE than once (a JSON string whose content is again a JSON string), so
+  // unwrap repeatedly until an object (or a non-JSON string) is reached.
+  for (let i = 0; typeof raw === "string" && i < 5; i++) {
+    try { raw = JSON.parse(raw); } catch { raw = null; break; }
   }
   if (raw == null || typeof raw !== "object") {
     return { state: "unknown", paid: null, price: null, priceSold: null, amountPaid: null, paymentTimestamp: null };

@@ -241,6 +241,11 @@ describe("payment-state derivation (payments.ts)", () => {
     expect(fromString.amountPaid).toBe(0);
     // a non-JSON string is NOT evidence — unknown, never invented
     expect(derivePaymentState("not-json").state).toBe("unknown");
+    // DOUBLE-wrapped (pre-fix store wrote stringified raw back as a string):
+    // repeated unwraps must still reach the evidence (Jenna/Marybeth case)
+    const double = JSON.stringify(JSON.stringify(obj));
+    expect(derivePaymentState(double).state).toBe("paid");
+    expect(derivePaymentState(double).amountPaid).toBe(0);
     // full derivation from a string raw: paid verdict + first-seen win date
     const d = deriveBookingPaymentFields({
       raw: JSON.stringify(raw("yes", "300.00", "300.00")),
