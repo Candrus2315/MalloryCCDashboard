@@ -14,6 +14,7 @@
  */
 import { useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { formatDuration } from "~/server/metrics/report-text";
+import { InfoTip } from "./InfoTip";
 
 export type TrendUnit = "int" | "pct" | "duration";
 
@@ -40,8 +41,13 @@ export interface TrendCardProps {
   unit: TrendUnit;
   /** Dashed horizontal reference line (e.g. weekly lead budget on Lead Volume). */
   refLine?: { value: number; label: string } | null;
-  /** Small footnote under the chart (e.g. bucketing / thin-bucket rules). */
+  /** Small footnote under the chart (data-honesty states only — e.g. thin-bucket rule). */
   note?: string | null;
+  /**
+   * Definition/methodology copy — rendered behind the shared InfoTip beside the
+   * title instead of as a permanent line (microcopy pass 2026-09-28).
+   */
+  info?: string | null;
   /**
    * Full-width variant (Team page Lead Volume module): wider viewBox so the
    * chart gains horizontal room without scaling the text/strokes up.
@@ -70,7 +76,7 @@ const H = 176;
 const WIDE_H = 200;
 const M = { l: 40, r: 10, t: 12, b: 20 };
 
-export function TrendCard({ title, points, unit, refLine, note, wide, meta, onPointClick, tooltip }: TrendCardProps) {
+export function TrendCard({ title, points, unit, refLine, note, info, wide, meta, onPointClick, tooltip }: TrendCardProps) {
   const w = wide ? WIDE_W : W;
   const h = wide ? WIDE_H : H;
   const PW = w - M.l - M.r;
@@ -147,7 +153,10 @@ export function TrendCard({ title, points, unit, refLine, note, wide, meta, onPo
   return (
     <div className="card">
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[13px] font-medium text-(--chip-neutral-fg)">{title}</p>
+        <span className="inline-flex min-w-0 items-center gap-1.5">
+          <p className="truncate text-[13px] font-medium text-(--chip-neutral-fg)">{title}</p>
+          {info && <InfoTip tip={info} label={`About ${title}`} />}
+        </span>
         <p className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
           {latest == null ? "—" : fmt(latest, unit)}
         </p>
@@ -330,16 +339,16 @@ export function TrendCard({ title, points, unit, refLine, note, wide, meta, onPo
               backgroundColor: "var(--card-bg)",
             }}
           >
-            <p className="text-[11px] font-semibold text-(--text-primary)">{tip.title}</p>
+            <p className="text-xs font-semibold text-(--text-primary)">{tip.title}</p>
             {tip.lines.map((line, i) => (
-              <p key={i} className="mt-0.5 text-[11px] leading-snug tabular-nums text-(--chip-neutral-fg)">
+              <p key={i} className="mt-0.5 text-xs leading-snug tabular-nums text-(--chip-neutral-fg)">
                 {line}
               </p>
             ))}
           </div>
         )}
       </div>
-      {note && <p className="mt-1 text-[11px] leading-snug text-(--text-muted)">{note}</p>}
+      {note && <p className="mt-1 text-xs leading-snug text-(--text-muted)">{note}</p>}
     </div>
   );
 }

@@ -61,7 +61,7 @@ export function DetailDrawer(props: {
           <div className="min-w-0">
             <p className="text-[15px] font-semibold tracking-tight text-(--text-primary)">{title}</p>
             {contextLines.length > 0 && (
-              <p className="mt-1 text-[11px] leading-snug text-(--text-caption)">
+              <p className="mt-1 text-xs leading-snug text-(--text-caption)">
                 {contextLines.map((line, i) => (
                   <span key={i} className="block">
                     {line}

@@ -30,7 +30,7 @@ export function GoalProgress(props: {
           <span className={"font-normal text-(--text-muted) " + (big ? "text-lg" : "text-xs")}>/ {cell.goal}</span>
         </span>
         {cell.pct != null && (
-          <span className={"tabular-nums text-(--text-caption) " + (big ? "text-sm" : "text-[11px]")}>{cell.pct}</span>
+          <span className={"tabular-nums text-(--text-caption) " + (big ? "text-sm" : "text-xs")}>{cell.pct}</span>
         )}
       </span>
       {cell.barPct != null && (
