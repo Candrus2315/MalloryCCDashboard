@@ -120,7 +120,7 @@ describe("schedulerTick", () => {
     const store = new MemoryStore();
     await store.insertSyncRun("highlevel"); // the running backfill
     const seen: SeenReq[] = [];
-    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch({ seen }), trigger: "background" });
+    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch({ seen }), trigger: "background", liveAdapters: { sheets: null } });
     expect(res.outcome).toBe("skipped");
     expect(res.reason).toBe("sync-in-progress");
     expect(seen.length).toBe(0);
@@ -139,6 +139,7 @@ describe("schedulerTick", () => {
       fetchImpl: makeIncrementalFetch(),
       now: () => new Date(Date.now() + 13 * 3_600_000),
       trigger: "background",
+      liveAdapters: { sheets: null }, // hermetic: sheets tick must not self-resolve the real secret
     });
     expect(res.outcome).toBe("synced");
     expect(res.mode).toBe("incremental");
@@ -147,7 +148,7 @@ describe("schedulerTick", () => {
   test("SKIP: no credentials → no-credentials, nothing fetched", async () => {
     const store = new MemoryStore();
     const seen: SeenReq[] = [];
-    const res = await schedulerTick({ store, creds: null, fetchImpl: makeIncrementalFetch({ seen }) });
+    const res = await schedulerTick({ store, creds: null, fetchImpl: makeIncrementalFetch({ seen }), liveAdapters: { sheets: null } });
     expect(res.outcome).toBe("skipped");
     expect(res.reason).toBe("no-credentials");
     expect(seen.length).toBe(0);
@@ -158,7 +159,7 @@ describe("schedulerTick", () => {
     const watermarkIso = secondsAgoIso(60);
     await store.setSyncWatermark("highlevel", watermarkIso);
     const seen: SeenReq[] = [];
-    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch({ seen }), trigger: "background" });
+    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch({ seen }), trigger: "background", liveAdapters: { sheets: null } });
 
     expect(res.outcome).toBe("synced");
     expect(res.mode).toBe("incremental");
@@ -210,7 +211,7 @@ describe("schedulerTick", () => {
       config: { source: "highlevel-api" },
     });
 
-    const failed = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch({ fail: true }) });
+    const failed = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch({ fail: true }), liveAdapters: { sheets: null } });
     expect(failed.outcome).toBe("error");
     expect(failed.error).toContain("network down");
     const afterFail = (await store.getConnections()).find((c) => c.provider === "highlevel");
@@ -222,7 +223,7 @@ describe("schedulerTick", () => {
     expect(failedRun?.error).toContain("network down");
 
     // next tick recovers: fetch works again → connected, watermark advances
-    const recovered = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch() });
+    const recovered = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch(), liveAdapters: { sheets: null } });
     expect(recovered.outcome).toBe("synced");
     const afterRecovery = (await store.getConnections()).find((c) => c.provider === "highlevel");
     expect(afterRecovery?.status).toBe("connected");
@@ -233,7 +234,7 @@ describe("schedulerTick", () => {
   test("ATTRIBUTIONS: recompute runs after each successful HighLevel tick", async () => {
     const store = new MemoryStore();
     await store.setSyncWatermark("highlevel", secondsAgoIso(60));
-    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch() });
+    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch(), liveAdapters: { sheets: null } });
     expect(res.outcome).toBe("synced");
     expect(typeof res.attributions).toBe("number");
     const attrRun = (await store.getSyncRuns(10)).find((r) => r.provider === "attribution" && r.status === "success");

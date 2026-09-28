@@ -81,12 +81,34 @@ function requireCreds(): HighLevelCreds {
 }
 
 // ---------- HTTP with retry/backoff ----------
-export type FetchLike = (url: string, init?: { headers?: Record<string, string>; method?: string; body?: string }) => Promise<Response>;
+export type FetchLike = (url: string, init?: { headers?: Record<string, string>; method?: string; body?: string; signal?: AbortSignal }) => Promise<Response>;
 
 const BASE_URL = "https://services.leadconnectorhq.com";
 const API_VERSION = "2021-07-28";
 const RATE_LIMIT_RETRIES = 4;
 const SERVER_ERROR_RETRIES = 1;
+/**
+ * HARD FETCH TIMEOUT (owner directive 2026-09-28): a hung HighLevel API call
+ * used to wedge a sync run forever (two zombie "running" rows observed on
+ * 2026-09-28 — no response, no error, no finish). Every request now carries
+ * an abort signal at this cap AND a race timeout, so a hung request becomes
+ * an ordinary (retried-next-tick) sync error.
+ */
+export const HL_FETCH_TIMEOUT_MS = 60_000;
+/** Race a promise against the fetch timeout (the abort signal alone cannot cover non-cooperative fetch impls). */
+async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s (no response) — hung request aborted`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 export const CALL_BACKFILL_DAYS = 30;
 export const CONTACT_SNAPSHOT_CAP = 2_000;
 export const OPPORTUNITY_SNAPSHOT_CAP = 5_000;
@@ -98,6 +120,8 @@ export interface HlEndpointOpts {
   creds: HighLevelCreds;
   fetchImpl: FetchLike;
   sleep: (ms: number) => Promise<void>;
+  /** Hard per-request timeout (tests shrink it); default HL_FETCH_TIMEOUT_MS. */
+  timeoutMs?: number;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -125,12 +149,20 @@ export async function hlRequest(req: HlRequest, opts: HlEndpointOpts): Promise<u
   if (req.body) headers["content-type"] = "application/json";
   let rateLimited = 0;
   let serverErrors = 0;
+  const timeoutMs = opts.timeoutMs ?? HL_FETCH_TIMEOUT_MS;
   for (;;) {
     let res: Response;
     try {
-      res = await opts.fetchImpl(url, { headers, method: req.body ? "POST" : "GET", body: req.body ? JSON.stringify(req.body) : undefined });
+      res = await withTimeout(
+        opts.fetchImpl(url, { headers, method: req.body ? "POST" : "GET", body: req.body ? JSON.stringify(req.body) : undefined, signal: AbortSignal.timeout(timeoutMs) }),
+        timeoutMs + 1000, // backstop for non-cooperative fetch impls; the abort signal fires first for real fetch
+        "HighLevel API request",
+      );
     } catch (e) {
-      throw new HighLevelError("network", `Could not reach the HighLevel API (${BASE_URL}): ${e instanceof Error ? e.message : String(e)}`);
+      const raw = e instanceof Error ? e.message : String(e);
+      throw new HighLevelError("network", /abort/i.test(raw)
+        ? `HighLevel API request timed out after ${Math.round(timeoutMs / 1000)}s (no response) — hung request aborted`
+        : `Could not reach the HighLevel API (${BASE_URL}): ${raw}`);
     }
     if (res.status === 429) {
       if (rateLimited >= RATE_LIMIT_RETRIES) {

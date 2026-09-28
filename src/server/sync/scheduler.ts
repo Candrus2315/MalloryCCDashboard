@@ -22,7 +22,7 @@
 import { getStore, type Store } from "../store";
 import type { AppSettings } from "../store/types";
 import { isRosterUser } from "../roster";
-import { readHighLevelCreds, type HighLevelCreds } from "./highlevel-live";
+import { readHighLevelCreds, type HighLevelCreds, type LiveHighLevelAdapter } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
 import {
   CONTACTS_INCREMENTAL_CHECKPOINT_KEY,
@@ -35,9 +35,49 @@ import {
 import { recomputeAttributions, runDemoSync } from "./run";
 import { availabilityTick, type AvailabilityTickResult } from "./acuity-live";
 import { attributionTick, type AttributionTickResult } from "./attribution-tick";
+import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
+import type { LiveSheetsAdapter } from "./sheets-live";
 
 /** A "running" sync_runs row older than this is a crashed process, not a live one. */
 export const STALE_RUNNING_CUTOFF_HOURS = 12;
+
+/**
+ * STALE-RUN REAPER (owner directive 2026-09-28): a sync run for a BOUNDED,
+ * fast provider stuck "running" longer than this is a hung process (the
+ * observed zombie HighLevel rows: two runs wedged forever on hung API calls).
+ * The reaper marks them failed with a clear note so they can't wedge the
+ * scheduler's skip-guards or the Sync Center forever. Providers that
+ * legitimately run long (resumable backfills/harvests) are NOT in the set.
+ */
+export const STALE_RUN_REAP_MINUTES = 15;
+const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity", "attribution"]);
+
+/**
+ * Mark every "running" sync_runs row of a bounded provider that is older than
+ * STALE_RUN_REAP_MINUTES as failed. Returns the number of rows reaped.
+ * Injectable clock for tests. Best-effort: callers never let a reaper error
+ * fail the tick.
+ */
+export async function reapStaleSyncRuns(store: Store, now?: () => Date): Promise<number> {
+  const nowFn = now ?? (() => new Date());
+  const runs = await store.getSyncRuns(200);
+  let reaped = 0;
+  for (const run of runs) {
+    if (run.status !== "running") continue;
+    if (!REAPABLE_SYNC_PROVIDERS.has(run.provider)) continue;
+    const startedMs = Date.parse(run.started_at);
+    if (!Number.isFinite(startedMs)) continue;
+    if (nowFn().getTime() - startedMs <= STALE_RUN_REAP_MINUTES * 60_000) continue;
+    await store.finishSyncRun(
+      run.id,
+      "error",
+      run.records_upserted,
+      `stale: this ${run.provider} run exceeded ${STALE_RUN_REAP_MINUTES} minutes without finishing — marked failed by the scheduler's stale-run reaper (the process hung or died; the next tick retries)`,
+    );
+    reaped++;
+  }
+  return reaped;
+}
 
 /** Pure interval resolution: settings value clamped; anything non-finite → default 90. */
 export function readSchedulerIntervalSeconds(raw: unknown): number {
@@ -63,6 +103,10 @@ export interface SchedulerTickResult {
   contactsWalk?: { new: number; pages: number; truncated: boolean };
   /** S4: meta.total-vs-DB reconciliation tripwire outcome. */
   contactsReconciliation?: { dbCount: number | null; sourceTotal: number | null; delta: number | null; status: string };
+  /** Independent Google Sheets lead sync piggy-backed on the same tick (never fails the tick). */
+  sheets?: SheetsTickResult;
+  /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
+  reaped?: number;
 }
 
 /** Attribution recompute wrapped in its own sync_runs row (visible in the Sync Center). */
@@ -93,8 +137,13 @@ async function highlevelTick(options?: {
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
   trigger?: "background" | "manual";
-  /** Test injection for the bootstrap full-sync path; absent in production (real adapters). */
-  liveAdapters?: { sheets: null; highlevel: import("./highlevel-live").LiveHighLevelAdapter };
+  /**
+   * Live-adapter injection for the bootstrap full-sync path. Each piece is
+   * independent: a piece ABSENT (or undefined) → the full sync resolves that
+   * adapter itself (env/credentials); a piece PRESENT (even null) → used as
+   * given. serve.ts passes only what it built; tests pass stubs for both.
+   */
+  liveAdapters?: { sheets?: LiveSheetsAdapter | null; highlevel?: import("./highlevel-live").LiveHighLevelAdapter | null };
   acuityAdapter?: import("./acuity-live").AcuityLiveAdapter | null;
 }): Promise<SchedulerTickResult> {
   const now = options?.now ?? (() => new Date());
@@ -120,9 +169,14 @@ async function highlevelTick(options?: {
     // --- no watermark yet → one full bootstrap sync (sets the watermark) ---
     const watermark = await store.getSyncWatermark("highlevel");
     if (!watermark) {
-      const adapterOpts = options?.liveAdapters
-        ? { sheetsAdapter: options.liveAdapters.sheets, highlevelAdapter: options.liveAdapters.highlevel }
-        : {};
+      // Per-piece threading (see the option docs): only pieces the caller
+      // actually provided are pinned; the rest self-resolve from credentials
+      // — so serve.ts can supply the sheets adapter without ever pinning
+      // HighLevel to demo (a wholesale { highlevel: null } would).
+      const la = options?.liveAdapters;
+      const adapterOpts: { sheetsAdapter?: LiveSheetsAdapter | null; highlevelAdapter?: LiveHighLevelAdapter | null } = {};
+      if (la && la.sheets !== undefined) adapterOpts.sheetsAdapter = la.sheets;
+      if (la && la.highlevel !== undefined) adapterOpts.highlevelAdapter = la.highlevel;
       const acuityOpt = options && "acuityAdapter" in options ? { acuityAdapter: options.acuityAdapter } : {};
       // BOOTSTRAP = the fresh-writer takeover (owner directive 2026-09-27): on
       // a store with NO watermark there are no production verdicts to protect
@@ -388,14 +442,21 @@ async function highlevelTick(options?: {
 // ---------- composed tick (HighLevel + independent availability refresh) ----------
 
 /**
- * One scheduler tick = the HighLevel harvest PLUS two independent refreshes:
- * the Acuity availability sync and the booking-attribution recompute (the
- * pure engine over stored rows — scope-filtered, manual overrides win).
- * Both piggy-backed refreshes record their failures (sync_runs rows) and
- * report them on the result — they never fail the tick or crash the scheduler
- * loop. Background refreshes are throttled (ACUITY_MIN_INTERVAL_MS /
- * ATTRIBUTION_MIN_INTERVAL_MS); manual triggers (REFRESH / SYNC NOW) skip the
- * throttle.
+ * One scheduler tick = the HighLevel harvest PLUS three independent
+ * refreshes: the Acuity availability sync, the booking-attribution recompute
+ * (the pure engine over stored rows — scope-filtered, manual overrides win)
+ * and the Google Sheets lead sync (throttled to SHEETS_MIN_INTERVAL_MS —
+ * sheet data is daily; it seeds the work-date cohort the Today page opens
+ * on). All three piggy-backed refreshes record their failures (sync_runs
+ * rows) and report them on the result — they never fail the tick or crash
+ * the scheduler loop. Background refreshes are throttled
+ * (ACUITY_MIN_INTERVAL_MS / ATTRIBUTION_MIN_INTERVAL_MS / SHEETS_MIN_INTERVAL_MS);
+ * manual triggers (REFRESH / SYNC NOW) skip the throttle.
+ *
+ * A STALE-RUN REAPER runs first: "running" sync_runs rows of the bounded
+ * providers older than STALE_RUN_REAP_MINUTES are marked failed (hung
+ * processes — the two wedged HighLevel rows of 2026-09-28) so they can never
+ * block the tick guards forever.
  */
 export async function schedulerTick(options?: {
   store?: Store;
@@ -405,10 +466,19 @@ export async function schedulerTick(options?: {
   sleep?: (ms: number) => Promise<void>;
   now?: () => Date;
   trigger?: "background" | "manual";
-  liveAdapters?: { sheets: null; highlevel: import("./highlevel-live").LiveHighLevelAdapter };
+  liveAdapters?: { sheets?: LiveSheetsAdapter | null; highlevel?: LiveHighLevelAdapter | null };
   /** Test injection for the availability refresh; absent → resolve from env (null when no creds → skip). */
   acuityAdapter?: import("./acuity-live").AcuityLiveAdapter | null;
 }): Promise<SchedulerTickResult> {
+  const now = options?.now ?? (() => new Date());
+  // Stale-run reaper (best-effort; never fails the tick). Runs FIRST so a
+  // zombie row is cleared before this tick's own guards check for in-flight runs.
+  let reaped: number | undefined;
+  try {
+    reaped = await reapStaleSyncRuns(options?.store ?? (await getStore()), now);
+  } catch {
+    reaped = undefined;
+  }
   const base = await highlevelTick(options);
   let availability: AvailabilityTickResult;
   try {
@@ -432,7 +502,20 @@ export async function schedulerTick(options?: {
   } catch (e) {
     attribution = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
-  return { ...base, availability, attribution };
+  let sheets: SheetsTickResult;
+  try {
+    sheets = await sheetsTick({
+      store: options?.store,
+      now,
+      trigger: options?.trigger,
+      ...(options?.liveAdapters && "sheets" in options.liveAdapters
+        ? { adapter: options.liveAdapters.sheets ?? null }
+        : {}),
+    });
+  } catch (e) {
+    sheets = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability, attribution, sheets, reaped };
 }
 
 // ---------- the always-on loop ----------
@@ -448,12 +531,18 @@ export function tickInFlight(): boolean {
 /**
  * Start the background loop (serve.ts calls this once). Re-entrant safe:
  * multiple calls start at most one loop. Reads the interval from settings each
- * tick so a Settings change applies without a restart.
+ * tick so a Settings change applies without a restart. `liveAdapters` threads
+ * pre-built live adapters into every tick (serve.ts passes the sheets adapter
+ * it built; pieces left undefined resolve themselves from credentials).
  */
-export function startScheduler(options?: { tick?: typeof schedulerTick }): void {
+export function startScheduler(options?: {
+  tick?: typeof schedulerTick;
+  liveAdapters?: { sheets?: LiveSheetsAdapter | null; highlevel?: LiveHighLevelAdapter | null };
+}): void {
   if (started) return;
   started = true;
   const tick = options?.tick ?? schedulerTick;
+  const liveAdapters = options?.liveAdapters;
   void (async () => {
     for (;;) {
       let intervalSeconds = 90;
@@ -468,8 +557,8 @@ export function startScheduler(options?: { tick?: typeof schedulerTick }): void 
       inflight = (async () => {
         const t0 = Date.now();
         try {
-          const res = await tick();
-          console.log(`[scheduler] tick ${res.outcome}${res.mode ? ` (${res.mode})` : ""}${res.reason ? ` — ${res.reason}` : ""}${typeof res.calls === "number" ? ` +${res.calls} calls` : ""}${typeof res.attributions === "number" ? `, ${res.attributions} attributions` : ""}${res.error ? ` ERROR: ${res.error}` : ""} [${Math.round((Date.now() - t0) / 1000)}s]`);
+          const res = await tick(liveAdapters ? { liveAdapters } : undefined);
+          console.log(`[scheduler] tick ${res.outcome}${res.mode ? ` (${res.mode})` : ""}${res.reason ? ` — ${res.reason}` : ""}${typeof res.calls === "number" ? ` +${res.calls} calls` : ""}${typeof res.attributions === "number" ? `, ${res.attributions} attributions` : ""}${res.sheets ? `, sheets ${res.sheets.outcome}${typeof res.sheets.leads === "number" ? ` +${res.sheets.leads} leads` : ""}${res.sheets.reason ? ` (${res.sheets.reason})` : ""}` : ""}${typeof res.reaped === "number" && res.reaped > 0 ? `, reaped ${res.reaped} stale runs` : ""}${res.error ? ` ERROR: ${res.error}` : ""} [${Math.round((Date.now() - t0) / 1000)}s]`);
         } catch (e) {
           console.log(`[scheduler] tick crashed: ${e instanceof Error ? e.message : String(e)}`);
         } finally {

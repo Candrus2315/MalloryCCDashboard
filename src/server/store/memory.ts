@@ -482,6 +482,11 @@ export class MemoryStore implements Store {
     }
     return rows.length;
   }
+  async countLeads(provider: string): Promise<number> {
+    let n = 0;
+    for (const lead of this.leads.values()) if (lead.provider === provider) n++;
+    return n;
+  }
   async getLeadsByWorkDates(dates: string[]): Promise<LeadRow[]> {
     const set = new Set(dates);
     return [...this.leads.values()]

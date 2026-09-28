@@ -974,6 +974,11 @@ export class PgStore implements Store {
     await this.ensureSchema();
     await this.sql`DELETE FROM leads WHERE provider = 'google_sheets' AND source_sheet = ${sourceSheet}`;
   }
+  async countLeads(provider: string): Promise<number> {
+    await this.ensureSchema();
+    const [{ n }] = await this.sql`SELECT count(*)::int AS n FROM leads WHERE provider = ${provider}`;
+    return Number(n);
+  }
   async getLeadsByWorkDates(dates: string[]): Promise<LeadRow[]> {
     await this.ensureSchema();
     if (!dates.length) return [];

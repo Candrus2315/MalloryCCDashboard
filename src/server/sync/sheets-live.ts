@@ -95,6 +95,7 @@ async function getAccessToken(sa: ServiceAccountInfo): Promise<string> {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+      signal: AbortSignal.timeout(60_000),
     });
   } catch (e) {
     throw new SheetsError("network", `Could not reach Google's OAuth endpoint: ${e instanceof Error ? e.message : String(e)}`);
@@ -128,7 +129,7 @@ function classifySheetsError(status: number, apiMessage: string, sa: ServiceAcco
 async function sheetsFetch(token: string, url: string, sa: ServiceAccountInfo): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+    res = await fetch(url, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) });
   } catch (e) {
     throw new SheetsError("network", `Could not reach Google Sheets: ${e instanceof Error ? e.message : String(e)}`);
   }
