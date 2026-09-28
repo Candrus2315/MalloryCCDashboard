@@ -34,7 +34,7 @@ import type {
   TeamGoalRow,
   UserRow,
 } from "./types";
-import { DEFAULT_SETTINGS, normalizeAppSettings } from "./types";
+import { DEFAULT_SETTINGS, normalizeAppSettings, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 
 // Ordered DDL: each statement idempotent, safe to run on every cold start.
 const DDL: string[] = [
@@ -1150,6 +1150,24 @@ export class PgStore implements Store {
       error: r.error ? String(r.error) : null,
     }));
   }
+  async getRunningSyncRuns(): Promise<SyncRunRow[]> {
+    await this.ensureSchema();
+    // FULL scan by status — deliberately no LIMIT and no recency filter: this
+    // feeds the stale-run reaper, which must see zombies hiding BELOW the
+    // recent-N window that getSyncRuns(200) reads (the 37h HighLevel zombie).
+    const rows = await this.sql`SELECT id::text, provider, status, started_at::text, finished_at::text, records_upserted, error
+      FROM sync_runs WHERE status = 'running' AND finished_at IS NULL
+      ORDER BY started_at ASC`;
+    return rows.map((r) => ({
+      id: String(r.id),
+      provider: String(r.provider),
+      status: String(r.status),
+      started_at: String(r.started_at),
+      finished_at: r.finished_at ? String(r.finished_at) : null,
+      records_upserted: Number(r.records_upserted),
+      error: r.error ? String(r.error) : null,
+    }));
+  }
   async getRunningSyncRun(provider: string): Promise<SyncRunRow | null> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text, provider, status, started_at::text, finished_at::text, records_upserted, error
@@ -1157,7 +1175,7 @@ export class PgStore implements Store {
       ORDER BY started_at DESC LIMIT 1`;
     if (rows.length === 0) return null;
     const r = rows[0];
-    return {
+    const run: SyncRunRow = {
       id: String(r.id),
       provider: String(r.provider),
       status: String(r.status),
@@ -1166,6 +1184,12 @@ export class PgStore implements Store {
       records_upserted: Number(r.records_upserted),
       error: r.error ? String(r.error) : null,
     };
+    // FRESHNESS BOUND: a zombie (or unparsable) started_at is NOT a live run —
+    // report null so it can't wedge the header's "Syncing…" or the tick guards.
+    const startedMs = parseSyncStartedMs(run.started_at);
+    if (!Number.isFinite(startedMs)) return null;
+    if (Date.now() - startedMs > STALE_RUN_REAP_MINUTES * 60_000) return null;
+    return run;
   }
   async getSyncWatermark(provider: string): Promise<string | null> {
     await this.ensureSchema();
