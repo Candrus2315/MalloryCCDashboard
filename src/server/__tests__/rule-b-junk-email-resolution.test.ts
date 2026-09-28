@@ -248,7 +248,7 @@ describe("Rule B guard (a) — a multi-contact email match never resolves", () =
   });
 });
 
-describe("Rule B guard (b) — non-roster owner on the resolved contact queues with a DISTINCT reason_code", () => {
+describe("Rule B guard (b) — no active-roster owner on the resolved contact queues with a DISTINCT reason_code", () => {
   test("resolved contact owned by an inactive (non-roster) user → manual queue, reason_code email-resolves-non-roster", () => {
     const m = runBooking(
       [...junkEvidence, conflictBooking],
@@ -261,6 +261,30 @@ describe("Rule B guard (b) — non-roster owner on the resolved contact queues w
     expect(m.detail).toContain(JUNK);
     expect(m.detail).toContain("c_real");
     expect(m.detail).toContain("not an active roster rep");
+  });
+
+  test("resolved contact with NO stored owner (assigned_rep_id NULL) → same manual queue (the live 3b649d31 follow-up shape)", () => {
+    const m = runBooking(
+      [...junkEvidence, conflictBooking],
+      [],
+      [contact(JUNK), contact("c_real", { email: "alice@example.com", assigned_rep_id: null })],
+    );
+    expect(m.status).toBe("unattributed");
+    expect(m.reason).toBe("ambiguous");
+    expect(m.reasonCode).toBe("email-resolves-non-roster");
+    expect(m.detail).toContain("c_real");
+  });
+
+  test("an ACTIVE-roster owner with no evidence does NOT queue — honest no-qualifying-call instead", () => {
+    const m = runBooking(
+      [...junkEvidence, conflictBooking],
+      [],
+      [contact(JUNK), contact("c_real", { email: "alice@example.com", assigned_rep_id: "u_r1" })],
+    );
+    expect(m.status).toBe("unattributed");
+    expect(m.reason).toBe("no-qualifying-call");
+    expect(m.reasonCode).toBeUndefined();
+    expect(m.emailResolution).toBeDefined();
   });
 
   test("the wiring persists the distinct code + the ambiguous note prefix (queue counts stay stable)", () => {

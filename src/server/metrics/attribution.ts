@@ -896,10 +896,10 @@ export function matchAppointmentsToCalls(
           // test-pinned:
           //   (a) the email matching MULTIPLE contacts never resolves (the
           //       distinct.size > 1 hard stop above is unchanged);
-          //   (b) the resolved contact's owner (assigned_rep_id) is not an
-          //       ACTIVE ROSTER rep → do NOT attribute; manual-assignment
-          //       queue with the distinct reason_code
-          //       "email-resolves-non-roster";
+          //   (b) the resolved contact has no ACTIVE-ROSTER owner (no stored
+          //       owner, or an owner who is not an active roster rep) → do
+          //       NOT attribute; manual-assignment queue with the distinct
+          //       reason_code "email-resolves-non-roster";
           //   (c) the resolved contact is itself junk → do NOT resolve; the
           //       conflict stays ambiguous (the fall-through push below);
           //   (d) manual_override rows are never re-processed (store-level:
@@ -930,13 +930,16 @@ export function matchAppointmentsToCalls(
               out.push({ ...s1, emailResolution: resolution });
               continue;
             }
-            // Guard (b): the resolved contact has a stored owner who is not an
-            // active roster rep — no rep signal exists under the frozen s1
-            // rules, so the row queues for manual assignment under its own
-            // reason_code (still an identity-conflict row: the note keeps the
-            // "ambiguous" prefix so queue counting stays stable).
+            // Guard (b): the resolved contact does NOT have an active-roster
+            // owner — either no stored owner at all (assigned_rep_id NULL,
+            // the live 3b649d31 follow-up shape: the email-matched contact is
+            // an unowned record) or an owner who is not an active roster rep.
+            // No rep signal exists under the frozen s1 rules, so the row queues
+            // for manual assignment under its own reason_code (still an
+            // identity-conflict row: the note keeps the "ambiguous" prefix so
+            // queue counting stays stable).
             const owner = ownerByContactId.get(contactId) ?? null;
-            if (owner && !elig.activeIds.has(owner)) {
+            if (!owner || !elig.activeIds.has(owner)) {
               out.push({
                 appointmentId: apptId,
                 status: "unattributed",

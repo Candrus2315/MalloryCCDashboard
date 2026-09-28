@@ -2,8 +2,8 @@
   "tickResult": {
     "outcome": "synced",
     "appointments": 401,
-    "attributed": 126,
-    "unattributed": 275,
+    "attributed": 127,
+    "unattributed": 274,
     "manuallyAssigned": 13
   },
   "storedSplit": {
@@ -14,7 +14,13 @@
   },
   "reasonCodeBreakdown": {
     "no-window-interaction": 268,
-    "ambiguous": 3
+    "email-resolves-non-roster": 2,
+    "ambiguous": 1
+  },
+  "ruleB": {
+    "emailResolvesNonRoster": 2,
+    "identityResolvedNotes": 0,
+    "EXPECTED_EMAIL_RESOLVES_NON_ROSTER": 2
   },
   "reasonCodeSanity": {
     "unattributedMissingCode": 0,
