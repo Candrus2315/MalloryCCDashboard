@@ -125,6 +125,15 @@ const DDL: string[] = [
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS created_time_source text`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS created_time_precision text`,
   `CREATE INDEX IF NOT EXISTS appt_created_bdate_idx ON appointments (created_business_date)`,
+  // BOOKING WIN PAYMENT MODEL (owner directive, rev 12): derived payment state
+  // + the win bucket (ET date the deposit was received) + provenance + the
+  // write-once first-seen stamp. Derived from appointments.raw by payments.ts;
+  // the sync writes them on every pass (win fields are COALESCE-protected).
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS payment_state text`,
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS booking_win_business_date date`,
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS payment_business_date_source text`,
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS first_seen_paid_at timestamptz`,
+  `CREATE INDEX IF NOT EXISTS appt_win_bdate_idx ON appointments (booking_win_business_date)`,
   `CREATE TABLE IF NOT EXISTS booking_attributions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     appointment_id uuid NOT NULL UNIQUE REFERENCES appointments(id) ON DELETE CASCADE,
@@ -785,18 +794,28 @@ export class PgStore implements Store {
     return { appointments: Number(appointments), blocked: Number(blocked) };
   }
 
-  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null })[]): Promise<number> {
+  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null; payment_state?: string | null; booking_win_business_date?: string | null; payment_business_date_source?: string | null; first_seen_paid_at?: string | null })[]): Promise<number> {
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
-        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, raw, status, cancelled, client_name, client_phone, client_email)
-        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.raw ? JSON.stringify(r.raw) : null}, ${r.status}, ${r.cancelled}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
+        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email)
+        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.payment_state ?? null}, ${r.booking_win_business_date ?? null}, ${r.payment_business_date_source ?? null}, ${r.first_seen_paid_at ?? null}, ${r.raw ? JSON.stringify(r.raw) : null}, ${r.status}, ${r.cancelled}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
         ON CONFLICT (acuity_appointment_id) DO UPDATE SET
           contact_id = EXCLUDED.contact_id, calendar_id = EXCLUDED.calendar_id, calendar_name = EXCLUDED.calendar_name,
           appointment_type = EXCLUDED.appointment_type, appointment_datetime = EXCLUDED.appointment_datetime,
           duration_minutes = EXCLUDED.duration_minutes, created_at = EXCLUDED.created_at,
           created_business_date = EXCLUDED.created_business_date, created_time_source = EXCLUDED.created_time_source,
-          created_time_precision = EXCLUDED.created_time_precision, raw = EXCLUDED.raw,
+          created_time_precision = EXCLUDED.created_time_precision,
+          -- BOOKING WIN (rev 12): payment state always follows the latest raw
+          -- derivation; the WIN evidence (win date, provenance, first-seen
+          -- stamp) is WRITE-ONCE — an existing non-null value is never
+          -- overwritten, so an appointment never counts twice and its win date
+          -- never moves after the fact.
+          payment_state = EXCLUDED.payment_state,
+          booking_win_business_date = COALESCE(appointments.booking_win_business_date, EXCLUDED.booking_win_business_date),
+          payment_business_date_source = COALESCE(appointments.payment_business_date_source, EXCLUDED.payment_business_date_source),
+          first_seen_paid_at = COALESCE(appointments.first_seen_paid_at, EXCLUDED.first_seen_paid_at),
+          raw = EXCLUDED.raw,
           status = EXCLUDED.status, cancelled = EXCLUDED.cancelled,
           client_name = EXCLUDED.client_name, client_phone = EXCLUDED.client_phone, client_email = EXCLUDED.client_email, updated_at = now()
       `;
@@ -818,6 +837,12 @@ export class PgStore implements Store {
       created_business_date: normalizePgBusinessDate(r.created_business_date),
       created_time_source: r.created_time_source == null ? null : String(r.created_time_source),
       created_time_precision: r.created_time_precision == null ? null : String(r.created_time_precision),
+      // BOOKING WIN payment model (rev 12): same pg-date normalization for the
+      // win bucket; the first-seen stamp is a real timestamptz → ISO.
+      payment_state: r.payment_state == null ? null : String(r.payment_state),
+      booking_win_business_date: normalizePgBusinessDate(r.booking_win_business_date),
+      payment_business_date_source: r.payment_business_date_source == null ? null : String(r.payment_business_date_source),
+      first_seen_paid_at: r.first_seen_paid_at == null ? null : new Date(r.first_seen_paid_at as string).toISOString(),
       raw: (r.raw ?? null) as Record<string, unknown> | null,
       status: String(r.status),
       cancelled: Boolean(r.cancelled),
@@ -826,7 +851,16 @@ export class PgStore implements Store {
   async getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
     // S7c: created-based metrics bucket on the ET BUSINESS DATE column.
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, raw FROM appointments WHERE created_business_date >= ${start}::date AND created_business_date <= ${end}::date`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE created_business_date >= ${start}::date AND created_business_date <= ${end}::date`;
+    return rows.map((r) => this.apptRow(r as Record<string, unknown>));
+  }
+  async getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
+    await this.ensureSchema();
+    // BOOKING WIN bucket (rev 12): the win-date SUPERSET — wins by the date
+    // the deposit was received, UNION not-yet-derived/legacy rows by created
+    // date (the metrics layer applies the win filters + fallback rules; unpaid
+    // rows returned here never count).
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE (booking_win_business_date >= ${start}::date AND booking_win_business_date <= ${end}::date) OR (booking_win_business_date IS NULL AND created_business_date >= ${start}::date AND created_business_date <= ${end}::date)`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
@@ -835,7 +869,7 @@ export class PgStore implements Store {
     // calendar name (scope matching), acuity id AND the client contact fields
     // (the attribution engine's phone/email tiers read them from this selector)
     // — the lean selectors used by the booking metrics keep their original columns.
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
     return rows.map((r) => ({
       ...this.apptRow(r as Record<string, unknown>),
       calendar_name: r.calendar_name ? String(r.calendar_name) : null,
@@ -848,7 +882,7 @@ export class PgStore implements Store {
   }
   async getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, status, cancelled FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsWithClientsSince(startUtc: string): Promise<(AppointmentRow & {
@@ -859,7 +893,7 @@ export class PgStore implements Store {
     calendar_name: string | null;
   })[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => ({
       ...this.apptRow(r as Record<string, unknown>),
       acuity_appointment_id: r.acuity_appointment_id ? String(r.acuity_appointment_id) : null,

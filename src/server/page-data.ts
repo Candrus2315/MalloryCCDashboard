@@ -39,13 +39,15 @@ import {
   bookingAttributionSplit,
   compareWithTeam,
   computeOpenSlots,
-  filterApptsCreatedInEtRange,
+  filterApptsInWinBucketRange,
   filterCallsInEtRange,
+  appointmentPaymentStateOf,
   materializeRecurringBlocks,
   repRangeSummaries,
   resolveRepGoal,
 } from "./metrics/compute";
 import { big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
+import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
@@ -87,9 +89,10 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers] = await Promise.all([
       store.getUsers(),
       store.getCallsBetween(startUtc, endUtc),
-      // S7c: the created-based bucket reads the ET BUSINESS DATE column —
-      // calendar-date bounds, inclusive both ends.
-      store.getAppointmentsCreatedBusinessDateBetween(range.start, range.end),
+      // REV 12 WIN BUCKET: wins count on booking_win_business_date (the ET
+      // date the deposit was received); the superset query also returns
+      // not-yet-derived rows by created date for the metrics fallback.
+      store.getAppointmentsByWinBusinessDateBetween(range.start, range.end),
       store.getAttributions(),
       store.getLeadsByWorkDates(dateRange(range.start, range.end)),
       // look-back before the range so attribution joins can reach the call
@@ -105,7 +108,7 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
 
     // re-apply the ET bounds as a pure guard (same semantics as the SQL bounds)
     const calls = filterCallsInEtRange(callsRaw, range.start, range.end);
-    const appts = filterApptsCreatedInEtRange(apptsRaw, range.start, range.end).filter((a) =>
+    const appts = filterApptsInWinBucketRange(apptsRaw, range.start, range.end).filter((a) =>
       // OWNER DIRECTIVE (2026-09-26): only in-scope Acuity calendars/types may
       // feed ANY booking number — the same appointmentInScope rule the
       // availability engine applies, from the SAME getSettings() read.
@@ -269,9 +272,10 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, teamGoalRows, repGoalRows] = await Promise.all([
       store.getUsers(),
       store.getCallsBetween(startUtc, endUtc),
-      // S7c: the created-based bucket reads the ET BUSINESS DATE column —
-      // calendar-date bounds, inclusive both ends.
-      store.getAppointmentsCreatedBusinessDateBetween(range.start, range.end),
+      // REV 12 WIN BUCKET: wins count on booking_win_business_date (the ET
+      // date the deposit was received); the superset query also returns
+      // not-yet-derived rows by created date for the metrics fallback.
+      store.getAppointmentsByWinBusinessDateBetween(range.start, range.end),
       store.getAttributions(),
       store.getLeadsByWorkDates(dateRange(range.start, range.end)),
       // look-back before the range so attribution joins can reach the call
@@ -286,7 +290,7 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
 
     // re-apply the ET bounds as a pure guard (same semantics as the SQL bounds)
     const calls = filterCallsInEtRange(callsRaw, range.start, range.end);
-    const appts = filterApptsCreatedInEtRange(apptsRaw, range.start, range.end).filter((a) =>
+    const appts = filterApptsInWinBucketRange(apptsRaw, range.start, range.end).filter((a) =>
       // OWNER DIRECTIVE (2026-09-26): same scope rule as the availability
       // engine (appointmentInScope, settings.acuity from THIS builder's one
       // getSettings() read) — out-of-scope appointments never feed numbers.
@@ -476,15 +480,17 @@ export async function todayPageData(deps?: PageDeps) {
   const yesterdayStart = etDayStartUtc(yesterday);
   const weekStartUtc = etDayStartUtc(ws);
 
-  const [callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, slotDayResults] =
+  const [callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, slotDayResults] =
     await Promise.all([
       store.getCallsBetween(todayStart, todayEnd),
       store.getCallsBetween(weekStartUtc, todayEnd),
       store.getAllCallsSince(weekStartUtc),
-      // S7c: created-based buckets read created_business_date (ET calendar dates).
-      store.getAppointmentsCreatedBusinessDateBetween(today, today),
-      store.getAppointmentsCreatedBusinessDateBetween(yesterday, yesterday),
-      store.getAppointmentsCreatedBusinessDateBetween(ws, today),
+      // REV 12 WIN BUCKET: today/yesterday/WTD bookings = BOOKING WINS whose
+      // booking_win_business_date (the ET date the deposit was received) falls
+      // in the bucket; not-yet-derived rows fall back to created date.
+      store.getAppointmentsByWinBusinessDateBetween(today, today),
+      store.getAppointmentsByWinBusinessDateBetween(yesterday, yesterday),
+      store.getAppointmentsByWinBusinessDateBetween(ws, today),
       store.getAvailabilityRules(),
       // leads worked this week so far: cohorts for each day Mon..today (work_date)
       store.getLeadsByWorkDates(
@@ -496,6 +502,9 @@ export async function todayPageData(deps?: PageDeps) {
       store.getAttributions(),
       // manual lead-count corrections for the operational week (metrics applies them)
       store.getLeadCountAdjustments(dateRange(ws, addDays(ws, 6))),
+      // PENDING PAYMENTS drill-down window (rev 12): unpaid bookings in the
+      // last 30 days (created OR session inside) — visible, never counted.
+      store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30))),
       // Spec §7.1: open slots for today + the next 6 days — per-day store
       // queries (appointments overlapping + blocked times), no new methods.
       Promise.all(
@@ -596,10 +605,43 @@ export async function todayPageData(deps?: PageDeps) {
     repGoals: resolvedRepGoals,
   });
 
+  // PENDING PAYMENTS drill-down (owner directive, rev 12): unpaid bookings
+  // (derived payment state "pending_payment") are VISIBLE but NEVER count.
+  // Amount is informational (raw priceSold ?? price — the amount due); rep is
+  // the stored attribution (manual overrides included) — never a guess.
+  const repNameById = new Map(users.map((u) => [u.id, u.name]));
+  const attrByAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
+  const pendingPayments = pendingWindow
+    .filter(
+      (a) =>
+        // unpaid appointment — pending only when it is a real booking (non-cancelled)
+        !a.cancelled && a.status !== "cancelled" && appointmentPaymentStateOf(a) === "pending_payment",
+    )
+    .map((a) => {
+      const d = derivePaymentState(a.raw);
+      const amount = d.priceSold ?? d.price;
+      const attr = attrByAppt.get(a.id);
+      return {
+        appointment_id: a.id,
+        acuity_appointment_id: a.acuity_appointment_id ?? null,
+        client_name: a.client_name ?? null,
+        appointment_type: a.appointment_type,
+        amount,
+        amountPaid: d.amountPaid,
+        rep_id: attr?.rep_id ?? null,
+        rep_name: attr?.rep_id ? repNameById.get(attr.rep_id) ?? null : null,
+        created_business_date: a.created_business_date ?? null,
+        created_at: a.created_at,
+        appointment_datetime: a.appointment_datetime,
+      };
+    })
+    .sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
+
   return {
     meta,
     settings,
     metrics,
+    pendingPayments,
     connections: serializableConnections(await store.getConnections()),
     staleWarnings: syncStaleWarnings(await store.getConnections()),
     cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")}`,
@@ -627,9 +669,10 @@ export async function dailyReportPageData(deps?: PageDeps) {
   const [callsYesterday, apptsYesterday, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
     await Promise.all([
       store.getCallsBetween(yesterdayStart, todayStart),
-      // S7c: created-based buckets read created_business_date (ET calendar dates).
-      store.getAppointmentsCreatedBusinessDateBetween(yesterday, yesterday),
-      store.getAppointmentsCreatedBusinessDateBetween(ws, today),
+      // REV 12 WIN BUCKET: yesterday/WTD = BOOKING WINS by deposit date
+      // (booking_win_business_date); not-yet-derived rows fall back to created.
+      store.getAppointmentsByWinBusinessDateBetween(yesterday, yesterday),
+      store.getAppointmentsByWinBusinessDateBetween(ws, today),
       store.getAllCallsSince(weekStartUtc),
       // all leads worked this week so far (work_date Mon..today) — covers both
       // today's cohort and yesterday's for the conversion denominators

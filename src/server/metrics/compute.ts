@@ -7,9 +7,14 @@
  *  - CONVERSATION CONVERSION = Bookings From Calls Over Threshold / Calls Over Threshold
  *  - ASSIGNED LEAD CONVERSION = Total Bookings / Assigned Leads
  *  - GOAL ACHIEVEMENT = Actual Bookings / Booking Goal
- *  - A "booking" = a non-cancelled appointment, counted by the day it was
- *    CREATED (created_business_date, ET business date) — the studio tracks sales made, not session date.
- *  - "Bookings From Calls Over Threshold" = bookings attributed to a call whose
+ *  - A performance "Booking" = a BOOKING WIN (owner directive, rev 12): a
+ *    non-cancelled appointment with PAID evidence (paid:"yes" in the retained
+ *    raw — amountPaid informational), counted on booking_win_business_date
+ *    (the ET date the deposit was received). Pending (unpaid) bookings NEVER
+ *    count — they stay visible in the Pending Payments drill-down. Legacy rows
+ *    with no payment evidence keep legacy created-date behavior until the
+ *    historical backfill re-derives them.
+ *  - "Bookings From Calls Over Threshold" = wins attributed to a call whose
  *    duration exceeds the meaningful-call threshold AND created within the
  *    attribution window (enforced by the attribution engine at sync time;
  *    re-checked here against the configured threshold).
@@ -44,6 +49,10 @@ import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 // import is acyclic — the old cycle note referred to src/server/attribution.ts
 // (the retired engine the sync no longer uses).
 import { attributionWindowDates, bookingCreationDateEt, callDateEt } from "./attribution";
+// BOOKING WIN payment-state derivation (owner directive, rev 12) — one pure
+// module; payments.ts imports nothing from this file, so the runtime import
+// stays acyclic.
+import { derivePaymentState } from "../payments";
 
 /**
  * OWNER SPEC (ux-charts-tables-spec.md §9 + accuracy pass 3): a positive
@@ -126,6 +135,15 @@ export interface AppointmentRow {
   created_time_source?: string | null;
   /** full = datetimeCreated existed; date_only = calendar date from dateCreated; session_fallback = neither. */
   created_time_precision?: string | null;
+  // ---- BOOKING WIN PAYMENT MODEL (owner directive, business-plan rev 12) ----
+  /** Derived payment state (payments.ts): paid | pending_payment | scheduled | unknown. */
+  payment_state?: string | null;
+  /** ET business date the deposit was received — THE win-bucket key. */
+  booking_win_business_date?: string | null;
+  /** acuity-payment | first-seen | null — win-date provenance (traceability). */
+  payment_business_date_source?: string | null;
+  /** First time the system observed the paid evidence (write-once). */
+  first_seen_paid_at?: string | null;
   /** FULL provider object as Acuity returned it (forensics; written by the live sync). */
   raw?: Record<string, unknown> | null;
 }
@@ -313,26 +331,112 @@ export function isBooking(a: AppointmentRow): boolean {
   return !a.cancelled && a.status !== "cancelled";
 }
 
+// ---------- BOOKING WIN payment model (owner directive, business-plan rev 12) ----------
+
 /**
- * Count bookings (non-cancelled) whose ET BUSINESS DATE (created_business_date)
- * falls in [start, end] inclusive — both bounds are YYYY-MM-DD ET calendar
- * dates (S7c: bucketing is the booking-MADE ET date, never an instant window).
+ * Is this appointment a PAID booking ("paid:"yes" evidence in the retained
+ * raw, or a persisted paid state written by the sync)? Evidence hierarchy:
+ *   1. persisted payment_state (written by the sync/derivation pass) when set;
+ *   2. the raw Acuity payload's `paid` flag — AUTHORITATIVE. amountPaid is
+ *      INFORMATIONAL (paid:"yes" + amountPaid:"0.00" still counts — Angela
+ *      Chiccarelli, 2026-09-28); price/priceSold/certificate never decide.
+ *   3. rows with NEITHER carry no payment evidence at all (legacy pre-S7c rows
+ *      with no raw, demo seeds): unknown → legacy behavior (they counted as
+ *      bookings before this model; they keep counting until the historical
+ *      backfill re-derives them — flagged, never silently reclassified here).
+ * Pending ("paid":"no") rows are NEVER paid — they hold availability and stay
+ * visible in the Pending Payments drill-down but count toward nothing.
  */
-export function countBookingsCreatedBetween(appts: AppointmentRow[], start: string, end: string): number {
-  return appts.filter(
-    (a) => {
-      const d = createdBusinessDateOf(a);
-      return isBooking(a) && d != null && d >= start && d <= end;
-    },
-  ).length;
+export function appointmentIsPaid(a: AppointmentRow): boolean {
+  const st = a.payment_state;
+  if (st === "paid") return true;
+  if (st === "pending_payment" || st === "scheduled") return false;
+  return derivePaymentState(a.raw).paid !== false;
 }
 
-/** Rep-level booking counts (via attributions; manual overrides included, unattributed excluded). */
+/**
+ * The display-facing payment state of ONE appointment ("paid" |
+ * "pending_payment" | "scheduled" | "unknown") — persisted state first, else
+ * derived from the retained raw. The Pending Payments drill-down filters on
+ * "pending_payment"; never guessed from amounts.
+ */
+export function appointmentPaymentStateOf(a: AppointmentRow): string {
+  if (a.payment_state) return a.payment_state;
+  return derivePaymentState(a.raw).state;
+}
+
+/** A Booking Win: a non-cancelled appointment with paid evidence. THE unit every performance "Booking" counts. */
+export function isBookingWin(a: AppointmentRow): boolean {
+  return isBooking(a) && appointmentIsPaid(a);
+}
+
+/**
+ * THE win-bucket key (ET business date the deposit was received):
+ * persisted booking_win_business_date first; else derived from a raw payment
+ * timestamp; else the creation ET business date (the first-seen proxy —
+ * precision-marked by the sync's payment_business_date_source). Unpaid
+ * appointments have no win date and never bucket anywhere.
+ */
+export function bookingWinBusinessDateOf(a: AppointmentRow): string | null {
+  if (!appointmentIsPaid(a)) return null;
+  if (a.booking_win_business_date) return a.booking_win_business_date;
+  const d = derivePaymentState(a.raw);
+  if (d.paymentTimestamp) {
+    const ms = Date.parse(d.paymentTimestamp.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+    if (Number.isFinite(ms)) {
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(ms));
+    }
+  }
+  return createdBusinessDateOf(a);
+}
+
+/**
+ * Win-bucket range filter (the win-date counterpart of
+ * filterApptsCreatedInEtRange): keep appointments whose booking-win business
+ * date falls in [start, end], plus NOT-YET-DERIVED paid rows whose CREATED
+ * business date falls in the range (the derivation pass may lag one sync
+ * behind; created date is the documented first-seen fallback proxy). Pure.
+ */
+export function filterApptsInWinBucketRange(appts: AppointmentRow[], start: string, end: string): AppointmentRow[] {
+  return appts.filter((a) => {
+    const win = bookingWinBusinessDateOf(a);
+    if (win != null) return win >= start && win <= end;
+    if (appointmentIsPaid(a)) {
+      const d = createdBusinessDateOf(a);
+      return d != null && d >= start && d <= end;
+    }
+    return false;
+  });
+}
+
+/**
+ * OWNER DIRECTIVE (rev 12 "Booking Win definition"): the performance "Booking"
+ * = PAID BOOKING. Count BOOKING WINS whose booking-win business date (the ET
+ * date the deposit was received) falls in [start, end] inclusive — both bounds
+ * are YYYY-MM-DD ET calendar dates. Pending (unpaid) and plain scheduled
+ * appointments never count (they stay visible in the Pending Payments
+ * drill-down instead). Legacy rows with no payment evidence keep legacy
+ * behavior via appointmentIsPaid's unknown rule (win date = created date).
+ */
+export function countBookingsCreatedBetween(appts: AppointmentRow[], start: string, end: string): number {
+  return appts.filter((a) => {
+    if (!isBookingWin(a)) return false;
+    const d = bookingWinBusinessDateOf(a);
+    return d != null && d >= start && d <= end;
+  }).length;
+}
+
+/** Booking WINS per rep (via attributions; manual overrides included, unattributed excluded) — the performance "Bookings". */
 export function bookingsByRep(appts: AppointmentRow[], attributions: AttributionRow[]): Map<string, number> {
   const byAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
   const m = new Map<string, number>();
   for (const appt of appts) {
-    if (!isBooking(appt)) continue;
+    if (!isBookingWin(appt)) continue;
     const attr = byAppt.get(appt.id);
     if (!attr?.rep_id) continue;
     m.set(attr.rep_id, (m.get(attr.rep_id) ?? 0) + 1);
@@ -340,7 +444,7 @@ export function bookingsByRep(appts: AppointmentRow[], attributions: Attribution
   return m;
 }
 
-/** Bookings attributable to a call over the CURRENT threshold (conversation-conversion numerator). */
+/** Booking WINS attributable to a call over the CURRENT threshold (conversation-conversion numerator). */
 export function bookingsFromOverThresholdCalls(
   appts: AppointmentRow[],
   attributions: AttributionRow[],
@@ -350,7 +454,7 @@ export function bookingsFromOverThresholdCalls(
   const callById = new Map(calls.map((c) => [c.id, c]));
   const byAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
   return appts.filter((appt) => {
-    if (!isBooking(appt)) return false;
+    if (!isBookingWin(appt)) return false;
     const attr = byAppt.get(appt.id);
     if (!attr?.call_id) return false;
     const call = callById.get(attr.call_id);
@@ -1172,10 +1276,9 @@ export function buildTeamTrends(input: {
     const startUtc = etDayStartOf(b.start);
     const endUtc = etDayEndUtc(b.end);
     const bCalls = input.calls.filter((c) => c.started_at >= startUtc && c.started_at < endUtc);
-    const bAppts = input.appts.filter((a) => {
-      const d = createdBusinessDateOf(a);
-      return d != null && d >= b.start && d <= b.end;
-    });
+    // Win-date bucketing (rev 12): wins count on the ET date the deposit was
+    // received; not-yet-derived paid rows fall back to their created date.
+    const bAppts = filterApptsInWinBucketRange(input.appts, b.start, b.end);
     const bLeads = input.leads.filter((l) => l.work_date >= b.start && l.work_date <= b.end);
     const bAdjustment = (input.leadCountAdjustments ?? [])
       .filter((a) => a.work_date >= b.start && a.work_date <= b.end)
@@ -1387,7 +1490,10 @@ export function buildUnattributedQueue(input: {
     return d != null && d >= window.from && d <= window.to;
   };
   for (const a of input.appointments) {
-    if (!isBooking(a) || attributed.has(a.id)) continue;
+    // Booking WINS only: attribution is about CREDITING performance, and only
+    // paid bookings count. Unpaid (pending) bookings move to the Pending
+    // Payments drill-down instead of the attribution queue.
+    if (!isBookingWin(a) || attributed.has(a.id)) continue;
     const contact =
       (a.contact_id ? contactById.get(a.contact_id) : undefined) ??
       (a.client_phone ? contactByPhone.get(normalizeUSPhone(a.client_phone) ?? "") : undefined) ??
@@ -1511,7 +1617,9 @@ export interface BookingAttributionSplit extends BookingCoverage {
  * so a page can say so instead of inventing a state.
  */
 export function bookingAttributionSplit(appts: AppointmentRow[], attributions: AttributionRow[]): BookingAttributionSplit {
-  const qualifying = appts.filter((a) => isBooking(a));
+  // The split covers BOOKING WINS (paid bookings) — the three-way invariant is
+  // about credit for performance, and unpaid bookings are pending, not credit.
+  const qualifying = appts.filter((a) => isBookingWin(a));
   const qualifyingIds = new Set(qualifying.map((a) => a.id));
   const rowByAppt = new Map(
     attributions.filter((r) => qualifyingIds.has(r.appointment_id)).map((r) => [r.appointment_id, r]),
@@ -1557,7 +1665,7 @@ export function assertBookingInvariant(
   verdicts?: { engineAttributed: number; engineUnattributed: number },
 ): void {
   const cov = bookingCoverage(appts, attributions);
-  const qualifyingIds = new Set(appts.filter((a) => isBooking(a)).map((a) => a.id));
+  const qualifyingIds = new Set(appts.filter((a) => isBookingWin(a)).map((a) => a.id));
   const rowsForQualifying = attributions.filter((r) => qualifyingIds.has(r.appointment_id));
   if (rowsForQualifying.length !== cov.total || new Set(rowsForQualifying.map((r) => r.appointment_id)).size !== cov.total) {
     throw new Error(

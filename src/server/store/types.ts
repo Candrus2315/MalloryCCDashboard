@@ -649,6 +649,12 @@ export interface Store {
       created_time_precision?: string | null;
       /** S7c: FULL provider object (appointments.raw). */
       raw?: Record<string, unknown> | null;
+      /** BOOKING WIN payment model (rev 12; derived by the sync via payments.ts). */
+      payment_state?: string | null;
+      /** ET business date the deposit was received — win bucket. Write-once: an existing non-null value is never overwritten. */
+      booking_win_business_date?: string | null;
+      payment_business_date_source?: string | null;
+      first_seen_paid_at?: string | null;
     })[],
   ): Promise<number>;
   /**
@@ -658,6 +664,17 @@ export interface Store {
    * created_at window that mis-bucketed date-only bookings one ET day early.
    */
   getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]>;
+  /**
+   * BOOKING WIN metrics bucket (rev 12): the SUPERSET the win-date bucketing
+   * needs — appointments whose booking_win_business_date falls in [start, end]
+   * (a win counts on the date the deposit was received, regardless of when it
+   * was created), UNION appointments with NO persisted win date whose
+   * created_business_date falls in [start, end] (not-yet-derived and legacy
+   * rows; the metrics layer filters those to wins by the same fallback rules).
+   * Callers feed the result through the metrics layer's win filters — unpaid
+   * rows in the result never count.
+   */
+  getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]>;
   getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]>;
   getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]>;
   /** Appointments with client contact fields joined (unattributed-bookings queue). */
