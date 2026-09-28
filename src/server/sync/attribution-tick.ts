@@ -50,6 +50,14 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * takes over automatically — the recovery path). `force` bypasses for a
  * deliberate owner-directed recompute.
  *
+ * v4 = RULE B (owner-approved 2026-09-28): deterministic email-identity
+ *      resolution for junk/shared stored contacts — a junk stored contact
+ *      (appointments against it carry ≥2 distinct client emails) resolves via
+ *      exact email match to the single non-junk contact, attributed under the
+ *      unchanged s1 rules; guard-(b) rows queue with reason_code
+ *      "email-resolves-non-roster"; resolved rows carry an
+ *      "identity-resolved-via-email" note segment. The version bump retires
+ *      v3 writers, whose conflict-updates would revert the resolution.
  * v3 = S4b reason_code persistence (the refined no-rep classification is
  *      written to booking_attributions.reason_code; verdicts unchanged — the
  *      version bump retires v2 writers, whose conflict-updates would leave
@@ -58,7 +66,7 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * no version check — operationally retired by the 9/27 republish; from s6 on
  * every shipped writer carries the guard).
  */
-export const ATTRIBUTION_WRITER_VERSION = 3;
+export const ATTRIBUTION_WRITER_VERSION = 4;
 /** sync_checkpoints key holding the latest writer version that has written. */
 export const ATTRIBUTION_WRITER_VERSION_KEY = "attribution-writer-version";
 
@@ -126,7 +134,13 @@ export function toAttributionRows(
       m.method === "window_interaction" && m.evidence
         ? `s1 window-interaction src=${m.evidence.source} evidence=${m.evidence.id} dur=${m.evidence.duration_seconds ?? "unknown"}`
         : null;
-    const note = [s1Note, windowNote].filter((n): n is string => !!n).join("; ") || null;
+    // RULE B observability: rows whose identity was resolved away from a
+    // junk/shared stored contact record WHICH contact was junk and which one
+    // the booking resolved to — auditable on the Audit page without re-deriving.
+    const resolutionNote = m.emailResolution
+      ? `identity-resolved-via-email stored-contact=${m.emailResolution.storedContactId} resolved-contact=${m.emailResolution.resolvedContactId}`
+      : null;
+    const note = [s1Note, resolutionNote, windowNote].filter((n): n is string => !!n).join("; ") || null;
     if (m.status === "attributed") {
       rows.push({
         id: `attr:${m.appointmentId}`,
@@ -151,8 +165,11 @@ export function toAttributionRows(
         note: m.reason ? `${m.reason}${m.detail ? ` — ${m.detail}` : ""}${note ? `; ${note}` : ""}` : note,
         // S4b triage category: the refined no-rep classification for
         // no-qualifying-call rows; "ambiguous" rows carry their own marker so
-        // grouped queue counts cover the whole queue. NEVER the note's job.
-        reason_code: m.noRepReason ?? (m.reason === "ambiguous" ? "ambiguous" : null),
+        // grouped queue counts cover the whole queue. RULE B guard (b): the
+        // engine's explicit reasonCode (e.g. "email-resolves-non-roster")
+        // wins — a DISTINCT queue code the owner can triage separately.
+        // NEVER the note's job.
+        reason_code: m.reasonCode ?? m.noRepReason ?? (m.reason === "ambiguous" ? "ambiguous" : null),
       });
     }
   }
@@ -248,7 +265,15 @@ export async function computeAndPersistAttributions(
   const matches = matchAppointmentsToCalls(
     appts,
     storedCalls,
-    storedContacts.map((c) => ({ id: c.id, phone: c.phone, email: c.email, external_id: c.external_id })),
+    storedContacts.map((c) => ({
+      id: c.id,
+      phone: c.phone,
+      email: c.email,
+      external_id: c.external_id,
+      // RULE B guard (b): the contact's stored owner feeds the
+      // active-roster check on email-resolved junk-contact bookings.
+      assigned_rep_id: c.assigned_rep_id,
+    })),
     {
       meeting_threshold_seconds: settings.meaningful_call_threshold_seconds,
       attribution_window_hours: settings.attribution_window_hours,
