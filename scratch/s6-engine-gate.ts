@@ -7,7 +7,7 @@
  *     ambiguous-ness) must survive the rerun unchanged — ANY change = STOP;
  *   - per-row vs scratch/s5-scenarios.json s1 verdicts (71 outcomes) +
  *     scratch/s5-engine-gate.json _allDiff (46) + kept-3/kept-4 → zero diffs;
- *   - S7c+S4b baseline split: 410 = 130 attributed / 12 ambiguous / 268
+ *   - S7c+S4b baseline split: 410 = 139 attributed / 3 ambiguous / 268 (owner assigned 9 more 9/28: email-identity conflicts owned by Allison — audit-tracked; 3 non-roster-owned remain queued)
  *     unattributed (post-manual-assignment baseline, 2026-09-27);
  *   - >2min subset (bookingsFromOverThresholdCalls) = EXACTLY 76;
  *   - S4b: every unattributed row carries a reason_code category, attributed
@@ -142,15 +142,15 @@ const summary = {
     unattributedMissingCode: after.filter((r) => r.rep_id == null && !(r.note ?? "").startsWith("ambiguous") && !r.reason_code).length,
     attributedWithCode: after.filter((r) => r.rep_id != null && r.reason_code).length,
   },
-  EXPECTED: { total: 410, attributed: 130, ambiguous: 12, unattributed: 268 },
+  EXPECTED: { total: 410, attributed: 139, ambiguous: 3, unattributed: 268 },
   rerunStability: { changed: rerunChanged.length, sample: rerunChanged.slice(0, 12), STOP_IF_NONZERO: true },
   perRow: { checked71, newly30, checked46, kept3: beforeAttr.size, kept4: beforeAmb.size, manualOverrides, failures: failures.length },
   over2min: { count: over2min.length, EXPECTED: 76 },
   gatePass:
     failures.length === 0 &&
     rerunChanged.length === 0 &&
-    attributed === 130 &&
-    ambiguous === 12 &&
+    attributed === 139 &&
+    ambiguous === 3 &&
     unattributed === 268 &&
     after.filter((r) => r.rep_id == null && !(r.note ?? "").startsWith("ambiguous") && !r.reason_code).length === 0 &&
     after.filter((r) => r.rep_id != null && r.reason_code).length === 0 &&

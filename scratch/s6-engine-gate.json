@@ -1,20 +1,20 @@
 {
   "tickResult": {
     "outcome": "synced",
-    "appointments": 410,
+    "appointments": 401,
     "attributed": 126,
-    "unattributed": 284,
-    "manuallyAssigned": 4
+    "unattributed": 275,
+    "manuallyAssigned": 13
   },
   "storedSplit": {
     "total": 410,
-    "attributed": 130,
-    "ambiguous": 12,
+    "attributed": 139,
+    "ambiguous": 3,
     "unattributed": 268
   },
   "reasonCodeBreakdown": {
     "no-window-interaction": 268,
-    "ambiguous": 12
+    "ambiguous": 3
   },
   "reasonCodeSanity": {
     "unattributedMissingCode": 0,
@@ -22,8 +22,8 @@
   },
   "EXPECTED": {
     "total": 410,
-    "attributed": 130,
-    "ambiguous": 12,
+    "attributed": 139,
+    "ambiguous": 3,
     "unattributed": 268
   },
   "rerunStability": {
@@ -35,9 +35,9 @@
     "checked71": 71,
     "newly30": 30,
     "checked46": 46,
-    "kept3": 130,
+    "kept3": 139,
     "kept4": 14,
-    "manualOverrides": 4,
+    "manualOverrides": 13,
     "failures": 0
   },
   "over2min": {
