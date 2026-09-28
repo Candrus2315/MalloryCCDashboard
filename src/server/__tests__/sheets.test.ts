@@ -355,6 +355,47 @@ describe("demo-awareness banner line", () => {
     ]);
     expect(line).toBe("Live: Google Sheets leads · Demo: HighLevel calls, Acuity bookings");
   });
+
+  // OWNER CASE (2026-09-28): HighLevel read ECONNRESET mid-day. The calls data
+  // in the store is 100% real (is_demo=false) — the banner must show it as
+  // live-with-a-sync-error, NEVER as "Demo".
+  test("real data with transient sync error → degraded-live clause, never Demo", () => {
+    const line = demoAwarenessLine([
+      { provider: "google_sheets", status: "connected", is_demo: false },
+      { provider: "highlevel", status: "error", is_demo: false, last_successful_sync_at: "2026-09-28T18:42:00.000Z" },
+      { provider: "acuity", status: "connected", is_demo: false },
+    ]);
+    expect(line).toBe(
+      "Live: Google Sheets leads, Acuity bookings · Live — last sync error, numbers as of 14:42 ET, retrying: HighLevel calls",
+    );
+    expect(line).not.toContain("Demo");
+  });
+
+  test("real data, sync error, never synced successfully → honest pending clause, never Demo", () => {
+    const line = demoAwarenessLine([
+      { provider: "highlevel", status: "error", is_demo: false, last_successful_sync_at: null },
+    ]);
+    expect(line).toBe("Live — last sync incomplete, numbers pending: HighLevel calls");
+    expect(line).not.toContain("Demo");
+  });
+
+  test("degraded clause uses ET clock from last_successful_sync_at (invalid/missing → pending)", () => {
+    const line = demoAwarenessLine([
+      { provider: "acuity", status: "pending", is_demo: false, last_successful_sync_at: "not-a-date" },
+      { provider: "highlevel", status: "error", is_demo: false, last_successful_sync_at: "2026-09-28T18:42:00.000Z" },
+    ]);
+    expect(line).toBe(
+      "Live — last sync incomplete, numbers pending: Acuity bookings · Live — last sync error, numbers as of 14:42 ET, retrying: HighLevel calls",
+    );
+  });
+
+  test("demo provider with error status still buckets as Demo (is_demo wins)", () => {
+    const line = demoAwarenessLine([
+      { provider: "highlevel", status: "error", is_demo: true, last_successful_sync_at: "2026-09-28T18:42:00.000Z" },
+      { provider: "google_sheets", status: "connected", is_demo: false },
+    ]);
+    expect(line).toBe("Live: Google Sheets leads · Demo: HighLevel calls");
+  });
   test("partial sync warning fires for connected-with-error", () => {
     const warnings = syncStaleWarnings([
       { provider: "google_sheets", status: "connected", last_successful_sync_at: "2026-09-25T10:00:00Z", last_error: "animalia: 403" },

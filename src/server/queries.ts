@@ -23,6 +23,7 @@ import {
   isHistoricalWeek,
   isRangeMode,
   mondaysInRange,
+  OPERATIONAL_TIMEZONE,
   repOperatingState,
   resolveRange,
   weekStart,
@@ -248,23 +249,56 @@ const PROVIDER_DATA_LABELS: Record<string, string> = {
 };
 
 /**
- * Provider-aware honesty line for the Today banner: which data is live vs
- * demo, e.g. "Live: Google Sheets leads · Demo: HighLevel calls, Acuity
- * bookings". Null when nothing has synced yet (other banner clauses cover it).
+ * Provider-aware honesty line for the Today banner: which data is live,
+ * live-but-degraded (real data, transient sync error), or demo, e.g.
+ * "Live: Google Sheets leads · Live — last sync error, numbers as of 14:42 ET,
+ * retrying: HighLevel calls · Demo: Acuity bookings". Null when nothing has
+ * synced yet (other banner clauses cover it).
+ *
+ * Buckets on is_demo, NEVER on status: real data whose sync hit a transient
+ * error (status error/pending, is_demo=false) is still live store data —
+ * labeling it "Demo" is false and alarms the owner. The per-provider error
+ * detail stays in syncStaleWarnings; this line stays one short clause.
  */
-export function demoAwarenessLine(connections: { provider: string; status: string; is_demo: boolean }[]): string | null {
+export function demoAwarenessLine(connections: { provider: string; status: string; is_demo: boolean; last_successful_sync_at?: string | null }[]): string | null {
   const live: string[] = [];
   const demo: string[] = [];
+  const degraded: string[] = [];
   for (const c of connections) {
     const label = PROVIDER_DATA_LABELS[c.provider];
     if (!label) continue;
-    if (!c.is_demo && c.status === "connected") live.push(label);
-    else demo.push(label);
+    if (c.is_demo) demo.push(label);
+    else if (c.status === "connected") live.push(label);
+    else degraded.push(label);
   }
-  if (live.length === 0 && demo.length === 0) return null;
-  if (live.length === 0) return `Demo data: ${demo.join(", ")} — live integrations pending`;
-  if (demo.length === 0) return `Live: ${live.join(", ")}`;
-  return `Live: ${live.join(", ")} · Demo: ${demo.join(", ")}`;
+  if (live.length === 0 && demo.length === 0 && degraded.length === 0) return null;
+  // Degraded = real (is_demo=false) data whose last sync attempt failed. The
+  // banner dates the numbers by the last SUCCESSFUL sync so the owner can
+  // trust what they are reading; no timestamp means no successful sync ever,
+  // so "pending" is the only honest word.
+  const byLabel = new Map(connections.map((c) => [PROVIDER_DATA_LABELS[c.provider], c] as const));
+  const degradedClause = (label: string): string => {
+    const raw = byLabel.get(label)?.last_successful_sync_at;
+    const ms = raw ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(ms)) return `Live — last sync incomplete, numbers pending: ${label}`;
+    const clock = new Intl.DateTimeFormat("en-US", {
+      timeZone: OPERATIONAL_TIMEZONE,
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(ms));
+    return `Live — last sync error, numbers as of ${clock} ET, retrying: ${label}`;
+  };
+  if (degraded.length === 0) {
+    if (live.length === 0) return `Demo data: ${demo.join(", ")} — live integrations pending`;
+    if (demo.length === 0) return `Live: ${live.join(", ")}`;
+    return `Live: ${live.join(", ")} · Demo: ${demo.join(", ")}`;
+  }
+  const parts: string[] = [];
+  if (live.length) parts.push(`Live: ${live.join(", ")}`);
+  parts.push(...degraded.map(degradedClause));
+  if (demo.length) parts.push(`Demo: ${demo.join(", ")}`);
+  return parts.join(" · ");
 }
 
 /** Save core operational settings (threshold + attribution window). */
