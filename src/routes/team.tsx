@@ -24,6 +24,7 @@ import {
 } from "~/server/metrics/report-text";
 import { TrendCard, type TrendUnit } from "~/components/trend-chart";
 import { Segmented, WeekOfSelect } from "~/components/Segmented";
+import { InfoTip } from "~/components/InfoTip";
 import { StatusChip } from "~/components/StatusChip";
 import { AttentionPanel } from "~/components/AttentionPanel";
 import { DetailDrawer } from "~/components/DetailDrawer";
@@ -100,6 +101,7 @@ function Field({
   label,
   value,
   sub,
+  info,
   tone,
   size = "mid",
 }: {
@@ -107,13 +109,18 @@ function Field({
   /** ReactNode: num() renders "—" as a muted span, so values may be JSX. */
   value: ReactNode;
   sub?: string;
+  /** Metric definition — rendered behind the shared InfoTip, not as permanent copy. */
+  info?: string;
   tone?: "pos" | "neg";
   size?: "hero" | "mid";
 }) {
   const toneCls = tone === "pos" ? "text-(--pos-text)" : tone === "neg" ? "text-(--neg-text)" : "text-(--text-primary)";
   return (
     <div>
-      <p className="text-xs font-medium text-(--text-caption)">{label}</p>
+      <p className="flex items-center gap-1.5 text-xs font-medium text-(--text-caption)">
+        {label}
+        {info && <InfoTip tip={info} label={`About ${label}`} />}
+      </p>
       <p
         className={
           "mt-1.5 font-semibold tracking-tight tabular-nums " +
@@ -217,8 +224,10 @@ function TeamPage() {
       : { value: lastRef, label: `budget pace ${formatInt(lastRef)}/day` };
 
   const sparseNote = `Fewer than ${TREND_MIN_DENOMINATOR} qualifying rows: value hidden.`;
-  const leadNote =
-    "Leads by work date (what the team works that day) · " +
+  // Methodology moved behind the trend cards' InfoTip (microcopy pass): the
+  // dashed budget line is self-labeled inside the chart.
+  const leadInfo =
+    "Leads by work date — what the team works that day (Mon folds Fri–Sun; Tue–Fri count the previous day) · " +
     (t.bucketMode === "week" ? "dashed line = weekly lead budget." : "dashed line = budget pace (weekly budget ÷ 7 per day).");
 
   // ---------- drill-down (§3/§12/§16): drawer state lives in the URL ----------
@@ -252,6 +261,7 @@ function TeamPage() {
     noun?: string;
     pctKind?: "conversation" | "assigned";
     note?: string | null;
+    info?: string | null;
     wide?: boolean;
     refLine?: { value: number; label: string } | null;
   }
@@ -264,7 +274,7 @@ function TeamPage() {
       pick: (p) => p.callsOverThreshold,
       unit: "int",
       noun: "calls over 2 min",
-      note: `duration > ${data.thresholdSeconds}s`,
+      info: `Calls lasting more than ${data.thresholdSeconds}s — the meaningful-call threshold, set in Settings → Operational Rules.`,
     },
     {
       key: "conv",
@@ -290,7 +300,7 @@ function TeamPage() {
       unit: "int",
       noun: "leads",
       refLine,
-      note: leadNote,
+      info: leadInfo,
       wide: true,
     },
   ];
@@ -318,6 +328,7 @@ function TeamPage() {
       points={pointsOf(t.points, c.pick)}
       unit={c.unit}
       note={c.note}
+      info={c.info}
       wide={c.wide}
       refLine={c.refLine}
       meta={trendMeta}
@@ -369,7 +380,7 @@ function TeamPage() {
         ) : (
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="border-b border-(--card-border) text-left text-[11px] text-(--text-caption)">
+              <tr className="border-b border-(--card-border) text-left text-xs text-(--text-caption)">
                 <th scope="col" className="py-1.5 pr-2 font-medium">Time</th>
                 <th scope="col" className="py-1.5 pr-2 font-medium">Rep</th>
                 <th scope="col" className="py-1.5 pr-2 font-medium">Contact</th>
@@ -392,7 +403,7 @@ function TeamPage() {
             </tbody>
           </table>
         )}
-        <p className={"mt-3 text-[11px] " + (rec.ok ? "text-(--text-caption)" : "text-(--banner-fg)")}>{rec.text}</p>
+        <p className={"mt-3 text-xs " + (rec.ok ? "text-(--text-caption)" : "text-(--banner-fg)")}>{rec.text}</p>
       </>
     );
   };
@@ -400,7 +411,7 @@ function TeamPage() {
   const weekAggregate = (line: string) => (
     <div>
       <p className="text-[13px] font-medium text-(--text-primary)">{line}</p>
-      <p className="mt-2 text-[11px] leading-snug text-(--text-muted)">{WEEK_BUCKET_DRILL_NOTE}</p>
+      <p className="mt-2 text-xs leading-snug text-(--text-muted)">{WEEK_BUCKET_DRILL_NOTE}</p>
     </div>
   );
 
@@ -422,10 +433,10 @@ function TeamPage() {
               {conversionComponents(drillPoint.bookingsFromOverThreshold, drillPoint.callsOverThreshold)}
             </p>
             {weekMode ? (
-              <p className="mt-2 text-[11px] leading-snug text-(--text-muted)">{WEEK_BUCKET_DRILL_NOTE}</p>
+              <p className="mt-2 text-xs leading-snug text-(--text-muted)">{WEEK_BUCKET_DRILL_NOTE}</p>
             ) : (
               <>
-                <p className="mt-2 text-[11px] leading-snug text-(--text-muted)">
+                <p className="mt-2 text-xs leading-snug text-(--text-muted)">
                   Bookings (the numerator) are not record-loaded yet — the calls below are the denominator, over
                   threshold only.
                 </p>
@@ -445,7 +456,7 @@ function TeamPage() {
         ) : (
           <div>
             <p className="text-[13px] font-medium text-(--text-primary)">{avgDurationLine(drillPoint)}</p>
-            <p className="mt-2 text-[11px] leading-snug text-(--text-muted)">The calls behind the average:</p>
+            <p className="mt-2 text-xs leading-snug text-(--text-muted)">The calls behind the average:</p>
             <div className="mt-1">{recordTable(drillRows, drillPoint.calls)}</div>
           </div>
         );
@@ -457,7 +468,7 @@ function TeamPage() {
                 {line}
               </p>
             ))}
-            <p className="mt-2 text-[11px] leading-snug text-(--text-muted)">
+            <p className="mt-2 text-xs leading-snug text-(--text-muted)">
               Record-level assigned-lead rows are not loaded yet — the components come from the metrics layer (bookings
               ÷ assigned leads worked).
             </p>
@@ -473,7 +484,7 @@ function TeamPage() {
                 Works leads from source dates: {lc.cohort.join(" · ")}
               </p>
             )}
-            <p className="mt-2 text-[11px] leading-snug text-(--text-muted)">{LEADS_DRILL_NOTE}</p>
+            <p className="mt-2 text-xs leading-snug text-(--text-muted)">{LEADS_DRILL_NOTE}</p>
           </div>
         );
       }
@@ -626,18 +637,17 @@ function TeamPage() {
         <section className="card" aria-label="Team performance summary">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <p className="section-heading">Team Performance</p>
-            <p className="text-xs text-(--text-muted)">Meaningful call threshold: {data.thresholdSeconds}s</p>
           </div>
 
           {/* PRIMARY — bookings + goal pace (spec: not all KPIs equal) */}
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-6 md:grid-cols-4">
-            <Field size="hero" label="Total Bookings" value={formatInt(m.totalBookings)} sub="non-cancelled, by created date" />
-            <Field size="hero" label="Goal Achievement" value={num(formatPercent(m.goalAchievement, 1))} sub="actual ÷ goal" />
+            <Field size="hero" label="Total Bookings" value={formatInt(m.totalBookings)} info="Non-cancelled bookings, counted by created date (America/New_York)" />
+            <Field size="hero" label="Goal Achievement" value={num(formatPercent(m.goalAchievement, 1))} info="Actual bookings ÷ the weekly goal for the range" />
             <Field
               size="hero"
               label="Bookings Remaining"
               value={num(formatCount(m.remaining))}
-              sub="goal − actual, floored at 0"
+              info="Goal − actual, floored at 0"
               tone={m.remaining === 0 ? "pos" : undefined}
             />
             <Field
@@ -663,12 +673,20 @@ function TeamPage() {
           {/* SECONDARY — calls & conversions */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
             <Field label="Total Team Calls" value={formatInt(m.totalCalls)} />
-            <Field label="Calls Over 2 Minutes" value={formatInt(m.callsOverThreshold)} sub={`duration > ${data.thresholdSeconds}s`} />
-            <Field label="Bookings From Calls Over 2 Minutes" value={formatInt(m.bookingsFromOverThreshold)} sub="attributed to >2 min calls" />
+            <Field
+              label="Calls Over 2 Minutes"
+              value={formatInt(m.callsOverThreshold)}
+              info={`Calls lasting more than ${data.thresholdSeconds}s — the meaningful-call threshold, set in Settings → Operational Rules.`}
+            />
+            <Field
+              label="Bookings From Calls Over 2 Minutes"
+              value={formatInt(m.bookingsFromOverThreshold)}
+              info="Bookings attributed to calls over the 2-minute threshold"
+            />
             <Field
               label="Team Conversation Conversion"
               value={num(formatPercent(m.conversationConversion, 1))}
-              sub={`bookings ÷ calls >${data.thresholdSeconds}s`}
+              info={`Bookings ÷ calls over ${data.thresholdSeconds}s (the meaningful-call threshold)`}
             />
             <Field
               label="Assigned Lead Conversion"
@@ -690,9 +708,11 @@ function TeamPage() {
         {/* GOAL PACING — one unit: number line, bar, sentence (spec §2) — sizes to its
             own content height (equal-height abolition: items-start on the grid above) */}
         <section className="card" aria-label="Goal pacing">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className="section-heading">Goal Pacing</p>
-            <p className="max-w-[240px] text-right text-[11px] leading-snug text-(--text-muted)">{m.goal.note}</p>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1.5">
+              <p className="section-heading">Goal Pacing</p>
+              {m.goal.note && <InfoTip tip={m.goal.note} label="Where this goal comes from" />}
+            </span>
           </div>
           <div className="mt-3">
             <p className="kpi-hero">
@@ -729,9 +749,11 @@ function TeamPage() {
 
       {/* TRENDS — structured analytics grid, two labeled rows (spec §3) */}
       <section aria-label="Trends">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <p className="section-heading">Trends</p>
-          <p className="text-xs text-(--text-muted)">{t.bucketNote}</p>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <span className="inline-flex items-center gap-1.5">
+            <p className="section-heading">Trends</p>
+            <InfoTip tip={t.bucketNote} label="How trend buckets are chosen" />
+          </span>
         </div>
         <p className="mt-3 text-xs font-semibold text-(--text-caption)">Performance trends</p>
         <div className="mt-2 grid gap-4 md:grid-cols-2">
@@ -745,7 +767,7 @@ function TeamPage() {
           {renderCard("assigned-conv")}
           {renderCard("avg-duration")}
         </div>
-        <p className="mt-3 text-[11px] leading-snug text-(--text-muted)">
+        <p className="mt-3 text-xs leading-snug text-(--text-muted)">
           Hover any point for exact values · click a point for that day's records.
         </p>
       </section>
@@ -780,8 +802,14 @@ function TeamPage() {
 
       {/* BY REP — sortable, chips rule-based from real metrics (spec §5) */}
       <section aria-label="Team by rep">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <p className="section-heading">By Rep</p>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <span className="inline-flex items-center gap-1.5">
+            <p className="section-heading">By Rep</p>
+            <InfoTip
+              tip={`Chips are rule-based from these columns — top bookings, conversion above team average (≥${TREND_MIN_DENOMINATOR} reps with a value), calls but no bookings, or no recorded activity; no grades. Assigned Lead Conversion per rep lives on each rep's page.`}
+              label="How rep chips are assigned"
+            />
+          </span>
           <p className="text-xs text-(--text-muted)">Click a rep for their full detail on the Reps page</p>
         </div>
         <div className="card mt-2 overflow-hidden p-0">
@@ -823,7 +851,7 @@ function TeamPage() {
                             >
                               <span
                                 aria-hidden="true"
-                                className={"block text-[10px] leading-none transition-transform " + (expanded ? "rotate-90" : "")}
+                                className={"block text-xs leading-none transition-transform " + (expanded ? "rotate-90" : "")}
                               >
                                 ▶
                               </span>
@@ -859,18 +887,18 @@ function TeamPage() {
                           <td colSpan={5} className="px-4 py-3">
                             <dl className="flex flex-wrap gap-x-10 gap-y-2 text-[12px]">
                               <div>
-                                <dt className="text-[11px] text-(--text-muted)">Total Calls</dt>
+                                <dt className="text-xs text-(--text-muted)">Total Calls</dt>
                                 <dd className="mt-0.5 tabular-nums text-(--text-body)">{formatInt(r.totalCalls)}</dd>
                               </div>
                               <div className="min-w-0">
-                                <dt className="text-[11px] text-(--text-muted)">Goal basis</dt>
+                                <dt className="text-xs text-(--text-muted)">Goal basis</dt>
                                 <dd className="mt-0.5 text-(--text-body)">
                                   {r.goal?.note ?? "No booking goal for this range"}
                                 </dd>
                               </div>
                               {r.operatingState === "not-yet-active" && (
                                 <div>
-                                  <dt className="text-[11px] text-(--text-muted)">Status</dt>
+                                  <dt className="text-xs text-(--text-muted)">Status</dt>
                                   <dd className="mt-0.5 text-(--text-body)">
                                     Not Yet Active
                                     {r.callStartDate ? ` — begins calling ${formatDateHuman(r.callStartDate)}` : ""}
@@ -895,12 +923,6 @@ function TeamPage() {
             </table>
           </div>
         </div>
-        <p className="mt-2 text-[11px] leading-snug text-(--text-muted)">
-          Chips are rule-based from these columns — top bookings, conversion above team average (≥
-          {TREND_MIN_DENOMINATOR} reps with a value), calls but no bookings, or no recorded activity; no grades.
-          Assigned Lead Conversion per rep lives on each rep's page. Expand a row (▸) for calls, goal basis and start
-          date.
-        </p>
       </section>
 
       {/* TEAM ATTENTION — rule-based, 3–5 notes, no fake AI (spec §6) */}
@@ -923,10 +945,13 @@ function TeamPage() {
         {drillBody}
       </DetailDrawer>
 
-      <p className="text-[11px] leading-snug text-(--text-muted)">
-        Bookings counted by created_at (America/New_York) · leads by work_date · team goal = weekly goals summed over
-        the range's weeks · Daily Pace Needed = bookings remaining ÷ working days left in the range's final week (never
-        negative). Every figure comes from the same metrics layer as every other page.
+      <p className="flex items-center gap-1.5 text-xs text-(--text-muted)">
+        Metric definitions &amp; methodology
+        <InfoTip
+          side="above"
+          tip="Bookings counted by created_at (America/New_York) · leads by work_date · team goal = weekly goals summed over the range's weeks · Daily Pace Needed = bookings remaining ÷ working days left in the range's final week (never negative). Every figure comes from the same metrics layer as every other page."
+          label="Metric definitions and methodology"
+        />
       </p>
     </div>
   );

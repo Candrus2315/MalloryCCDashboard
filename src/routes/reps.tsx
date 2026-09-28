@@ -22,6 +22,7 @@ import {
 } from "~/server/metrics/report-text";
 import type { ComparisonUnit } from "~/server/metrics/compute";
 import { Segmented, WeekOfSelect } from "~/components/Segmented";
+import { InfoTip } from "~/components/InfoTip";
 import { StatusChip } from "~/components/StatusChip";
 import {
   coachingObservations,
@@ -419,7 +420,7 @@ function RepsPage() {
                   </span>
                   <span
                     className={
-                      "mt-0.5 block pl-3.5 text-[11px] tabular-nums " +
+                      "mt-0.5 block pl-3.5 text-xs tabular-nums " +
                       (r.isSelected ? "text-(--text-caption)" : "text-(--text-muted)")
                     }
                   >
@@ -432,7 +433,7 @@ function RepsPage() {
               ))}
             </div>
           </div>
-          <p className="mt-2 text-[11px] text-(--text-muted)">Bookings · calls in the selected range.</p>
+          <p className="mt-2 text-xs text-(--text-muted)">Bookings · calls in the selected range.</p>
 
           {/* CALL-OWNERSHIP BUCKETS (design/data-terminology.md — three, mutually
               exclusive). "Non Roster Calls" = a KNOWN HL user outside the CC
@@ -442,7 +443,13 @@ function RepsPage() {
               query time without touching any source record. */}
           {data.nonRoster && (
             <div className="mt-4">
-              <p className="section-heading mb-2">Non Roster Calls</p>
+              <p className="section-heading mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                Non Roster Calls
+                <InfoTip
+                  tip="Calls from valid HighLevel users outside the CC roster. Fully visible and auditable but excluded from CC rep metrics, team metrics, conversions, goal progress and coaching logic — unless the user is mapped to the roster in Settings → Roster Mapping. Raw rows: Audit page → Non Roster Calls."
+                  label="What Non Roster Calls means"
+                />
+              </p>
               <div className="card p-3">
                 {data.nonRoster.users.length === 0 ? (
                   <p className="text-[12px] text-(--text-caption)">No non-roster calls in this window.</p>
@@ -462,24 +469,25 @@ function RepsPage() {
                   </ul>
                 )}
                 {data.nonRoster.totalCalls > 0 && (
-                  <p className="mt-2 border-t border-(--table-border-weak) pt-2 text-[11px] tabular-nums text-(--text-caption)">
+                  <p className="mt-2 border-t border-(--table-border-weak) pt-2 text-xs tabular-nums text-(--text-caption)">
                     Total: {formatInt(data.nonRoster.totalCalls)} calls ·{" "}
                     {formatInt(data.nonRoster.totalOverThreshold)} over threshold — excluded from roster and team
                     totals.
                   </p>
                 )}
-                <p className="mt-2 text-[11px] leading-relaxed text-(--text-muted)">
-                  Calls from valid HighLevel users outside the CC roster. Fully visible and auditable but excluded from
-                  CC rep metrics, team metrics, conversions, goal progress and coaching logic — unless the user is
-                  mapped to the roster in Settings → Roster Mapping. Raw rows: Audit page → Non Roster Calls.
-                </p>
               </div>
             </div>
           )}
 
           {data.unattributed && (
             <div className="mt-4">
-              <p className="section-heading mb-2">Unattributed</p>
+              <p className="section-heading mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                Unattributed
+                <InfoTip
+                  tip="Reserved EXCLUSIVELY for call records whose ownership genuinely cannot be determined (no HighLevel user id). Never used for non-roster users; excluded from every roster and team total."
+                  label="What Unattributed means"
+                />
+              </p>
               <div className="card p-3">
                 {data.unattributed.totalCalls === 0 ? (
                   <p className="text-[12px] text-(--text-caption)">No unattributed calls in this window.</p>
@@ -489,10 +497,6 @@ function RepsPage() {
                     {formatInt(data.unattributed.totalOverThreshold)} &gt;{data.thresholdSeconds}s
                   </p>
                 )}
-                <p className="mt-2 text-[11px] leading-relaxed text-(--text-muted)">
-                  Reserved EXCLUSIVELY for call records whose ownership genuinely cannot be determined (no HighLevel
-                  user id). Never used for non-roster users; excluded from every roster and team total.
-                </p>
               </div>
             </div>
           )}
@@ -508,7 +512,6 @@ function RepsPage() {
                   <StatusChip kind="neutral" label="Not Yet Active" />
                 )}
               </p>
-              <p className="text-xs text-(--text-muted)">Meaningful call threshold: {data.thresholdSeconds}s</p>
             </div>
             {data.selectedOperatingState === "not-yet-active" && (
               <p className="text-xs text-(--text-caption)">
@@ -522,14 +525,21 @@ function RepsPage() {
             <section className="card" aria-label="Primary performance metrics">
               <div className="grid grid-cols-1 gap-y-6 sm:grid-cols-3 sm:gap-y-0 sm:divide-x sm:divide-(--table-border-weak)">
                 <div className="sm:pr-6">
-                  <p className="kpi-label">Total Bookings</p>
+                  <p className="kpi-label flex items-center gap-1.5">
+                    Total Bookings
+                    <InfoTip tip="Non-cancelled bookings, counted by created date" label="How Total Bookings is counted" />
+                  </p>
                   <p className="kpi-hero mt-2">{formatInt(d.metrics.totalBookings)}</p>
-                  <p className="kpi-sub mt-1.5">non-cancelled, by created date</p>
                 </div>
                 <div className="sm:px-6">
-                  <p className="kpi-label">Conversation Conversion</p>
+                  <p className="kpi-label flex items-center gap-1.5">
+                    Conversation Conversion
+                    <InfoTip
+                      tip={`Bookings ÷ calls over ${data.thresholdSeconds}s (the meaningful-call threshold, set in Settings → Operational Rules)`}
+                      label="How Conversation Conversion is calculated"
+                    />
+                  </p>
                   <p className="kpi-hero mt-2">{num(formatPercent(d.metrics.conversationConversion, 1))}</p>
-                  <p className="kpi-sub mt-1.5">bookings ÷ calls &gt;{data.thresholdSeconds}s</p>
                 </div>
                 <div className="sm:pl-6">
                   <p className="kpi-label">Assigned Lead Conversion</p>
@@ -541,9 +551,13 @@ function RepsPage() {
               <hr className="my-4 border-(--table-border-weak)" />
 
               {/* WEEKLY GOAL PROGRESS — always WTD vs the weekly goal (spec) */}
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <p className="section-heading">{weekScoped ? "Weekly Goal Progress" : "Goal Progress"}</p>
-                {d.goal?.note && <p className="text-xs text-(--text-muted)">{d.goal.note}</p>}
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="inline-flex items-center gap-1.5">
+                  <p className="section-heading">{weekScoped ? "Weekly Goal Progress" : "Goal Progress"}</p>
+                  {d.goal?.note && (
+                    <InfoTip tip={d.goal.note} label="Where this week's goal comes from" />
+                  )}
+                </span>
               </div>
               {gp && goalViewRaw ? (
                 <>
@@ -604,7 +618,7 @@ function RepsPage() {
                 <KpiMid
                   label="Calls Over 2 Minutes"
                   value={formatInt(d.metrics.callsOverThreshold)}
-                  sub={`duration > ${data.thresholdSeconds}s`}
+                  info={`Calls lasting more than ${data.thresholdSeconds}s — the meaningful-call threshold, set in Settings → Operational Rules.`}
                 />
                 <KpiMid
                   label="Bookings From Calls Over 2 Minutes"
@@ -625,11 +639,14 @@ function RepsPage() {
       {/* COACHING FOCUS — rule-based from real metrics (spec: NO fake AI) */}
       {d && (
         <section className="card card-dense" aria-label="Coaching focus">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className="section-heading">Coaching Focus</p>
-            <p className="text-xs font-normal text-(--text-muted)">
-              Rule-based from selected-range metrics — no scores.
-            </p>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1.5">
+              <p className="section-heading">Coaching Focus</p>
+              <InfoTip
+                tip="Rule-based from selected-range metrics — no scores."
+                label="How Coaching Focus works"
+              />
+            </span>
           </div>
           {observations.length === 0 ? (
             <p className="mt-3 text-[13px] text-(--text-body)">
@@ -661,8 +678,13 @@ function RepsPage() {
       {d && (
         <section aria-label="Performance compared with team average">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className="section-heading">Performance Compared With Team Average</p>
-            <p className="text-xs font-normal text-(--text-muted)">Team average excludes the selected rep.</p>
+            <span className="inline-flex items-center gap-1.5">
+              <p className="section-heading">Performance Compared With Team Average</p>
+              <InfoTip
+                tip={`Team average excludes the selected rep. Counts compare as % difference; conversion rates as percentage points (pp); durations in m/s. Team averages cover the ${data.teamAverages.repCount} other active ${data.teamAverages.repCount === 1 ? "rep" : "reps"}; rate averages include only reps with a value — a missing value renders as — rather than a guess.`}
+                label="How team averages and differences are computed"
+              />
+            </span>
           </div>
           <div className="card mt-3 overflow-hidden p-0">
             <div className="overflow-x-auto">
@@ -715,17 +737,11 @@ function RepsPage() {
           {sortedComparisons.some(
             (c) => c.diff != null && restrainedDiff(c.diff, diffSampleDenominator(c, d.metrics)),
           ) && (
-            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-(--text-muted)">
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-(--text-muted)">
               <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
               {SMALL_SAMPLE_FOOTNOTE}
             </p>
           )}
-          <p className="mt-2 text-[11px] text-(--text-muted)">
-            Counts compare as % difference; conversion rates as percentage points (pp); durations in
-            m/s. Team averages cover the {data.teamAverages.repCount} other active{" "}
-            {data.teamAverages.repCount === 1 ? "rep" : "reps"}; rate averages include only reps with
-            a value — a missing value renders as — rather than a guess.
-          </p>
         </section>
       )}
     </div>
@@ -733,10 +749,13 @@ function RepsPage() {
 }
 
 /** Secondary KPI cell — same stack as the Today page at text-3xl. */
-function KpiMid({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function KpiMid({ label, value, sub, info }: { label: string; value: string; sub?: string; info?: string }) {
   return (
     <div>
-      <p className="kpi-label">{label}</p>
+      <p className="kpi-label flex items-center gap-1.5">
+        {label}
+        {info && <InfoTip tip={info} label={`About ${label}`} />}
+      </p>
       <p className="kpi-mid mt-2">{num(value)}</p>
       {sub && <p className="kpi-sub mt-1.5">{sub}</p>}
     </div>

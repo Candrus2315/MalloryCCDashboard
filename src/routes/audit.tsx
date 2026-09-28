@@ -4,6 +4,7 @@ import { getAuditData } from "~/server/queries";
 import { addDays, formatDateHuman } from "~/server/date-logic";
 import { formatInt } from "~/server/metrics/report-text";
 import type { AuditOkBody } from "~/server/audit-api";
+import { InfoTip } from "~/components/InfoTip";
 
 export const Route = createFileRoute("/audit")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -97,9 +98,13 @@ function AuditPage() {
           </span>
           <span className="text-[15px] font-medium text-(--text-caption)">Raw Call Audit (read-only)</span>
         </div>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-(--text-caption)">
+        <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-(--text-caption)">
           <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
           <span>DB call rows for one rep × one day · America/New_York · also served as JSON at /api/audit</span>
+          <InfoTip
+            tip={`Read-only rows from the normalized calls table — the same rows Reps/Team count. Over-threshold uses the live settings threshold (${p?.threshold_seconds ?? 120}s), the same rule as every page; no live HighLevel harvesting happens here. Buckets per the owner's terminology: Non Roster Calls = a known HighLevel user outside the CC roster; Unattributed = no determinable owner. Roster mappings (Settings) change reporting eligibility at query time — these raw rows always show the original source values.`}
+            label="About these audit rows"
+          />
         </p>
         {data.error && (
           <div className="status-banner mt-2" role="alert">
@@ -199,7 +204,7 @@ function AuditPage() {
                           {r.rep_name ?? "(no user)"}
                         </span>
                         {r.rep_is_active === false && (
-                          <span className="ml-1.5 text-[10px] uppercase tracking-wide text-(--banner-fg)">non-roster</span>
+                          <span className="ml-1.5 text-xs uppercase tracking-wide text-(--banner-fg)">non-roster</span>
                         )}
                       </td>
                       <td className="tabular-nums text-(--chip-neutral-fg)">{r.direction ?? "—"}</td>
@@ -207,22 +212,22 @@ function AuditPage() {
                       <td className="text-center">
                         <span
                           className={
-                            "inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " +
+                            "inline-block rounded px-1.5 py-0.5 text-xs font-medium " +
                             (r.over_threshold ? "bg-(--chip-positive-bg) text-(--chip-positive-fg)" : "bg-(--chip-neutral-bg) text-(--chip-neutral-fg)")
                           }
                         >
                           {r.over_threshold ? "yes" : "no"}
                         </span>
                       </td>
-                      <td className="max-w-[220px] break-all font-mono text-[11px] text-(--text-caption)">{r.external_call_id}</td>
-                      <td className="max-w-[220px] break-all font-mono text-[11px] text-(--text-caption)">{r.conversation_id ?? "—"}</td>
-                      <td className="max-w-[160px] break-all font-mono text-[11px] text-(--text-caption)">
+                      <td className="max-w-[220px] break-all font-mono text-xs text-(--text-caption)">{r.external_call_id}</td>
+                      <td className="max-w-[220px] break-all font-mono text-xs text-(--text-caption)">{r.conversation_id ?? "—"}</td>
+                      <td className="max-w-[160px] break-all font-mono text-xs text-(--text-caption)">
                         {r.provider_rep_external_id ?? "—"}
                       </td>
                       <td className="text-left text-(--chip-neutral-fg)">
                         {r.contact_name ?? "—"}
                         {r.contact_external_id && (
-                          <span className="ml-1 font-mono text-[10px] text-(--text-muted)">{r.contact_external_id}</span>
+                          <span className="ml-1 font-mono text-xs text-(--text-muted)">{r.contact_external_id}</span>
                         )}
                       </td>
                       <td className="text-left text-(--text-caption)">{r.call_status ?? "—"}</td>
@@ -233,13 +238,6 @@ function AuditPage() {
             </table>
           </div>
         </div>
-        <p className="mt-2 text-[11px] text-(--text-muted)">
-          Read-only rows from the normalized <code>calls</code> table — the same rows Reps/Team count. Over-threshold
-          uses the live settings threshold ({p?.threshold_seconds ?? 120}s), the same rule as every page; no live
-          HighLevel harvesting happens here. Buckets per the owner&apos;s terminology: <b>Non Roster Calls</b> = a known
-          HighLevel user outside the CC roster; <b>Unattributed</b> = no determinable owner. Roster mappings (Settings)
-          change reporting eligibility at query time — these raw rows always show the original source values.
-        </p>
       </section>
     </div>
   );
