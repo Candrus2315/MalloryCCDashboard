@@ -681,6 +681,12 @@ export interface Store {
    */
   deleteLeadsForSheet(sourceSheet: string): Promise<void>;
   getLeadsByWorkDates(dates: string[]): Promise<LeadRow[]>;
+  /**
+   * Cheap count of a provider's stored leads (no row materialization). Used by
+   * the Sheets sync's demo-seed guard: demo rows may only ever seed a dataset
+   * with NO stored google_sheets leads — live data is never demo-replaced.
+   */
+  countLeads(provider: string): Promise<number>;
   /** Manual work-date correction (overrides UI); caller writes the audit row. */
   updateLeadWorkDate(id: string, workDate: string): Promise<void>;
 

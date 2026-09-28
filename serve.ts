@@ -91,4 +91,23 @@ console.log(`team-site serving on http://${HOST}:${String(PORT)}`);
 // sync run is in progress; records failures on the connection row and retries
 // next tick; recomputes attributions after each successful HighLevel sync.
 import { startScheduler } from "./src/server/sync/scheduler";
-startScheduler();
+
+// Background Google Sheets lead sync (owner directive 2026-09-28): build the
+// LIVE sheets adapter the way production does — GOOGLE_SERVICE_ACCOUNT_JSON
+// from env + the Settings sheet config — and thread it into the scheduler's
+// tick. When the store/secret isn't ready at boot we pass nothing: the tick
+// resolves the adapter itself from env each round and skips cleanly when no
+// secret is configured (it never falls back to demo rows — runSheetsSync's
+// demo-replace guard keeps stored leads). Sheet-config changes picked up on
+// the next restart; SYNC NOW always reads current settings.
+import { getStore } from "./src/server/store";
+import { createSheetsAdapter } from "./src/server/sync/sheets-live";
+const liveSheets = await (async () => {
+  try {
+    const store = await getStore();
+    return createSheetsAdapter((await store.getSettings()).sheets);
+  } catch {
+    return null; // store not ready at boot — the tick self-resolves per round
+  }
+})();
+startScheduler(liveSheets ? { liveAdapters: { sheets: liveSheets } } : undefined);

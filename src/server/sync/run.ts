@@ -83,7 +83,7 @@ export async function runDemoSync(options?: {
   const startedAt = new Date().toISOString();
   const store = options?.store ?? (await getStore());
   const settings = options?.settings ?? (await store.getSettings());
-  const { highlevel: demoHl, acuity, sheets: demoSheets } = createDemoAdapters({
+  const { highlevel: demoHl, acuity } = createDemoAdapters({
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
     windowHours: settings.attribution_window_hours,
   });
@@ -333,94 +333,11 @@ export async function runDemoSync(options?: {
   results.push({ provider: "acuity", count: acuityRes.count, error: acuityRes.error ?? null });
 
   // --- Google Sheets (leads with work_date applied; per-sheet REPLACE) ---
-  // Live adapter when the service-account secret resolves, demo seed otherwise.
-  // A failed live attempt falls back to the demo lead seed so pages still have
-  // honest, demo-flagged data — the real error lands in the connection row.
-  const sheetsRes = await runProvider(store, "google_sheets", async () => {
-    let leads: NormalizedLead[];
-    let liveReport: SheetsLiveRunReport | null = null;
-    let liveFailed = false;
-    let liveError: string | undefined;
-    if (liveSheets) {
-      try {
-        leads = await liveSheets.fetchLeads();
-        liveReport = "lastRun" in liveSheets ? ((liveSheets as { lastRun?: SheetsLiveRunReport | null }).lastRun ?? null) : null;
-      } catch (e) {
-        // All sheets failed → demo fallback; the actionable error is preserved
-        // for the connection row and page warnings.
-        leads = await demoSheets.fetchLeads();
-        liveFailed = true;
-        liveReport = "lastRun" in liveSheets ? ((liveSheets as { lastRun?: SheetsLiveRunReport | null }).lastRun ?? null) : null;
-        liveError = e instanceof Error ? e.message : String(e);
-      }
-    } else {
-      leads = await demoSheets.fetchLeads();
-    }
-
-    // Link leads to HighLevel contacts (phone → email) for assigned-rep reporting.
-    const storedUsers = await store.getUsers();
-    const storedContacts = await store.getContacts();
-    const contactByPhone = new Map(storedContacts.map((c) => [c.phone?.replace(/\D/g, "").slice(-10) ?? "", c.id]));
-    const contactByEmail = new Map(storedContacts.map((c) => [c.email?.toLowerCase() ?? "", c.id]));
-
-    // REPLACE semantics per sheet: delete the sheet's stored leads, then
-    // upsert fresh. Row-per-day counts therefore replace (never add), and
-    // removed sheet rows disappear. Idempotent across re-syncs (deterministic
-    // source_ids), safe under partial failure (only synced sheets replaced).
-    const bySheet = new Map<string, NormalizedLead[]>();
-    for (const l of leads) {
-      const arr = bySheet.get(l.sheet) ?? [];
-      arr.push(l);
-      bySheet.set(l.sheet, arr);
-    }
-    for (const [sheetName, sheetLeads] of bySheet) {
-      await store.deleteLeadsForSheet(sheetName);
-      await store.upsertLeads(
-        sheetLeads.map((l) => {
-          const contactId = l.phone ? contactByPhone.get(l.phone.replace(/\D/g, "").slice(-10)) ?? null : null;
-          const contactId2 = contactId ?? (l.email ? contactByEmail.get(l.email.toLowerCase()) ?? null : null);
-          const contact = contactId2 ? storedContacts.find((c) => c.id === contactId2) : null;
-          void storedUsers;
-          return {
-            provider: "google_sheets",
-            source_id: l.source_id,
-            lead_type: l.leadType,
-            source_date: l.sourceDate,
-            work_date: l.workDate,
-            name: l.name,
-            phone: l.phone,
-            email: l.email,
-            contact_id: contactId2,
-            assigned_rep_id: contact?.assigned_rep_id ?? null,
-            source_sheet: l.sheet,
-          };
-        }),
-      );
-    }
-
-    const note = liveReport
-      ? [
-          `window from ${liveReport.windowStart}`,
-          ...liveReport.perSheet.map((p) => p.ok ? `${p.sheet}: ${p.leads} leads from ${p.dataRows} rows (${p.mode})` : `${p.sheet}: FAILED`),
-          ...liveReport.suggestions,
-          ...liveReport.warnings.slice(0, 4),
-        ].filter(Boolean).join(" · ").slice(0, 500)
-      : "Demo dataset — GOOGLE_SERVICE_ACCOUNT_JSON not set";
-    // Partial failure (one sheet ok, one failed) → the run records the
-    // per-sheet error while successfully synced sheets are still stored.
-    const failedSheets = liveReport?.perSheet.filter((p) => !p.ok) ?? [];
-    const partialError = failedSheets.length
-      ? failedSheets.map((f) => `${f.sheet}: ${f.error}`).join(" · ")
-      : undefined;
-    return {
-      count: leads.length,
-      error: liveFailed ? liveError : partialError,
-      live: !!liveSheets && !liveFailed,
-      liveFailed,
-      liveError,
-      note,
-    };
-  });
+  // ONE implementation shared with the background sheets tick (sheets-tick.ts):
+  // live adapter when the service-account secret resolves, demo seed otherwise
+  // (see runSheetsSync for the demo-replace guard). The sync_runs row + result
+  // wrapping stays here; the connection row is written inside runSheetsSync.
+  const sheetsRes = await runProvider(store, "google_sheets", () => runSheetsSync(store, settings, liveSheets));
   results.push({ provider: "google_sheets", count: sheetsRes.count, error: sheetsRes.error ?? null });
 
   // --- Attributions (engine over STORED rows; re-runs replace, manual overrides preserved by store) ---
@@ -473,30 +390,191 @@ export async function runDemoSync(options?: {
       nowIso: now,
     });
   }
-  // Google Sheets: provider-aware honesty. Live success → connected; partial
-  // success → connected with last_error (page warnings say "incomplete");
-  // failed live attempt or missing secret → demo-flagged with the real error.
-  {
-    const live = sheetsRes.live === true;
-    const liveFailed = sheetsRes.liveFailed === true;
-    const partial = live && !!sheetsRes.error;
-    const note = typeof sheetsRes.note === "string" ? sheetsRes.note : null;
-    const liveError = typeof sheetsRes.liveError === "string" ? sheetsRes.liveError : null;
-    await store.upsertConnection({
-      provider: "google_sheets",
-      status: live ? "connected" : liveError ? "error" : "demo",
-      is_demo: !live,
-      last_sync_at: now,
-      last_successful_sync_at: live || !liveError ? now : null,
-      last_error: partial ? sheetsRes.error ?? null : liveError ?? sheetsRes.error ?? null,
-      config: {
-        source: live ? "google-sheets-api" : liveError ? "google-sheets-api (failed — demo fallback)" : "demo-seed",
-        note: liveFailed && liveError ? `Live sync failed — showing demo lead data until fixed. ${liveError}` : note,
-      },
-    });
-  }
+  // Google Sheets: provider-aware honesty is written by runSheetsSync above
+  // (live → connected; partial → connected with last_error; failed live
+  // attempt → error with the last successful timestamp preserved; demo →
+  // demo-flagged with the real error).
 
   return { mode: store.mode, providers: results, startedAt, finishedAt: new Date().toISOString() };
+}
+
+// ---------- Google Sheets sync core (full sync + background tick) ----------
+
+export interface SheetsSyncResult {
+  count: number;
+  error?: string;
+  live: boolean;
+  liveFailed?: boolean;
+  liveError?: string;
+  note: string | null;
+}
+
+/**
+ * The Google Sheets portion of a sync — ONE implementation shared by the full
+ * sync (runDemoSync above; manual SYNC NOW included) and the background sheets
+ * tick (sheets-tick.ts): fetch → link to HighLevel contacts (phone → email) →
+ * per-sheet REPLACE → provider-honest connection row. Throws only on store
+ * failures; the adapter's fetch outcome is returned, never thrown.
+ *
+ * DEMO-REPLACE GUARD (owner directive 2026-09-28): demo lead rows may only
+ * ever seed a dataset that has NO stored google_sheets leads at all — a failed
+ * or absent live fetch NEVER demo-REPLACEs stored leads. The previous shape
+ * (per-sheet REPLACE of `demoSheets.fetchLeads()` on any live failure) was a
+ * latent data-loss hazard: the first sheets sync to run without credentials or
+ * with a live error would have wiped the real lead history with demo rows.
+ * Real data survived only because the sheets path never executed at all.
+ */
+export async function runSheetsSync(
+  store: Store,
+  settings: AppSettings,
+  adapter: GoogleSheetsAdapter | null,
+  options?: { nowIso?: string },
+): Promise<SheetsSyncResult> {
+  const { sheets: demoSheets } = createDemoAdapters({
+    thresholdSeconds: settings.meaningful_call_threshold_seconds,
+    windowHours: settings.attribution_window_hours,
+  });
+
+  let leads: NormalizedLead[] | null = null;
+  let liveReport: SheetsLiveRunReport | null = null;
+  let liveFailed = false;
+  let liveError: string | undefined;
+  let demoSeeded = false;
+  let storedBefore = 0;
+
+  const lastRunOf = (a: GoogleSheetsAdapter) => ("lastRun" in a ? ((a as { lastRun?: SheetsLiveRunReport | null }).lastRun ?? null) : null);
+  if (adapter) {
+    try {
+      leads = await adapter.fetchLeads();
+      liveReport = lastRunOf(adapter);
+    } catch (e) {
+      // ALL sheets failed → the actionable error is preserved for the
+      // connection row and page warnings; stored leads are left untouched.
+      liveFailed = true;
+      liveReport = lastRunOf(adapter);
+      liveError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  if (leads === null) {
+    // Demo path (no adapter, or the live fetch failed): demo rows may only
+    // ever seed a dataset with no stored google_sheets leads.
+    storedBefore = await store.countLeads("google_sheets");
+    if (storedBefore === 0) {
+      leads = await demoSheets.fetchLeads();
+      demoSeeded = true;
+    }
+  }
+
+  let count = 0;
+  if (leads !== null) {
+    // Link leads to HighLevel contacts (phone → email) for assigned-rep
+    // reporting — skipped entirely when no fetched lead carries a phone/email
+    // (count-mode sheets: the per-day totals this dashboard reports), so a
+    // background tick never materializes the full contacts table for nothing.
+    const needContacts = leads.some((l) => l.phone || l.email);
+    const storedContacts = needContacts ? await store.getContacts() : [];
+    const contactByPhone = new Map(storedContacts.map((c) => [c.phone?.replace(/\D/g, "").slice(-10) ?? "", c.id]));
+    const contactByEmail = new Map(storedContacts.map((c) => [c.email?.toLowerCase() ?? "", c.id]));
+
+    // REPLACE semantics per sheet: delete the sheet's stored leads, then
+    // upsert fresh. Row-per-day counts therefore replace (never add), and
+    // removed sheet rows disappear. Idempotent across re-syncs (deterministic
+    // source_ids), safe under partial failure (only synced sheets replaced).
+    const bySheet = new Map<string, NormalizedLead[]>();
+    for (const l of leads) {
+      const arr = bySheet.get(l.sheet) ?? [];
+      arr.push(l);
+      bySheet.set(l.sheet, arr);
+    }
+    for (const [sheetName, sheetLeads] of bySheet) {
+      await store.deleteLeadsForSheet(sheetName);
+      await store.upsertLeads(
+        sheetLeads.map((l) => {
+          const contactId = l.phone ? contactByPhone.get(l.phone.replace(/\D/g, "").slice(-10)) ?? null : null;
+          const contactId2 = contactId ?? (l.email ? contactByEmail.get(l.email.toLowerCase()) ?? null : null);
+          const contact = contactId2 ? storedContacts.find((c) => c.id === contactId2) : null;
+          return {
+            provider: "google_sheets",
+            source_id: l.source_id,
+            lead_type: l.leadType,
+            source_date: l.sourceDate,
+            work_date: l.workDate,
+            name: l.name,
+            phone: l.phone,
+            email: l.email,
+            contact_id: contactId2,
+            assigned_rep_id: contact?.assigned_rep_id ?? null,
+            source_sheet: l.sheet,
+          };
+        }),
+      );
+      count += sheetLeads.length;
+    }
+  }
+
+  // Partial failure (one sheet ok, one failed) → the run records the per-sheet
+  // error while successfully synced sheets are still stored.
+  const failedSheets = liveReport?.perSheet.filter((p) => !p.ok) ?? [];
+  const partialError = failedSheets.length
+    ? failedSheets.map((f) => `${f.sheet}: ${f.error}`).join(" · ")
+    : undefined;
+  const live = !!adapter && !liveFailed;
+  const partial = live && !!partialError;
+
+  const note = liveFailed && liveError
+    ? (demoSeeded
+        ? `Live sync failed — showing demo lead data until fixed. ${liveError}`
+        : `Live sync failed — stored leads untouched, showing last synced data until fixed. ${liveError}`)
+    : liveReport
+      ? [
+          `window from ${liveReport.windowStart}`,
+          ...liveReport.perSheet.map((p) => p.ok ? `${p.sheet}: ${p.leads} leads from ${p.dataRows} rows (${p.mode})` : `${p.sheet}: FAILED`),
+          ...liveReport.suggestions,
+          ...liveReport.warnings.slice(0, 4),
+        ].filter(Boolean).join(" · ").slice(0, 500)
+      : demoSeeded
+        ? "Demo dataset — GOOGLE_SERVICE_ACCOUNT_JSON not set"
+        : storedBefore > 0
+          ? `Demo seed skipped — ${storedBefore} stored google_sheets leads kept (demo rows never replace live data)`
+          : null;
+
+  // Connection row: provider-aware honesty. Live success → connected (partial
+  // → connected with last_error); failed live attempt → error with the last
+  // successful timestamp PRESERVED (stale-data warnings read it — the old
+  // shape nulled it, hiding how stale the pages were); no credentials →
+  // demo-flagged. is_demo tracks the stored CONTENT: demo only when demo rows
+  // were actually stored (a failed live attempt leaves live rows behind).
+  const nowIso = options?.nowIso ?? new Date().toISOString();
+  const previous = (await store.getConnections()).find((c) => c.provider === "google_sheets");
+  await store.upsertConnection({
+    provider: "google_sheets",
+    status: live ? "connected" : liveError ? "error" : "demo",
+    is_demo: demoSeeded,
+    last_sync_at: nowIso,
+    // A FAILED live attempt does not claim a successful sync (demo fallback
+    // included — the old contract, pinned by tests); a plain demo seed or a
+    // live success does. The previous successful timestamp is preserved
+    // otherwise so stale-data warnings keep working.
+    last_successful_sync_at: live || (demoSeeded && !liveFailed) ? nowIso : previous?.last_successful_sync_at ?? null,
+    last_error: partial ? partialError ?? null : liveError ?? null,
+    config: {
+      source: live
+        ? "google-sheets-api"
+        : liveError
+          ? demoSeeded ? "google-sheets-api (failed — demo fallback)" : "google-sheets-api (failed — stored leads untouched)"
+          : demoSeeded ? "demo-seed" : "google-sheets (not configured — stored leads kept)",
+      note,
+    },
+  });
+
+  return {
+    count,
+    error: liveFailed ? liveError : partialError,
+    live,
+    liveFailed,
+    liveError,
+    note,
+  };
 }
 
 /**
