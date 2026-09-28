@@ -157,6 +157,29 @@ export interface SyncRunRow {
   error: string | null;
 }
 
+// ---------- sync-run freshness (shared by both stores + the scheduler) ----------
+
+/**
+ * STALE-RUN REAP WINDOW (owner directive 2026-09-28): a bounded provider's
+ * "running" sync_runs row stuck longer than this is a hung process, not a live
+ * one. Defined HERE (not in sync/scheduler) so both stores can use it in
+ * getRunningSyncRun without importing the scheduler (which imports the store
+ * — a cycle). sync/scheduler re-exports it for its callers/tests.
+ */
+export const STALE_RUN_REAP_MINUTES = 15;
+
+/**
+ * Defensive started_at parse. Accepts ISO strings AND Postgres's text form
+ * ("YYYY-MM-DD HH:MM:SS.ffffff+00" — space separator, microseconds) that some
+ * engines' Date.parse rejects; retries with a "T" separator before giving up.
+ * Returns NaN when unparsable — callers treat that as stale and never crash.
+ */
+export function parseSyncStartedMs(raw: string): number {
+  const direct = Date.parse(raw);
+  if (Number.isFinite(direct)) return direct;
+  return Date.parse(raw.replace(" ", "T"));
+}
+
 /**
  * One conversation discovered by the resumable call harvest
  * (src/server/sync/call-harvest.ts). `visited` marks that its messages have
@@ -714,7 +737,23 @@ export interface Store {
   insertSyncRun(provider: string): Promise<string>;
   finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<void>;
   getSyncRuns(limit: number): Promise<SyncRunRow[]>;
-  /** The in-flight sync_runs row for a provider (status=running, finished_at null), or null. Guards background/manual sync overlap. */
+  /**
+   * EVERY in-flight sync_runs row (status=running, finished_at null) of any
+   * age, oldest first — the stale-run reaper's full scan. NOT bounded by
+   * getSyncRuns' recent-N window: at the ~90s sync cadence the 200 most
+   * recent runs span only a few hours, which is exactly how zombies older
+   * than that survived the reaper (the 2026-09-27 HighLevel row: 37h).
+   */
+  getRunningSyncRuns(): Promise<SyncRunRow[]>;
+  /**
+   * The in-flight sync_runs row for a provider (status=running, finished_at
+   * null), or null. Guards background/manual sync overlap.
+   * FRESHNESS BOUND (owner directive 2026-09-28): a running row older than
+   * STALE_RUN_REAP_MINUTES is a hung process — reported as NOT running so a
+   * zombie can never wedge the header's "Syncing…" indicator or the tick
+   * guards; the reaper marks it failed on the next tick. An unparsable
+   * started_at is treated as stale (null), never a crash.
+   */
   getRunningSyncRun(provider: string): Promise<SyncRunRow | null>;
   /** Incremental HighLevel sync watermark (ISO timestamp: everything before it is already stored), or null when never synced. */
   getSyncWatermark(provider: string): Promise<string | null>;

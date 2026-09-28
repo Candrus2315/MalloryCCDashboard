@@ -36,7 +36,7 @@ import type {
   TeamGoalRow,
   UserRow,
 } from "./types";
-import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings } from "./types";
+import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 
 interface CallExt extends CallRow {
   external_call_id: string;
@@ -606,9 +606,18 @@ export class MemoryStore implements Store {
   async getSyncRuns(limit: number): Promise<SyncRunRow[]> {
     return this.syncRuns.slice(-limit).reverse();
   }
+  async getRunningSyncRuns(): Promise<SyncRunRow[]> {
+    return this.syncRuns.filter((r) => r.status === "running" && r.finished_at === null);
+  }
   async getRunningSyncRun(provider: string): Promise<SyncRunRow | null> {
     const running = this.syncRuns.filter((r) => r.provider === provider && r.status === "running" && r.finished_at === null);
-    return running.length ? running[running.length - 1] : null;
+    const run = running.length ? running[running.length - 1] : null;
+    if (!run) return null;
+    // FRESHNESS BOUND: a zombie (or unparsable) started_at is NOT a live run.
+    const startedMs = parseSyncStartedMs(run.started_at);
+    if (!Number.isFinite(startedMs)) return null;
+    if (Date.now() - startedMs > STALE_RUN_REAP_MINUTES * 60_000) return null;
+    return run;
   }
   async getSyncWatermark(provider: string): Promise<string | null> {
     return this.watermarks.get(provider) ?? null;

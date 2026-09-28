@@ -20,7 +20,7 @@
  *      successful timestamp) and keep retrying on the next tick.
  */
 import { getStore, type Store } from "../store";
-import type { AppSettings } from "../store/types";
+import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, type AppSettings } from "../store/types";
 import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds, type LiveHighLevelAdapter } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
@@ -42,14 +42,11 @@ import type { LiveSheetsAdapter } from "./sheets-live";
 export const STALE_RUNNING_CUTOFF_HOURS = 12;
 
 /**
- * STALE-RUN REAPER (owner directive 2026-09-28): a sync run for a BOUNDED,
- * fast provider stuck "running" longer than this is a hung process (the
- * observed zombie HighLevel rows: two runs wedged forever on hung API calls).
- * The reaper marks them failed with a clear note so they can't wedge the
- * scheduler's skip-guards or the Sync Center forever. Providers that
- * legitimately run long (resumable backfills/harvests) are NOT in the set.
+ * STALE-RUN REAP WINDOW — the constant now lives in store/types (both stores
+ * need it for getRunningSyncRun's freshness bound; defining it there avoids a
+ * store→scheduler import cycle). Re-exported here for existing callers/tests.
  */
-export const STALE_RUN_REAP_MINUTES = 15;
+export { STALE_RUN_REAP_MINUTES } from "../store/types";
 const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity", "attribution"]);
 
 /**
@@ -57,15 +54,19 @@ const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity",
  * STALE_RUN_REAP_MINUTES as failed. Returns the number of rows reaped.
  * Injectable clock for tests. Best-effort: callers never let a reaper error
  * fail the tick.
+ *
+ * Scans by STATUS (store.getRunningSyncRuns — every 'running' row of any age),
+ * NOT by the getSyncRuns(200) recency window: at the ~90s sync cadence 200
+ * rows span only a few hours, so zombies older than that (the 2026-09-27
+ * HighLevel row: 37h) were invisible to the reaper forever.
  */
 export async function reapStaleSyncRuns(store: Store, now?: () => Date): Promise<number> {
   const nowFn = now ?? (() => new Date());
-  const runs = await store.getSyncRuns(200);
+  const runs = await store.getRunningSyncRuns();
   let reaped = 0;
   for (const run of runs) {
-    if (run.status !== "running") continue;
     if (!REAPABLE_SYNC_PROVIDERS.has(run.provider)) continue;
-    const startedMs = Date.parse(run.started_at);
+    const startedMs = parseSyncStartedMs(run.started_at);
     if (!Number.isFinite(startedMs)) continue;
     if (nowFn().getTime() - startedMs <= STALE_RUN_REAP_MINUTES * 60_000) continue;
     await store.finishSyncRun(
