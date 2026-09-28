@@ -276,13 +276,6 @@ export interface ParsedSheetResult {
 }
 
 const MAX_PLAUSIBLE_DAY_COUNT = 10_000;
-
-/** Phone identity key: last 10 digits (US). */
-function phoneKey(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-  return digits.length >= 10 ? digits.slice(-10) : digits;
-}
-
 /**
  * Parse a full sheet (rows as returned by Sheets API values.get, header row
  * included) into normalized leads. Applies the mapping mode, the backfill
