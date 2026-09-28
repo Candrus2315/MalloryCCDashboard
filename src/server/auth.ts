@@ -176,11 +176,13 @@ async function handleLogin(request: Request, passphrase: string, now: number): P
 /** Standalone lock screen (no app JS, no assets needed — works pre-cookie). */
 export function lockScreenHtml(redirectTo: string, error?: string): string {
   const err = error
-    ? `<p style="margin:14px 0 0;color:#b91c1c;font-size:13px">${error}</p>`
+    ? `<p class="err" style="margin:14px 0 0;color:#b91c1c;font-size:13px">${error}</p>`
     : "";
   // DECISION ③ (P5): prefers-color-scheme media-query dark ONLY — no localStorage
   // reader here; the standalone doc stays minimal (key-name sync risk not worth
   // it on this rare, pre-cookie surface). Colors mirror the app tokens.
+  // P5 QA fix: dark .err rule — #b91c1c is ~2.7:1 on the charcoal page bg
+  // (below legibility); --neg-text's dark value #f87171 mirrors the app.
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -193,7 +195,9 @@ export function lockScreenHtml(redirectTo: string, error?: string): string {
     form { background:#292524 !important; border-color:#44403c !important; }
     .sub { color:#a8a29e !important; }
     .hint { color:#a8a29e !important; }
+    .err { color:#f87171 !important; }
     input[type="password"] { background:#292524 !important; color:#fafaf9 !important; border-color:#57534e !important; }
+    input[type="password"]:focus { border-color:#a8a29e !important; }
     button[type="submit"] { background:#fafaf9 !important; color:#1c1917 !important; }
   }
 </style>

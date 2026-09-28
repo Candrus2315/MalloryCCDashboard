@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import appCss from "~/styles/app.css?url";
+import { useAppearance } from "~/components/appearance";
 import { getFreshnessData, refreshNow, type FreshnessData } from "~/server/queries";
 
 const NAV = [
@@ -53,6 +54,11 @@ function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const path = location.pathname;
   const freshness = Route.useLoaderData();
+  // P5 QA fix: mount the appearance hook app-wide (not only in Settings) so
+  // pref="system" live-tracks prefers-color-scheme changes on EVERY page —
+  // otherwise an OS dark↔light flip only applies after a full reload.
+  // Idempotent with the Settings block's own subscription (same class toggle).
+  useAppearance();
   return (
     <div className="min-h-dvh bg-(--page-bg) text-(--text-primary)">
       <header className="border-b border-(--card-border) bg-(--sticky-header-bg) sticky top-0 z-10">
