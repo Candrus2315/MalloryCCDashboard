@@ -147,9 +147,11 @@ describe("parseSheetRows — row_per_day_count", () => {
     expect(res.stats.skippedEmpty).toBe(1);
     const ids = res.leads.map((l) => l.source_id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids[0]).toBe("SHEET1#family#d2026-09-24#0");
-    expect(ids[11]).toBe("SHEET1#family#d2026-09-24#11");
-    expect(ids[12]).toBe("SHEET1#family#d2026-09-23#0");
+    // v2 content keys: anonymous count-expanded leads share the "c" handle
+    // with deterministic first-seen ordinal suffixes.
+    expect(ids[0]).toBe("gs2#family#d2026-09-24#c");
+    expect(ids[11]).toBe("gs2#family#d2026-09-24#c#12");
+    expect(ids[12]).toBe("gs2#family#d2026-09-23#c");
     expect(res.warnings.join(" ")).toContain("unreadable lead count");
   });
   test("re-parsing the same input yields identical source_ids (idempotency)", () => {
@@ -197,9 +199,11 @@ describe("parseSheetRows — row_per_lead", () => {
     const res = parseSheetRows({ sheet: "family", sheetId: "S", mapping, rows: [...rows(), rows()[1]], windowStart: WINDOW_START });
     expect(res.stats.leads).toBe(4); // 3 unique + 1 duplicated row
     const ids = res.leads.map((l) => l.source_id);
-    expect(ids[0]).toBe("S#family#d2026-09-24#p9175550142");
-    expect(ids[1]).toBe("S#family#d2026-09-24#p9175550188");
-    expect(ids[3]).toBe("S#family#d2026-09-24#p9175550142#2"); // same phone re-added
+    // v2 content keys — sheet label + date + phone handle, NO sheetId/position.
+    expect(ids[0]).toBe("gs2#family#d2026-09-24#p9175550142");
+    expect(ids[1]).toBe("gs2#family#d2026-09-24#p9175550188");
+    expect(ids[3]).toBe("gs2#family#d2026-09-24#p9175550142#2"); // full identity collision → ordinal, counted
+    expect(res.stats.collisions).toBe(1);
     expect(res.leads[3]!.leadType).toBe("family");
     expect(res.warnings.join(" ")).toContain("no phone and no email");
   });

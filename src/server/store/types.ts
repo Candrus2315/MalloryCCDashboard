@@ -697,12 +697,22 @@ export interface Store {
   ): Promise<number>;
   /**
    * Remove every stored lead for one source sheet (provider google_sheets,
-   * e.g. "family"). Used by the Sheets sync as a per-sheet REPLACE so
-   * row-per-day counts replace (not add to) the previous sync, and removed
-   * sheet rows disappear instead of lingering. Manual lead-count adjustments
-   * live in their own table and are unaffected.
+   * e.g. "family"). NOT used by the Sheets sync anymore — the sync is
+   * upsert-only under content keys (v2) and never mass-deletes stored leads
+   * a fetch didn't include. Kept as an explicit store primitive for tests and
+   * deliberate repairs. Manual lead-count adjustments live in their own table
+   * and are unaffected.
    */
   deleteLeadsForSheet(sourceSheet: string): Promise<void>;
+  /**
+   * All stored leads of one provider with their FULL identity columns
+   * (source_id, name, phone, email) — the re-key migration and the sheets
+   * sync's drift guard read these. Heavier than getLeadsByWorkDates; not for
+   * per-request page paths.
+   */
+  getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null })[]>;
+  /** Delete stored leads by exact provider + source_id (re-key migration, demo purge). Returns rows deleted. */
+  deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number>;
   getLeadsByWorkDates(dates: string[]): Promise<LeadRow[]>;
   /**
    * Cheap count of a provider's stored leads (no row materialization). Used by

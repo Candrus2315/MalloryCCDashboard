@@ -8,7 +8,8 @@
  * leads per sheet. Pinned here:
  *
  *  - runSheetsSync (ONE core shared by full sync + background tick):
- *      · live success → per-sheet REPLACE + honest connection row;
+ *      · live success → UPSERT-ONLY under v2 content keys (never deletes
+ *        stored rows the fetch didn't include) + honest connection row;
  *      · live FAILURE with stored leads → stored leads UNTOUCHED
  *        (demo rows never replace live data) + error surfaced;
  *      · live failure on an EMPTY dataset → demo fallback still seeds
@@ -75,7 +76,7 @@ const failingStub = (message = "Sheets API unreachable"): GoogleSheetsAdapter =>
 const FAM = (rows: NormalizedLead[], d: string) => rows.filter((l) => l.sheet === "family" && l.sourceDate === d).length;
 
 // ---------- runSheetsSync: the shared sync core ----------
-describe("runSheetsSync — demo-replace guard + per-sheet REPLACE", () => {
+describe("runSheetsSync — demo-replace guard + upsert-only storage", () => {
   test("live success stores per-sheet counts and writes an honest connection row", async () => {
     const store = new MemoryStore();
     const settings = await store.getSettings();
@@ -153,21 +154,26 @@ describe("runSheetsSync — demo-replace guard + per-sheet REPLACE", () => {
     expect(demoRes.note).toContain("Demo dataset");
   });
 
-  test("REPLACE semantics: rows removed from the sheet disappear on the next live sync", async () => {
+  test("UPSERT-ONLY: rows removed from the sheet are KEPT (never mass-deleted)", async () => {
+    // The old per-sheet REPLACE deleted every stored lead the fetch didn't
+    // include — a transient mid-edit fetch could then wipe a whole sheet's
+    // stored history (observed live 2026-09-28: 315 → 262 → 183 → 315).
+    // Upset-only semantics: the shrunk fetch updates its own 3 rows and the
+    // other 52 stay stored (history — cohort math depends on stored rows).
     const store = new MemoryStore();
     const settings = await store.getSettings();
     const d = "2026-09-27";
     await runSheetsSync(store, settings, liveStub([d], 55, 72));
-    // sheet now reports only 3 family rows for that day → 52 stale rows must go
+    // sheet now reports only 3 family rows for that day → nothing is deleted
     const shrunk: GoogleSheetsAdapter = {
       provider: "google_sheets",
       isDemo: false,
       fetchLeads: async () => Array.from({ length: 3 }, (_, n) => dayLead("family", d, n)),
     };
     const res = await runSheetsSync(store, settings, shrunk);
-    expect(res.count).toBe(3);
+    expect(res.count).toBe(3); // only the fetched rows were stored/updated
     const fam = (await store.getLeadsByWorkDates([getWorkDate(d)])).filter((l) => l.source_sheet === "family");
-    expect(fam.length).toBe(3);
+    expect(fam.length).toBe(55); // 52 stale rows KEPT + 3 updated in place
   });
 });
 

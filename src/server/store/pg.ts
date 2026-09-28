@@ -974,6 +974,37 @@ export class PgStore implements Store {
     await this.ensureSchema();
     await this.sql`DELETE FROM leads WHERE provider = 'google_sheets' AND source_sheet = ${sourceSheet}`;
   }
+  async getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null })[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text, provider, source_id, lead_type, source_date::text, work_date::text, name, phone, email, contact_id::text, assigned_rep_id::text, source_sheet FROM leads WHERE provider = ${provider} ORDER BY id`;
+    return rows.map((r) => ({
+      id: String(r.id),
+      source_id: String(r.source_id),
+      provider: String(r.provider),
+      lead_type: String(r.lead_type),
+      source_date: String(r.source_date),
+      work_date: String(r.work_date),
+      name: r.name ?? null,
+      phone: r.phone ?? null,
+      email: r.email ?? null,
+      contact_id: r.contact_id ? String(r.contact_id) : null,
+      assigned_rep_id: r.assigned_rep_id ? String(r.assigned_rep_id) : null,
+      source_sheet: String(r.source_sheet),
+    }));
+  }
+  async deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number> {
+    await this.ensureSchema();
+    let n = 0;
+    for (let i = 0; i < sourceIds.length; i += 500) {
+      const chunk = sourceIds.slice(i, i + 500);
+      const res = await this.sql`
+        DELETE FROM leads WHERE provider = ${provider} AND source_id = ANY(${chunk}::text[])
+        RETURNING id
+      `;
+      n += res.length;
+    }
+    return n;
+  }
   async countLeads(provider: string): Promise<number> {
     await this.ensureSchema();
     const [{ n }] = await this.sql`SELECT count(*)::int AS n FROM leads WHERE provider = ${provider}`;

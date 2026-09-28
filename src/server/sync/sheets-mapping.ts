@@ -7,8 +7,7 @@
  * pick per sheet — "Test mapping" shows a REAL sample row live):
  *
  *  - "row_per_day_count" (primary): one row per day with a lead COUNT column.
- *    Each row expands into N lead rows; re-syncs REPLACE the stored count
- *    (delete + insert per sheet), never add to it.
+ *    Each row expands into N lead rows.
  *  - "row_per_lead": one row per lead with phone/email columns.
  *
  * Every parsed lead gets:
@@ -17,8 +16,8 @@
  *    YYYYMMDD, Google serial dates).
  *  - work_date:   getWorkDate(source_date) — the SPEC operational rule
  *    (Tue–Fri → prev day; Mon cohort ← Fri+Sat+Sun).
- *  - source_id:   deterministic (sheetId + date + row identity) so re-syncs
- *    are duplicate-safe by construction.
+ *  - source_id:   CONTENT identity (v2, see sheetLeadKey) so re-syncs are
+ *    duplicate-safe AND row-position-stable by construction.
  */
 import { addDays, getWorkDate } from "../date-logic";
 
@@ -184,6 +183,67 @@ export function backfillWindowStart(todayIso: string): string {
   return addDays(todayIso, -LEAD_BACKFILL_DAYS);
 }
 
+// ---------- lead identity (v2 content keys) ----------
+/**
+ * LEAD IDENTITY — v2 CONTENT KEY (owner directive 2026-09-28).
+ *
+ * The v1 key embedded the sheetId + date + a contact handle, and day-count
+ * rows used a within-day ORDINAL (`#k`) — a position. When rows are inserted,
+ * deleted, or re-sorted above a position, every later ordinal remaps to
+ * different content, and per-sheet REPLACE then overwrote the wrong leads'
+ * dates. "Leads worked today" swung between refreshes (observed live:
+ * 315 → 262 → 183 → 315 within an hour on 2026-09-28).
+ *
+ * v2 keys are derived ONLY from content, never from row position:
+ *
+ *     gs2#{sheet}#d{source_date}#{p{last-10 phone digits} | e{lower email} | c}
+ *
+ * Field choice (minimal deterministic set, unique in practice):
+ *  - sheet label ("family"/"animalia") — the logical sheet in Settings, NOT
+ *    the spreadsheet id, so re-pointing a sheet at a new spreadsheet keeps
+ *    its history;
+ *  - source_date — a lead worked on a different day is a different lead;
+ *  - phone (last 10 digits, format-insensitive) when present, else the
+ *    lower-cased email. The NAME is deliberately NOT part of the key: names
+ *    get typo-fixed and reformatted, and a name edit must never spawn a
+ *    duplicate lead.
+ *  - "c" (no contact handle) only for anonymous count-expanded leads
+ *    (row_per_day_count) — those have no content beyond their date.
+ *
+ * COLLISION SAFETY: if two rows in one sheet fully collide on the identity
+ * fields (same date + same phone/email), both are kept — the first seen gets
+ * the bare key, subsequent ones a deterministic ordinal suffix `#2`, `#3`, …
+ * (first-seen order). parseSheetRows counts these in stats.collisions so the
+ * sync run note can surface them.
+ *
+ * Legacy v1 ids (spreadsheet-id-prefixed, ordinal-suffixed) are re-keyed in
+ * place by migrateSheetsLeadKeys (sheets-rekey.ts).
+ */
+export function sheetPhoneKey(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+/** Phone identity key: last 10 digits (US). */
+function phoneKey(phone: string): string {
+  return sheetPhoneKey(phone);
+}
+
+/**
+ * The v2 CONTENT identity of a lead: stable across row insertions, deletions
+ * and re-sorts. Pure — shared by parseSheetRows and the legacy-key migration.
+ */
+export function sheetLeadKey(sheet: string, sourceDate: string, phone: string | null, email: string | null): string {
+  const p = phone ? phoneKey(phone) : null;
+  const e = email ? email.trim().toLowerCase() : null;
+  const contact = p ? `p${p}` : e ? `e${e}` : "c";
+  return `gs2#${sheet}#d${sourceDate}#${contact}`;
+}
+
+/** v1-era id (spreadsheet-id-prefixed, row/ordinal-derived)? Used by the re-key migration. */
+export function isLegacySheetsSourceId(sourceId: string): boolean {
+  return !sourceId.startsWith("gs2#");
+}
 // ---------- full-sheet parsing ----------
 export interface SheetParseStats {
   sheet: string;
@@ -202,6 +262,8 @@ export interface SheetParseStats {
   skippedBad: number;
   /** Fully empty rows. */
   skippedEmpty: number;
+  /** Leads that fully collided on identity fields and got a `#N` suffix. */
+  collisions: number;
   windowStart: string;
 }
 
@@ -242,7 +304,7 @@ export function parseSheetRows(opts: {
   const stats: SheetParseStats = {
     sheet, sheetId, mode,
     totalRows: rows.length, dataRows: 0, usedRows: 0, leads: 0,
-    skippedOld: 0, skippedBad: 0, skippedEmpty: 0, windowStart,
+    skippedOld: 0, skippedBad: 0, skippedEmpty: 0, collisions: 0, windowStart,
   };
   const header = rows.find((r) => r.some((c) => String(c ?? "").trim() !== "")) ?? [];
   const dateLetter = (mapping.columns.source_date ?? "?").toUpperCase();
@@ -251,7 +313,13 @@ export function parseSheetRows(opts: {
   const pushLead = (l: NormalizedLead) => {
     const n = (seenIds.get(l.source_id) ?? 0) + 1;
     seenIds.set(l.source_id, n);
-    if (n > 1) l.source_id = `${l.source_id}#${n}`;
+    if (n > 1) {
+      // Full identity collision (same sheet + date + contact): keep BOTH
+      // leads, disambiguate deterministically by first-seen order. Counted
+      // so the sync run note can surface it.
+      l.source_id = `${l.source_id}#${n}`;
+      stats.collisions++;
+    }
     leads.push(l);
   };
 
@@ -289,8 +357,11 @@ export function parseSheetRows(opts: {
       const ltIdx = columnLetterToIndex(mapping.columns.lead_type ?? "");
       const leadType = (ltIdx == null ? "" : (row[ltIdx] ?? "").trim()) || sheet;
       for (let k = 0; k < n; k++) {
+        // Anonymous count-expanded leads: no contact content exists, so the
+        // per-lead ordinal k disambiguates same-date rows (collision-suffix
+        // path above keeps them distinct deterministically).
         pushLead({
-          source_id: `${sheetId}#${sheet}#d${d}#${k}`,
+          source_id: sheetLeadKey(sheet, d, null, null) + (k > 0 ? `#${k + 1}` : ""),
           leadType,
           sourceDate: d,
           workDate: getWorkDate(d),
@@ -317,7 +388,9 @@ export function parseSheetRows(opts: {
       if (stats.skippedBad <= 3) warnings.push(`row ${rowNo}: lead has no phone and no email — row skipped`);
       return;
     }
-    const idBase = `${sheetId}#${sheet}#d${d}#${phone ? "p" + phoneKey(phone) : "e" + (email ?? "").toLowerCase()}`;
+    // v2 CONTENT identity: sheet + date + phone/email. Row position plays no
+    // part — inserting/re-sorting rows cannot remap this id to other content.
+    const idBase = sheetLeadKey(sheet, d, phone, email);
     pushLead({
       source_id: idBase,
       leadType,
