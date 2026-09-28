@@ -52,10 +52,79 @@ type SortKey =
   | "assignedLeadConversion"
   | "avgCallDurationSeconds";
 
+/** One row of the Pending Payments drill-down (unpaid booking — never counted). */
+export interface PendingPaymentRow {
+  appointment_id: string;
+  acuity_appointment_id: string | null;
+  client_name: string | null;
+  appointment_type: string;
+  amount: number | null;
+  amountPaid: number | null;
+  rep_id: string | null;
+  rep_name: string | null;
+  created_business_date: string | null;
+  created_at: string;
+  appointment_datetime: string;
+}
+
+/**
+ * Clickable Pending Payments drill-down (owner directive, rev 12): lists
+ * unpaid bookings with rep + amount. Deposits not yet received — these hold
+ * availability and are visible here, but count toward NO performance number
+ * until paid.
+ */
+function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
+  const fmtAmount = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2).replace(/\.00$/, "")}`);
+  return (
+    <details className="card card-dense mt-3">
+      <summary className="cursor-pointer select-none">
+        <span className="section-heading inline-flex items-center gap-2">
+          Pending Payments ({rows.length})
+          <span className="text-xs font-normal text-(--text-muted)">— awaiting deposit · not counted</span>
+        </span>
+      </summary>
+      <div className="mt-3 overflow-x-auto">
+        <table className="data-table min-w-[560px]">
+          <thead>
+            <tr>
+              <th scope="col" className="text-left">Client</th>
+              <th scope="col" className="text-right">Amount Due</th>
+              <th scope="col" className="text-left">Rep</th>
+              <th scope="col" className="text-left">Session Type</th>
+              <th scope="col" className="text-left">Booked On</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.appointment_id}>
+                <td className="text-left font-medium text-(--text-primary)">{r.client_name ?? "—"}</td>
+                <td className="text-right tabular-nums">{fmtAmount(r.amount)}</td>
+                <td className="text-left">
+                  {r.rep_name ?? <span className="text-(--text-faint)">Unattributed</span>}
+                </td>
+                <td className="text-left text-(--text-caption)">{r.appointment_type || "—"}</td>
+                <td className="text-left text-(--text-caption)">
+                  {r.created_business_date ? formatDateHuman(r.created_business_date) : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-(--text-muted)">
+        Deposit not yet received (Acuity paid = no). These bookings hold studio availability and stay visible here, but count toward no bookings, conversion, or goal number until the deposit is paid.
+      </p>
+    </details>
+  );
+}
+
 function TodayPage() {
   const data = Route.useLoaderData();
   const navigate = useNavigate();
   const m = data.metrics;
+  // PENDING PAYMENTS drill-down (rev 12): unpaid bookings — visible, never counted.
+  const pendingPayments: PendingPaymentRow[] = data.pendingPayments ?? [];
+  const pendingCount = pendingPayments.length;
   const [sortKey, setSortKey] = useState<SortKey>("totalBookings");
   const [sortAsc, setSortAsc] = useState(false);
   /** The one rep whose secondary-metrics detail panel is open (owner directive). */
@@ -209,10 +278,17 @@ function TodayPage() {
         )}
       </header>
 
-      {/* 2 — primary performance KPI row (the 10-second answer) */}
+      {/* 2 — primary performance KPI row (the 10-second answer).
+          REV 12: "Bookings" = PAID Bookings (Booking Wins) — the subtext keeps
+          pending (unpaid) bookings visible without letting them count. */}
       <section aria-label="Bookings and pace">
         <div className="card grid grid-cols-2 gap-y-6 p-0 sm:grid-cols-3 xl:grid-cols-6 xl:gap-y-0 xl:divide-x xl:divide-(--table-border-weak)">
-          <KpiHero label="Bookings WTD" value={m.bookings.wtd} sub={`of ${m.bookings.weeklyGoal} goal`} pace={paceState ?? undefined} />
+          <KpiHero
+            label="Bookings WTD"
+            value={m.bookings.wtd}
+            sub={pendingCount > 0 ? `${pendingCount} pending · of ${m.bookings.weeklyGoal} goal` : `of ${m.bookings.weeklyGoal} goal`}
+            pace={paceState ?? undefined}
+          />
           <KpiHero label="Remaining" value={m.bookings.remaining} sub="bookings left" />
           <KpiHero
             label="Daily Pace Needed"
@@ -226,8 +302,13 @@ function TodayPage() {
             pace={paceState ?? undefined}
           />
           <KpiHero label="Yesterday's Bookings" value={m.bookings.yesterday} />
-          <KpiHero label="Bookings Today" value={m.bookings.today} />
+          <KpiHero
+            label="Bookings Today"
+            value={m.bookings.today}
+            sub={pendingCount > 0 ? `${pendingCount} pending payment${pendingCount === 1 ? "" : "s"} excluded` : "paid bookings"}
+          />
         </div>
+        {pendingCount > 0 && <PendingPaymentsDrillDown rows={pendingPayments} />}
       </section>
 
       {/* 3 — secondary operations row */}

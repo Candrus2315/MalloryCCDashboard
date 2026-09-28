@@ -31,6 +31,7 @@
 import { getSecret } from "../env";
 import { addDays, etDateStrFromInstant, etToday } from "../date-logic";
 import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics/attribution";
+import { deriveBookingPaymentFields } from "../payments";
 import type { Store } from "../store/types";
 import type { NormalizedAppointment } from "./adapters";
 
@@ -434,6 +435,12 @@ export async function upsertAcuityAppointments(store: Store, appts: NormalizedAp
   const contactByExt = new Map(storedContacts.map((c) => [c.external_id, c.id]));
   const contactByPhone = new Map(storedContacts.map((c) => [c.phone?.replace(/\D/g, "").slice(-10) ?? "", c.id]));
   const contactByEmail = new Map(storedContacts.map((c) => [c.email?.toLowerCase() ?? "", c.id]));
+  // BOOKING WIN PAYMENT MODEL (rev 12): derive the payment state + win bucket
+  // from the retained raw on EVERY sync pass. The store upsert is write-once
+  // for the win evidence (existing win date/stamp never overwritten), so the
+  // first pass that sees paid:"yes" stamps the win and later passes cannot
+  // move or double-count it.
+  const nowIso = new Date().toISOString();
   await store.upsertAppointments(
     appts.map((a) => {
       const contactId =
@@ -441,6 +448,15 @@ export async function upsertAcuityAppointments(store: Store, appts: NormalizedAp
         contactByPhone.get(a.clientPhone.replace(/\D/g, "").slice(-10)) ??
         contactByEmail.get(a.clientEmail.toLowerCase()) ??
         null;
+      // Derive payment fields from the retained raw. The store's COALESCE
+      // upsert keeps any existing win evidence, and deriveBookingPaymentFields
+      // is given no "existing" here — the authoritative write-once protection
+      // lives in the store (single source, both stores agree).
+      const payment = deriveBookingPaymentFields({
+        raw: a.raw ?? null,
+        createdBusinessDate: a.createdAtBusinessDate ?? null,
+        nowIso,
+      });
       return {
         acuity_appointment_id: a.acuity_appointment_id,
         contact_id: contactId,
@@ -456,6 +472,11 @@ export async function upsertAcuityAppointments(store: Store, appts: NormalizedAp
         created_business_date: a.createdAtBusinessDate ?? null,
         created_time_source: a.createdTimeSource ?? null,
         created_time_precision: a.createdTimePrecision ?? "session_fallback",
+        // BOOKING WIN payment model (rev 12)
+        payment_state: payment.payment_state,
+        booking_win_business_date: payment.booking_win_business_date,
+        payment_business_date_source: payment.payment_business_date_source,
+        first_seen_paid_at: payment.first_seen_paid_at,
         raw: a.raw ?? null,
         status: a.status,
         cancelled: a.cancelled,

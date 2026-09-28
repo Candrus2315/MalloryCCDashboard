@@ -368,9 +368,16 @@ export class MemoryStore implements Store {
   async upsertAppointments(rows: ApptExt[]): Promise<number> {
     for (const r of rows) {
       const existing = this.appointments.get(r.acuity_appointment_id);
-      // keep stable internal id across re-syncs; cancellations update in place
+      // keep stable internal id across re-syncs; cancellations update in place.
+      // BOOKING WIN (rev 12): win evidence is WRITE-ONCE — an existing
+      // non-null win date / provenance / first-seen stamp is never overwritten
+      // (mirror of the pg store's COALESCE upsert), so an appointment never
+      // counts twice and its win date never moves.
       this.appointments.set(r.acuity_appointment_id, {
         ...r,
+        booking_win_business_date: existing?.booking_win_business_date ?? r.booking_win_business_date ?? null,
+        payment_business_date_source: existing?.payment_business_date_source ?? r.payment_business_date_source ?? null,
+        first_seen_paid_at: existing?.first_seen_paid_at ?? r.first_seen_paid_at ?? null,
         id: existing?.id ?? this.nextId("appt"),
       });
     }
@@ -388,6 +395,20 @@ export class MemoryStore implements Store {
     // never diverge, including for legacy rows without the column.
     return [...this.appointments.values()]
       .filter((a) => {
+        const d = createdBusinessDateOf(a);
+        return d != null && d >= start && d <= end;
+      })
+      .map((a) => this.stripAppt(a));
+  }
+  async getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
+    // BOOKING WIN bucket (rev 12) — mirrors the pg SQL: wins by the persisted
+    // win date (fallback derivation: created date for not-yet-derived paid
+    // rows), UNION no-win-date rows by created date. The metrics layer applies
+    // the win filters; unpaid rows here never count.
+    return [...this.appointments.values()]
+      .filter((a) => {
+        const win = a.booking_win_business_date;
+        if (win != null && win !== "") return win >= start && win <= end;
         const d = createdBusinessDateOf(a);
         return d != null && d >= start && d <= end;
       })
