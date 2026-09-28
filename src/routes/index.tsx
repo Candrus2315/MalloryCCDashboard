@@ -4,6 +4,7 @@ import { demoAwarenessLine, getTodayData } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
 import { AttentionPanel } from "~/components/AttentionPanel";
 import { DayCardStrip, type DayCardData } from "~/components/DayCardStrip";
+import { InfoTip } from "~/components/InfoTip";
 import { StatusChip } from "~/components/StatusChip";
 import {
   attentionNotes,
@@ -262,12 +263,6 @@ function TodayPage() {
             Current Week
           </span>
         </div>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-(--text-caption)">
-          <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
-          <span>
-            {data.cohortNote} (America/New_York)
-          </span>
-        </p>
         {bannerMessages.length > 0 && (
           <div className="status-banner mt-2" role="status">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
@@ -336,10 +331,14 @@ function TodayPage() {
         </div>
       </section>
 
-      {/* 4b — leads worked today (compact FULL/STRIP-class block) */}
+      {/* 4b — leads worked today (compact FULL/STRIP-class block); the work-date
+              cohort definition lives behind the shared InfoTip */}
       <section aria-label="Leads worked today">
         <div className="card">
-          <p className="section-heading">Leads — worked today (work-date logic)</p>
+          <p className="section-heading flex flex-wrap items-center gap-x-2 gap-y-1">
+            Leads — worked today
+            <InfoTip tip={`${data.cohortNote} (America/New_York)`} label="How today's lead counts are dated" />
+          </p>
           <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
             <KpiMid label="Family Leads Today" value={m.leads.today.family} />
             <KpiMid label="Animalia Leads Today" value={m.leads.today.animalia} />
@@ -371,11 +370,13 @@ function TodayPage() {
           row; whole row opens that rep on the Reps page with the week kept. */}
       <section aria-label="Rep performance">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <p className="section-heading">Rep Performance — this week</p>
-          <p className="text-xs font-normal text-(--text-muted)">
-            Team benchmarks are pooled (sum ÷ sum) over other active reps — never averages of percentages ·
-            rule-based, no scores
-          </p>
+          <span className="inline-flex items-center gap-1.5">
+            <p className="section-heading">Rep Performance — this week</p>
+            <InfoTip
+              tip="Team benchmarks are pooled (sum ÷ sum) over other active reps — never averages of percentages · rule-based, no scores"
+              label="How rep performance and benchmarks work"
+            />
+          </span>
         </div>
         <div className="card mt-3 overflow-hidden p-0">
           <div className="overflow-x-auto">
@@ -457,7 +458,7 @@ function TodayPage() {
                             }}
                             aria-expanded={expanded}
                             aria-label={expanded ? `Hide details for ${r.name}` : `Show details for ${r.name}`}
-                            className="relative z-[1] rounded-md px-1.5 py-1 text-[11px] text-(--text-muted) hover:bg-(--surface-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
+                            className="relative z-[1] rounded-md px-1.5 py-1 text-xs text-(--text-muted) hover:bg-(--surface-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
                           >
                             <span aria-hidden="true">{expanded ? "▲" : "▼"}</span>
                           </button>
@@ -511,10 +512,10 @@ function GoalProgressCell({ view }: { view: GoalProgressView }) {
             style={{ width: `${view.barPct}%` }}
           />
         </span>
-        <span className="whitespace-nowrap text-[11px] tabular-nums text-(--text-caption)">{view.pctText}</span>
+        <span className="whitespace-nowrap text-xs tabular-nums text-(--text-caption)">{view.pctText}</span>
       </span>
       {view.diffText && (
-        <span className="mt-0.5 block text-[11px] text-(--text-muted)">{view.diffText}</span>
+        <span className="mt-0.5 block text-xs text-(--text-muted)">{view.diffText}</span>
       )}
     </span>
   );

@@ -13,6 +13,7 @@ import {
   slackAvailabilitySummary,
 } from "~/components/availability-views";
 import { TONE_BADGE_STYLES } from "~/components/DayCardStrip";
+import { InfoTip } from "~/components/InfoTip";
 
 export const Route = createFileRoute("/availability")({
   loader: () => getAvailabilityData(),
@@ -133,20 +134,20 @@ function AvailabilityStrip({
             onClick={() => onSelect(d.date)}
             className={`day-card ${isSelected ? "day-card-on" : "day-card-off"}`}
           >
-            <span className="block text-[11px] font-medium uppercase tracking-wide text-(--text-caption)">
+            <span className="block text-xs font-medium uppercase tracking-wide text-(--text-caption)">
               {dayPrefix(d.date, today)}
             </span>
-            <span className="block text-[10px] font-medium uppercase tracking-wide text-(--text-muted)">
+            <span className="block text-xs font-medium uppercase tracking-wide text-(--text-muted)">
               {formatDateShort(d.date)}
             </span>
             <span className="mt-2 block text-2xl font-semibold tracking-tight text-(--text-primary) tabular-nums">
               {open} <span className="text-xs font-normal text-(--text-muted)">open</span>
             </span>
-            <span className="mt-1 block text-[11px] text-(--text-muted) tabular-nums">
+            <span className="mt-1 block text-xs text-(--text-muted) tabular-nums">
               {detail} · {util}
             </span>
             <span
-              className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${tone.badge}`}
+              className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${tone.badge}`}
             >
               {tone.dot && <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} aria-hidden="true" />}
               {status.label}
@@ -359,7 +360,7 @@ function AvailabilityPage() {
                 <AuditStat label="Blocked Slots" value={selected.blockedCount} />
                 <AuditStat label="Calculated Open" value={selected.openSlotTimes.length} />
               </div>
-              <p className="mt-2 text-[11px] text-(--text-muted)">
+              <p className="mt-2 text-xs text-(--text-muted)">
                 booked + blocked + open = configured capacity · computed by the slot engine from studio hours,
                 appointments, blocks and padding
               </p>
@@ -368,9 +369,12 @@ function AvailabilityPage() {
         )}
 
         <div className="card card-dense">
-          <p className="section-heading">Dates to Push</p>
-          <p className="mt-1 text-xs text-(--text-muted)">
-            Rule-based from actual open capacity — full and closed days excluded.
+          <p className="section-heading flex flex-wrap items-center gap-x-2 gap-y-1">
+            Dates to Push
+            <InfoTip
+              tip="Rule-based from actual open capacity — full and closed days excluded."
+              label="How Dates to Push is chosen"
+            />
           </p>
           <div className="mt-3 space-y-2">
             {conn.unavailable ? (

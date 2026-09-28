@@ -8,6 +8,7 @@
  * fired.
  */
 import type { AttentionNote } from "./today-views";
+import { InfoTip } from "./InfoTip";
 
 export function AttentionPanel({
   notes,
@@ -16,13 +17,16 @@ export function AttentionPanel({
 }: {
   notes: AttentionNote[];
   title?: string;
+  /** Methodology line — rendered behind the shared InfoTip, not as permanent copy. */
   subtitle?: string;
 }) {
   return (
     <section className="card card-dense">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <p className="section-heading">{title}</p>
-        <p className="text-xs font-normal text-(--text-muted)">{subtitle}</p>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <span className="inline-flex items-center gap-1.5">
+          <p className="section-heading">{title}</p>
+          {subtitle && <InfoTip tip={subtitle} label={`How ${title} works`} />}
+        </span>
       </div>
       {notes.length === 0 ? (
         <p className="mt-3 text-[13px] text-(--text-body)">

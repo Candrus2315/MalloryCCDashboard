@@ -86,14 +86,14 @@ export function DayCardStrip({ days }: { days: DayCardData[] }) {
               onBlur={() => setPreview(null)}
               className={`day-card ${isSelected ? "day-card-on" : "day-card-off"}`}
             >
-              <span className="block text-[11px] font-medium uppercase tracking-wide text-(--text-caption)">
+              <span className="block text-xs font-medium uppercase tracking-wide text-(--text-caption)">
                 {d.prefix} · {d.weekday}
               </span>
               <span className="mt-2 block text-2xl font-semibold tracking-tight text-(--text-primary) tabular-nums">
                 {d.openCount} <span className="text-xs font-normal text-(--text-muted)">open</span>
               </span>
               <span
-                className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${tone.badge}`}
+                className={`mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium uppercase tracking-wide ${tone.badge}`}
               >
                 {tone.dot && <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} aria-hidden="true" />}
                 {d.status.label}

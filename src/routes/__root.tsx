@@ -196,7 +196,7 @@ function MobileNav({ open, onClose, path }: { open: boolean; onClose: () => void
           })}
         </div>
         <div
-          className="border-t border-(--table-border-weak) px-4 py-3 text-[11px] text-(--text-muted)"
+          className="border-t border-(--table-border-weak) px-4 py-3 text-xs text-(--text-muted)"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
         >
           Mallory CC Performance Dashboard

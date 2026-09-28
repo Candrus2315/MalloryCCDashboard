@@ -5,6 +5,7 @@ import { useRouter } from "@tanstack/react-router";
 import { getDailyReportData, saveDailyPriorities } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
 import { formatInt, formatPercent } from "~/server/metrics/report-text";
+import { InfoTip } from "~/components/InfoTip";
 
 export const Route = createFileRoute("/daily-report")({
   loader: () => getDailyReportData(),
@@ -137,7 +138,10 @@ function DailyReportPage() {
 
       {/* SECTION 2 — leads */}
       <section>
-        <p className="section-title mb-4">Leads</p>
+        <p className="section-title mb-4 flex items-center gap-1.5">
+          Leads
+          <InfoTip tip={`${data.cohortNote} (America/New_York)`} label="How today's lead counts are dated" />
+        </p>
         <div className="grid grid-cols-2 gap-x-8 gap-y-6 md:grid-cols-4">
           <Kpi label="Weekly Lead Budget" value={formatInt(m.weeklyLeadBudget)} />
           <Kpi label="Leads Today" value={formatInt(m.leadsToday)} sub="work-date cohort" />
@@ -152,7 +156,6 @@ function DailyReportPage() {
             sub={m.paceWeekend ? "team is off — pace resumes Monday" : "pace to budget"}
           />
         </div>
-        <p className="mt-3 text-xs text-(--text-muted)">{data.cohortNote} (America/New_York)</p>
       </section>
 
       <hr className="border-(--card-border)" />

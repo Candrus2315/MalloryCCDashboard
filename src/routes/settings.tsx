@@ -22,6 +22,7 @@ import {
   unassignable,
 } from "~/components/settings-views";
 import { bookingSplitLine } from "~/components/team-views";
+import { InfoTip } from "~/components/InfoTip";
 import { formatInt } from "~/server/metrics/report-text";
 import {
   addBlockedTime,
@@ -172,7 +173,7 @@ function SettingsPage() {
       <details id="sheets" className="group scroll-mt-28 rounded-xl border border-(--card-border) bg-(--card-bg)">
         <summary className="flex cursor-pointer list-none select-none items-center justify-between gap-3 px-5 py-4 hover:bg-(--surface-hover) [&::-webkit-details-marker]:hidden">
           <span className="flex items-baseline gap-3">
-            <span className="text-[11px] font-medium tabular-nums text-(--text-faint)" aria-hidden="true">
+            <span className="text-xs font-medium tabular-nums text-(--text-faint)" aria-hidden="true">
               {sectionNumber("sheets")}
             </span>
             <span>
@@ -181,7 +182,7 @@ function SettingsPage() {
             </span>
           </span>
           <span className="flex items-center gap-3">
-            <span className="hidden text-[11px] text-(--text-muted) sm:inline">{(["family", "animalia"] as const).map((s) => data.settings.sheets[s].mode === "row_per_lead" ? `${s} row-per-lead` : `${s} day+count`).join(" · ")}</span>
+            <span className="hidden text-xs text-(--text-muted) sm:inline">{(["family", "animalia"] as const).map((s) => data.settings.sheets[s].mode === "row_per_lead" ? `${s} row-per-lead` : `${s} day+count`).join(" · ")}</span>
             <span className="text-(--text-muted) transition-transform group-open:rotate-180" aria-hidden="true">
               ▾
             </span>
@@ -292,7 +293,7 @@ function SettingsPage() {
       <details id="audit" className="group scroll-mt-28 rounded-xl border border-(--card-border) bg-(--card-bg)">
         <summary className="flex cursor-pointer list-none select-none items-center justify-between gap-3 px-5 py-4 hover:bg-(--surface-hover) [&::-webkit-details-marker]:hidden">
           <span className="flex items-baseline gap-3">
-            <span className="text-[11px] font-medium tabular-nums text-(--text-faint)" aria-hidden="true">
+            <span className="text-xs font-medium tabular-nums text-(--text-faint)" aria-hidden="true">
               {sectionNumber("audit")}
             </span>
             <span>
@@ -301,7 +302,7 @@ function SettingsPage() {
             </span>
           </span>
           <span className="flex items-center gap-3">
-            <span className="text-[11px] tabular-nums text-(--text-muted)">{data.overrides.length} entries</span>
+            <span className="text-xs tabular-nums text-(--text-muted)">{data.overrides.length} entries</span>
             <span className="text-(--text-muted) transition-transform group-open:rotate-180" aria-hidden="true">
               ▾
             </span>
@@ -364,7 +365,7 @@ function SubNav() {
             href={`#${s.id}`}
             className="whitespace-nowrap rounded-md px-2.5 py-2 text-[13px] font-medium text-(--text-caption) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
           >
-            <span className="mr-1.5 text-[11px] tabular-nums text-(--text-faint)">{String(i + 1).padStart(2, "0")}</span>
+            <span className="mr-1.5 text-xs tabular-nums text-(--text-faint)">{String(i + 1).padStart(2, "0")}</span>
             {s.nav}
           </a>
         ))}
@@ -378,7 +379,7 @@ function SectionHeader({ id }: { id: string }) {
   const meta = sectionMeta(id);
   return (
     <div className="flex items-baseline gap-3">
-      <span className="text-[11px] font-medium tabular-nums text-(--text-faint)" aria-hidden="true">
+      <span className="text-xs font-medium tabular-nums text-(--text-faint)" aria-hidden="true">
         {sectionNumber(id)}
       </span>
       <div>
@@ -396,7 +397,7 @@ function Collapsible({ label, hint, children }: { label: string; hint?: string; 
       <summary className="flex cursor-pointer list-none select-none items-center justify-between gap-3 px-5 py-3.5 hover:bg-(--surface-hover) [&::-webkit-details-marker]:hidden">
         <span className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <span className="section-heading">{label}</span>
-          {hint && <span className="text-[11px] text-(--text-muted)">{hint}</span>}
+          {hint && <span className="text-xs text-(--text-muted)">{hint}</span>}
         </span>
         <span className="text-(--text-muted) transition-transform group-open:rotate-180" aria-hidden="true">
           ▾
@@ -426,9 +427,9 @@ function SecuritySection({ data }: { data: SettingsData }) {
             <span key={c.provider} className="flex items-center gap-2 text-[13px]">
               <span className="font-medium text-(--text-body)">{providerLabel(c.provider)}</span>
               <StatusChip kind={c.tone} label={c.label} />
-              {c.lastSync && <span className="text-[11px] text-(--text-muted)">{c.lastSync}</span>}
+              {c.lastSync && <span className="text-xs text-(--text-muted)">{c.lastSync}</span>}
               {c.error && (
-                <span className="max-w-[220px] truncate text-[11px] text-(--neg-text)" title={c.error}>
+                <span className="max-w-[220px] truncate text-xs text-(--neg-text)" title={c.error}>
                   {c.error}
                 </span>
               )}
@@ -470,8 +471,8 @@ function WeekGoalRow({ week, busy, onSave }: { week: EditorWeek; busy: boolean; 
     <tr className={week.isCurrent ? "bg-(--row-highlight)" : ""}>
       <td className="sticky left-0 bg-(--card-bg)">
         <span className="font-medium text-(--text-primary)">{week.label}</span>
-        {week.isCurrent && <span className="ml-2 rounded-full bg-(--chip-current-bg) px-2 py-0.5 text-[11px] font-medium text-(--chip-current-fg)">current</span>}
-        <span className="ml-2 text-[11px] text-(--text-muted)">{week.weekStart}</span>
+        {week.isCurrent && <span className="ml-2 rounded-full bg-(--chip-current-bg) px-2 py-0.5 text-xs font-medium text-(--chip-current-fg)">current</span>}
+        <span className="ml-2 text-xs text-(--text-muted)">{week.weekStart}</span>
       </td>
       <td className="text-right">
         <input type="number" className="w-24 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-right text-[13px] outline-none focus:border-(--input-focus-border)" value={goal} onChange={(e) => setGoal(e.target.value)} />
@@ -533,9 +534,9 @@ function RepGoalsSection({ data, busy, onSave }: {
               <span className="text-[13px] font-medium text-(--text-body)">{u.name}</span>
               <div className="flex items-center gap-3">
                 {val.trim() === "" ? (
-                  <span className="text-[11px] font-medium uppercase tracking-wide text-(--banner-fg)">team share ≈ {teamShare != null ? (Math.round(teamShare * 100) / 100).toFixed(2) : "—"}</span>
+                  <span className="text-xs font-medium uppercase tracking-wide text-(--banner-fg)">team share ≈ {teamShare != null ? (Math.round(teamShare * 100) / 100).toFixed(2) : "—"}</span>
                 ) : (
-                  <span className="text-[11px] text-(--text-muted)">own goal</span>
+                  <span className="text-xs text-(--text-muted)">own goal</span>
                 )}
                 <input
                   type="number"
@@ -625,9 +626,11 @@ function CoreOpsCard({ data, busy, onSave }: {
         <NumberField label="Meaningful Call Threshold (seconds)" value={threshold} onChange={setThreshold} />
         <NumberField label="Booking Attribution Window (hours)" value={windowHours} onChange={setWindowHours} />
         <div>
-          <span className="kpi-label">Operational Time Zone</span>
+          <span className="kpi-label flex items-center gap-1.5">
+            Operational Time Zone
+            <InfoTip tip="Fixed because work_date and reporting are stored in ET." label="Why the time zone is fixed" />
+          </span>
           <p className="mt-1 text-sm font-medium text-(--text-primary)">{data.settings.timezone}</p>
-          <p className="mt-1 text-[11px] text-(--text-muted)">Fixed because work_date and reporting are stored in ET.</p>
         </div>
       </div>
       <div className="flex justify-end">
@@ -679,7 +682,7 @@ function AcuityScopeCard({ data, busy, onSave }: {
                 {c.name}
               </label>
             ))}
-            {calendars.length === 0 && <p className="text-[11px] text-(--banner-fg)">No calendars selected — all are included.</p>}
+            {calendars.length === 0 && <p className="text-xs text-(--banner-fg)">No calendars selected — all are included.</p>}
           </div>
         </div>
         <div>
@@ -692,7 +695,7 @@ function AcuityScopeCard({ data, busy, onSave }: {
               </label>
             ))}
           </div>
-          {types.length === 0 && <p className="text-[11px] text-(--banner-fg)">No types selected — all are included.</p>}
+          {types.length === 0 && <p className="text-xs text-(--banner-fg)">No types selected — all are included.</p>}
         </div>
       </div>
       <div className="flex justify-end">
@@ -778,7 +781,7 @@ function StudioRulesCard({ data, busy, onSave }: {
       <div className="space-y-1 border-t border-(--table-border-weak) pt-3">
         {/* Column legend only where the three columns actually fit (sm+); on
             phones each day stacks vertically with per-block labels. */}
-        <div className="hidden items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-(--text-faint) sm:flex">
+        <div className="hidden items-center gap-2 text-xs font-medium uppercase tracking-wide text-(--text-faint) sm:flex">
           <span className="w-20 shrink-0">Day</span>
           <span className="w-58 shrink-0">Morning block</span>
           <span className="w-58 shrink-0">Afternoon block</span>
@@ -790,7 +793,7 @@ function StudioRulesCard({ data, busy, onSave }: {
             <StudioBlockEditor day={WEEKDAYS[wd]} which="Afternoon" block={blocks[1]} onChange={(b) => setDays(days.map((x, j) => (j === wd ? [x[0], b] : x)))} />
           </div>
         ))}
-        <p className="pt-1 text-[11px] text-(--text-muted)">
+        <p className="pt-1 text-xs text-(--text-muted)">
           Each active block contributes its own hourly slots; {activeCount} active block{activeCount === 1 ? "" : "s"} across the week.
         </p>
       </div>
@@ -811,7 +814,7 @@ function StudioBlockEditor({ day, which, block, onChange }: {
 }) {
   return (
     <span className="flex w-full items-center gap-1.5 sm:w-58 sm:shrink-0">
-      <span className="w-[74px] shrink-0 text-[11px] font-medium uppercase tracking-wide text-(--text-muted) sm:hidden">
+      <span className="w-[74px] shrink-0 text-xs font-medium uppercase tracking-wide text-(--text-muted) sm:hidden">
         {which}
       </span>
       <input
@@ -958,8 +961,8 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
     <div className="card card-dense space-y-3">
       <div>
         <p className="section-title">{sheet === "family" ? "Family sheet" : "Animalia sheet"}</p>
-        <p className="mt-1 truncate text-[11px] text-(--text-muted)">Sheet ID {sheetId}</p>
-        <p className="mt-0.5 text-[11px] text-(--text-muted)">
+        <p className="mt-1 truncate text-xs text-(--text-muted)">Sheet ID {sheetId}</p>
+        <p className="mt-0.5 text-xs text-(--text-muted)">
           Default mapping: {defaultNote} (editable below)
         </p>
       </div>
@@ -970,7 +973,7 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
             <input type="radio" name={`${sheet}-mode`} className="mt-0.5" checked={mode === m.value} onChange={() => setMode(m.value)} />
             <span className="text-[13px]">
               <span className="font-medium text-(--text-body)">{m.label}</span>
-              <span className="block text-[11px] text-(--text-muted)">{m.hint}</span>
+              <span className="block text-xs text-(--text-muted)">{m.hint}</span>
             </span>
           </label>
         ))}
@@ -1008,7 +1011,7 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
       {test && (
         <div className="rounded-lg bg-(--surface-inset) p-3 text-xs text-(--chip-neutral-fg)">
           <p className="mb-1">
-            <span className={"rounded-full px-2 py-0.5 text-[11px] font-medium " + (test.source === "live" ? "bg-(--chip-good-bg) text-(--chip-good-fg)" : "bg-(--chip-current-bg) text-(--chip-current-fg)")}>
+            <span className={"rounded-full px-2 py-0.5 text-xs font-medium " + (test.source === "live" ? "bg-(--chip-good-bg) text-(--chip-good-fg)" : "bg-(--chip-current-bg) text-(--chip-current-fg)")}>
               {test.source === "live" ? "live sample from Google Sheets" : "demo sample — Sheets API not reachable yet"}
             </span>
             {test.source === "live" && test.sample.tab ? <span className="ml-2 text-(--text-muted)">tab “{test.sample.tab}”</span> : null}
@@ -1016,7 +1019,7 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
           {test.liveError && <p className="mt-1 text-(--neg-text)">{test.liveError}</p>}
           {test.sample.notice && <p className="mt-1 text-(--banner-fg)">{test.sample.notice}</p>}
           <p className="kpi-label mt-2 mb-1">Sample row (header: {test.sample.header.join(" | ") || "—"})</p>
-          <p className="mb-2 font-mono text-[11px]">{test.sample.rows[0]?.join("  |  ")}</p>
+          <p className="mb-2 font-mono text-xs">{test.sample.rows[0]?.join("  |  ")}</p>
           <p className="kpi-label mb-1">Parsed ({test.mode === "row_per_day_count" ? "row-per-day + count" : "row-per-lead"})</p>
           <ul className="space-y-0.5">
             {Object.entries(test.result.parsed).map(([k, v]) => (
@@ -1174,10 +1177,10 @@ function RosterMappingSection({ data, busy, onSave }: {
             <div key={u.externalId} className="flex flex-wrap items-center justify-between gap-4 border-b border-(--table-border-weak) px-5 py-2.5 last:border-0">
               <span className="text-[13px] font-medium text-(--text-body)">
                 {u.name || u.externalId}
-                <span className="ml-2 font-mono text-[11px] text-(--text-muted)">{u.externalId}</span>
+                <span className="ml-2 font-mono text-xs text-(--text-muted)">{u.externalId}</span>
               </span>
               <div className="flex items-center gap-3">
-                <span className="text-[11px] tabular-nums text-(--text-muted)">
+                <span className="text-xs tabular-nums text-(--text-muted)">
                   {u.callCount > 0 ? `${u.callCount} calls in last 30 days` : "no calls in last 30 days"}
                 </span>
                 <select
@@ -1208,7 +1211,7 @@ function RosterMappingSection({ data, busy, onSave }: {
         </div>
       </div>
       {data.repMappings.length > 0 && (
-        <p className="text-[11px] text-(--text-muted)">
+        <p className="text-xs text-(--text-muted)">
           Active mappings: {data.repMappings.map((m) => `${m.external_user_id} → ${data.users.find((u) => u.id === m.rep_id)?.name ?? m.rep_id}`).join(" · ")}
         </p>
       )}
@@ -1245,16 +1248,16 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
     <tr>
       <td className="font-medium text-(--text-primary)">
         {row.client_name ?? "Unknown"}
-        <span className="block text-[11px] font-normal text-(--text-muted)">{row.client_phone ?? ""}</span>
-        <span className="block text-[11px] font-normal text-(--text-muted)">{row.client_email ?? ""}</span>
+        <span className="block text-xs font-normal text-(--text-muted)">{row.client_phone ?? ""}</span>
+        <span className="block text-xs font-normal text-(--text-muted)">{row.client_email ?? ""}</span>
       </td>
       <td>
         {row.appointment_type}
-        <span className="block text-[11px] text-(--text-muted)">{row.calendar_name ?? ""}</span>
+        <span className="block text-xs text-(--text-muted)">{row.calendar_name ?? ""}</span>
       </td>
       <td>
         {new Date(row.appointment_datetime).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}
-        <span className="block text-[11px] text-(--text-muted)">booked {new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
+        <span className="block text-xs text-(--text-muted)">booked {new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
       </td>
       <td>
         <StatusChip kind={queueRowState(row.reason) === "ambiguous" ? "risk" : "neutral"} label={QUEUE_STATE_LABELS[queueRowState(row.reason)]} />
@@ -1326,7 +1329,7 @@ function UnattributedCard({ row, users, busy, onAssign, onUnassign }: {
         <div className="min-w-0">
           <p className="text-[13px] font-medium text-(--text-primary)">{row.client_name ?? "Unknown"}</p>
           {(row.client_phone || row.client_email) && (
-            <p className="mt-0.5 break-all text-[11px] text-(--text-muted)">
+            <p className="mt-0.5 break-all text-xs text-(--text-muted)">
               {[row.client_phone, row.client_email].filter(Boolean).join(" · ")}
             </p>
           )}
@@ -1437,7 +1440,7 @@ function LeadCountCard({ data, busy, onSave }: {
             <div key={key(r.date, r.sheet)} className="flex items-center justify-between gap-2 border-b border-(--table-border-weak) pb-1 text-[13px] last:border-0">
               <span>
                 {r.date} · <span className="capitalize">{r.sheet}</span>
-                <span className="ml-2 text-[11px] text-(--text-muted)">
+                <span className="ml-2 text-xs text-(--text-muted)">
                   synced {r.observed}
                   {r.adjustedDelta ? ` ${r.adjustedDelta > 0 ? "+" : ""}${r.adjustedDelta}` : ""}
                 </span>
