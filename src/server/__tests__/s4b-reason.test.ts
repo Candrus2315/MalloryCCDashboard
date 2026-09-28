@@ -210,8 +210,8 @@ describe("S4b reason_code persistence — the sync wiring stores the category", 
     ...over,
   });
 
-  test("writer version bumped to 3 (a v2 writer would leave stale reason_code behind conflict-updates)", () => {
-    expect(ATTRIBUTION_WRITER_VERSION).toBe(3);
+  test("writer version bumped to 4 (a v3 writer would revert Rule B junk-contact email resolutions behind conflict-updates)", () => {
+    expect(ATTRIBUTION_WRITER_VERSION).toBe(4);
   });
 
   test("unattributed rows carry reason_code; attributed rows are NULL; note format unchanged", () => {

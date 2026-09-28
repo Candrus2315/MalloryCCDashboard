@@ -73,6 +73,20 @@
  *   Everything ambiguous lands in the Unattributed queue with a reason string
  *   that says WHY — visible and auditable, ready for manual assignment.
  *
+ * RULE B (owner-approved 2026-09-28): the ONE deterministic exception to the
+ * stored-contact/email conflict above. When the STORED contact is a
+ * junk/shared record (appointments stored against it carry ≥2 distinct client
+ * emails — computeJunkContactIds) and the booking's email resolves via EXACT
+ * case-insensitive equality to exactly one NON-junk contact, the booking's
+ * identity resolves through the email-matched contact and attribution runs
+ * under the UNCHANGED s1 rules (same window, most-recent verified roster
+ * interaction, no all-time fallback, no fuzzy matching). Guards: multi-email
+ * matches never resolve; a non-roster owner on the resolved contact queues the
+ * row for manual assignment under reason_code "email-resolves-non-roster"; a
+ * junk RESOLVED contact is never resolved onto; manual_override rows are never
+ * re-processed. Resolved rows carry an "identity-resolved-via-email" audit
+ * note.
+ *
  * Rep identity flows through the EXISTING roster-eligibility machinery
  * (src/server/roster.ts — applyAttributionEligibility; NEVER re-implemented
  * here): the winning call's rep is resolved at query time through
@@ -166,6 +180,13 @@ export interface AttributionContact {
   email?: string | null;
   /** HL contact id — links s1 harvest interactions to this contact. */
   external_id?: string | null;
+  /**
+   * RULE B guard (b): the contact's stored OWNER (contacts.assigned_rep_id, an
+   * internal user id). Read ONLY to decide whether the email-resolved contact
+   * is owned by an ACTIVE ROSTER rep — never as an attribution source in
+   * itself (ownership still flows exclusively through the s1 evidence rules).
+   */
+  assigned_rep_id?: string | null;
 }
 
 // ---------- output ----------
@@ -276,6 +297,27 @@ export interface AttributionMatch {
    * attribution row by the sync wiring — never re-derived ad hoc).
    */
   window?: WindowMarker;
+  /**
+   * RULE B (owner-approved 2026-09-28) — the booking's identity was RESOLVED
+   * through an exact email match away from a junk/shared stored contact.
+   * Persisted by the sync wiring as an `identity-resolved-via-email` note
+   * segment (junk stored contact id + resolved contact id) so the owner can
+   * audit every auto-resolution on the Audit page. Present on matches that
+   * went through the resolution path AND received a verdict; the guard-(b)
+   * manual-queue rows instead carry the distinct reason_code
+   * "email-resolves-non-roster" (plus the same ids in their note).
+   */
+  emailResolution?: {
+    storedContactId: string;
+    resolvedContactId: string;
+  };
+  /**
+   * DISTINCT queue reason_code override (RULE B guard b): the manual-queue
+   * rows the rule routes stay visible in Settings under
+   * "email-resolves-non-roster" instead of the generic "ambiguous". The sync
+   * wiring persists this verbatim to booking_attributions.reason_code.
+   */
+  reasonCode?: string;
 }
 
 // ---------- window math (ET date granularity — owner-ratified 2026-09-26) ----------
@@ -344,6 +386,43 @@ function unionCandidates(...ids: Array<string | null>): string[] {
   const out: string[] = [];
   for (const id of ids) if (id && !out.includes(id)) out.push(id);
   return out;
+}
+
+/**
+ * RULE B (owner-approved 2026-09-28) — JUNK/SHARED CONTACT DETECTION.
+ *
+ * A contact record is a junk/shared record when the appointments STORED
+ * against it carry TWO OR MORE DISTINCT client emails — one contact record
+ * cannot be several different clients, so the link is source-side garbage
+ * (the HighLevel/Acuity shared-record defect: many clients all landing on one
+ * contact). COMputed from the current appointment set the engine evaluates —
+ * never hardcoded, so future junk records are caught automatically.
+ *
+ * Distinctness is EXACT case-insensitive email equality (the canonical
+ * normalizer) — "A@x.com" and "a@x.com" are ONE email, not two. Appointments
+ * with no email contribute nothing. The junk set gates ONLY the Rule B email
+ * resolution; every other tier behaves exactly as before.
+ */
+export function computeJunkContactIds(
+  appointments: Array<{ contact_id?: string | null; client_email?: string | null }>,
+): Set<string> {
+  const emailsByContact = new Map<string, Set<string>>();
+  for (const a of appointments) {
+    const cid = (a.contact_id ?? "").trim();
+    const email = normalizeEmail(a.client_email);
+    if (!cid || !email) continue;
+    let set = emailsByContact.get(cid);
+    if (!set) {
+      set = new Set();
+      emailsByContact.set(cid, set);
+    }
+    set.add(email);
+  }
+  const junk = new Set<string>();
+  for (const [cid, emails] of emailsByContact) {
+    if (emails.size >= 2) junk.add(cid);
+  }
+  return junk;
 }
 
 export interface AttributionSettings {
@@ -510,6 +589,12 @@ export function matchAppointmentsToCalls(
     }
   }
   const contactExtById = new Map(contacts.map((c) => [c.id, c.external_id ?? null]));
+
+  // RULE B indexes: the junk/shared contact set (computed from the current
+  // appointment set — see computeJunkContactIds) and each contact's stored
+  // OWNER, read only for the guard-(b) active-roster check.
+  const junkContactIds = computeJunkContactIds(appointments);
+  const ownerByContactId = new Map(contacts.map((c) => [c.id, c.assigned_rep_id ?? null]));
 
   const out: AttributionMatch[] = [];
 
@@ -798,6 +883,80 @@ export function matchAppointmentsToCalls(
         // Clause 1 vs BOTH stronger identities: the stored contact id, and a
         // phone that resolved cleanly to a different contact.
         if (apptContactId && apptContactId !== contactId) {
+          // RULE B (owner-approved 2026-09-28): when the STORED contact is a
+          // junk/shared record (appointments stored against it carry ≥2
+          // distinct client emails) and the booking's email resolves via EXACT
+          // case-insensitive equality to exactly one NON-junk contact, resolve
+          // the booking's identity through the email-matched contact and
+          // attribute under the UNCHANGED s1 rules — same attribution window
+          // (created_business_date ET + preceding calendar day), most-recent
+          // verified roster interaction in window regardless of duration, NO
+          // all-time fallback. The junk contact's own calls/interactions are
+          // NEVER evidence (they belong to other clients). Guards, each
+          // test-pinned:
+          //   (a) the email matching MULTIPLE contacts never resolves (the
+          //       distinct.size > 1 hard stop above is unchanged);
+          //   (b) the resolved contact's owner (assigned_rep_id) is not an
+          //       ACTIVE ROSTER rep → do NOT attribute; manual-assignment
+          //       queue with the distinct reason_code
+          //       "email-resolves-non-roster";
+          //   (c) the resolved contact is itself junk → do NOT resolve; the
+          //       conflict stays ambiguous (the fall-through push below);
+          //   (d) manual_override rows are never re-processed (store-level:
+          //       the upsert skips manual rows; the wiring carries them
+          //       verbatim) — the engine never sees them change;
+          //   (e) EXACT case-insensitive email equality is the ONLY
+          //       resolution key — no fuzzy matching of any kind (no name
+          //       similarity, no phone matching).
+          // A phone that resolved to the stored (junk) contact is not a
+          // counter-evidence: it resolved to the same garbage record. A phone
+          // that resolved to a DIFFERENT contact is a real conflict — the
+          // resolution is refused and the booking stays ambiguous.
+          const storedIsJunk = junkContactIds.has(apptContactId);
+          const resolvedIsJunk = junkContactIds.has(contactId);
+          const phoneConflict = phoneContactId != null && phoneContactId !== apptContactId;
+          if (storedIsJunk && !resolvedIsJunk && !phoneConflict) {
+            const resolution = { storedContactId: apptContactId, resolvedContactId: contactId };
+            const match = decideForContact(contactId, "email");
+            if (match.status === "attributed" || match.reason === "ambiguous") {
+              out.push({ ...match, emailResolution: resolution });
+              continue;
+            }
+            // No >threshold call at the resolved contact → the s1 layer runs
+            // over the RESOLVED identity ONLY (the junk contact never joins
+            // the candidate set — its calls belong to other clients).
+            const s1 = s1Verdict([contactId]);
+            if (s1) {
+              out.push({ ...s1, emailResolution: resolution });
+              continue;
+            }
+            // Guard (b): the resolved contact has a stored owner who is not an
+            // active roster rep — no rep signal exists under the frozen s1
+            // rules, so the row queues for manual assignment under its own
+            // reason_code (still an identity-conflict row: the note keeps the
+            // "ambiguous" prefix so queue counting stays stable).
+            const owner = ownerByContactId.get(contactId) ?? null;
+            if (owner && !elig.activeIds.has(owner)) {
+              out.push({
+                appointmentId: apptId,
+                status: "unattributed",
+                reason: "ambiguous",
+                reasonCode: "email-resolves-non-roster",
+                detail: `email resolves a different contact than the stored contact id — stored contact ${apptContactId} is a junk/shared record; resolved via email to ${contactId}, whose owner is not an active roster rep`,
+                window: windowMarker,
+              });
+              continue;
+            }
+            // Owner is an active roster rep (or unset) but no in-window
+            // evidence: the honest no-qualifying-call verdict on the resolved
+            // identity, marked as an email resolution for the audit trail.
+            out.push({
+              ...match,
+              noRepReason: noRepReasonFor([contactId]),
+              emailResolution: resolution,
+            });
+            continue;
+          }
           out.push({
             appointmentId: apptId,
             status: "unattributed",
