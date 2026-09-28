@@ -124,7 +124,7 @@ function SettingsPage() {
             <table className="data-table min-w-[720px]">
               <thead>
                 <tr>
-                  <th className="text-left">Week</th>
+                  <th className="sticky left-0 z-[1] bg-(--card-bg) text-left">Week</th>
                   <th className="text-right">Booking goal</th>
                   <th className="text-right">Lead budget</th>
                   <th className="text-left"></th>
@@ -243,27 +243,38 @@ function SettingsPage() {
             {data.unattributed.length === 0 ? (
               <p className="text-[13px] text-(--text-muted)">Every active booking is attributed.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="data-table min-w-[980px]">
-                  <thead>
-                    <tr>
-                      <th className="text-left">Client</th>
-                      <th className="text-left">Type</th>
-                      <th className="text-left">Session</th>
-                      <th className="text-left">State · why unattributed</th>
-                      <th className="text-left">Suggested</th>
-                      <th className="text-left">Call</th>
-                      <th className="text-left">Assign to</th>
-                      <th className="text-left"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.unattributed.slice(0, 12).map((u) => (
-                      <UnattributedRow key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                {/* Phones: one decision card per booking — the 8-column table
+                    is unreadable at 375px, so every field and control stacks
+                    full-width with the same wording and the same handlers. */}
+                <div className="space-y-3 md:hidden">
+                  {data.unattributed.slice(0, 12).map((u) => (
+                    <UnattributedCard key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} />
+                  ))}
+                </div>
+                {/* md+: the compact sortable-adjacent queue table (unchanged) */}
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="data-table min-w-[980px]">
+                    <thead>
+                      <tr>
+                        <th className="text-left">Client</th>
+                        <th className="text-left">Type</th>
+                        <th className="text-left">Session</th>
+                        <th className="text-left">State · why unattributed</th>
+                        <th className="text-left">Suggested</th>
+                        <th className="text-left">Call</th>
+                        <th className="text-left">Assign to</th>
+                        <th className="text-left"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.unattributed.slice(0, 12).map((u) => (
+                        <UnattributedRow key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -340,16 +351,18 @@ function SettingsPage() {
 
 /* ================= sub-nav + section scaffolding ================= */
 
-/** Sticky sub-nav — same trick as Today's sticky table header (top-14 under the shell header). */
+/** Sticky sub-nav — same trick as Today's sticky table header (offsets pair
+ * with the shell header: top-[68px] on phones, md:top-14 on desktop; negative
+ * margins match main's responsive padding so the bar spans edge-to-edge). */
 function SubNav() {
   return (
-    <nav aria-label="Settings sections" className="sticky top-14 z-[1] -mx-6 border-b border-(--card-border) bg-(--sticky-header-bg) px-6 backdrop-blur-sm">
+    <nav aria-label="Settings sections" className="sticky top-[68px] z-[1] -mx-4 border-b border-(--card-border) bg-(--sticky-header-bg) px-4 backdrop-blur-sm sm:-mx-6 sm:px-6 md:top-14">
       <div className="flex items-center gap-1 overflow-x-auto py-2">
         {SETTINGS_SECTIONS.map((s, i) => (
           <a
             key={s.id}
             href={`#${s.id}`}
-            className="whitespace-nowrap rounded-md px-2.5 py-1 text-[13px] font-medium text-(--text-caption) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
+            className="whitespace-nowrap rounded-md px-2.5 py-2 text-[13px] font-medium text-(--text-caption) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
           >
             <span className="mr-1.5 text-[11px] tabular-nums text-(--text-faint)">{String(i + 1).padStart(2, "0")}</span>
             {s.nav}
@@ -455,7 +468,7 @@ function WeekGoalRow({ week, busy, onSave }: { week: EditorWeek; busy: boolean; 
   const [budget, setBudget] = useState(String(week.leadBudget ?? 700));
   return (
     <tr className={week.isCurrent ? "bg-(--row-highlight)" : ""}>
-      <td>
+      <td className="sticky left-0 bg-(--card-bg)">
         <span className="font-medium text-(--text-primary)">{week.label}</span>
         {week.isCurrent && <span className="ml-2 rounded-full bg-(--chip-current-bg) px-2 py-0.5 text-[11px] font-medium text-(--chip-current-fg)">current</span>}
         <span className="ml-2 text-[11px] text-(--text-muted)">{week.weekStart}</span>
@@ -763,13 +776,15 @@ function StudioRulesCard({ data, busy, onSave }: {
         <NumberField label="Padding (min)" value={padding} onChange={setPadding} />
       </div>
       <div className="space-y-1 border-t border-(--table-border-weak) pt-3">
-        <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-(--text-faint)">
+        {/* Column legend only where the three columns actually fit (sm+); on
+            phones each day stacks vertically with per-block labels. */}
+        <div className="hidden items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-(--text-faint) sm:flex">
           <span className="w-20 shrink-0">Day</span>
           <span className="w-58 shrink-0">Morning block</span>
           <span className="w-58 shrink-0">Afternoon block</span>
         </div>
         {days.map((blocks, wd) => (
-          <div key={wd} className="flex flex-wrap items-center gap-2 text-[13px]">
+          <div key={wd} className="flex flex-col gap-2 border-b border-(--table-border-weak) py-2 last:border-0 text-[13px] sm:flex-row sm:items-center sm:gap-2 sm:border-0 sm:py-0">
             <span className="w-20 shrink-0 font-medium text-(--text-body)">{WEEKDAYS[wd]}</span>
             <StudioBlockEditor day={WEEKDAYS[wd]} which="Morning" block={blocks[0]} onChange={(b) => setDays(days.map((x, j) => (j === wd ? [b, x[1]] : x)))} />
             <StudioBlockEditor day={WEEKDAYS[wd]} which="Afternoon" block={blocks[1]} onChange={(b) => setDays(days.map((x, j) => (j === wd ? [x[0], b] : x)))} />
@@ -795,7 +810,10 @@ function StudioBlockEditor({ day, which, block, onChange }: {
   onChange: (b: StudioBlockVM) => void;
 }) {
   return (
-    <span className="flex w-58 shrink-0 items-center gap-1.5">
+    <span className="flex w-full items-center gap-1.5 sm:w-58 sm:shrink-0">
+      <span className="w-[74px] shrink-0 text-[11px] font-medium uppercase tracking-wide text-(--text-muted) sm:hidden">
+        {which}
+      </span>
       <input
         type="checkbox"
         aria-label={`${which} block active on ${day}`}
@@ -805,16 +823,16 @@ function StudioBlockEditor({ day, which, block, onChange }: {
       <input
         type="time"
         aria-label={`${which} open time on ${day}`}
-        className="rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px] disabled:opacity-50"
+        className="min-w-0 flex-1 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px] disabled:opacity-50 sm:flex-none"
         value={block.open}
         disabled={!block.active}
         onChange={(e) => onChange({ ...block, open: e.target.value })}
       />
-      <span className="text-(--text-muted)">–</span>
+      <span className="shrink-0 text-(--text-muted)">–</span>
       <input
         type="time"
         aria-label={`${which} close time on ${day}`}
-        className="rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px] disabled:opacity-50"
+        className="min-w-0 flex-1 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px] disabled:opacity-50 sm:flex-none"
         value={block.close}
         disabled={!block.active}
         onChange={(e) => onChange({ ...block, close: e.target.value })}
@@ -1284,6 +1302,88 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
   );
 }
 
+/**
+ * Mobile stacked decision card for the manual-assignment queue (md:hidden
+ * twin of UnattributedRow). Same row data, same reason labels, same assign/
+ * unassign handlers and controls — laid out vertically with full-width
+ * selects so the decision is readable and tappable at 375px.
+ */
+function UnattributedCard({ row, users, busy, onAssign, onUnassign }: {
+  row: { appointment_id: string; client_name: string | null; client_phone: string | null; client_email: string | null; appointment_type: string; calendar_name: string | null; appointment_datetime: string; created_at: string; reason: string | null; reason_code: string | null; suggested_rep_id: string | null; candidate_calls: { call_id: string; rep_id: string | null; started_at: string; duration_seconds: number }[] };
+  users: { id: string; name: string }[];
+  busy: boolean;
+  onAssign: (appointmentId: string, repId: string, callId?: string | null) => void;
+  onUnassign: (appointmentId: string) => void;
+}) {
+  const [repId, setRepId] = useState(row.suggested_rep_id ?? row.candidate_calls[0]?.rep_id ?? "");
+  const [callId, setCallId] = useState(row.candidate_calls[0]?.call_id ?? "");
+  const reasonLabel = row.reason
+    ? NO_REP_REASON_LABELS[row.reason_code ?? ""] ?? UNATTRIBUTED_REASON_LABELS[row.reason] ?? row.reason
+    : "—";
+  return (
+    <div className="rounded-lg border border-(--card-border) bg-(--card-bg) p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-(--text-primary)">{row.client_name ?? "Unknown"}</p>
+          {(row.client_phone || row.client_email) && (
+            <p className="mt-0.5 break-all text-[11px] text-(--text-muted)">
+              {[row.client_phone, row.client_email].filter(Boolean).join(" · ")}
+            </p>
+          )}
+        </div>
+        <StatusChip kind={queueRowState(row.reason) === "ambiguous" ? "risk" : "neutral"} label={QUEUE_STATE_LABELS[queueRowState(row.reason)]} />
+      </div>
+      <p className="mt-2 text-[12px] text-(--chip-neutral-fg)">
+        {row.appointment_type}
+        {row.calendar_name ? ` · ${row.calendar_name}` : ""}
+      </p>
+      <p className="mt-0.5 text-[12px] tabular-nums text-(--text-caption)">
+        {new Date(row.appointment_datetime).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}
+        <span className="text-(--text-muted)"> · booked {new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
+      </p>
+      <p className="mt-1 text-[12px] text-(--chip-neutral-fg)" title={row.reason_code ?? row.reason ?? ""}>
+        {reasonLabel}
+      </p>
+      <p className="mt-1 text-[12px] text-(--text-caption)">
+        Suggested: <span className="font-medium text-(--text-body)">{users.find((u) => u.id === row.suggested_rep_id)?.name ?? "—"}</span>
+      </p>
+      {row.candidate_calls.length > 0 && (
+        <label className="mt-3 block">
+          <span className="kpi-label">Call</span>
+          <select className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={callId} onChange={(e) => setCallId(e.target.value)}>
+            {row.candidate_calls.map((c) => (
+              <option key={c.call_id} value={c.call_id}>
+                {new Date(c.started_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })} · {Math.round(c.duration_seconds / 60)}m · {users.find((u) => u.id === c.rep_id)?.name ?? "non-roster"}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="mt-2 block">
+        <span className="kpi-label">Assign to</span>
+        <select className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={repId} onChange={(e) => setRepId(e.target.value)}>
+          <option value="">Choose rep…</option>
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="mt-3 flex items-center gap-3">
+        <button className="rounded-lg border border-(--input-border) px-4 py-1.5 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle) disabled:opacity-50" disabled={busy || !repId} onClick={() => onAssign(row.appointment_id, repId, callId || null)}>
+          Assign
+        </button>
+        {unassignable(row.reason) && (
+          <button className="text-xs text-(--neg-text) hover:underline disabled:opacity-50" disabled={busy} onClick={() => onUnassign(row.appointment_id)}>
+            Unassign
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LeadWorkDateCard({ data, busy, onSave }: {
   data: SettingsData;
   busy: boolean;
@@ -1307,7 +1407,7 @@ function LeadWorkDateCard({ data, busy, onSave }: {
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className="text-(--text-caption)">Move to</span>
         <input type="date" className="rounded-lg border border-(--input-border) px-2 py-1" value={workDate} onChange={(e) => setWorkDate(e.target.value)} />
-        <input type="text" placeholder="Reason (optional)" className="w-40 rounded-lg border border-(--input-border) px-2 py-1" value={reason} onChange={(e) => setReason(e.target.value)} />
+        <input type="text" placeholder="Reason (optional)" className="w-full rounded-lg border border-(--input-border) px-2 py-1 sm:w-40" value={reason} onChange={(e) => setReason(e.target.value)} />
       </div>
       <button className="w-fit rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50" disabled={busy || !selected || !lead} onClick={() => selected && lead && onSave(selected, workDate, lead.work_date, reason)}>
         Save work date

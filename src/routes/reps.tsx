@@ -272,14 +272,17 @@ function RepsPage() {
     }
   };
 
-  const th = (key: SortKey, label: string, opts?: { left?: boolean }) => {
+  const th = (key: SortKey, label: string, opts?: { left?: boolean; stickyLeft?: boolean }) => {
     const active = sortKey === key;
     const caret = active ? (sortAsc ? "↑" : "↓") : key === "metric" ? "↑" : "↓";
     return (
       <th
         scope="col"
         aria-sort={active ? (sortAsc ? "ascending" : "descending") : undefined}
-        className={opts?.left ? "text-left" : "text-right"}
+        className={
+          (opts?.stickyLeft ? "sticky left-0 z-[2] bg-(--card-bg) " : "") +
+          (opts?.left ? "text-left" : "text-right")
+        }
       >
         <button type="button" className="th-sort-btn" onClick={() => sortBy(key)}>
           {label}
@@ -663,10 +666,12 @@ function RepsPage() {
           </div>
           <div className="card mt-3 overflow-hidden p-0">
             <div className="overflow-x-auto">
+              {/* Metric column pinned on horizontal scroll (phones) so the
+                  metric name stays visible while the numbers slide. */}
               <table className="data-table min-w-[640px] [&_td]:py-2.5 [&_td]:text-right [&_td:first-child]:text-left">
                 <thead>
                   <tr>
-                    {th("metric", "Metric", { left: true })}
+                    {th("metric", "Metric", { left: true, stickyLeft: true })}
                     {th("rep", "Rep")}
                     {th("teamAvg", "Team Average")}
                     {th("diff", "Difference")}
@@ -683,7 +688,7 @@ function RepsPage() {
                       : false;
                     return (
                       <tr key={c.metric}>
-                        <td className="text-(--text-body)">{c.metric}</td>
+                        <td className="sticky left-0 z-[1] bg-(--card-bg) text-(--text-body)">{c.metric}</td>
                         <td className="font-medium text-(--text-primary)">{repCompareValue(c.rep, c.unit)}</td>
                         <td className="text-(--text-caption)">{teamCompareValue(c.teamAvg, c.unit)}</td>
                         <td

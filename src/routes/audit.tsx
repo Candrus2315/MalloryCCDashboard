@@ -24,16 +24,23 @@ function Th({
   sort,
   onSort,
   left,
+  stickyLeft,
 }: {
   label: string;
   sortKey: SortKey;
   sort: { key: SortKey; asc: boolean };
   onSort: (k: SortKey) => void;
   left?: boolean;
+  /** FIRST column only: pinned during horizontal scroll on phones. */
+  stickyLeft?: boolean;
 }) {
   const active = sort.key === sortKey;
   return (
-    <th scope="col" aria-sort={active ? (sort.asc ? "ascending" : "descending") : undefined} className={left ? "text-left" : "text-right"}>
+    <th
+      scope="col"
+      aria-sort={active ? (sort.asc ? "ascending" : "descending") : undefined}
+      className={(stickyLeft ? "sticky left-0 z-[2] bg-(--card-bg) " : "") + (left ? "text-left" : "text-right")}
+    >
       <button type="button" className="th-sort-btn" onClick={() => onSort(sortKey)}>
         {label}
         <span aria-hidden="true" className={active ? "text-(--text-primary)" : "text-(--text-muted)"}>
@@ -162,7 +169,7 @@ function AuditPage() {
             <table className="data-table min-w-[980px] text-[12px] [&_td]:py-2">
               <thead>
                 <tr>
-                  <Th label="Started (ET)" sortKey="started_at_et" sort={sort} onSort={onSort} />
+                  <Th label="Started (ET)" sortKey="started_at_et" sort={sort} onSort={onSort} stickyLeft />
                   <Th label="Rep" sortKey="rep_name" sort={sort} onSort={onSort} left />
                   <Th label="Direction" sortKey="direction" sort={sort} onSort={onSort} />
                   <Th label="Duration" sortKey="duration_seconds" sort={sort} onSort={onSort} />
@@ -184,7 +191,7 @@ function AuditPage() {
                 ) : (
                   sorted.map((r) => (
                     <tr key={r.external_call_id} className="border-b border-(--table-border-weak) last:border-0">
-                      <td className="whitespace-nowrap tabular-nums text-(--text-body)">
+                      <td className="sticky left-0 z-[1] whitespace-nowrap bg-(--card-bg) tabular-nums text-(--text-body)">
                         {r.et_date} {r.started_at_et}
                       </td>
                       <td className="text-left">
