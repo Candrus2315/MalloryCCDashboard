@@ -21,7 +21,7 @@
  * unattributed/online) count in the TEAM total but NEVER in a rep row
  * (rev-13 rule) — they surface as the separate online/unattributed line.
  */
-import { addDays, weekStart } from "../date-logic";
+import { addDays, etDateStrFromInstant, weekStart } from "../date-logic";
 import type { AppointmentRow, AttributionRow, LeadRow } from "./compute";
 import { bookingWinBusinessDateOf, filterApptsInWinBucketRange, isBookingWin } from "./compute";
 
@@ -218,6 +218,52 @@ export function splitWinsByChannel(wins: AppointmentRow[]): { alliance: number; 
     if (/auction/i.test(w.appointment_type ?? "")) auction += 1;
   }
   return { alliance, auction };
+}
+
+// ---------- ALLIANCE/AUCTION LEADS (owner-verified 2026-09-29: they live in GHL opportunities) ----------
+
+/**
+ * The GHL pipeline ids for the two outreach channels, verified live against
+ * GET /opportunities/pipelines on 2026-09-29 (names: "Alliance Booking Calls",
+ * "Auction Booking Calls"). Opportunities synced from these pipelines ARE the
+ * channels' leads — created-date bucketing below feeds the Weekly page and the
+ * CC Report. Hardcoded ids, never guessed: the pipeline list is fetched/verified
+ * in scratch/probe-opp-pages.ts and the ids are stable GHL identifiers.
+ */
+export const ALLIANCE_PIPELINE_ID = "lBNmeGNAJQxs29XPRpJW";
+export const AUCTION_PIPELINE_ID = "BWTfoJF6nfoFgUT1EBpP";
+
+/** Minimal shape of a synced GHL opportunity row this counter needs. */
+export interface ChannelLeadRow {
+  pipeline_id: string | null;
+  source_created_at: string | null;
+}
+
+/**
+ * Alliance/Auction LEADS of one Mon–Sun week: opportunities on the channel
+ * pipelines whose CREATED timestamp (source_created_at) falls in [weekStart,
+ * weekEnd] by ET calendar date — the same America/New_York bucketing every
+ * other weekly figure uses. Every opportunity on the pipeline counts (open,
+ * won, lost, abandoned — a lead is a lead however it later resolved);
+ * independent counters; website stays null (no synced source — never invented).
+ */
+export function splitChannelLeads(
+  opps: ChannelLeadRow[],
+  mon: string,
+  sun: string,
+): { alliance: number; auction: number; website: number | null } {
+  let alliance = 0;
+  let auction = 0;
+  for (const o of opps) {
+    if (!o.source_created_at) continue;
+    const ms = Date.parse(o.source_created_at);
+    if (!Number.isFinite(ms)) continue; // unparsable created time — never guessed
+    const d = etDateStrFromInstant(ms);
+    if (d < mon || d > sun) continue;
+    if (o.pipeline_id === ALLIANCE_PIPELINE_ID) alliance += 1;
+    if (o.pipeline_id === AUCTION_PIPELINE_ID) auction += 1;
+  }
+  return { alliance, auction, website: null };
 }
 
 // ---------- BOOKINGS FROM LEADS funnel (owner request 2026-09-29) ----------

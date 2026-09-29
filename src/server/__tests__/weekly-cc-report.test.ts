@@ -1,20 +1,31 @@
 /**
  * WEEKLY CC REPORT (owner template, 2026-09-29) — deterministic tests.
  *
- *  1. splitWinsByChannel: Alliance/Auction counted from Acuity type names
- *     (case-insensitive, independent counters); website is never computed.
- *  2. buildWeeklyCcReportText: the owner's EXACT template order — bookings
+ *  1. splitWinsByChannel: Alliance/Auction BOOKINGS counted from Acuity type
+ *     names (case-insensitive, independent counters); website is never computed.
+ *  2. splitChannelLeads: Alliance/Auction LEADS from GHL opportunities
+ *     (owner-verified 2026-09-29: the channels' pipelines), bucketed by ET
+ *     created date into Mon–Sun weeks — completed weeks only, the same rule as
+ *     the funnel series; website has no synced source and stays null.
+ *  3. buildWeeklyCcReportText: the owner's EXACT template order — bookings
  *     week/month with goalVsActual, Alliance/Auction/Website leads+bookings,
  *     leads, conversion (+ by genre), calendar/booked-out, the three
  *     not-yet-defined placeholders as BLANK fields, then the narrative
- *     sections. Honest states: no goal → "X/—", channel leads "not synced",
- *     website bookings "—".
- *  3. Narrative persistence: stored notes override the computed Celebrate
+ *     sections. Honest states: no goal → "X/—", website leads/bookings "—".
+ *  4. Narrative persistence: stored notes override the computed Celebrate
  *     default; weeklyPageData passes stored notes through (PageDeps seam,
  *     MemoryStore + pinned today).
  */
 import { describe, expect, test } from "bun:test";
-import { splitWinsByChannel, celebrateDefaultLine, WEEKLY_CC_SECTIONS } from "../metrics/weekly";
+import {
+  splitWinsByChannel,
+  splitChannelLeads,
+  recentCompletedWeekStarts,
+  celebrateDefaultLine,
+  WEEKLY_CC_SECTIONS,
+  ALLIANCE_PIPELINE_ID,
+  AUCTION_PIPELINE_ID,
+} from "../metrics/weekly";
 import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "../metrics/weekly-report-text";
 import { weeklyPageData } from "../page-data";
 import { MemoryStore } from "../store/memory";
@@ -60,6 +71,55 @@ describe("celebrateDefaultLine (pure)", () => {
   });
 });
 
+// ---------- ALLIANCE/AUCTION LEADS from GHL opportunities (owner-verified 2026-09-29) ----------
+
+const opp = (id: string, pipelineId: string, createdAtUtc: string) => ({ id, pipeline_id: pipelineId, source_created_at: createdAtUtc });
+
+describe("splitChannelLeads (pure — GHL opportunities, ET created-date weeks)", () => {
+  const MON = "2026-09-21";
+  const SUN = "2026-09-27";
+  test("counts only the channel pipelines, by ET created date inside the Mon–Sun week", () => {
+    const leads = [
+      opp("a1", ALLIANCE_PIPELINE_ID, "2026-09-22T14:00:00Z"), // Mon 10:00 ET Sep 22 → counts
+      opp("a2", AUCTION_PIPELINE_ID, "2026-09-27T03:30:00Z"), // Sat 23:30 ET Sep 26 → counts
+      opp("a3", ALLIANCE_PIPELINE_ID, "2026-09-28T02:00:00Z"), // Sun 22:00 ET Sep 27 → counts (week ends Sunday ET)
+      opp("n1", "some-other-pipeline", "2026-09-23T12:00:00Z"), // not a channel
+      opp("a4", ALLIANCE_PIPELINE_ID, "2026-09-20T23:00:00Z"), // previous Sunday ET → out
+      opp("a5", ALLIANCE_PIPELINE_ID, "2026-09-28T12:00:00Z"), // next Monday ET → out
+      opp("a6", ALLIANCE_PIPELINE_ID, null), // no created time — never guessed
+    ];
+    expect(splitChannelLeads(leads, MON, SUN)).toEqual({ alliance: 2, auction: 1, website: null });
+  });
+  test("independent counters; empty input → zeros; website always null", () => {
+    expect(splitChannelLeads([opp("x", ALLIANCE_PIPELINE_ID + AUCTION_PIPELINE_ID, "2026-09-22T12:00:00Z")], MON, SUN)).toEqual({
+      alliance: 0,
+      auction: 0,
+      website: null,
+    });
+    expect(splitChannelLeads([], MON, SUN)).toEqual({ alliance: 0, auction: 0, website: null });
+  });
+  test("week bucketing uses COMPLETED Mon–Sun weeks only — the same rule as the funnel series (in-progress week never in it)", () => {
+    // Owner's reference week (2026-09-29): leads on each day of the two most
+    // recent weeks. The series for a Tuesday covers Aug 24–Sep 27 — NEVER the
+    // in-progress week starting Sep 28, even though leads exist in it.
+    const leads = [
+      opp("w1", ALLIANCE_PIPELINE_ID, "2026-09-08T18:00:00Z"), // Tue Sep 8 (ET Sep 8)
+      opp("w2", AUCTION_PIPELINE_ID, "2026-09-22T14:00:00Z"), // report week
+      opp("w3", ALLIANCE_PIPELINE_ID, "2026-09-29T14:00:00Z"), // TODAY — in-progress week
+    ];
+    const weeks = recentCompletedWeekStarts("2026-09-29", 5);
+    expect(weeks.at(-1)).toBe("2026-09-21"); // last completed week ends Sep 27
+    expect(weeks).not.toContain("2026-09-28"); // in-progress week excluded
+    const perWeek = weeks.map((mon) => ({ mon, ...splitChannelLeads(leads, mon, new Date(Date.parse(mon) + 6 * 86400000).toISOString().slice(0, 10)) }));
+    const reportWeek = perWeek.find((w) => w.mon === "2026-09-21")!;
+    expect(reportWeek.alliance).toBe(0);
+    expect(reportWeek.auction).toBe(1);
+    // the in-progress week's lead never lands in any series week
+    const totalAlliance = perWeek.reduce((s, w) => s + w.alliance, 0);
+    expect(totalAlliance).toBe(1); // only the Sep 8 lead (Sep 22 is auction)
+  });
+});
+
 // ---------- report text assembly ----------
 
 const baseInput = (): WeeklyCcReportInput => ({
@@ -68,6 +128,9 @@ const baseInput = (): WeeklyCcReportInput => ({
   bookingsWeek: { total: 62, goal: 79 },
   bookingsMonth: { total: 239, goal: 316 },
   channels: { alliance: 13, auction: 17, website: null },
+  // Alliance/Auction LEADS now synced from GHL opportunities (owner-verified
+  // 2026-09-29); website has no source → null renders "—".
+  channelLeads: { alliance: 7, auction: 21, website: null },
   leads: { family: 214, animalia: 178, total: 392 },
   conversion: { overall: 0.2105, family: 0.1818, animalia: 0.2381 },
   // BOOKINGS FROM LEADS (owner request 2026-09-29): the owner's reference week —
@@ -97,9 +160,9 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
         "Bookings (Week): 62/79 (−17)",
         "Bookings (Month-to-Date, September 2026): 239/316 (−77)",
         "",
-        "Alliance — Leads: not synced · Bookings: 13",
-        "Auction — Leads: not synced · Bookings: 17",
-        "Website — Leads: not synced · Bookings: —",
+        "Alliance — Leads: 7 · Bookings: 13",
+        "Auction — Leads: 21 · Bookings: 17",
+        "Website — Leads: — · Bookings: —",
         "",
         "Leads (week — synced Family/Animalia sheets):",
         "Family: 214",
@@ -212,11 +275,21 @@ async function seedStore(): Promise<MemoryStore> {
       cancelled: false,
     },
   ]);
+  // Alliance/Auction LEADS: GHL opportunities on the channels' pipelines
+  // (owner-verified source), bucketed by ET created date. One out-of-week and
+  // one off-pipeline row prove the bucketing/filtering, not just the totals.
+  await store.upsertOpportunities([
+    { provider: "highlevel", external_id: "opp-al-1", name: null, status: "open", monetary_value: null, contact_id: null, rep_id: null, pipeline_id: ALLIANCE_PIPELINE_ID, stage_id: null, source_created_at: H("2026-09-22", "10:00"), source_updated_at: null },
+    { provider: "highlevel", external_id: "opp-al-2", name: null, status: "won", monetary_value: null, contact_id: null, rep_id: null, pipeline_id: ALLIANCE_PIPELINE_ID, stage_id: null, source_created_at: H("2026-09-25", "15:00"), source_updated_at: null },
+    { provider: "highlevel", external_id: "opp-au-1", name: null, status: "open", monetary_value: null, contact_id: null, rep_id: null, pipeline_id: AUCTION_PIPELINE_ID, stage_id: null, source_created_at: H("2026-09-26", "20:00"), source_updated_at: null },
+    { provider: "highlevel", external_id: "opp-next", name: null, status: "open", monetary_value: null, contact_id: null, rep_id: null, pipeline_id: ALLIANCE_PIPELINE_ID, stage_id: null, source_created_at: H("2026-09-28", "12:00"), source_updated_at: null },
+    { provider: "highlevel", external_id: "opp-other", name: null, status: "open", monetary_value: null, contact_id: null, rep_id: null, pipeline_id: "unrelated-pipeline", stage_id: null, source_created_at: H("2026-09-23", "12:00"), source_updated_at: null },
+  ]);
   return store;
 }
 
 describe("weeklyPageData CC Report payload (MemoryStore, pinned today)", () => {
-  test("channels counted from the week's wins; website null; leads passthrough; report text assembled", async () => {
+  test("channels counted from the week's wins; AA leads from GHL opportunities; website null; report text assembled", async () => {
     const store = await seedStore();
     await store.upsertWeeklyReportNotes({
       week_start: LW_MON,
@@ -224,12 +297,15 @@ describe("weeklyPageData CC Report payload (MemoryStore, pinned today)", () => {
     });
     const data = await weeklyPageData({ store, today: TODAY });
     expect(data.channels).toEqual({ alliance: 1, auction: 1, website: null });
+    // AA LEADS: 2 alliance + 1 auction in the report week (out-of-week and
+    // off-pipeline opportunity rows excluded — see seedStore).
+    expect(data.channelLeads).toEqual({ alliance: 2, auction: 1, website: null });
     expect(data.report.notes).toEqual({ big3: "1. One\n2. Two\n3. Three", celebrate: "Custom celebrate." });
     // stored note wins over the computed default (no attributions → no default anyway)
     expect(data.report.reportText).toContain("Celebrate / Top Performer: Custom celebrate.");
     expect(data.report.reportText).toContain("Big 3: 1. One");
-    expect(data.report.reportText).toContain("Alliance — Leads: not synced · Bookings: 1");
-    expect(data.report.reportText).toContain("Website — Leads: not synced · Bookings: —");
+    expect(data.report.reportText).toContain("Alliance — Leads: 2 · Bookings: 1");
+    expect(data.report.reportText).toContain("Website — Leads: — · Bookings: —");
     expect(data.report.reportText).toContain("Empty appointments:");
     expect(data.report.reportText).toContain("1st Call Completed through Monday:");
   });

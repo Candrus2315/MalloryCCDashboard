@@ -66,12 +66,15 @@ import {
   monthKeyOf,
   monthStartDate,
   recentCompletedWeekStarts,
+  splitChannelLeads,
   splitLeadsByType,
   splitWinOwnership,
   splitWinsByChannel,
   splitWinsBySessionType,
   weekFunnelRows,
   winsByDate,
+  ALLIANCE_PIPELINE_ID,
+  AUCTION_PIPELINE_ID,
   type WeekFunnelRow,
   type WeeklyRepRow,
 } from "./metrics/weekly";
@@ -937,11 +940,14 @@ export interface WeeklyPageData {
   /**
    * Previous week's Alliance/Auction/Website split (owner CC Report template).
    * Bookings count from Acuity type names; WEBSITE is always null — no
-   * "Website" booking type exists in Acuity, so no bucket is invented. LEADS
-   * for these channels are NOT synced (only Family/Animalia sheets are) and
-   * are NEVER fabricated here — the UI shows an explicit not-synced note.
+   * "Website" booking type exists in Acuity, so no bucket is invented. LEADS:
+   * Alliance/Auction are synced from GHL opportunities (owner-verified
+   * 2026-09-29 — the channels' pipelines); website has no synced source and
+   * stays null — never a fabricated number.
    */
   channels: { alliance: number; auction: number; website: number | null };
+  /** Alliance/Auction LEADS of the report week (GHL opportunities, created-date ET bucketing); website null. */
+  channelLeads: { alliance: number; auction: number; website: number | null };
   /** Assigned-lead conversion: numerator = rep-attributed wins, denominator = source-dated assigned leads. */
   conversion: {
     overall: number | null;
@@ -1032,7 +1038,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // recent-completed-weeks strip (report week included — one fetch serves both).
   const seriesMon = addDays(lwMon, -7 * (FUNNEL_SERIES_WEEKS - 1));
 
-  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow] =
+  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, channelLeadOpps] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -1060,6 +1066,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       store.getMonthlyGoal(monthKey),
       // CC Report narrative for THIS report week (Big-3 pattern at week grain).
       store.getWeeklyReportNotes(lwMon),
+      // ALLIANCE/AUCTION LEADS (owner-verified 2026-09-29): GHL opportunities
+      // on the channels' pipelines; ET created-date bucketing slices the week.
+      store.getOpportunitiesByPipelines([ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID]),
     ]);
 
   const scope = settings.acuity;
@@ -1104,6 +1113,10 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // Alliance/Auction bookings counted from the same in-scope win set as every
   // other last-week figure; website stays null (no such Acuity type).
   const channels = { ...splitWinsByChannel(winsLw), website: null as number | null };
+  // Alliance/Auction LEADS of the report week — GHL opportunities on the
+  // channels' pipelines, bucketed by ET created date (owner-verified source).
+  // Website has no synced lead source → null, never invented.
+  const channelLeads = splitChannelLeads(channelLeadOpps, lwMon, lwSun);
 
   // ---- BOOKINGS FROM LEADS (owner funnel, 2026-09-29) ----
   // Overall funnel rate: ALL paid bookings of a week ÷ ALL sheet leads of the
@@ -1214,6 +1227,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     bookingsWeek: { total: winsLw.length, goal: weeklyGoal },
     bookingsMonth: { total: winsMtd.length, goal: monthlyGoal },
     channels,
+    channelLeads,
     leads: splitLeadsByType(leadsWeek),
     conversion: {
       overall: conversionRate(lwOwnership.repWins.length, assigned.length),
@@ -1246,6 +1260,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       unattributed: lwOwnership.unattributed,
     },
     channels,
+    channelLeads,
     conversion: {
       overall: conversionRate(lwOwnership.repWins.length, assigned.length),
       family: conversionRate(repWinsFam, assignedFam.length),

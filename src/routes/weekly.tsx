@@ -97,16 +97,21 @@ function RepTable({ rows, unattributed, total, totalLabel }: {
 
 /**
  * Previous week's Alliance / Auction / Website split (owner CC Report
- * template). Bookings are computed from Acuity type names; LEADS are not
- * synced (the dashboard's leads come only from the Family/Animalia sheets) —
- * shown as an explicit not-synced note, never an invented number. Website
- * bookings render "—": Acuity has no distinct "Website" booking type.
+ * template). BOOKINGS are computed from Acuity type names. LEADS for Alliance
+ * and Auction come from the GHL opportunities sync (owner-verified 2026-09-29:
+ * the channels' pipelines), bucketed by created date in the report week.
+ * Website has no synced lead or booking source — renders "—" on both, never an
+ * invented number.
  */
-function ChannelTable({ channels }: { channels: { alliance: number; auction: number; website: number | null } }) {
+function ChannelTable({ channels, leads }: { channels: { alliance: number; auction: number; website: number | null }; leads: { alliance: number; auction: number; website: number | null } }) {
   const rows = [
-    { name: "Alliance", bookings: formatInt(channels.alliance) },
-    { name: "Auction", bookings: formatInt(channels.auction) },
-    { name: "Website", bookings: channels.website == null ? "—" : formatInt(channels.website) },
+    { name: "Alliance", leads: formatInt(leads.alliance), bookings: formatInt(channels.alliance) },
+    { name: "Auction", leads: formatInt(leads.auction), bookings: formatInt(channels.auction) },
+    {
+      name: "Website",
+      leads: leads.website == null ? "—" : formatInt(leads.website),
+      bookings: channels.website == null ? "—" : formatInt(channels.website),
+    },
   ];
   return (
     <table className="w-full max-w-xl text-[12px]">
@@ -121,8 +126,8 @@ function ChannelTable({ channels }: { channels: { alliance: number; auction: num
         {rows.map((r) => (
           <tr key={r.name} className="border-b border-(--table-border-weak)">
             <td className="py-1.5 pr-2 text-(--text-body)">{r.name}</td>
-            <td className="py-1.5 text-right text-(--text-muted)">not synced</td>
-            <td className="py-1.5 text-right font-medium tabular-nums text-(--text-body)">{r.bookings}</td>
+            <td className={"py-1.5 text-right tabular-nums " + (r.leads === "—" ? "text-(--text-muted)" : "font-medium text-(--text-body)")}>{r.leads}</td>
+            <td className={"py-1.5 text-right tabular-nums " + (r.bookings === "—" ? "text-(--text-muted)" : "font-medium text-(--text-body)")}>{r.bookings}</td>
           </tr>
         ))}
       </tbody>
@@ -343,14 +348,16 @@ function WeeklyPage() {
               tip={
                 <>
                   Bookings: paid wins of the week whose Acuity appointment type contains the channel name (case-insensitive)
-                  — same deposit-paid rule as every other figure. Website shows "—": Acuity has no distinct "Website"
-                  booking type. Leads for these three channels are NOT synced — the dashboard's leads come only from the
-                  Family/Animalia sheets. Connect a source and this card will show them; nothing is invented meanwhile.
+                  — same deposit-paid rule as every other figure. Leads: HighLevel opportunities on the channel's pipeline
+                  (Alliance / Alliance Booking Calls, Auction / Auction Booking Calls) whose created date falls in the week,
+                  America/New_York — synced from GoHighLevel, every pipeline status counts (open, won, lost, abandoned).
+                  Website shows "—" on both: no distinct Website booking type exists in Acuity and no Website lead source is
+                  synced — nothing is invented meanwhile.
                 </>
               }
             />
           </p>
-          <ChannelTable channels={data.channels} />
+          <ChannelTable channels={data.channels} leads={data.channelLeads} />
         </div>
       </section>
 

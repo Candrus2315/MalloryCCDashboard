@@ -21,8 +21,14 @@
  *    snapshot is capped (CONTACT_SNAPSHOT_CAP) at the most recent contacts;
  *    truncation is recorded as a warning, never silently ignored. The FULL
  *    population is backfilled once by scripts/contacts-backfill.ts.
- *  - GET /opportunities/    → 404; POST /opportunities/search works
- *    (limit/offset body paging). Stage field is pipelineStageId.
+ *  - GET /opportunities/    → 404; POST /opportunities/search works.
+ *    REAL CONTRACT (re-verified live 2026-09-29): body {locationId, limit,
+ *    page} with page 1-BASED (page 0 is clamped to page 1 — identical rows);
+ *    SUCCESS RETURNS HTTP 201 (any 2xx is success); the body REJECTS
+ *    `offset` (422) AND `pipelineId` (422 "property pipelineId should not
+ *    exist") — there is NO server-side pipeline filter, so the snapshot pages
+ *    the FULL set and groups client-side. Each response carries a top-level
+ *    `total` (no meta object); paging stops on a short page.
  *
  * BACKFILL DEPTH (documented per task spec):
  *  - calls:   trailing CALL_BACKFILL_DAYS (30) days. Every conversation whose
@@ -111,7 +117,16 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
 }
 export const CALL_BACKFILL_DAYS = 30;
 export const CONTACT_SNAPSHOT_CAP = 2_000;
-export const OPPORTUNITY_SNAPSHOT_CAP = 5_000;
+/**
+ * FULL OPPORTUNITY SNAPSHOT (owner-verified 2026-09-29: Alliance/Auction leads
+ * live in GHL opportunities — the real set is ~4,3xx across 13 pipelines, not
+ * the ~200 rows the old cursor-paged fetch stored). The cap is now only a
+ * runaway safety net far above the real population; hitting it is a loud
+ * truncation warning, never a silent gap.
+ */
+export const OPPORTUNITY_SNAPSHOT_CAP = 20_000;
+/** Paging termination guard (independent of the cap): 500 × 100/page = 50k rows. */
+export const OPPORTUNITY_MAX_PAGES = 500;
 export const CONVERSATION_SCAN_PAGES = 60; // offset pages of /conversations/search (100 each)
 export const CONVERSATION_VISIT_CAP = 2_500; // message fetches per run (pacing-guarded)
 export const MESSAGE_PAGES_PER_CONVERSATION = 5;
@@ -526,23 +541,41 @@ export class LiveHighLevelAdapter {
 
   /**
    * Opportunities via POST /opportunities/search (GET /opportunities/ is 404
-   * here). REAL QUIRK (hit live 2026-09-26, backfill log): the endpoint
-   * REJECTS `offset` (422 "property offset should not exist") — paging is
-   * cursor-based like /contacts/: send {locationId, limit}, follow
-   * meta.startAfterId when present, stop on a short page. A full page with no
-   * cursor stops the snapshot with an explicit truncation warning — never a
-   * silent gap.
+   * here). FULL SNAPSHOT AS FAR AS THE API ALLOWS (live-verified 2026-09-29):
+   * the body accepts ONLY {locationId, limit, page} — page is 1-BASED (page 0
+   * is clamped to page 1), success is HTTP 201, and `offset`, `pipelineId`,
+   * `status` and cursor keys are all rejected (422). Paging runs until a SHORT
+   * page (fewer than `limit` rows = last page) or until GHL's server-side
+   * document wall: past offset 10,000 the endpoint answers HTTP 400 "Paginated
+   * query has reached beyond allowed document limit. Please switch to Scroll
+   * query" — that wall is a HARD API LIMIT (no scroll endpoint exists on API
+   * version 2021-07-28), so the snapshot covers the 10,000 most recent
+   * opportunities and SAYS SO (warning with the API's `total`), never silently.
+   * Alliance/Auction rows verified complete inside that window (2026-09-29:
+   * Alliance 18/18, every report-week AA lead present); the unfetched tail is
+   * dominated by the Donations import. Stored rows are upsert-only, so the
+   * snapshot window plus previous runs keep everything ever seen.
    */
   async fetchOpportunities(): Promise<NormalizedOpportunity[]> {
     const opts = this.endpointOpts();
     const opps: NormalizedOpportunity[] = [];
-    let startAfterId: string | null = null;
-    let truncated = false;
-    for (let page = 0; page < 100; page++) {
-      const body: Record<string, unknown> = { locationId: opts.creds.locationId, limit: this.pageSize };
-      if (startAfterId) body.startAfterId = startAfterId;
-      const res = (await hlRequest({ path: "/opportunities/search", body }, opts)) as Record<string, unknown> | null;
-      const meta = (res?.["meta"] ?? null) as Record<string, unknown> | null;
+    let apiTotal: number | null = null;
+    let truncated = false; // snapshot cap hit
+    let atApiWall = false; // GHL's 10k-document boundary hit
+    let page = 1;
+    for (; page <= OPPORTUNITY_MAX_PAGES; page++) {
+      const body: Record<string, unknown> = { locationId: opts.creds.locationId, limit: this.pageSize, page };
+      let res: Record<string, unknown> | null;
+      try {
+        res = (await hlRequest({ path: "/opportunities/search", body }, opts)) as Record<string, unknown> | null;
+      } catch (e) {
+        if (e instanceof HighLevelError && /beyond allowed document limit/i.test(e.message)) {
+          atApiWall = true; // offset wall reached — the API will not page further
+          break;
+        }
+        throw e;
+      }
+      if (apiTotal == null && typeof res?.["total"] === "number") apiTotal = res["total"];
       const items = listOf(res, "opportunities", "data") as Record<string, unknown>[];
       if (items.length === 0) break;
       for (const raw of items) {
@@ -554,17 +587,26 @@ export class LiveHighLevelAdapter {
         if (p) opps.push(p);
         else this.warn("opportunities: skipped one row with no id");
       }
-      startAfterId = asString(meta?.["startAfterId"]);
-      if (truncated || !startAfterId) {
-        if (!truncated && items.length >= this.pageSize && !startAfterId) {
-          this.warn(`opportunities: ${opps.length} fetched and the response carried no pagination cursor — if the location has more, they are not in this snapshot.`);
-        }
-        break;
-      }
+      if (truncated) break;
+      // Short page = last page (live-verified).
+      if (items.length < this.pageSize) break;
+      await opts.sleep(100); // conservative inter-page pacing (~100 pages to the API wall)
     }
-    if (truncated) this.warn(`opportunities: snapshot capped at ${OPPORTUNITY_SNAPSHOT_CAP}.`);
+    if (truncated) {
+      this.warn(`opportunities: snapshot capped at ${OPPORTUNITY_SNAPSHOT_CAP}${apiTotal != null ? ` (API total ${apiTotal})` : ""}.`);
+    } else if (atApiWall) {
+      this.warn(
+        `opportunities: GHL caps page-based search at 10,000 documents — snapshot covers the ${opps.length} most recent${apiTotal != null ? ` of API total ${apiTotal}` : ""}. Deeper history is not fetched (no scroll endpoint on this API version); rows already stored are kept (upsert-only).`,
+      );
+    } else if (page > OPPORTUNITY_MAX_PAGES) {
+      this.warn(`opportunities: paging hit the ${OPPORTUNITY_MAX_PAGES}-page guard at ${opps.length} rows — snapshot incomplete.`);
+    } else if (apiTotal != null && opps.length < apiTotal) {
+      this.warn(`opportunities: snapshot ended at ${opps.length} rows vs API total ${apiTotal} — dataset may have shifted mid-paging; re-run SYNC NOW.`);
+    }
     this.lastRun.counts.opportunities = opps.length;
-    this.lastRun.endpointNotes.push(`opportunities: ${opps.length} snapshot${truncated ? " (capped)" : ""}`);
+    this.lastRun.endpointNotes.push(
+      `opportunities: ${opps.length} snapshot (${page} page${page === 1 ? "" : "s"}${atApiWall ? ", at GHL 10k wall" : ""}, API total ${apiTotal ?? "n/a"}${truncated ? ", TRUNCATED at cap" : ""})`,
+    );
     return opps;
   }
 }

@@ -117,14 +117,16 @@ const OPPS_P1 = {
     { id: "opp_001", name: "Family Session — Carter", status: "open", monetaryValue: 450000, contactId: "cnt_001", assignedTo: "usr_001", pipelineId: "pipe_1", pipelineStageId: "stage_1", createdAt: daysAgoIso(2), updatedAt: daysAgoIso(1) },
     { id: "opp_002", name: "Animalia Session — Nguyen", status: "won", monetaryValue: "1200.50", contactId: "cnt_002" },
   ],
-  meta: { total: 3, startAfterId: "cursor_o1" },
+  // LIVE SHAPE (2026-09-29): top-level `total`, NO meta object.
+  total: 3,
   traceId: "t9",
 };
 const OPPS_P2 = {
   opportunities: [{ id: "opp_003", name: "Weird value", status: "open", monetaryValue: "not-a-number", contactId: "cnt_003" }],
-  meta: { total: 3 },
+  total: 3,
   traceId: "t10",
 };
+const OPPS_EMPTY = { opportunities: [], total: 3, traceId: "t11" };
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
@@ -139,8 +141,10 @@ interface SeenReq {
 /**
  * Stub fetch dispatching on path + method; per-endpoint ordered page lists
  * (clamped to the last page when exhausted, like a stable API snapshot).
+ * statusByKey pins per-endpoint HTTP statuses (opportunities/search answers
+ * HTTP 201 live — any 2xx must be treated as success).
  */
-function makeFetch(pages: Record<string, unknown[]>, opts: { apiKey: string; locationId: string; seen?: SeenReq[] }): FetchLike {
+function makeFetch(pages: Record<string, unknown[]>, opts: { apiKey: string; locationId: string; seen?: SeenReq[] }, statusByKey: Record<string, number> = {}): FetchLike {
   const pageIdx: Record<string, number> = {};
   return async (url, init) => {
     const u = String(url);
@@ -154,7 +158,7 @@ function makeFetch(pages: Record<string, unknown[]>, opts: { apiKey: string; loc
         const list = pages[key];
         const i = Math.min(pageIdx[key] ?? 0, list.length - 1);
         pageIdx[key] = (pageIdx[key] ?? 0) + 1;
-        return json(list[i]);
+        return json(list[i], statusByKey[key] ?? 200);
       }
     }
     return json({ error: `unmatched ${method} ${u}` }, 404);
@@ -356,11 +360,12 @@ describe("LiveHighLevelAdapter (fixture fetch)", () => {
     expect(contacts).toEqual([]);
   });
 
-  test("opportunities: POST search cursor-paged (offset REJECTED live: 422), money strings + garbage → 0", async () => {
+  test("opportunities: POST search page-paged (1-based page, HTTP 201 success, offset/pipelineId never sent), money strings + garbage → 0", async () => {
     const seen: SeenReq[] = [];
     const adapter = new LiveHighLevelAdapter({
       creds: CREDENTIALS,
-      fetchImpl: makeFetch({ "opportunities/search|POST": [OPPS_P1, OPPS_P2] }, { apiKey: CREDENTIALS.apiKey, locationId: CREDENTIALS.locationId, seen }),
+      // LIVE (2026-09-29): the search answers HTTP 201 — any 2xx is success.
+      fetchImpl: makeFetch({ "opportunities/search|POST": [OPPS_P1, OPPS_P2] }, { apiKey: CREDENTIALS.apiKey, locationId: CREDENTIALS.locationId, seen }, { "opportunities/search|POST": 201 }),
       sleep: SLEEP_NOOP,
       pageSize: 2,
     });
@@ -369,12 +374,77 @@ describe("LiveHighLevelAdapter (fixture fetch)", () => {
     expect(opps.find((o) => o.external_id === "opp_002")!.monetaryValue).toBe(1200.5);
     expect(opps.find((o) => o.external_id === "opp_003")!.monetaryValue).toBe(0);
     expect(opps.find((o) => o.external_id === "opp_001")!.stageId).toBe("stage_1");
+    expect(opps.find((o) => o.external_id === "opp_001")!.pipelineId).toBe("pipe_1");
     expect(seen[0].method).toBe("POST");
-    const body = JSON.parse(seen[0].body ?? "{}");
-    expect(body.locationId).toBe("loc_123");
-    // live quirk (2026-09-26): the endpoint 422s on `offset` — cursor only
-    expect("offset" in body).toBe(false);
-    expect(JSON.parse(seen[1].body ?? "{}").startAfterId).toBe("cursor_o1");
+    // 1-BASED page paging; the body NEVER carries offset/pipelineId/startAfterId
+    // (all rejected 422 live: "property … should not exist").
+    expect(JSON.parse(seen[0].body ?? "{}")).toEqual({ locationId: "loc_123", limit: 2, page: 1 });
+    expect(JSON.parse(seen[1].body ?? "{}")).toEqual({ locationId: "loc_123", limit: 2, page: 2 });
+    // short page 2 = last page → exactly two requests, no truncation warnings
+    expect(seen.length).toBe(2);
+    expect(adapter.lastRun.counts.opportunities).toBe(3);
+    expect(adapter.lastRun.endpointNotes.join(" ")).toContain("API total 3");
+    expect(adapter.lastRun.warnings.join(" ")).not.toMatch(/capped|incomplete|shifted|10,000/);
+  });
+
+  test("opportunities: empty page terminates paging (no runaway requests)", async () => {
+    const seen: SeenReq[] = [];
+    const adapter = new LiveHighLevelAdapter({
+      creds: CREDENTIALS,
+      fetchImpl: makeFetch({ "opportunities/search|POST": [OPPS_P1, OPPS_EMPTY] }, { apiKey: CREDENTIALS.apiKey, locationId: CREDENTIALS.locationId, seen }),
+      sleep: SLEEP_NOOP,
+      pageSize: 2,
+    });
+    const opps = await adapter.fetchOpportunities();
+    expect(opps.length).toBe(2);
+    expect(seen.length).toBe(2); // page 1 full → page 2 empty → stop
+  });
+
+  test("opportunities: GHL 10k-document wall (HTTP 400 'beyond allowed document limit') stops the snapshot loudly, not a crash", async () => {
+    const seen: SeenReq[] = [];
+    const adapter = new LiveHighLevelAdapter({
+      creds: CREDENTIALS,
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(init?.body ?? "{}");
+        seen.push({ url: String(_url), method: init?.method ?? "GET", headers: {}, body: init?.body });
+        if (body.page >= 3) {
+          // LIVE (2026-09-29): past offset 10,000 the endpoint hard-400s.
+          return new Response(
+            JSON.stringify({ message: "Paginated query has reached beyond allowed document limit. Please switch to Scroll query", error: "Bad Request", statusCode: 400 }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+        return json({ opportunities: [{ id: `o${body.page}a`, status: "open" }, { id: `o${body.page}b`, status: "lost" }], total: 9 }, 201);
+      },
+      sleep: SLEEP_NOOP,
+      pageSize: 2,
+    });
+    const opps = await adapter.fetchOpportunities();
+    expect(opps.length).toBe(4);
+    const warns = adapter.lastRun.warnings.join(" ");
+    expect(warns).toContain("10,000 documents");
+    expect(warns).toContain("API total 9");
+    expect(adapter.lastRun.endpointNotes.join(" ")).toContain("at GHL 10k wall");
+  });
+
+  test("opportunities: snapshot ending short of the API total warns (dataset shifted mid-paging)", async () => {
+    const adapter = new LiveHighLevelAdapter({
+      creds: CREDENTIALS,
+      fetchImpl: makeFetch(
+        {
+          "opportunities/search|POST": [
+            { opportunities: [{ id: "opp_a", status: "open" }, { id: "opp_b", status: "lost" }], total: 9 },
+            { opportunities: [{ id: "opp_c", status: "won" }], total: 9 },
+          ],
+        },
+        { apiKey: CREDENTIALS.apiKey, locationId: CREDENTIALS.locationId },
+      ),
+      sleep: SLEEP_NOOP,
+      pageSize: 2,
+    });
+    const opps = await adapter.fetchOpportunities();
+    expect(opps.length).toBe(3);
+    expect(adapter.lastRun.warnings.join(" ")).toContain("vs API total 9");
   });
 });
 

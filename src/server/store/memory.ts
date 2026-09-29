@@ -342,6 +342,11 @@ export class MemoryStore implements Store {
   async getOpportunities(): Promise<OpportunityRow[]> {
     return [...this.opportunities.values()];
   }
+  /** Opportunities on specific GHL pipelines (Alliance/Auction lead counts). */
+  async getOpportunitiesByPipelines(pipelineIds: string[]): Promise<OpportunityRow[]> {
+    const want = new Set(pipelineIds);
+    return [...this.opportunities.values()].filter((o) => o.pipeline_id != null && want.has(o.pipeline_id));
+  }
 
   /** Mirror of the PG store's demo-content replacement (see Store doc). */
   async deleteDemoHighLevelRows(): Promise<{ users: number; contacts: number; calls: number }> {
