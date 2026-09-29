@@ -150,6 +150,19 @@ export interface RepGoalRowFull {
   goal: number;
 }
 
+/** One per-month booking goal — key is the ET calendar month 'YYYY-MM' (rep_goals precedent, month-grain). */
+export interface MonthlyGoalRow {
+  month: string; // YYYY-MM
+  goal: number;
+}
+
+/** The owner's editable CC Report narrative for one report week (Big-3 pattern, week-grain). */
+export interface WeeklyReportNotesRow {
+  week_start: string; // YYYY-MM-DD (Monday) — the save key
+  /** Section key → text (keys are the stable ids in WEEKLY_CC_SECTIONS); absent/empty = unfilled. */
+  notes: Record<string, string>;
+}
+
 export interface ConnectionRow {
   provider: string; // highlevel | acuity | google_sheets
   status: string; // connected | demo | error | disconnected
@@ -580,6 +593,13 @@ export interface Store {
   getRepGoals(weekStart: string): Promise<RepGoalRowFull[]>;
   /** Remove a rep's goal override so the team-share fallback applies again. */
   deleteRepGoal(repId: string, weekStart: string): Promise<void>;
+  /** Per-month booking goals (Monthly Booking Goal, owner-approved 2026-09-29) — months never inherit each other. */
+  upsertMonthlyGoal(row: MonthlyGoalRow): Promise<void>;
+  getMonthlyGoal(month: string): Promise<MonthlyGoalRow | null>;
+  deleteMonthlyGoal(month: string): Promise<void>;
+  /** Editable CC Report narrative per report week (week_start Monday key). */
+  getWeeklyReportNotes(weekStart: string): Promise<WeeklyReportNotesRow | null>;
+  upsertWeeklyReportNotes(row: WeeklyReportNotesRow): Promise<void>;
 
   // core entities
   upsertUsers(rows: UserRow[]): Promise<number>;

@@ -28,12 +28,14 @@ import type {
   HarvestProgressRow,
   LeadCountAdjustmentRow,
   ManualOverrideRow,
+  MonthlyGoalRow,
   OpportunityRow,
   RepGoalRowFull,
   Store,
   SyncRunRow,
   TeamGoalRow,
   UserRow,
+  WeeklyReportNotesRow,
 } from "./types";
 import { DEFAULT_SETTINGS, normalizeAppSettings, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import { TtlReadCache } from "./read-cache";
@@ -178,6 +180,26 @@ const DDL: string[] = [
     week_start date NOT NULL UNIQUE,
     booking_goal integer NOT NULL DEFAULT 79,
     lead_budget integer NOT NULL DEFAULT 700,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  // MONTHLY BOOKING GOAL (owner-approved 2026-09-29): month-grain goal keyed
+  // 'YYYY-MM' — a month NEVER inherits another month's goal (October does not
+  // inherit September's 316). Text key (not a date) keeps the month bucket
+  // exact; the UNIQUE key is the upsert conflict target.
+  `CREATE TABLE IF NOT EXISTS monthly_goals (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    month text NOT NULL UNIQUE,
+    goal integer NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  // WEEKLY CC REPORT NARRATIVE (owner template, 2026-09-29): the editable
+  // sections of the Monday report, persisted per week-start (Big-3 pattern at
+  // week grain). jsonb map of section key → text so sections can be added
+  // without DDL; every changed section still lands in manual_overrides.
+  `CREATE TABLE IF NOT EXISTS weekly_report_notes (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    week_start date NOT NULL UNIQUE,
+    notes jsonb NOT NULL DEFAULT '{}'::jsonb,
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
   `CREATE TABLE IF NOT EXISTS availability_rules (
@@ -511,6 +533,52 @@ export class PgStore implements Store {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`DELETE FROM rep_goals WHERE rep_id = ${repId}::uuid AND week_start = ${weekStart}::date`;
+  }
+
+  async upsertMonthlyGoal(row: MonthlyGoalRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    await this.sql`
+      INSERT INTO monthly_goals (month, goal) VALUES (${row.month}, ${row.goal})
+      ON CONFLICT (month) DO UPDATE SET goal = EXCLUDED.goal, updated_at = now()
+    `;
+  }
+  async getMonthlyGoal(month: string): Promise<MonthlyGoalRow | null> {
+    return this.cache.wrap("getMonthlyGoal:" + JSON.stringify([month]), () => this.getMonthlyGoalCached(month));
+  }
+  private async getMonthlyGoalCached(month: string): Promise<MonthlyGoalRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT month, goal FROM monthly_goals WHERE month = ${month}`;
+    if (rows.length === 0) return null;
+    return { month: String(rows[0].month), goal: Number(rows[0].goal) };
+  }
+  async deleteMonthlyGoal(month: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    await this.sql`DELETE FROM monthly_goals WHERE month = ${month}`;
+  }
+
+  async getWeeklyReportNotes(weekStart: string): Promise<WeeklyReportNotesRow | null> {
+    return this.cache.wrap("getWeeklyReportNotes:" + JSON.stringify([weekStart]), () => this.getWeeklyReportNotesCached(weekStart));
+  }
+  private async getWeeklyReportNotesCached(weekStart: string): Promise<WeeklyReportNotesRow | null> {
+    await this.ensureSchema();
+    // jsonb param passes the OBJECT (never a pre-stringified value) — stringifying
+    // would store a quoted STRING and re-upserts would double-wrap.
+    const rows = await this.sql`SELECT week_start::text AS week_start, notes FROM weekly_report_notes WHERE week_start = ${weekStart}::date`;
+    if (rows.length === 0) return null;
+    return {
+      week_start: String(rows[0].week_start),
+      notes: (rows[0].notes ?? {}) as Record<string, string>,
+    };
+  }
+  async upsertWeeklyReportNotes(row: WeeklyReportNotesRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    await this.sql`
+      INSERT INTO weekly_report_notes (week_start, notes) VALUES (${row.week_start}::date, ${row.notes}::jsonb)
+      ON CONFLICT (week_start) DO UPDATE SET notes = EXCLUDED.notes, updated_at = now()
+    `;
   }
 
   async upsertUsers(rows: UserRow[]): Promise<number> {

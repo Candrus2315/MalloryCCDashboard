@@ -57,17 +57,21 @@ import { appointmentInScope, computeDayAvailability, type DayAvailability } from
 import {
   assignedLeadsInRange,
   buildWeeklyRepRows,
+  celebrateDefaultLine,
   conversionRate,
   goalVsActual,
   isAnimaliaSession,
   lastCompletedWeekStart,
+  monthKeyOf,
   monthStartDate,
   splitLeadsByType,
   splitWinOwnership,
+  splitWinsByChannel,
   splitWinsBySessionType,
   winsByDate,
   type WeeklyRepRow,
 } from "./metrics/weekly";
+import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
 import { serializableConnections, syncStaleWarnings, type PageMeta, type RepsSearchParams, type RepStripRow, type TeamSearchParams } from "./queries";
@@ -911,7 +915,8 @@ export interface WeeklyPageData {
   meta: PageMeta;
   today: string;
   week: { start: string; end: string; caption: string };
-  month: { start: string; end: string };
+  /** Current ET calendar month of the MTD bucket — key 'YYYY-MM', start..end ET dates. */
+  month: { key: string; start: string; end: string };
   /** Last week's booking wins vs the stored weekly team goal. */
   bookings: {
     total: number;
@@ -925,6 +930,14 @@ export interface WeeklyPageData {
     /** Wins with no attribution rep — team total only, NEVER a rep row (rev-13). */
     unattributed: number;
   };
+  /**
+   * Previous week's Alliance/Auction/Website split (owner CC Report template).
+   * Bookings count from Acuity type names; WEBSITE is always null — no
+   * "Website" booking type exists in Acuity, so no bucket is invented. LEADS
+   * for these channels are NOT synced (only Family/Animalia sheets are) and
+   * are NEVER fabricated here — the UI shows an explicit not-synced note.
+   */
+  channels: { alliance: number; auction: number; website: number | null };
   /** Assigned-lead conversion: numerator = rep-attributed wins, denominator = source-dated assigned leads. */
   conversion: {
     overall: number | null;
@@ -942,8 +955,10 @@ export interface WeeklyPageData {
     unattributed: number;
     /** Rep with the most MTD wins; null when no rep has any. */
     topPerformer: { repId: string; repName: string; total: number } | null;
-    /** Always null today: no monthly-goal concept exists in settings/rep_goals (weekly-keyed only). */
+    /** Stored monthly goal for THIS month's exact key; null = none stored (months never inherit). */
     goal: number | null;
+    /** "X/Goal (±N)" — goalVsActual(total, goal); "X/—" when no goal is stored. */
+    goalLine: string;
   };
   calendar: {
     thisWeek: WeeklyCalendarBucket;
@@ -952,6 +967,14 @@ export interface WeeklyPageData {
     beyond: number;
     /** First future ET date with zero non-cancelled appointments (and an open studio); null when none within the horizon. */
     firstFullyOpenDay: string | null;
+  };
+  /** CC Report narrative: stored notes for THIS report week + the computed Celebrate default + the assembled copy text. */
+  report: {
+    notes: Record<string, string>;
+    /** "Name — N paid bookings" (last week's top performer) — prefill for Celebrate, still editable. */
+    celebrateDefault: string | null;
+    /** The full CC Report text COPY REPORT emits (owner's template order). */
+    reportText: string;
   };
   warnings: string[];
 }
@@ -991,8 +1014,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const nextMon = addDays(thisMon, 7);
   const nextSun = addDays(thisMon, 13);
   const monthStart = monthStartDate(today);
+  const monthKey = monthKeyOf(today);
 
-  const [meta, settings, winsLwRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsWeek, teamGoal, futureAppts, storedRules, connections] =
+  const [meta, settings, winsLwRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsWeek, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -1011,6 +1035,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       store.getAllAppointmentsSince(etDayStartUtc(thisMon)),
       store.getAvailabilityRules(),
       store.getConnections(),
+      // MONTHLY BOOKING GOAL: resolved by THIS month's exact 'YYYY-MM' key —
+      // months never inherit each other (October never shows September's 316).
+      store.getMonthlyGoal(monthKey),
+      // CC Report narrative for THIS report week (Big-3 pattern at week grain).
+      store.getWeeklyReportNotes(lwMon),
     ]);
 
   const scope = settings.acuity;
@@ -1044,10 +1073,19 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const mtdOwnership = splitWinOwnership(winsMtd, attributions);
   const mtdRepRows = buildWeeklyRepRows(mtdOwnership.repCounts, nameById, rosterIds);
   const top = mtdRepRows.find((r) => r.total > 0) ?? null; // rows sort largest-first
-  // No monthly-goal concept exists anywhere in settings/rep_goals (both are
-  // weekly-keyed) — goal stays null and the UI renders "—" with an InfoTip.
-  // It is NEVER invented here.
-  const monthlyGoal: number | null = null;
+  // MONTHLY BOOKING GOAL (owner-approved 2026-09-29): stored per exact
+  // 'YYYY-MM' month key (Settings) — null when none is stored for THIS month,
+  // and months never inherit (the UI renders "—" until a goal exists).
+  const monthlyGoal: number | null = monthlyGoalRow?.goal ?? null;
+
+  // ---- CC REPORT extras ----
+  // Alliance/Auction bookings counted from the same in-scope win set as every
+  // other last-week figure; website stays null (no such Acuity type).
+  const channels = { ...splitWinsByChannel(winsLw), website: null as number | null };
+  // Celebrate prefill: LAST WEEK's top performer (the report is about the
+  // week) — stored note overrides it in the narrative editor.
+  const lwTop = lwRepRows.find((r) => r.total > 0) ?? null;
+  const celebrateDefault = celebrateDefaultLine(lwTop ? { repName: lwTop.rep_name, total: lwTop.total } : null);
 
   // ---- CALENDAR FILL ----
   // studio hours: availability_rules is the runtime mirror; fall back to the
@@ -1112,6 +1150,43 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   if (leadsWeek.length === 0)
     warnings.push(`No sheet leads with source dates ${formatDateHuman(lwMon)} – ${formatDateHuman(lwSun)} — check the Google Sheets sync.`);
 
+  const calendar: WeeklyPageData["calendar"] = {
+    thisWeek: {
+      label: "This week",
+      start: thisMon,
+      end: addDays(thisMon, 6),
+      appointments: thisWeekCount,
+      capacity: weekCapacity(thisMon),
+    },
+    nextWeek: {
+      label: "Next week",
+      start: nextMon,
+      end: nextSun,
+      appointments: nextWeekCount,
+      capacity: weekCapacity(nextMon),
+    },
+    beyond,
+    firstFullyOpenDay,
+  };
+
+  const reportNotes = reportNotesRow?.notes ?? {};
+  const reportText = buildWeeklyCcReportText({
+    week: { start: lwMon, end: lwSun },
+    monthKey,
+    bookingsWeek: { total: winsLw.length, goal: weeklyGoal },
+    bookingsMonth: { total: winsMtd.length, goal: monthlyGoal },
+    channels,
+    leads: splitLeadsByType(leadsWeek),
+    conversion: {
+      overall: conversionRate(lwOwnership.repWins.length, assigned.length),
+      family: conversionRate(repWinsFam, assignedFam.length),
+      animalia: conversionRate(repWinsAni, assignedAni.length),
+    },
+    calendar,
+    notes: reportNotes,
+    celebrateDefault,
+  });
+
   return {
     meta,
     today,
@@ -1120,7 +1195,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       end: lwSun,
       caption: `${formatDateHuman(lwMon)} – ${formatDateHuman(lwSun)} · Last Week`,
     },
-    month: { start: monthStart, end: today },
+    month: { key: monthKey, start: monthStart, end: today },
     bookings: {
       total: winsLw.length,
       family: lwSplit.family,
@@ -1131,6 +1206,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       repRows: lwRepRows,
       unattributed: lwOwnership.unattributed,
     },
+    channels,
     conversion: {
       overall: conversionRate(lwOwnership.repWins.length, assigned.length),
       family: conversionRate(repWinsFam, assignedFam.length),
@@ -1145,24 +1221,13 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       unattributed: mtdOwnership.unattributed,
       topPerformer: top ? { repId: top.rep_id, repName: top.rep_name, total: top.total } : null,
       goal: monthlyGoal,
+      goalLine: goalVsActual(winsMtd.length, monthlyGoal),
     },
-    calendar: {
-      thisWeek: {
-        label: "This week",
-        start: thisMon,
-        end: addDays(thisMon, 6),
-        appointments: thisWeekCount,
-        capacity: weekCapacity(thisMon),
-      },
-      nextWeek: {
-        label: "Next week",
-        start: nextMon,
-        end: nextSun,
-        appointments: nextWeekCount,
-        capacity: weekCapacity(nextMon),
-      },
-      beyond,
-      firstFullyOpenDay,
+    calendar,
+    report: {
+      notes: reportNotes,
+      celebrateDefault,
+      reportText,
     },
     warnings,
   };

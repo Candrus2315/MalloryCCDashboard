@@ -163,3 +163,83 @@ export function goalVsActual(actual: number, goal: number | null): string {
   const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
   return `${actual}/${goal} (${sign}${Math.abs(diff)})`;
 }
+
+// ---------- MONTHLY BOOKING GOAL (owner-approved 2026-09-29) ----------
+// Month keys are ET calendar months 'YYYY-MM'. Months NEVER inherit each
+// other's goals (October does not inherit September's 316) — resolution is
+// always by exact key.
+
+/**
+ * Shift a 'YYYY-MM' month key by n months, clamping the day away by
+ * construction (no Date object — pure string arithmetic, no timezone edges).
+ * "2026-12" + 1 → "2027-01"; "2026-01" − 1 → "2025-12".
+ */
+export function addMonthsKey(month: string, n: number): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(month ?? "");
+  if (!m) return month;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const total = y * 12 + (mo - 1) + n;
+  const ny = Math.floor(total / 12);
+  const nm = total - ny * 12 + 1;
+  return `${String(ny).padStart(4, "0")}-${String(nm).padStart(2, "0")}`;
+}
+
+/** "2026-09" → "September 2026" (display label for Settings/MTD; unparsable keys pass through). */
+export function monthKeyLabel(month: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(month ?? "");
+  if (!m) return month;
+  const label = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(
+    new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 15)),
+  );
+  return `${label} ${m[1]}`;
+}
+
+/** The 'YYYY-MM' ET calendar month containing `today` (matches monthStartDate's bucket). */
+export function monthKeyOf(today: string): string {
+  return today.slice(0, 7);
+}
+
+// ---------- CC REPORT channel split (owner template, 2026-09-29) ----------
+
+/**
+ * Alliance/Auction/Website BOOKINGS of the report week: paid wins whose Acuity
+ * appointment_type contains the channel word (case-insensitive — live types
+ * are "Alliance Portrait Session + 20\" Portrait", "Auction Animalia Session…").
+ * Independent counters (a type matching both words would count in both);
+ * Website is deliberately NOT computed here — no "Website" booking type exists
+ * in Acuity, and inventing a bucket from "everything else" would be wrong.
+ */
+export function splitWinsByChannel(wins: AppointmentRow[]): { alliance: number; auction: number } {
+  let alliance = 0;
+  let auction = 0;
+  for (const w of wins) {
+    if (/alliance/i.test(w.appointment_type ?? "")) alliance += 1;
+    if (/auction/i.test(w.appointment_type ?? "")) auction += 1;
+  }
+  return { alliance, auction };
+}
+
+/**
+ * The owner's CC Report narrative sections, in the owner's template order.
+ * Keys are the STABLE persistence ids (weekly_report_notes jsonb keys +
+ * manual_overrides field names) — never rename, only append.
+ */
+export const WEEKLY_CC_SECTIONS: { key: string; label: string }[] = [
+  { key: "department_updates", label: "Department Updates" },
+  { key: "big3", label: "Big 3" },
+  { key: "big3_followup", label: "Update on Last Week's Big Three" },
+  { key: "celebrate", label: "Celebrate / Top Performer" },
+  { key: "culture", label: "Company Culture / Team Building" },
+  { key: "escalations", label: "Escalations" },
+  { key: "customer_service", label: "Customer Service" },
+  { key: "recruitment", label: "Recruitment / Training" },
+  { key: "roadblocks", label: "Roadblocks / Support Needed" },
+  { key: "leadership_learning", label: "Leadership Learning" },
+];
+
+/** Auto-fill text for the Celebrate line — the week's computed top performer (still editable). */
+export function celebrateDefaultLine(top: { repName: string; total: number } | null): string | null {
+  if (!top) return null;
+  return `${top.repName} — ${top.total} paid bookings`;
+}
