@@ -40,7 +40,7 @@ import {
 } from "./metrics/compute";
 import { getStore } from "./store";
 import type { Store } from "./store/types";
-import { availabilityPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData } from "./page-data";
+import { availabilityPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
 import {
@@ -958,3 +958,5 @@ export const getTeamData = createServerFn()
 
 /** AVAILABILITY page — engine + Acuity connection + scope filters (playbook contract). */
 export const getAvailabilityData = createServerFn().handler(async () => availabilityPageData());
+/** WEEKLY REPORT page — last completed week + MTD (page-data.ts weeklyPageData, PageDeps test seam). */
+export const getWeeklyData = createServerFn().handler(async () => weeklyPageData());

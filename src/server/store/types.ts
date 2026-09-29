@@ -747,6 +747,15 @@ export interface Store {
   deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number>;
   getLeadsByWorkDates(dates: string[]): Promise<LeadRow[]>;
   /**
+   * Read-only counterpart of getLeadsByWorkDates keyed on SOURCE_DATE (the
+   * date the lead entered the sheet). The Weekly Report's lead section and
+   * assigned-lead conversion denominator are source-dated (owner directive
+   * 2026-09-29) — work_date deliberately does NOT biject with source_date
+   * across a week boundary (Fri/Sat/Sun sources work the NEXT Monday), so a
+   * work-date fetch cannot substitute. Presentation reads only; never written.
+   */
+  getLeadsBySourceDates(dates: string[]): Promise<LeadRow[]>;
+  /**
    * Cheap count of a provider's stored leads (no row materialization). Used by
    * the Sheets sync's demo-seed guard: demo rows may only ever seed a dataset
    * with NO stored google_sheets leads — live data is never demo-replaced.

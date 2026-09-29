@@ -16,6 +16,7 @@ import {
   addDays,
   dateRange,
   dailyReportAnchorDate,
+  etDateStrFromInstant,
   etDayEndUtc,
   etDayStartUtc,
   etRangeBounds,
@@ -29,6 +30,7 @@ import {
   repOperatingState,
   resolveRange,
   weekStart,
+  weekday,
   type RangeMode,
 } from "./date-logic";
 import {
@@ -44,6 +46,7 @@ import {
   filterApptsInWinBucketRange,
   filterCallsInEtRange,
   appointmentPaymentStateOf,
+  isBookingWin,
   materializeRecurringBlocks,
   repRangeSummaries,
   resolveRepGoal,
@@ -51,6 +54,20 @@ import {
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
 import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
+import {
+  assignedLeadsInRange,
+  buildWeeklyRepRows,
+  conversionRate,
+  goalVsActual,
+  isAnimaliaSession,
+  lastCompletedWeekStart,
+  monthStartDate,
+  splitLeadsByType,
+  splitWinOwnership,
+  splitWinsBySessionType,
+  winsByDate,
+  type WeeklyRepRow,
+} from "./metrics/weekly";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
 import { serializableConnections, syncStaleWarnings, type PageMeta, type RepsSearchParams, type RepStripRow, type TeamSearchParams } from "./queries";
@@ -871,6 +888,282 @@ export async function availabilityPageData(deps?: PageDeps) {
     connection,
     days,
     filters: { calendars: settings.acuity.calendars_included, types: settings.acuity.types_included },
+    warnings,
+  };
+}
+
+// ---------- WEEKLY REPORT (owner directive 2026-09-29: the Monday leadership
+// report as one page instead of hand-pulled SQL) ----------
+
+/** One calendar-fill bucket (a Mon–Sun week) of the weekly report. */
+export interface WeeklyCalendarBucket {
+  label: string;
+  start: string;
+  end: string;
+  /** Non-cancelled in-scope appointments whose SESSION falls in the bucket. */
+  appointments: number;
+  /** Slots the studio schedule config offers across the bucket's 7 days (derived, never hardcoded). */
+  capacity: number;
+}
+
+/** The weekly report payload contract (route + tests consume this). */
+export interface WeeklyPageData {
+  meta: PageMeta;
+  today: string;
+  week: { start: string; end: string; caption: string };
+  month: { start: string; end: string };
+  /** Last week's booking wins vs the stored weekly team goal. */
+  bookings: {
+    total: number;
+    family: number;
+    animalia: number;
+    goal: number;
+    /** "X/Goal (±N)" presentation string. */
+    goalLine: string;
+    daily: { date: string; count: number }[];
+    repRows: WeeklyRepRow[];
+    /** Wins with no attribution rep — team total only, NEVER a rep row (rev-13). */
+    unattributed: number;
+  };
+  /** Assigned-lead conversion: numerator = rep-attributed wins, denominator = source-dated assigned leads. */
+  conversion: {
+    overall: number | null;
+    family: number | null;
+    animalia: number | null;
+    numerator: { overall: number; family: number; animalia: number };
+    denominator: { overall: number; family: number; animalia: number };
+  };
+  /** Sheet leads by source_date in the week. */
+  leads: { family: number; animalia: number; total: number };
+  /** Month-to-date paid wins (current ET calendar month through today). */
+  mtd: {
+    total: number;
+    repRows: WeeklyRepRow[];
+    unattributed: number;
+    /** Rep with the most MTD wins; null when no rep has any. */
+    topPerformer: { repId: string; repName: string; total: number } | null;
+    /** Always null today: no monthly-goal concept exists in settings/rep_goals (weekly-keyed only). */
+    goal: number | null;
+  };
+  calendar: {
+    thisWeek: WeeklyCalendarBucket;
+    nextWeek: WeeklyCalendarBucket;
+    /** Sessions beyond next week — visible, never silently dropped. */
+    beyond: number;
+    /** First future ET date with zero non-cancelled appointments (and an open studio); null when none within the horizon. */
+    firstFullyOpenDay: string | null;
+  };
+  warnings: string[];
+}
+
+/** Horizon (days) for the "first fully open day" scan — bounded, never infinite. */
+export const FIRST_OPEN_DAY_HORIZON_DAYS = 120;
+
+/**
+ * WEEKLY REPORT payload — LAST WEEK (most recent completed Mon–Sun, ET) and
+ * MONTH TO DATE. Read-only presentation over the same store primitives and
+ * the same win/attribution/scope rules as every other page:
+ *  - Booking wins bucket on booking_win_business_date (deposit-received ET
+ *    date) — the rev-12 model; not-yet-derived paid rows fall back to created
+ *    date via the metrics-layer filter, exactly like Today/Team/Reps.
+ *  - Only in-scope Acuity appointments feed numbers (appointmentInScope, one
+ *    getSettings() read).
+ *  - Attribution join booking_attributions → users: manual overrides ARE rep
+ *    bookings; no-attribution wins are the online/unattributed line (team
+ *    total only, rev-13 rule).
+ *  - Conversion denominator = leads with an assigned rep whose SOURCE_DATE
+ *    falls in the week (owner's definition; labeled in the UI InfoTip).
+ *  - Calendar fill derives slots/day from the live studio schedule config via
+ *    the ONE availability engine (computeDayAvailability — never hardcoded).
+ * Same PageDeps seam as every builder: tests inject MemoryStore + pinned
+ * `today`; the createServerFn loader passes nothing.
+ */
+export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
+  const today = deps?.today ?? etToday();
+  const metaPromise: Promise<PageMeta> = deps?.store
+    ? Promise.resolve({ mode: "memory", dbReason: null, today, demoSeeded: false })
+    : loadPageMeta();
+  const store = deps?.store ?? (await getStore());
+
+  const lwMon = lastCompletedWeekStart(today);
+  const lwSun = addDays(lwMon, 6);
+  const thisMon = weekStart(today);
+  const nextMon = addDays(thisMon, 7);
+  const nextSun = addDays(thisMon, 13);
+  const monthStart = monthStartDate(today);
+
+  const [meta, settings, winsLwRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsWeek, teamGoal, futureAppts, storedRules, connections] =
+    await Promise.all([
+      metaPromise,
+      store.getSettings(),
+      // REV 12 WIN BUCKET: wins count on booking_win_business_date; the
+      // superset query + metrics filter below is the exact Today/Team pattern.
+      store.getAppointmentsByWinBusinessDateBetween(lwMon, lwSun),
+      store.getAppointmentsByWinBusinessDateBetween(monthStart, today),
+      store.getAttributions(),
+      store.getUsers(),
+      // ALL users — attribution rep_ids resolve names even off-roster.
+      store.getAllUsers(),
+      store.getLeadsBySourceDates(dateRange(lwMon, lwSun)),
+      store.getTeamGoal(lwMon),
+      // calendar fill: every session from this week's Monday onward (this
+      // week + next week + beyond — nothing silently dropped)
+      store.getAllAppointmentsSince(etDayStartUtc(thisMon)),
+      store.getAvailabilityRules(),
+      store.getConnections(),
+    ]);
+
+  const scope = settings.acuity;
+  const winsLw = filterApptsInWinBucketRange(winsLwRaw, lwMon, lwSun).filter(
+    (a) => isBookingWin(a) && appointmentInScope(a, scope),
+  );
+  const winsMtd = filterApptsInWinBucketRange(winsMtdRaw, monthStart, today).filter(
+    (a) => isBookingWin(a) && appointmentInScope(a, scope),
+  );
+
+  const nameById = new Map(allUsers.map((u) => [u.id, u.name]));
+  const rosterIds = rosterUsers.map((u) => u.id);
+
+  // ---- LAST WEEK: bookings ----
+  const lwDates = dateRange(lwMon, lwSun);
+  const dailyMap = winsByDate(winsLw, lwDates);
+  const lwSplit = splitWinsBySessionType(winsLw);
+  const lwOwnership = splitWinOwnership(winsLw, attributions);
+  const lwRepRows = buildWeeklyRepRows(lwOwnership.repCounts, nameById, rosterIds);
+  const weeklyGoal = teamGoal?.booking_goal ?? 79; // the app-wide team-goal default (Today/Daily Report convention)
+
+  // ---- LAST WEEK: assigned-lead conversion (source-dated denominators) ----
+  const assigned = assignedLeadsInRange(leadsWeek, lwMon, lwSun);
+  const isAniLead = (l: { lead_type: string }) => /animalia/i.test(l.lead_type);
+  const assignedFam = assigned.filter((l) => !isAniLead(l));
+  const assignedAni = assigned.filter(isAniLead);
+  const repWinsFam = lwOwnership.repWins.filter((a) => !isAnimaliaSession(a.appointment_type)).length;
+  const repWinsAni = lwOwnership.repWins.length - repWinsFam;
+
+  // ---- MTD ----
+  const mtdOwnership = splitWinOwnership(winsMtd, attributions);
+  const mtdRepRows = buildWeeklyRepRows(mtdOwnership.repCounts, nameById, rosterIds);
+  const top = mtdRepRows.find((r) => r.total > 0) ?? null; // rows sort largest-first
+  // No monthly-goal concept exists anywhere in settings/rep_goals (both are
+  // weekly-keyed) — goal stays null and the UI renders "—" with an InfoTip.
+  // It is NEVER invented here.
+  const monthlyGoal: number | null = null;
+
+  // ---- CALENDAR FILL ----
+  // studio hours: availability_rules is the runtime mirror; fall back to the
+  // settings rules when the mirror is empty (same rule as Availability).
+  const rules = storedRules.length > 0 ? storedRules : settings.studio.hours;
+  // Capacity per ET date comes from the ONE availability engine with no
+  // appointments/blocked — pure schedule config (blocks × slots). Capacity
+  // depends only on the weekday, so it is computed once per weekday.
+  const capacityByWeekday = new Map<number, number>();
+  const capacityFor = (date: string): number => {
+    const wd = weekday(date);
+    let cap = capacityByWeekday.get(wd);
+    if (cap == null) {
+      cap = computeDayAvailability({
+        date,
+        rules,
+        blocked: [],
+        appointments: [],
+        slotIntervalMin: settings.studio.slot_interval_min,
+        durationMin: settings.studio.appointment_duration_min,
+        paddingMin: settings.studio.padding_min,
+      }).totalCapacity;
+      capacityByWeekday.set(wd, cap);
+    }
+    return cap;
+  };
+
+  const apptsByDate = new Map<string, number>();
+  let beyond = 0;
+  let thisWeekCount = 0;
+  let nextWeekCount = 0;
+  for (const a of futureAppts) {
+    // non-cancelled + in-scope — the same population the availability engine counts
+    if (a.cancelled || a.status === "cancelled" || !appointmentInScope(a, scope)) continue;
+    const ms = Date.parse(a.appointment_datetime);
+    if (!Number.isFinite(ms)) continue; // unparsable session time — never guessed
+    const d = etDateStrFromInstant(ms);
+    apptsByDate.set(d, (apptsByDate.get(d) ?? 0) + 1);
+    if (d >= thisMon && d < nextMon) thisWeekCount += 1;
+    else if (d >= nextMon && d <= nextSun) nextWeekCount += 1;
+    else beyond += 1; // d > nextSun (fetch floor is thisMon, so never earlier)
+  }
+  const weekCapacity = (mon: string) => dateRange(mon, addDays(mon, 6)).reduce((s, d) => s + capacityFor(d), 0);
+
+  // first future date with zero appointments (and an open studio) — the scan
+  // includes sessions beyond next week, so nothing future is excluded
+  let firstFullyOpenDay: string | null = null;
+  for (let i = 0; i < FIRST_OPEN_DAY_HORIZON_DAYS; i++) {
+    const d = addDays(today, i);
+    if ((apptsByDate.get(d) ?? 0) === 0 && capacityFor(d) > 0) {
+      firstFullyOpenDay = d;
+      break;
+    }
+  }
+
+  // ---- warnings (honest states, never invented data) ----
+  const warnings: string[] = [...syncStaleWarnings(connections)];
+  if (!teamGoal)
+    warnings.push(`No team booking goal stored for the week of ${formatDateHuman(lwMon)} — the ${weeklyGoal} default is shown.`);
+  if (winsLw.length === 0)
+    warnings.push(`No paid bookings recorded ${formatDateHuman(lwMon)} – ${formatDateHuman(lwSun)} — check the Acuity sync.`);
+  if (leadsWeek.length === 0)
+    warnings.push(`No sheet leads with source dates ${formatDateHuman(lwMon)} – ${formatDateHuman(lwSun)} — check the Google Sheets sync.`);
+
+  return {
+    meta,
+    today,
+    week: {
+      start: lwMon,
+      end: lwSun,
+      caption: `${formatDateHuman(lwMon)} – ${formatDateHuman(lwSun)} · Last Week`,
+    },
+    month: { start: monthStart, end: today },
+    bookings: {
+      total: winsLw.length,
+      family: lwSplit.family,
+      animalia: lwSplit.animalia,
+      goal: weeklyGoal,
+      goalLine: goalVsActual(winsLw.length, weeklyGoal),
+      daily: lwDates.map((d) => ({ date: d, count: dailyMap.get(d) ?? 0 })),
+      repRows: lwRepRows,
+      unattributed: lwOwnership.unattributed,
+    },
+    conversion: {
+      overall: conversionRate(lwOwnership.repWins.length, assigned.length),
+      family: conversionRate(repWinsFam, assignedFam.length),
+      animalia: conversionRate(repWinsAni, assignedAni.length),
+      numerator: { overall: lwOwnership.repWins.length, family: repWinsFam, animalia: repWinsAni },
+      denominator: { overall: assigned.length, family: assignedFam.length, animalia: assignedAni.length },
+    },
+    leads: splitLeadsByType(leadsWeek),
+    mtd: {
+      total: winsMtd.length,
+      repRows: mtdRepRows,
+      unattributed: mtdOwnership.unattributed,
+      topPerformer: top ? { repId: top.rep_id, repName: top.rep_name, total: top.total } : null,
+      goal: monthlyGoal,
+    },
+    calendar: {
+      thisWeek: {
+        label: "This week",
+        start: thisMon,
+        end: addDays(thisMon, 6),
+        appointments: thisWeekCount,
+        capacity: weekCapacity(thisMon),
+      },
+      nextWeek: {
+        label: "Next week",
+        start: nextMon,
+        end: nextSun,
+        appointments: nextWeekCount,
+        capacity: weekCapacity(nextMon),
+      },
+      beyond,
+      firstFullyOpenDay,
+    },
     warnings,
   };
 }
