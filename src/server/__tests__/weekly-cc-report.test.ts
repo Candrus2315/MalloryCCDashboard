@@ -70,6 +70,9 @@ const baseInput = (): WeeklyCcReportInput => ({
   channels: { alliance: 13, auction: 17, website: null },
   leads: { family: 214, animalia: 178, total: 392 },
   conversion: { overall: 0.2105, family: 0.1818, animalia: 0.2381 },
+  // BOOKINGS FROM LEADS (owner request 2026-09-29): the owner's reference week —
+  // 62 paid bookings / 702 sheet leads = 8.83% overall funnel rate.
+  funnel: { wins: 62, leads: 702, pct: 62 / 702 },
   calendar: {
     thisWeek: { appointments: 34, capacity: 63 },
     nextWeek: { appointments: 12, capacity: 63 },
@@ -104,6 +107,7 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
         "Total: 392",
         "",
         "Conversion of Assigned Leads: 21.05% (Family 18.18% · Animalia 23.81%)",
+        "Bookings from Leads: 8.83%",
         "",
         "Calendar / Booked-out:",
         "This week: 34/63 filled (54%)",
@@ -137,9 +141,11 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
     input.conversion = { overall: null, family: null, animalia: null };
     input.calendar.thisWeek = { appointments: 5, capacity: 0 };
     input.calendar.firstFullyOpenDay = null;
+    input.funnel = { wins: 0, leads: 0, pct: null }; // zero sheet leads → never a fabricated 0%
     const text = buildWeeklyCcReportText(input);
     expect(text).toContain("Bookings (Month-to-Date, September 2026): 239/—");
     expect(text).toContain("Conversion of Assigned Leads: — (Family — · Animalia —)");
+    expect(text).toContain("Bookings from Leads: —");
     expect(text).toContain("This week: 5/— filled");
     expect(text).toContain("First fully open day: —");
   });

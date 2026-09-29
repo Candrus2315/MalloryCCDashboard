@@ -5,7 +5,8 @@
  * Monday, in the owner's template order:
  *   Bookings (Week ± goal) · Bookings (Month-to-Date ± goal) ·
  *   Alliance/Auction/Website (leads + bookings) · Leads ·
- *   Lead Conversion (+ by genre) · Calendar/booked-out ·
+ *   Lead Conversion (+ by genre) · Bookings from Leads (overall funnel) ·
+ *   Calendar/booked-out ·
  *   placeholder fields (Empty appointments / Holes / 1st Call Completed) ·
  *   the narrative sections (editable, persisted per week).
  *
@@ -36,6 +37,12 @@ export interface WeeklyCcReportInput {
   channels: { alliance: number; auction: number; website: number | null };
   leads: { family: number; animalia: number; total: number };
   conversion: { overall: number | null; family: number | null; animalia: number | null };
+  /**
+   * BOOKINGS FROM LEADS (owner request 2026-09-29): ALL paid bookings of the
+   * week ÷ ALL sheet leads — the overall funnel rate. pct is null when the
+   * week had no sheet leads ("—" is rendered, never a fabricated 0%).
+   */
+  funnel: { wins: number; leads: number; pct: number | null };
   calendar: {
     thisWeek: { appointments: number; capacity: number };
     nextWeek: { appointments: number; capacity: number };
@@ -87,6 +94,10 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   lines.push(
     `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)})`,
   );
+  // BOOKINGS FROM LEADS (owner request 2026-09-29) — the overall funnel rate
+  // right after the assigned-lead conversion; the owner edits it out freely.
+  // Zero sheet leads → "—" (never a fabricated 0%).
+  lines.push(`Bookings from Leads: ${formatPercent(input.funnel.pct)}`);
   lines.push("");
   lines.push("Calendar / Booked-out:");
   lines.push(`This week: ${fillSummary(input.calendar.thisWeek.appointments, input.calendar.thisWeek.capacity)}`);

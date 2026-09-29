@@ -135,6 +135,7 @@ function WeeklyPage() {
   const router = useRouter();
   const b = data.bookings;
   const c = data.conversion;
+  const f = data.funnel;
   const mtd = data.mtd;
   const cal = data.calendar;
 
@@ -245,10 +246,40 @@ function WeeklyPage() {
                   }
                 />
               </p>
-              <div className="grid grid-cols-3 gap-x-6">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4">
                 <Kpi label="Overall" value={formatPercent(c.overall)} sub={`${c.numerator.overall}/${c.denominator.overall} leads`} />
                 <Kpi label="Family" value={formatPercent(c.family)} sub={`${c.numerator.family}/${c.denominator.family} leads`} />
                 <Kpi label="Animalia" value={formatPercent(c.animalia)} sub={`${c.numerator.animalia}/${c.denominator.animalia} leads`} />
+                {/* BOOKINGS FROM LEADS (owner funnel, 2026-09-29) — the overall
+                    funnel rate next to the assigned-lead conversion cards. */}
+                <div>
+                  <p className="kpi-label flex items-center gap-1.5">
+                    Bookings from leads
+                    <InfoTip
+                      label="How bookings from leads is computed"
+                      tip={
+                        <>
+                          Numerator: ALL paid bookings of the week (booking wins — online/unattributed included).
+                          Denominator: ALL sheet leads (Family + Animalia) whose SHEET date (source_date) falls in the
+                          week. Caveat: some bookings never came from sheet leads — online bookings, repeat clients,
+                          Alliance/Auction members — so this is the overall funnel rate, not a strict lead→booking
+                          attribution.
+                        </>
+                      }
+                    />
+                  </p>
+                  <p
+                    className={
+                      "mt-1 text-4xl font-semibold tracking-tight tabular-nums " +
+                      (f.pct != null ? "text-(--text-primary)" : "text-(--text-muted)")
+                    }
+                  >
+                    {formatPercent(f.pct)}
+                  </p>
+                  <p className="kpi-sub mt-1">
+                    {formatInt(f.wins)}/{formatInt(f.leads)} leads · overall funnel rate
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -266,6 +297,40 @@ function WeeklyPage() {
                 <Kpi label="Total" value={formatInt(data.leads.total)} sub="sheet leads in the week" />
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* BOOKINGS FROM LEADS — recent completed weeks strip (owner request 2026-09-29):
+            the last 5 COMPLETED Mon–Sun weeks, oldest first. The in-progress week is
+            never shown (its % is meaningless mid-week); zero-leads weeks render "—"
+            (the Sheets sync begins 2026-08-24). Same counts as the card above. */}
+        <div className="mt-6">
+          <p className="kpi-label mb-3 flex items-center gap-1.5">
+            Bookings from leads — recent weeks
+            <InfoTip
+              label="About the recent-weeks strip"
+              tip="The last 5 completed Mon–Sun weeks, oldest first, all paid bookings ÷ all sheet leads (the same counts as the card above). The in-progress week is excluded — its % would be meaningless mid-week. A week with zero sheet leads renders “—” (the Google Sheets sync begins 2026-08-24), never a fabricated 0%."
+            />
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {data.funnelSeries.map((w) => (
+              <div key={w.weekStart} className="rounded-lg border border-(--card-border) px-3 py-2">
+                <p className="text-[12px] font-medium uppercase tracking-wide text-(--text-caption)">
+                  {formatDateShort(w.weekStart)} – {formatDateShort(w.weekEnd)}
+                </p>
+                <p
+                  className={
+                    "mt-0.5 text-2xl font-semibold tracking-tight tabular-nums " +
+                    (w.pct != null ? "text-(--text-primary)" : "text-(--text-muted)")
+                  }
+                >
+                  {formatPercent(w.pct)}
+                </p>
+                <p className="text-[12px] text-(--text-muted)">
+                  {formatInt(w.leads)} leads · {formatInt(w.wins)} wins
+                </p>
+              </div>
+            ))}
           </div>
         </div>
 

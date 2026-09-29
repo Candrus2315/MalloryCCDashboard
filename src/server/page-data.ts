@@ -59,16 +59,20 @@ import {
   buildWeeklyRepRows,
   celebrateDefaultLine,
   conversionRate,
+  FUNNEL_SERIES_WEEKS,
   goalVsActual,
   isAnimaliaSession,
   lastCompletedWeekStart,
   monthKeyOf,
   monthStartDate,
+  recentCompletedWeekStarts,
   splitLeadsByType,
   splitWinOwnership,
   splitWinsByChannel,
   splitWinsBySessionType,
+  weekFunnelRows,
   winsByDate,
+  type WeekFunnelRow,
   type WeeklyRepRow,
 } from "./metrics/weekly";
 import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
@@ -976,6 +980,15 @@ export interface WeeklyPageData {
     /** The full CC Report text COPY REPORT emits (owner's template order). */
     reportText: string;
   };
+  /**
+   * BOOKINGS FROM LEADS (owner funnel, 2026-09-29): ALL paid bookings of the
+   * report week ÷ ALL sheet leads (source_date in week) — the overall funnel
+   * rate, NOT strict attribution (online bookings, repeat clients and
+   * Alliance/Auction members never appear in the sheets).
+   */
+  funnel: { wins: number; leads: number; pct: number | null };
+  /** The same funnel for the last 5 COMPLETED Mon–Sun weeks, oldest first — never the in-progress week. */
+  funnelSeries: WeekFunnelRow[];
   warnings: string[];
 }
 
@@ -1015,20 +1028,27 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const nextSun = addDays(thisMon, 13);
   const monthStart = monthStartDate(today);
   const monthKey = monthKeyOf(today);
+  // BOOKINGS FROM LEADS series floor: the Monday of the oldest week in the
+  // recent-completed-weeks strip (report week included — one fetch serves both).
+  const seriesMon = addDays(lwMon, -7 * (FUNNEL_SERIES_WEEKS - 1));
 
-  const [meta, settings, winsLwRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsWeek, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow] =
+  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
       // REV 12 WIN BUCKET: wins count on booking_win_business_date; the
       // superset query + metrics filter below is the exact Today/Team pattern.
-      store.getAppointmentsByWinBusinessDateBetween(lwMon, lwSun),
+      // Window WIDENED to the funnel series (read-only, same superset shape) —
+      // sub-window filtering below reproduces the narrow fetch exactly.
+      store.getAppointmentsByWinBusinessDateBetween(seriesMon, lwSun),
       store.getAppointmentsByWinBusinessDateBetween(monthStart, today),
       store.getAttributions(),
       store.getUsers(),
       // ALL users — attribution rep_ids resolve names even off-roster.
       store.getAllUsers(),
-      store.getLeadsBySourceDates(dateRange(lwMon, lwSun)),
+      // Sheet leads for the WHOLE funnel window (source_date) — the report week
+      // is sliced out below; no rep filter (the funnel counts ALL sheets).
+      store.getLeadsBySourceDates(dateRange(seriesMon, lwSun)),
       store.getTeamGoal(lwMon),
       // calendar fill: every session from this week's Monday onward (this
       // week + next week + beyond — nothing silently dropped)
@@ -1043,12 +1063,14 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     ]);
 
   const scope = settings.acuity;
-  const winsLw = filterApptsInWinBucketRange(winsLwRaw, lwMon, lwSun).filter(
+  const winsLw = filterApptsInWinBucketRange(winsWindowRaw, lwMon, lwSun).filter(
     (a) => isBookingWin(a) && appointmentInScope(a, scope),
   );
   const winsMtd = filterApptsInWinBucketRange(winsMtdRaw, monthStart, today).filter(
     (a) => isBookingWin(a) && appointmentInScope(a, scope),
   );
+  // Report week's sheet leads (the series fetch covers more weeks — slice it).
+  const leadsWeek = leadsSeries.filter((l) => l.source_date >= lwMon && l.source_date <= lwSun);
 
   const nameById = new Map(allUsers.map((u) => [u.id, u.name]));
   const rosterIds = rosterUsers.map((u) => u.id);
@@ -1082,6 +1104,22 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // Alliance/Auction bookings counted from the same in-scope win set as every
   // other last-week figure; website stays null (no such Acuity type).
   const channels = { ...splitWinsByChannel(winsLw), website: null as number | null };
+
+  // ---- BOOKINGS FROM LEADS (owner funnel, 2026-09-29) ----
+  // Overall funnel rate: ALL paid bookings of a week ÷ ALL sheet leads of the
+  // same week (source_date, Family + Animalia sheets) — no rep filter and no
+  // attribution filter, so online/unattributed bookings count too. That is the
+  // owner's funnel view, not a strict lead→booking attribution (some bookings
+  // never appear in the sheets). Recent-weeks strip = the last 5 COMPLETED
+  // Mon–Sun weeks, oldest first — the in-progress week is excluded by
+  // construction (its % would be meaningless mid-week). Weeks with zero sheet
+  // leads carry pct null → the UI renders "—" (Sheets data begins 2026-08-24).
+  const seriesStarts = recentCompletedWeekStarts(today, FUNNEL_SERIES_WEEKS);
+  const winsSeries = filterApptsInWinBucketRange(winsWindowRaw, seriesStarts[0], lwSun).filter(
+    (a) => isBookingWin(a) && appointmentInScope(a, scope),
+  );
+  const funnelSeries = weekFunnelRows(seriesStarts, winsSeries, leadsSeries);
+  const funnel = { wins: winsLw.length, leads: leadsWeek.length, pct: conversionRate(winsLw.length, leadsWeek.length) };
   // Celebrate prefill: LAST WEEK's top performer (the report is about the
   // week) — stored note overrides it in the narrative editor.
   const lwTop = lwRepRows.find((r) => r.total > 0) ?? null;
@@ -1182,6 +1220,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       family: conversionRate(repWinsFam, assignedFam.length),
       animalia: conversionRate(repWinsAni, assignedAni.length),
     },
+    funnel,
     calendar,
     notes: reportNotes,
     celebrateDefault,
@@ -1215,6 +1254,8 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       denominator: { overall: assigned.length, family: assignedFam.length, animalia: assignedAni.length },
     },
     leads: splitLeadsByType(leadsWeek),
+    funnel,
+    funnelSeries,
     mtd: {
       total: winsMtd.length,
       repRows: mtdRepRows,
