@@ -22,6 +22,7 @@ import type {
   CallContactBackfillUpdate,
   ConnectionRow,
   ContactExternalIdRow,
+  ContactIdentityRow,
   ContactRow,
   DailyPrioritiesRow,
   HarvestCallRow,
@@ -216,6 +217,15 @@ export class MemoryStore implements Store {
     return [...this.contacts.values()]
       .filter((c) => c.provider === provider && (!only || only.includes(c.external_id)))
       .map((c) => ({ id: c.id, external_id: c.external_id }));
+  }
+  /** PERF: identity slice (mirror of PgStore.getContactIdentityRows). */
+  async getContactIdentityRows(): Promise<ContactIdentityRow[]> {
+    return [...this.contacts.values()].map((c) => ({
+      id: c.id,
+      phone: c.phone ?? null,
+      email: c.email ?? null,
+      assigned_rep_id: c.assigned_rep_id ?? null,
+    }));
   }
 
   async upsertCalls(rows: CallExt[]): Promise<number> {

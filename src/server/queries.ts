@@ -73,18 +73,22 @@ export const getTodayData = createServerFn().handler(async () => todayPageData()
 
 /** SETTINGS page data — every editable surface loads its rows here. */
 export const getSettingsData = createServerFn().handler(async () => {
-  const meta = await loadPageMeta();
   const store = await getStore();
-  const settings = await store.getSettings();
   const today = etToday();
   const ws = weekStart(today);
+  // PERF: meta (demo-seed guard) + settings were two sequential round trips
+  // before the batch; both are independent of it — run them INSIDE the batch.
+  const metaPromise: Promise<PageMeta> = loadPageMeta();
+  const settingsPromise = store.getSettings();
 
   // Week-list editor window: two past weeks, current, six future.
   const editorWeeks = Array.from({ length: 9 }, (_, i) => addDays(weekStart(today), 7 * (i - 2)));
   const week = dateRange(ws, addDays(ws, 6));
 
-  const [teamGoals, connections, runs, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow, allUsers] =
+  const [meta, settings, teamGoals, connections, runs, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow, allUsers] =
     await Promise.all([
+      metaPromise,
+      settingsPromise,
       store.getTeamGoals(),
       store.getConnections(),
       store.getSyncRuns(12),
@@ -95,7 +99,10 @@ export const getSettingsData = createServerFn().handler(async () => {
       store.getLeadsByWorkDates(dateRange(addDays(today, -7), today)),
       store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30))),
       store.getAllCallsSince(etDayStartUtc(addDays(today, -30))),
-      store.getContacts(),
+      // PERF: identity slice only (id/phone/email/assigned_rep_id) — the full
+      // 18-column getContacts() materialized ~116k rows (~1s remote transfer)
+      // for consumers that read exactly these four fields.
+      store.getContactIdentityRows(),
       store.getAttributions(),
       store.getBlockedTimesBetween(etDayStartUtc(addDays(today, -7)), etDayEndUtc(addDays(today, 30))),
       // ALL users (roster + non-roster) — the Roster Mapping panel lists the

@@ -16,6 +16,7 @@ import {
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
   AppSettings,
+  ContactIdentityRow,
   AuditCallRow,
   CallContactBackfillUpdate,
   ConnectionRow,
@@ -35,6 +36,7 @@ import type {
   UserRow,
 } from "./types";
 import { DEFAULT_SETTINGS, normalizeAppSettings, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { TtlReadCache } from "./read-cache";
 
 // Ordered DDL: each statement idempotent, safe to run on every cold start.
 const DDL: string[] = [
@@ -399,6 +401,8 @@ export class PgStore implements Store {
   mode = "postgres" as const;
   private sql: ReturnType<typeof postgres>;
   private schemaReady: Promise<void> | null = null;
+  /** PERF: short-TTL (20s) read cache — bumped by every write; see store/read-cache.ts. */
+  private cache = new TtlReadCache();
 
   constructor(databaseUrl: string) {
     // Managed Postgres (Tiger Cloud) requires TLS. If the URL carries its own
@@ -412,8 +416,8 @@ export class PgStore implements Store {
       // probePg validates the URL before constructing; ignore here
     }
     this.sql = postgres(databaseUrl, {
-      max: 5,
-      idle_timeout: 20,
+      max: 16, // PERF: page loaders issue 15-30 parallel queries; 5 connections serialized them into RTT-bound waves
+      idle_timeout: 240, // PERF: keep warm conns across the ~10-min sync cadence (server idle kills are >5 min)
       connect_timeout: 10,
       ...(needsSsl ? { ssl: "require" } : {}),
     });
@@ -429,6 +433,9 @@ export class PgStore implements Store {
   }
 
   async getSettings(): Promise<AppSettings> {
+    return this.cache.wrap("getSettings", () => this.getSettingsCached());
+  }
+  private async getSettingsCached(): Promise<AppSettings> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT value FROM app_settings WHERE key = 'app' LIMIT 1`;
     if (!rows.length) return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
@@ -439,6 +446,7 @@ export class PgStore implements Store {
   }
 
   async saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     const current = await this.getSettings();
     const next: AppSettings = {
@@ -456,6 +464,7 @@ export class PgStore implements Store {
   }
 
   async upsertTeamGoal(row: TeamGoalRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`
       INSERT INTO team_goals (week_start, booking_goal, lead_budget)
@@ -464,16 +473,23 @@ export class PgStore implements Store {
     `;
   }
   async getTeamGoal(weekStart: string): Promise<TeamGoalRow | null> {
+    return this.cache.wrap("getTeamGoal:" + JSON.stringify([weekStart]), () => this.getTeamGoalCached(weekStart));
+  }
+  private async getTeamGoalCached(weekStart: string): Promise<TeamGoalRow | null> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT week_start::text::date::text AS week_start, booking_goal, lead_budget FROM team_goals WHERE week_start = ${weekStart}::date`;
     return rows[0] ? { week_start: String(rows[0].week_start), booking_goal: Number(rows[0].booking_goal), lead_budget: Number(rows[0].lead_budget) } : null;
   }
   async getTeamGoals(): Promise<TeamGoalRow[]> {
+    return this.cache.wrap("getTeamGoals", () => this.getTeamGoalsCached());
+  }
+  private async getTeamGoalsCached(): Promise<TeamGoalRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT week_start::text::date::text AS week_start, booking_goal, lead_budget FROM team_goals ORDER BY week_start`;
     return rows.map((r) => ({ week_start: String(r.week_start), booking_goal: Number(r.booking_goal), lead_budget: Number(r.lead_budget) }));
   }
   async upsertRepGoals(rows: RepGoalRowFull[]): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     if (!rows.length) return;
     for (const r of rows) {
@@ -484,16 +500,21 @@ export class PgStore implements Store {
     }
   }
   async getRepGoals(weekStart: string): Promise<RepGoalRowFull[]> {
+    return this.cache.wrap("getRepGoals:" + JSON.stringify([weekStart]), () => this.getRepGoalsCached(weekStart));
+  }
+  private async getRepGoalsCached(weekStart: string): Promise<RepGoalRowFull[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT rep_id::text, week_start::text AS week_start, goal FROM rep_goals WHERE week_start = ${weekStart}::date`;
     return rows.map((r) => ({ rep_id: String(r.rep_id), week_start: String(r.week_start), goal: Number(r.goal) }));
   }
   async deleteRepGoal(repId: string, weekStart: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`DELETE FROM rep_goals WHERE rep_id = ${repId}::uuid AND week_start = ${weekStart}::date`;
   }
 
   async upsertUsers(rows: UserRow[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -505,6 +526,7 @@ export class PgStore implements Store {
     return rows.length;
   }
   async setUserCallStartDate(repId: string, date: string | null): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`UPDATE users SET call_start_date = ${date}, updated_at = now() WHERE id = ${repId}::uuid`;
   }
@@ -520,17 +542,24 @@ export class PgStore implements Store {
     };
   }
   async getUsers(): Promise<UserRow[]> {
+    return this.cache.wrap("getUsers", () => this.getUsersCached());
+  }
+  private async getUsersCached(): Promise<UserRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date FROM users WHERE is_active ORDER BY name`;
     return rows.map((r) => this.userRow(r as Record<string, unknown>));
   }
   async getAllUsers(): Promise<UserRow[]> {
+    return this.cache.wrap("getAllUsers", () => this.getAllUsersCached());
+  }
+  private async getAllUsersCached(): Promise<UserRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date FROM users ORDER BY name`;
     return rows.map((r) => this.userRow(r as Record<string, unknown>));
   }
 
   async upsertContacts(rows: ContactRow[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       // Canonical normalizers at the store boundary: raw stays verbatim in
@@ -592,9 +621,27 @@ export class PgStore implements Store {
     return (rows as Record<string, unknown>[]).map((r) => ({ id: String(r.id), external_id: String(r.external_id) }));
   }
 
+  /**
+   * PERF (identity slice): the Settings page and the attribution engine's
+   * identity resolution only consume id/phone/email/assigned_rep_id. The full
+   * getContacts() materializes 18 columns × ~116k rows over the remote wire
+   * (~1s RTT-bound); this reads only the consumed columns. Row VALUES are
+   * identical for those fields — no semantics change.
+   */
+  async getContactIdentityRows(): Promise<ContactIdentityRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, phone, email, assigned_rep_id::text AS assigned_rep_id FROM contacts`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id),
+      phone: r.phone == null ? null : String(r.phone),
+      email: r.email == null ? null : String(r.email),
+      assigned_rep_id: r.assigned_rep_id ? String(r.assigned_rep_id) : null,
+    }));
+  }
   async upsertCalls(
     rows: (CallRow & { external_call_id: string; provider: string; contact_resolution_method?: string | null; contact_resolved_at?: string | null })[],
   ): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -631,11 +678,17 @@ export class PgStore implements Store {
     };
   }
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
+    return this.cache.wrap("getCallsBetween:" + JSON.stringify([startUtc, endUtc]), () => this.getCallsBetweenCached(startUtc, endUtc));
+  }
+  private async getCallsBetweenCached(startUtc: string, endUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
+    return this.cache.wrap("getAllCallsSince:" + JSON.stringify([startUtc]), () => this.getAllCallsSinceCached(startUtc));
+  }
+  private async getAllCallsSinceCached(startUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method FROM calls WHERE started_at >= ${startUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
@@ -702,6 +755,7 @@ export class PgStore implements Store {
   }
 
   async upsertOpportunities(rows: OpportunityRow[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -741,7 +795,9 @@ export class PgStore implements Store {
    * null out references first (attributions, appointments, leads, contacts,
    * rep_goals), then delete calls → contacts → users. Idempotent.
    */
-  async deleteDemoHighLevelRows(): Promise<{ users: number; contacts: number; calls: number }> {
+  async deleteDemoHighLevelRows(): Promise<{
+    users: number; contacts: number; calls: number }> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     // Shared predicates (subqueries keep every statement consistent + idempotent)
     const demoUsers = this.sql`SELECT id FROM users WHERE provider = 'highlevel' AND external_id LIKE 'demo-%'`;
@@ -781,7 +837,9 @@ export class PgStore implements Store {
       SELECT (SELECT count(*) FROM deleted) AS n`;
     return { users: Number(users), contacts: Number(contacts), calls: Number(calls) };
   }
-  async deleteDemoAcuityRows(): Promise<{ appointments: number; blocked: number }> {
+  async deleteDemoAcuityRows(): Promise<{
+    appointments: number; blocked: number }> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     // Demo Acuity rows: appointment ids prefixed "demo-" + demo blocked-time
     // rows (provider acuity). Manual blocks (provider 'manual') and recurring
@@ -795,6 +853,7 @@ export class PgStore implements Store {
   }
 
   async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null; payment_state?: string | null; booking_win_business_date?: string | null; payment_business_date_source?: string | null; first_seen_paid_at?: string | null })[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -855,6 +914,9 @@ export class PgStore implements Store {
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
+    return this.cache.wrap("getAppointmentsByWinBusinessDateBetween:" + JSON.stringify([start, end]), () => this.getAppointmentsByWinBusinessDateBetweenCached(start, end));
+  }
+  private async getAppointmentsByWinBusinessDateBetweenCached(start: string, end: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
     // BOOKING WIN bucket (rev 12): the win-date SUPERSET — wins by the date
     // the deposit was received, UNION not-yet-derived/legacy rows by created
@@ -864,6 +926,9 @@ export class PgStore implements Store {
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
+    return this.cache.wrap("getAppointmentsOverlapping:" + JSON.stringify([startUtc, endUtc]), () => this.getAppointmentsOverlappingCached(startUtc, endUtc));
+  }
+  private async getAppointmentsOverlappingCached(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
     // Availability path: carries the per-appointment duration (session length),
     // calendar name (scope matching), acuity id AND the client contact fields
@@ -892,6 +957,15 @@ export class PgStore implements Store {
     client_email: string | null;
     calendar_name: string | null;
   })[]> {
+    return this.cache.wrap("getAppointmentsWithClientsSince:" + JSON.stringify([startUtc]), () => this.getAppointmentsWithClientsSinceCached(startUtc));
+  }
+  private async getAppointmentsWithClientsSinceCached(startUtc: string): Promise<(AppointmentRow & {
+    acuity_appointment_id: string | null;
+    client_name: string | null;
+    client_phone: string | null;
+    client_email: string | null;
+    calendar_name: string | null;
+  })[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => ({
@@ -905,6 +979,7 @@ export class PgStore implements Store {
   }
 
   async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     if (rows.length === 0) return 0;
     // WRITER PROTECTION (owner directive 2026-09-27): ONE advisory-locked
@@ -956,6 +1031,9 @@ export class PgStore implements Store {
     return rows.length;
   }
   async getAttributions(): Promise<AttributionRow[]> {
+    return this.cache.wrap("getAttributions", () => this.getAttributionsCached());
+  }
+  private async getAttributionsCached(): Promise<AttributionRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text, appointment_id::text, call_id::text, rep_id::text, method, confidence, manual_override, note, reason_code FROM booking_attributions`;
     return rows.map((r) => ({
@@ -971,6 +1049,7 @@ export class PgStore implements Store {
     }));
   }
   async setManualAttribution(row: AttributionRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     // Manual assignment wins over the engine and survives re-syncs (engine
     // upserts skip rows with manual_override = true). The triage category is
@@ -984,6 +1063,7 @@ export class PgStore implements Store {
     `;
   }
   async deleteAttribution(appointmentId: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     // Manual UNASSIGN: the row is derived data — delete it and the next
     // attribution tick recomputes the appointment from raw rows.
@@ -991,6 +1071,7 @@ export class PgStore implements Store {
   }
 
   async upsertLeads(rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null })[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -1005,6 +1086,7 @@ export class PgStore implements Store {
     return rows.length;
   }
   async deleteLeadsForSheet(sourceSheet: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`DELETE FROM leads WHERE provider = 'google_sheets' AND source_sheet = ${sourceSheet}`;
   }
@@ -1027,6 +1109,7 @@ export class PgStore implements Store {
     }));
   }
   async deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     let n = 0;
     for (let i = 0; i < sourceIds.length; i += 500) {
@@ -1045,6 +1128,9 @@ export class PgStore implements Store {
     return Number(n);
   }
   async getLeadsByWorkDates(dates: string[]): Promise<LeadRow[]> {
+    return this.cache.wrap("getLeadsByWorkDates:" + JSON.stringify([dates]), () => this.getLeadsByWorkDatesCached(dates));
+  }
+  private async getLeadsByWorkDatesCached(dates: string[]): Promise<LeadRow[]> {
     await this.ensureSchema();
     if (!dates.length) return [];
     const rows = await this.sql`SELECT id::text, lead_type, source_date::text, work_date::text, contact_id::text, assigned_rep_id::text, source_sheet FROM leads WHERE work_date = ANY(${dates}::date[])`;
@@ -1059,12 +1145,14 @@ export class PgStore implements Store {
     }));
   }
   async updateLeadWorkDate(id: string, workDate: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     const res = await this.sql`UPDATE leads SET work_date = ${workDate}::date, updated_at = now() WHERE id = ${id}::uuid RETURNING id::text`;
     if (!res.length) throw new Error(`Lead ${id} not found`);
   }
 
   async upsertLeadCountAdjustment(row: Omit<LeadCountAdjustmentRow, "updated_at">): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     if (!row.delta) {
       // corrected back to the observed count → the adjustment disappears
@@ -1078,6 +1166,9 @@ export class PgStore implements Store {
     `;
   }
   async getLeadCountAdjustments(dates: string[]): Promise<LeadCountAdjustmentRow[]> {
+    return this.cache.wrap("getLeadCountAdjustments:" + JSON.stringify([dates]), () => this.getLeadCountAdjustmentsCached(dates));
+  }
+  private async getLeadCountAdjustmentsCached(dates: string[]): Promise<LeadCountAdjustmentRow[]> {
     await this.ensureSchema();
     if (!dates.length) return [];
     const rows = await this.sql`SELECT work_date::text, sheet, delta, reason, updated_at::text FROM lead_count_adjustments WHERE work_date = ANY(${dates}::date[])`;
@@ -1099,6 +1190,7 @@ export class PgStore implements Store {
    * per weekday.
    */
   async upsertAvailabilityRules(rows: AvailabilityRule[]): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`DELETE FROM availability_rules`;
     for (const r of rows) {
@@ -1109,12 +1201,16 @@ export class PgStore implements Store {
     }
   }
   async getAvailabilityRules(): Promise<AvailabilityRule[]> {
+    return this.cache.wrap("getAvailabilityRules", () => this.getAvailabilityRulesCached());
+  }
+  private async getAvailabilityRulesCached(): Promise<AvailabilityRule[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT weekday, open_time, close_time, active FROM availability_rules ORDER BY weekday, open_time`;
     return rows.map((r) => ({ weekday: Number(r.weekday), open_time: String(r.open_time), close_time: String(r.close_time), active: Boolean(r.active) }));
   }
 
   async upsertBlockedTimes(rows: (BlockedTimeRow & { provider: string; external_id: string })[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -1136,6 +1232,7 @@ export class PgStore implements Store {
     }));
   }
   async insertBlockedTime(row: { start_at: string; end_at: string; reason: string | null }): Promise<BlockedTimeRow> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     const rows = await this.sql`
       INSERT INTO blocked_times (provider, external_id, start_at, end_at, reason)
@@ -1151,11 +1248,13 @@ export class PgStore implements Store {
     };
   }
   async deleteBlockedTime(id: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`DELETE FROM blocked_times WHERE id = ${id}::uuid`;
   }
 
   async upsertDailyPriorities(row: DailyPrioritiesRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`
       INSERT INTO daily_priorities (date, priority1, priority2, priority3) VALUES (${row.date}::date, ${row.priority1}, ${row.priority2}, ${row.priority3})
@@ -1163,6 +1262,9 @@ export class PgStore implements Store {
     `;
   }
   async getDailyPriorities(date: string): Promise<DailyPrioritiesRow | null> {
+    return this.cache.wrap("getDailyPriorities:" + JSON.stringify([date]), () => this.getDailyPrioritiesCached(date));
+  }
+  private async getDailyPrioritiesCached(date: string): Promise<DailyPrioritiesRow | null> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT date::text, priority1, priority2, priority3, updated_at::text FROM daily_priorities WHERE date = ${date}::date`;
     return rows[0]
@@ -1171,6 +1273,7 @@ export class PgStore implements Store {
   }
 
   async upsertConnection(row: ConnectionRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`
       INSERT INTO integration_connections (provider, status, is_demo, last_sync_at, last_successful_sync_at, last_error, config)
@@ -1195,14 +1298,19 @@ export class PgStore implements Store {
   }
 
   async insertSyncRun(provider: string): Promise<string> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     const rows = await this.sql`INSERT INTO sync_runs (provider) VALUES (${provider}) RETURNING id::text`;
     return String(rows[0].id);
   }
   async finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.sql`UPDATE sync_runs SET status = ${status}, records_upserted = ${recordsUpserted}, error = ${error}, finished_at = now() WHERE id = ${id}::uuid`;
   }
   async getSyncRuns(limit: number): Promise<SyncRunRow[]> {
+    return this.cache.wrap("getSyncRuns:" + JSON.stringify([limit]), () => this.getSyncRunsCached(limit));
+  }
+  private async getSyncRunsCached(limit: number): Promise<SyncRunRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text, provider, status, started_at::text, finished_at::text, records_upserted, error FROM sync_runs ORDER BY started_at DESC LIMIT ${limit}`;
     return rows.map((r) => ({
@@ -1262,6 +1370,7 @@ export class PgStore implements Store {
     return rows.length ? String(rows[0].watermark) : null;
   }
   async setSyncWatermark(provider: string, watermarkIso: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`INSERT INTO sync_watermarks (provider, watermark, updated_at) VALUES (${provider}, ${watermarkIso}, now())
       ON CONFLICT (provider) DO UPDATE SET watermark = EXCLUDED.watermark, updated_at = now()`;
@@ -1272,16 +1381,21 @@ export class PgStore implements Store {
     return rows.length ? String(rows[0].value) : null;
   }
   async setSyncCheckpoint(key: string, value: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`INSERT INTO sync_checkpoints (key, value, updated_at) VALUES (${key}, ${value}::jsonb, now())
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
   }
 
   async insertManualOverride(row: Omit<ManualOverrideRow, "id" | "changed_at">): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`INSERT INTO manual_overrides (entity_type, entity_id, field, previous_value, new_value, changed_by) VALUES (${row.entity_type}, ${row.entity_id}, ${row.field}, ${row.previous_value}, ${row.new_value}, ${row.changed_by})`;
   }
   async getManualOverrides(limit: number): Promise<ManualOverrideRow[]> {
+    return this.cache.wrap("getManualOverrides:" + JSON.stringify([limit]), () => this.getManualOverridesCached(limit));
+  }
+  private async getManualOverridesCached(limit: number): Promise<ManualOverrideRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text, entity_type, entity_id, field, previous_value, new_value, changed_by, changed_at::text FROM manual_overrides ORDER BY changed_at DESC LIMIT ${limit}`;
     return rows as unknown as ManualOverrideRow[];
@@ -1310,6 +1424,7 @@ export class PgStore implements Store {
     };
   }
   async saveHarvestProgress(p: HarvestProgressRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`
       INSERT INTO harvest_progress (id, window_start_utc, list_hi_exclusive, list_complete, list_requests, conversations_listed, visits_done, calls_found, messages_scanned, started_at, updated_at, completed_at, last_error)
@@ -1323,6 +1438,7 @@ export class PgStore implements Store {
         completed_at = EXCLUDED.completed_at, last_error = EXCLUDED.last_error`;
   }
   async upsertHarvestConversations(rows: HarvestConvRow[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -1364,6 +1480,7 @@ export class PgStore implements Store {
     }));
   }
   async markHarvestVisited(convIds: string[], callsFoundByConv: Record<string, number>, messagesScannedByConv?: Record<string, number>): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const id of convIds) {
       await this.sql`UPDATE harvest_conversations SET visited = true, visited_at = now(), calls_found = ${callsFoundByConv[id] ?? 0}, messages_scanned = messages_scanned + ${messagesScannedByConv?.[id] ?? 0}, updated_at = now() WHERE conv_id = ${id}`;
@@ -1404,6 +1521,7 @@ export class PgStore implements Store {
     }));
   }
   async upsertHarvestCalls(rows: HarvestCallRow[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
@@ -1451,6 +1569,7 @@ export class PgStore implements Store {
     }));
   }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     for (const r of rows) {
       // FILL-NULL-ONLY (owner rule): an existing non-null contact_id is NEVER

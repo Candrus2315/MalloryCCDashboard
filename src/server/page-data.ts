@@ -465,23 +465,25 @@ function apptsInScope(appts: AppointmentRow[], scope: AppSettings["acuity"]): Ap
 /** TODAY page payload — everything computed via buildTodayMetrics. */
 export async function todayPageData(deps?: PageDeps) {
   const today = deps?.today ?? etToday();
-  const meta: PageMeta = deps?.store
-    ? { mode: "memory", dbReason: null, today, demoSeeded: false }
-    : await loadPageMeta();
+  // PERF: meta (demo-seed guard) + settings + connections are independent of
+  // the main batch — they run inside it instead of sequentially before/after.
+  const metaPromise: Promise<PageMeta> = deps?.store
+    ? Promise.resolve({ mode: "memory", dbReason: null, today, demoSeeded: false })
+    : loadPageMeta();
   const store = deps?.store ?? (await getStore());
 
   const yesterday = addDays(today, -1);
   const ws = weekStart(today);
 
-  const settings = await store.getSettings();
-  const scope = settings.acuity;
   const todayStart = etDayStartUtc(today);
   const todayEnd = etDayEndUtc(today);
   const yesterdayStart = etDayStartUtc(yesterday);
   const weekStartUtc = etDayStartUtc(ws);
 
-  const [callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, slotDayResults] =
+  const [meta, settings, callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, connections, slotDayResults] =
     await Promise.all([
+      metaPromise,
+      store.getSettings(),
       store.getCallsBetween(todayStart, todayEnd),
       store.getCallsBetween(weekStartUtc, todayEnd),
       store.getAllCallsSince(weekStartUtc),
@@ -516,7 +518,12 @@ export async function todayPageData(deps?: PageDeps) {
           ];
         }),
       ),
+      // PERF: one connections read feeds BOTH the banner lines (was two
+      // sequential getConnections() round trips at the end of the builder).
+      store.getConnections(),
     ]);
+
+  const scope = settings.acuity;
 
   // Scope BEFORE any booking computation (owner directive — see apptsInScope).
   // The availability open slots below scope themselves inside computeDayAvailability.
@@ -642,8 +649,8 @@ export async function todayPageData(deps?: PageDeps) {
     settings,
     metrics,
     pendingPayments,
-    connections: serializableConnections(await store.getConnections()),
-    staleWarnings: syncStaleWarnings(await store.getConnections()),
+    connections: serializableConnections(connections),
+    staleWarnings: syncStaleWarnings(connections),
     cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")}`,
   };
 }
@@ -651,23 +658,24 @@ export async function todayPageData(deps?: PageDeps) {
 /** DAILY REPORT page — yesterday's performance + current week progress. */
 export async function dailyReportPageData(deps?: PageDeps) {
   const today = deps?.today ?? etToday();
-  const meta: PageMeta = deps?.store
-    ? { mode: "memory", dbReason: null, today, demoSeeded: false }
-    : await loadPageMeta();
+  // PERF: meta + settings run inside the main batch (were sequential before it).
+  const metaPromise: Promise<PageMeta> = deps?.store
+    ? Promise.resolve({ mode: "memory", dbReason: null, today, demoSeeded: false })
+    : loadPageMeta();
   const store = deps?.store ?? (await getStore());
 
   const yesterday = addDays(today, -1);
   const ws = weekStart(today);
 
-  const settings = await store.getSettings();
-  const scope = settings.acuity;
   const todayStart = etDayStartUtc(today);
   const todayEnd = etDayEndUtc(today);
   const yesterdayStart = etDayStartUtc(yesterday);
   const weekStartUtc = etDayStartUtc(ws);
 
-  const [callsYesterday, apptsYesterday, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
+  const [meta, settings, callsYesterday, apptsYesterday, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
     await Promise.all([
+      metaPromise,
+      store.getSettings(),
       store.getCallsBetween(yesterdayStart, todayStart),
       // REV 12 WIN BUCKET: yesterday/WTD = BOOKING WINS by deposit date
       // (booking_win_business_date); not-yet-derived rows fall back to created.
@@ -682,6 +690,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
       store.getLeadCountAdjustments(dateRange(ws, addDays(ws, 6))),
     ]);
 
+  const scope = settings.acuity;
   // Scope BEFORE any booking computation (owner directive — see apptsInScope).
   const apptsYesterdayScoped = apptsInScope(apptsYesterday, scope);
   const apptsWtdScoped = apptsInScope(apptsWtd, scope);
@@ -761,21 +770,28 @@ export const ACUITY_STALE_AFTER_MS = 30 * 60_000;
  */
 export async function availabilityPageData(deps?: PageDeps) {
   const today = deps?.today ?? etToday();
-  const meta: PageMeta = deps?.store
-    ? { mode: "memory", dbReason: null, today, demoSeeded: false }
-    : await loadPageMeta();
+  // PERF: meta + settings + the rules mirror all independent — one parallel wave.
+  const metaPromise: Promise<PageMeta> = deps?.store
+    ? Promise.resolve({ mode: "memory", dbReason: null, today, demoSeeded: false })
+    : loadPageMeta();
   const store = deps?.store ?? (await getStore());
-  const settings = await store.getSettings();
+
+  const [meta, settings, storedRules] = await Promise.all([
+    metaPromise,
+    store.getSettings(),
+    store.getAvailabilityRules(),
+  ]);
 
   // studio hours: availability_rules is the runtime mirror; fall back to the
   // settings rules when the mirror is empty (fresh store/tests) — never invent
-  const storedRules = await store.getAvailabilityRules();
   const rules = storedRules.length > 0 ? storedRules : settings.studio.hours;
   const recurring = settings.studio.recurring_blocks ?? [];
 
   const dayDates = Array.from({ length: 7 }, (_, off) => addDays(today, off));
-  const days: DayAvailability[] = await Promise.all(
-    dayDates.map(async (date) => {
+  // PERF: the 7 per-day engine runs and the Acuity connection read share one wave.
+  const [days, connections]: [DayAvailability[], Awaited<ReturnType<Store["getConnections"]>>] = await Promise.all([
+    Promise.all(
+      dayDates.map(async (date) => {
       const [appointments, blockedRaw] = await Promise.all([
         store.getAppointmentsOverlapping(etDayStartUtc(date), etDayEndUtc(date)),
         store.getBlockedTimesBetween(etDayStartUtc(date), etDayEndUtc(date)),
@@ -791,9 +807,9 @@ export async function availabilityPageData(deps?: PageDeps) {
         scope: settings.acuity,
       });
     }),
-  );
-
-  const connections = await store.getConnections();
+    ),
+    store.getConnections(),
+  ]);
   const row = connections.find((c) => c.provider === "acuity") ?? null;
   const lastSuccess = row?.last_successful_sync_at ?? null;
   const lastMs = lastSuccess ? Date.parse(lastSuccess) : NaN;

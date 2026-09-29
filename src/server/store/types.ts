@@ -93,6 +93,19 @@ export interface ContactExternalIdRow {
   id: string;
   external_id: string;
 }
+/**
+ * PERF: light contact identity slice — ONLY the columns the Settings page's
+ * unattributed-queue/engine identity resolution consumes (id/phone/email/
+ * assigned_rep_id). Replaces the 18-column × ~116k-row getContacts()
+ * materialization on page paths (~1s remote transfer). Row VALUES are
+ * identical for these fields — no semantics change.
+ */
+export interface ContactIdentityRow {
+  id: string;
+  phone: string | null;
+  email: string | null;
+  assigned_rep_id: string | null;
+}
 /** Raw joined call record for the audit endpoint (source = normalized DB). */
 export interface AuditCallRow {
   /** HighLevel call-message id (the calls table's external_call_id). */
@@ -596,6 +609,8 @@ export interface Store {
    * external ids (targeted linkage lookup for rows just upserted this tick).
    */
   getContactExternalIds(provider: string, only?: string[]): Promise<ContactExternalIdRow[]>;
+  /** PERF: identity slice of every contact (see ContactIdentityRow) — page-path replacement for the full getContacts() read. */
+  getContactIdentityRows(): Promise<ContactIdentityRow[]>;
   /**
    * Call upsert (keyed by provider + external_call_id — duplicates never
    * duplicate rows). provider_rep_external_id preserves the RAW HighLevel
