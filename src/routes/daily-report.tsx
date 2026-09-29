@@ -6,6 +6,7 @@ import { getDailyReportData, saveDailyPriorities } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
 import { formatInt, formatPercent, anchorDayPhrase, bookingsAnchorLabel } from "~/server/metrics/report-text";
 import { InfoTip } from "~/components/InfoTip";
+import { CopyButton } from "~/components/CopyButton";
 
 export const Route = createFileRoute("/daily-report")({
   loader: () => getDailyReportData(),
@@ -19,50 +20,6 @@ function Kpi({ label, value, sub }: { label: string; value: string | number; sub
       <p className="mt-1 text-4xl font-semibold tracking-tight tabular-nums text-(--text-primary)">{value}</p>
       {sub && <p className="kpi-sub mt-1">{sub}</p>}
     </div>
-  );
-}
-
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    // clipboard API unavailable (permissions/HTTP): select-and-copy fallback
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
-
-function CopyButton({ label, text }: { label: string; text: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  return (
-    <button
-      type="button"
-      onClick={async () => {
-        const ok = await copyText(text);
-        setState(ok ? "copied" : "failed");
-        setTimeout(() => setState("idle"), 2500);
-      }}
-      className={
-        "rounded-lg px-4 py-2 text-[13px] font-medium transition-colors " +
-        (state === "copied"
-          ? "bg-(--btn-success) text-white"
-          : "bg-(--accent-solid) text-(--accent-solid-fg) hover:bg-(--accent-hover)")
-      }
-    >
-      {state === "copied" ? "Copied ✓" : state === "failed" ? "Copy failed — select the text below" : label}
-    </button>
   );
 }
 

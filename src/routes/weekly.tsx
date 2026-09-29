@@ -1,9 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getWeeklyData } from "~/server/queries";
+import { getWeeklyData, saveWeeklyReportNotes } from "~/server/queries";
 import { formatDateHuman, formatDateHumanFull, formatDateShort, weekdayName } from "~/server/date-logic";
 import { formatInt, formatPercent } from "~/server/metrics/report-text";
+import { monthKeyLabel, WEEKLY_CC_SECTIONS } from "~/server/metrics/weekly";
 import { WarningList } from "~/components/warnings";
 import { InfoTip } from "~/components/InfoTip";
+import { CopyButton } from "~/components/CopyButton";
+import { useState } from "react";
+import { useRouter } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/weekly")({
   loader: () => getWeeklyData(),
@@ -91,12 +95,71 @@ function RepTable({ rows, unattributed, total, totalLabel }: {
   );
 }
 
+/**
+ * Previous week's Alliance / Auction / Website split (owner CC Report
+ * template). Bookings are computed from Acuity type names; LEADS are not
+ * synced (the dashboard's leads come only from the Family/Animalia sheets) —
+ * shown as an explicit not-synced note, never an invented number. Website
+ * bookings render "—": Acuity has no distinct "Website" booking type.
+ */
+function ChannelTable({ channels }: { channels: { alliance: number; auction: number; website: number | null } }) {
+  const rows = [
+    { name: "Alliance", bookings: formatInt(channels.alliance) },
+    { name: "Auction", bookings: formatInt(channels.auction) },
+    { name: "Website", bookings: channels.website == null ? "—" : formatInt(channels.website) },
+  ];
+  return (
+    <table className="w-full max-w-xl text-[12px]">
+      <thead>
+        <tr className="border-b border-(--card-border) text-left text-xs text-(--text-caption)">
+          <th scope="col" className="py-1.5 pr-2 font-medium">Channel</th>
+          <th scope="col" className="py-1.5 text-right font-medium">Leads</th>
+          <th scope="col" className="py-1.5 text-right font-medium">Paid bookings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.name} className="border-b border-(--table-border-weak)">
+            <td className="py-1.5 pr-2 text-(--text-body)">{r.name}</td>
+            <td className="py-1.5 text-right text-(--text-muted)">not synced</td>
+            <td className="py-1.5 text-right font-medium tabular-nums text-(--text-body)">{r.bookings}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function WeeklyPage() {
   const data = Route.useLoaderData();
+  const router = useRouter();
   const b = data.bookings;
   const c = data.conversion;
   const mtd = data.mtd;
   const cal = data.calendar;
+
+  // CC Report narrative — stored note per section; the Celebrate line prefills
+  // with the computed top performer (still editable like every other section).
+  const [notes, setNotes] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      WEEKLY_CC_SECTIONS.map((s) => [
+        s.key,
+        data.report.notes[s.key] ?? (s.key === "celebrate" ? (data.report.celebrateDefault ?? "") : ""),
+      ]),
+    ),
+  );
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveNotes = async () => {
+    setSaveState("saving");
+    try {
+      await saveWeeklyReportNotes({ data: { weekStart: data.week.start, notes } });
+      setSaveState("saved");
+      await router.invalidate();
+      setTimeout(() => setSaveState("idle"), 2500);
+    } catch {
+      setSaveState("error");
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -205,6 +268,25 @@ function WeeklyPage() {
             </div>
           </div>
         </div>
+
+        {/* previous week — Alliance / Auction / Website (owner CC Report template) */}
+        <div className="card mt-6 max-w-xl">
+          <p className="kpi-label mb-3 flex items-center gap-1.5">
+            Alliance / Auction / Website — previous week
+            <InfoTip
+              label="How the channel split is computed"
+              tip={
+                <>
+                  Bookings: paid wins of the week whose Acuity appointment type contains the channel name (case-insensitive)
+                  — same deposit-paid rule as every other figure. Website shows "—": Acuity has no distinct "Website"
+                  booking type. Leads for these three channels are NOT synced — the dashboard's leads come only from the
+                  Family/Animalia sheets. Connect a source and this card will show them; nothing is invented meanwhile.
+                </>
+              }
+            />
+          </p>
+          <ChannelTable channels={data.channels} />
+        </div>
       </section>
 
       <hr className="border-(--card-border)" />
@@ -254,16 +336,30 @@ function WeeklyPage() {
         </p>
 
         <div className="grid grid-cols-2 gap-x-8 gap-y-6 md:grid-cols-4">
-          <Kpi label="Paid bookings MTD" value={formatInt(mtd.total)} sub={`${data.month.start} – ${data.month.end}`} />
+          {/* MONTHLY GOAL (owner-approved 2026-09-29): "X/Goal (±N)" when a goal
+              is stored for THIS month's exact key; otherwise the honest count
+              and a "—" goal — months never inherit another month's goal. */}
+          <Kpi
+            label="Paid bookings MTD"
+            value={mtd.goal != null ? `${formatInt(mtd.total)}/${formatInt(mtd.goal)}` : formatInt(mtd.total)}
+            sub={`${mtd.goal != null ? `${signedDelta(mtd.total, mtd.goal)} vs goal · ` : ""}${data.month.start} – ${data.month.end}`}
+          />
           <div>
             <p className="kpi-label flex items-center gap-1.5">
               Monthly goal
               <InfoTip
                 label="About the monthly goal"
-                tip="No monthly goal is configured — goals in Settings are weekly. When a monthly goal exists it will render here; none is invented in the meantime."
+                tip={
+                  mtd.goal != null
+                    ? `Stored in Settings → Monthly Booking Goal for ${monthKeyLabel(data.month.key)} (per-month goals never carry over).`
+                    : "No monthly goal is set for this month — add one in Settings → Monthly Booking Goal. Goals are stored per month (current + next), so a month never inherits another month's number."
+                }
               />
             </p>
-            <p className="mt-1 text-4xl font-semibold tracking-tight tabular-nums text-(--text-muted)">—</p>
+            <p className={"mt-1 text-4xl font-semibold tracking-tight tabular-nums " + (mtd.goal != null ? "text-(--text-primary)" : "text-(--text-muted)")}>
+              {mtd.goal != null ? formatInt(mtd.goal) : "—"}
+            </p>
+            {mtd.goal != null && <p className="kpi-sub mt-1">set for {monthKeyLabel(data.month.key)}</p>}
           </div>
           <div>
             <p className="kpi-label">Top performer</p>
@@ -286,6 +382,70 @@ function WeeklyPage() {
         <div className="card mt-6">
           <p className="kpi-label mb-3">By rep — month to date</p>
           <RepTable rows={mtd.repRows} unattributed={mtd.unattributed} total={mtd.total} totalLabel="Team total" />
+        </div>
+      </section>
+
+      <hr className="border-(--card-border)" />
+
+      {/* SECTION 3 — CC REPORT narrative + copy (owner template, 2026-09-29) */}
+      <section>
+        <p className="section-title mb-4 flex items-center gap-1.5">
+          CC Report
+          <InfoTip
+            label="About the CC Report"
+            tip={
+              <>
+                The Monday leadership report, assembled from this page's figures plus your narrative below. Every section
+                is saved per week (the report week above) and audited. "Celebrate / Top Performer" prefills with the
+                computed top performer — edit freely. COPY REPORT puts the full text on your clipboard; placeholder lines
+                (Empty appointments, Holes, 1st Call Completed) stay blank until the owner defines them — no numbers are
+                invented for them.
+              </>
+            }
+          />
+        </p>
+
+        <div className="card max-w-3xl">
+          <div className="space-y-4">
+            {WEEKLY_CC_SECTIONS.map((s) => (
+              <div key={s.key}>
+                <label htmlFor={`cc-${s.key}`} className="kpi-label">
+                  {s.label}
+                  {s.key === "celebrate" && <span className="ml-2 font-normal text-[12px] text-(--text-muted)">auto-filled from the computed top performer — editable</span>}
+                </label>
+                <textarea
+                  id={`cc-${s.key}`}
+                  rows={s.key === "big3" || s.key === "big3_followup" ? 3 : 2}
+                  value={notes[s.key] ?? ""}
+                  onChange={(e) => setNotes({ ...notes, [s.key]: e.target.value })}
+                  placeholder={s.key === "celebrate" ? "e.g. Allison Wittner — 47 paid bookings" : ""}
+                  className="mt-1 w-full rounded-lg border border-(--card-border) bg-(--card-bg) px-3 py-2 text-sm text-(--text-primary) outline-none focus:border-(--input-focus-border)"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={saveNotes}
+              disabled={saveState === "saving"}
+              className="rounded-lg bg-(--accent-solid) px-4 py-2 text-[13px] font-medium text-(--accent-solid-fg) transition-colors hover:bg-(--accent-hover) disabled:opacity-50"
+            >
+              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Save CC Report narrative"}
+            </button>
+            {saveState === "error" && <span className="text-xs text-(--neg-text)">Save failed — try again.</span>}
+            <span className="text-[12px] text-(--text-muted)">Saved per report week · changes are audited · shows in the copied report</span>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <CopyButton label="COPY REPORT" text={data.report.reportText} />
+        </div>
+        <div className="card mt-5">
+          <p className="kpi-label">Report preview — exactly what COPY REPORT puts on your clipboard</p>
+          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-relaxed text-(--text-body)">
+            {data.report.reportText}
+          </pre>
         </div>
       </section>
     </div>

@@ -30,12 +30,14 @@ import type {
   HarvestProgressRow,
   LeadCountAdjustmentRow,
   ManualOverrideRow,
+  MonthlyGoalRow,
   OpportunityRow,
   RepGoalRowFull,
   Store,
   SyncRunRow,
   TeamGoalRow,
   UserRow,
+  WeeklyReportNotesRow,
 } from "./types";
 import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 
@@ -80,6 +82,8 @@ export class MemoryStore implements Store {
   private blocked = new Map<string, BlockedExt>();
   private teamGoals = new Map<string, TeamGoalRow>();
   private repGoals = new Map<string, RepGoalRowFull>();
+  private monthlyGoals = new Map<string, MonthlyGoalRow>();
+  private weeklyReportNotes = new Map<string, WeeklyReportNotesRow>();
   private connections = new Map<string, ConnectionRow>();
   private syncRuns: SyncRunRow[] = [];
   private watermarks = new Map<string, string>();
@@ -142,6 +146,21 @@ export class MemoryStore implements Store {
   }
   async deleteRepGoal(repId: string, weekStart: string): Promise<void> {
     this.repGoals.delete(`${repId}:${weekStart}`);
+  }
+  async upsertMonthlyGoal(row: MonthlyGoalRow): Promise<void> {
+    this.monthlyGoals.set(row.month, { ...row });
+  }
+  async getMonthlyGoal(month: string): Promise<MonthlyGoalRow | null> {
+    return this.monthlyGoals.get(month) ?? null;
+  }
+  async deleteMonthlyGoal(month: string): Promise<void> {
+    this.monthlyGoals.delete(month);
+  }
+  async getWeeklyReportNotes(weekStart: string): Promise<WeeklyReportNotesRow | null> {
+    return this.weeklyReportNotes.get(weekStart) ?? null;
+  }
+  async upsertWeeklyReportNotes(row: WeeklyReportNotesRow): Promise<void> {
+    this.weeklyReportNotes.set(row.week_start, { ...row, notes: { ...row.notes } });
   }
 
   async upsertUsers(rows: UserRow[]): Promise<number> {

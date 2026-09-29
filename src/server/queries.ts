@@ -43,6 +43,7 @@ import type { Store } from "./store/types";
 import { availabilityPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
+import { WEEKLY_CC_SECTIONS, addMonthsKey, monthKeyLabel, monthKeyOf } from "./metrics/weekly";
 import {
   applyAttributionEligibility,
   applyRosterEligibility,
@@ -85,7 +86,7 @@ export const getSettingsData = createServerFn().handler(async () => {
   const editorWeeks = Array.from({ length: 9 }, (_, i) => addDays(weekStart(today), 7 * (i - 2)));
   const week = dateRange(ws, addDays(ws, 6));
 
-  const [meta, settings, teamGoals, connections, runs, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow, allUsers] =
+  const [meta, settings, teamGoals, connections, runs, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow, allUsers, monthlyGoalCurrent, monthlyGoalNext] =
     await Promise.all([
       metaPromise,
       settingsPromise,
@@ -108,6 +109,10 @@ export const getSettingsData = createServerFn().handler(async () => {
       // ALL users (roster + non-roster) — the Roster Mapping panel lists the
       // non-roster HighLevel users actually seen in calls.
       store.getAllUsers(),
+      // MONTHLY BOOKING GOAL editor rows: THIS month + next, exact 'YYYY-MM'
+      // keys — a month never inherits another month's goal.
+      store.getMonthlyGoal(monthKeyOf(today)),
+      store.getMonthlyGoal(addMonthsKey(monthKeyOf(today), 1)),
     ]);
 
   const repGoalsByWeek: Record<string, { rep_id: string; goal: number }[]> = {};
@@ -184,6 +189,12 @@ export const getSettingsData = createServerFn().handler(async () => {
     passphraseConfigured: isPassphraseConfigured(),
     weekStart: ws,
     today,
+    monthlyGoals: [monthlyGoalCurrent, monthlyGoalNext].map((row, i) => ({
+      month: addMonthsKey(monthKeyOf(today), i),
+      label: monthKeyLabel(addMonthsKey(monthKeyOf(today), i)),
+      isCurrent: i === 0,
+      goal: row?.goal ?? null,
+    })),
     editorWeeks: editorWeeks.map((w) => ({
       weekStart: w,
       isCurrent: w === ws,
@@ -464,6 +475,85 @@ export const saveRepGoals = createServerFn({ method: "POST" })
         new_value: a.next,
         changed_by: "christopher",
       });
+    }
+    return { ok: true };
+  });
+
+/**
+ * Per-MONTH booking goals (owner-approved 2026-09-29). goal <= 0 (or null) =
+ * unset → the row is deleted so the month honestly renders "—" (months never
+ * inherit: October does not fall back to September's goal). Audit row per
+ * changed month, saveWeekGoal convention.
+ */
+export const saveMonthlyGoals = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { goals: { month: string; goal: number | null }[] })
+  .handler(async ({ data }) => {
+    const store = await getStore();
+    const audits: { entityId: string; previous: string; next: string }[] = [];
+    for (const g of data.goals ?? []) {
+      const month = String(g.month);
+      const goal = g.goal == null ? 0 : Math.floor(Number(g.goal));
+      if (!/^\d{4}-\d{2}$/.test(month)) continue; // never write a malformed month key
+      const prev = await store.getMonthlyGoal(month);
+      const prevGoal = prev?.goal ?? null;
+      if (goal > 0) {
+        if (prevGoal !== goal) {
+          await store.upsertMonthlyGoal({ month, goal });
+          audits.push({ entityId: month, previous: prevGoal != null ? String(prevGoal) : "unset", next: String(goal) });
+        }
+      } else if (prev) {
+        await store.deleteMonthlyGoal(month);
+        audits.push({ entityId: month, previous: String(prevGoal), next: "unset" });
+      }
+    }
+    for (const a of audits) {
+      await store.insertManualOverride({
+        entity_type: "monthly_goal",
+        entity_id: a.entityId,
+        field: "monthly_booking_goal",
+        previous_value: a.previous,
+        new_value: a.next,
+        changed_by: "christopher",
+      });
+    }
+    return { ok: true, changed: audits.length };
+  });
+
+/**
+ * Save the CC Report narrative for ONE report week (week_start Monday key) —
+ * the Big-3 save pattern at week grain: trim, empty → unset (row field
+ * removed), audit row per CHANGED section. Section keys are the stable
+ * WEEKLY_CC_SECTIONS ids; unknown keys are ignored so a stale client cannot
+ * inject arbitrary jsonb fields.
+ */
+export const saveWeeklyReportNotes = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { weekStart: string; notes: Record<string, string | null> })
+  .handler(async ({ data }) => {
+    const store = await getStore();
+    const weekStart = String(data.weekStart);
+    const knownKeys = new Set(WEEKLY_CC_SECTIONS.map((s) => s.key));
+    const clean: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data.notes ?? {})) {
+      if (!knownKeys.has(key)) continue;
+      const text = (value ?? "").trim();
+      if (text) clean[key] = text;
+    }
+    const prevRow = await store.getWeeklyReportNotes(weekStart);
+    const prev = prevRow?.notes ?? {};
+    await store.upsertWeeklyReportNotes({ week_start: weekStart, notes: clean });
+    for (const section of WEEKLY_CC_SECTIONS) {
+      const before = prev[section.key] ?? "";
+      const after = clean[section.key] ?? "";
+      if (before !== after) {
+        await store.insertManualOverride({
+          entity_type: "weekly_report_notes",
+          entity_id: weekStart,
+          field: section.key,
+          previous_value: before,
+          new_value: after,
+          changed_by: "christopher",
+        });
+      }
     }
     return { ok: true };
   });
