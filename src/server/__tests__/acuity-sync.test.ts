@@ -320,7 +320,9 @@ describe("availabilityTick", () => {
 // ---------- composed scheduler tick ----------
 
 describe("schedulerTick composition", () => {
-  test("availability refresh rides the same tick; its failure never fails the HighLevel outcome", async () => {
+  // timeout: full-tick test with real timers — can exceed bun's 5s default when
+  // the whole suite runs in parallel (load flake; passes in isolation). 15s tolerates it.
+  test("availability refresh rides the same tick; its failure never fails the HighLevel outcome", { timeout: 15_000 }, async () => {
     const store = new MemoryStore();
     const res = await schedulerTick({
       store,
