@@ -874,6 +874,42 @@ export class PgStore implements Store {
     }
     return rows.length;
   }
+  /** Mirror of MemoryStore: drop the demo generator's Acuity rows — appointments
+   * with acuity_appointment_id prefixed "demo-" and demo blocked rows (provider
+   * acuity). Manual and recurring blocks stay. Idempotent. */
+  async deleteDemoAcuityRows(): Promise<{ appointments: number; blocked: number }> {
+    const a = await this.sql`DELETE FROM appointments WHERE acuity_appointment_id LIKE 'demo-%' RETURNING id`;
+    const b = await this.sql`DELETE FROM blocked_times WHERE provider = 'acuity' AND external_id LIKE 'demo-%' RETURNING id`;
+    return { appointments: a.length, blocked: b.length };
+  }
+
+  /** Mirror of MemoryStore: demo rows are GHL rows whose external ids are prefixed
+   * "demo-". References (appointments/leads/opportunities/contacts/rep_goals) are
+   * nulled BEFORE the demo rows go so FK constraints hold and history survives;
+   * attribution rows keep history with just the call link nulled. Idempotent. */
+  async deleteDemoHighLevelRows(): Promise<{ users: number; contacts: number; calls: number }> {
+    await this.sql`UPDATE booking_attributions SET call_id = NULL
+      WHERE call_id IN (SELECT id FROM calls WHERE provider = 'highlevel' AND external_call_id LIKE 'demo-%')`;
+    const calls = await this.sql`DELETE FROM calls WHERE provider = 'highlevel' AND external_call_id LIKE 'demo-%' RETURNING id`;
+    await this.sql`UPDATE appointments SET contact_id = NULL
+      WHERE contact_id IN (SELECT id FROM contacts WHERE provider = 'highlevel' AND external_id LIKE 'demo-%')`;
+    await this.sql`UPDATE leads SET contact_id = NULL
+      WHERE contact_id IN (SELECT id FROM contacts WHERE provider = 'highlevel' AND external_id LIKE 'demo-%')`;
+    await this.sql`UPDATE leads SET assigned_rep_id = NULL
+      WHERE assigned_rep_id IN (SELECT id FROM users WHERE provider = 'highlevel' AND external_id LIKE 'demo-%')`;
+    await this.sql`UPDATE opportunities SET contact_id = NULL
+      WHERE contact_id IN (SELECT id FROM contacts WHERE provider = 'highlevel' AND external_id LIKE 'demo-%')`;
+    await this.sql`UPDATE opportunities SET rep_id = NULL
+      WHERE rep_id IN (SELECT id FROM users WHERE provider = 'highlevel' AND external_id LIKE 'demo-%')`;
+    await this.sql`UPDATE contacts SET assigned_rep_id = NULL
+      WHERE assigned_rep_id IN (SELECT id FROM users WHERE provider = 'highlevel' AND external_id LIKE 'demo-%')`;
+    await this.sql`DELETE FROM rep_goals
+      WHERE rep_id IN (SELECT id FROM users WHERE provider = 'highlevel' AND external_id LIKE 'demo-%')`;
+    const contacts = await this.sql`DELETE FROM contacts WHERE provider = 'highlevel' AND external_id LIKE 'demo-%' RETURNING id`;
+    const users = await this.sql`DELETE FROM users WHERE provider = 'highlevel' AND external_id LIKE 'demo-%' RETURNING id`;
+    return { users: users.length, contacts: contacts.length, calls: calls.length };
+  }
+
   async getOpportunities(): Promise<OpportunityRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text, provider, external_id, name, status, monetary_value, contact_id::text, rep_id::text, pipeline_id, stage_id, source_created_at::text, source_updated_at::text FROM opportunities`;
