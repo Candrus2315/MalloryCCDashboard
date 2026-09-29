@@ -938,6 +938,39 @@ export class PgStore implements Store {
       source_updated_at: r.source_updated_at === null ? null : String(r.source_updated_at),
     };
   }
+  // RESTORED 9/29 (PR #18 follow-up): PR #17's refactor dropped PgStore's only
+  // appointments writer — every Acuity sync then crashed at
+  // "store.upsertAppointments is not a function" once the demo-purge hotfix
+  // unblocked it. Recovered verbatim from pre-#17 main (e2f3412).
+  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null; payment_state?: string | null; booking_win_business_date?: string | null; payment_business_date_source?: string | null; first_seen_paid_at?: string | null })[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    for (const r of rows) {
+      await this.sql`
+        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email)
+        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.payment_state ?? null}, ${r.booking_win_business_date ?? null}, ${r.payment_business_date_source ?? null}, ${r.first_seen_paid_at ?? null}, ${r.raw ?? null}, ${r.status}, ${r.cancelled}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
+        ON CONFLICT (acuity_appointment_id) DO UPDATE SET
+          contact_id = EXCLUDED.contact_id, calendar_id = EXCLUDED.calendar_id, calendar_name = EXCLUDED.calendar_name,
+          appointment_type = EXCLUDED.appointment_type, appointment_datetime = EXCLUDED.appointment_datetime,
+          duration_minutes = EXCLUDED.duration_minutes, created_at = EXCLUDED.created_at,
+          created_business_date = EXCLUDED.created_business_date, created_time_source = EXCLUDED.created_time_source,
+          created_time_precision = EXCLUDED.created_time_precision,
+          -- BOOKING WIN (rev 12): payment state always follows the latest raw
+          -- derivation; the WIN evidence (win date, provenance, first-seen
+          -- stamp) is WRITE-ONCE — an existing non-null value is never
+          -- overwritten, so an appointment never counts twice and its win date
+          -- never moves after the fact.
+          payment_state = EXCLUDED.payment_state,
+          booking_win_business_date = COALESCE(appointments.booking_win_business_date, EXCLUDED.booking_win_business_date),
+          payment_business_date_source = COALESCE(appointments.payment_business_date_source, EXCLUDED.payment_business_date_source),
+          first_seen_paid_at = COALESCE(appointments.first_seen_paid_at, EXCLUDED.first_seen_paid_at),
+          raw = EXCLUDED.raw,
+          status = EXCLUDED.status, cancelled = EXCLUDED.cancelled,
+          client_name = EXCLUDED.client_name, client_phone = EXCLUDED.client_phone, client_email = EXCLUDED.client_email, updated_at = now()
+      `;
+    }
+    return rows.length;
+  }
   private apptRow(r: Record<string, unknown>): AppointmentRow {
     return {
       id: String(r.id),
