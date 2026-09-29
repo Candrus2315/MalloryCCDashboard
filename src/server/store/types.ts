@@ -655,6 +655,8 @@ export interface Store {
   getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]>;
   upsertOpportunities(rows: OpportunityRow[]): Promise<number>;
   getOpportunities(): Promise<OpportunityRow[]>;
+  /** Opportunities on specific GHL pipelines (Alliance/Auction lead counts). */
+  getOpportunitiesByPipelines(pipelineIds: string[]): Promise<OpportunityRow[]>;
   /**
    * Remove rows the demo generator seeded for the HighLevel provider
    * (external ids prefixed "demo-"), FK-safe: nulls attribution call links

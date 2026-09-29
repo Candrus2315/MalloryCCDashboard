@@ -822,13 +822,23 @@ export class PgStore implements Store {
     }));
   }
 
+  /**
+   * BATCHED upsert (pool discipline, 2026-09-29): the full opportunity
+   * snapshot is ~10k rows — one statement per row floods the pg pool with
+   * sequential round-trips (the 9/29 500s were pool exhaustion). Rows go up in
+   * 500-row multi-VALUES INSERT ... ON CONFLICT statements (5.5k params per
+   * statement, far under PG's param ceiling); each chunk is one round-trip on
+   * one pooled connection.
+   */
   async upsertOpportunities(rows: OpportunityRow[]): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
-    for (const r of rows) {
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK);
       await this.sql`
         INSERT INTO opportunities (provider, external_id, name, status, monetary_value, contact_id, rep_id, pipeline_id, stage_id, source_created_at, source_updated_at)
-        VALUES (${r.provider}, ${r.external_id}, ${r.name}, ${r.status}, ${r.monetary_value}, ${r.contact_id}, ${r.rep_id}, ${r.pipeline_id}, ${r.stage_id}, ${r.source_created_at}, ${r.source_updated_at})
+        VALUES ${this.sql(chunk, "provider", "external_id", "name", "status", "monetary_value", "contact_id", "rep_id", "pipeline_id", "stage_id", "source_created_at", "source_updated_at")}
         ON CONFLICT (provider, external_id) DO UPDATE SET
           name = EXCLUDED.name, status = EXCLUDED.status, monetary_value = EXCLUDED.monetary_value,
           contact_id = EXCLUDED.contact_id, rep_id = EXCLUDED.rep_id,
@@ -841,7 +851,17 @@ export class PgStore implements Store {
   async getOpportunities(): Promise<OpportunityRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text, provider, external_id, name, status, monetary_value, contact_id::text, rep_id::text, pipeline_id, stage_id, source_created_at::text, source_updated_at::text FROM opportunities`;
-    return rows.map((r) => ({
+    return rows.map((r) => this.opportunityRow(r));
+  }
+  /** Opportunities on specific GHL pipelines (Alliance/Auction lead counts — no full-table scan on page loads). */
+  async getOpportunitiesByPipelines(pipelineIds: string[]): Promise<OpportunityRow[]> {
+    if (pipelineIds.length === 0) return [];
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text, provider, external_id, name, status, monetary_value, contact_id::text, rep_id::text, pipeline_id, stage_id, source_created_at::text, source_updated_at::text FROM opportunities WHERE pipeline_id IN ${this.sql(pipelineIds)}`;
+    return rows.map((r) => this.opportunityRow(r));
+  }
+  private opportunityRow(r: Record<string, unknown>): OpportunityRow {
+    return {
       id: String(r.id),
       provider: String(r.provider),
       external_id: String(r.external_id),
@@ -854,100 +874,7 @@ export class PgStore implements Store {
       stage_id: r.stage_id === null ? null : String(r.stage_id),
       source_created_at: r.source_created_at === null ? null : String(r.source_created_at),
       source_updated_at: r.source_updated_at === null ? null : String(r.source_updated_at),
-    }));
-  }
-
-  /**
-   * Replace demo HighLevel content with live data: rows the demo generator
-   * seeded all carry external ids prefixed "demo-". FK-safe ordered cleanup —
-   * null out references first (attributions, appointments, leads, contacts,
-   * rep_goals), then delete calls → contacts → users. Idempotent.
-   */
-  async deleteDemoHighLevelRows(): Promise<{
-    users: number; contacts: number; calls: number }> {
-    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
-    await this.ensureSchema();
-    // Shared predicates (subqueries keep every statement consistent + idempotent)
-    const demoUsers = this.sql`SELECT id FROM users WHERE provider = 'highlevel' AND external_id LIKE 'demo-%'`;
-    const demoContacts = this.sql`SELECT id FROM contacts WHERE provider = 'highlevel' AND external_id LIKE 'demo-%'`;
-    const demoCalls = this.sql`SELECT id FROM calls WHERE provider = 'highlevel' AND external_call_id LIKE 'demo-%'`;
-    const [{ n: calls }] = await this.sql`
-      WITH cleared AS (
-        UPDATE booking_attributions SET call_id = NULL
-        WHERE call_id IN (${demoCalls}) RETURNING 1
-      ), deleted AS (
-        DELETE FROM calls WHERE id IN (${demoCalls}) RETURNING 1
-      )
-      SELECT (SELECT count(*) FROM deleted) AS n`;
-    const [{ n: contacts }] = await this.sql`
-      WITH nulled_appts AS (
-        UPDATE appointments SET contact_id = NULL WHERE contact_id IN (${demoContacts}) RETURNING 1
-      ), nulled_leads AS (
-        UPDATE leads SET contact_id = NULL WHERE contact_id IN (${demoContacts}) RETURNING 1
-      ), nulled_opps AS (
-        UPDATE opportunities SET contact_id = NULL WHERE contact_id IN (${demoContacts}) RETURNING 1
-      ), nulled_reps AS (
-        UPDATE contacts SET assigned_rep_id = NULL WHERE assigned_rep_id IN (${demoUsers}) RETURNING 1
-      ), deleted AS (
-        DELETE FROM contacts WHERE id IN (${demoContacts}) RETURNING 1
-      )
-      SELECT (SELECT count(*) FROM deleted) AS n`;
-    const [{ n: users }] = await this.sql`
-      WITH nulled_leads AS (
-        UPDATE leads SET assigned_rep_id = NULL WHERE assigned_rep_id IN (${demoUsers}) RETURNING 1
-      ), nulled_opps AS (
-        UPDATE opportunities SET rep_id = NULL WHERE rep_id IN (${demoUsers}) RETURNING 1
-      ), deleted_goals AS (
-        DELETE FROM rep_goals WHERE rep_id IN (${demoUsers}) RETURNING 1
-      ), deleted AS (
-        DELETE FROM users WHERE id IN (${demoUsers}) RETURNING 1
-      )
-      SELECT (SELECT count(*) FROM deleted) AS n`;
-    return { users: Number(users), contacts: Number(contacts), calls: Number(calls) };
-  }
-  async deleteDemoAcuityRows(): Promise<{
-    appointments: number; blocked: number }> {
-    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
-    await this.ensureSchema();
-    // Demo Acuity rows: appointment ids prefixed "demo-" + demo blocked-time
-    // rows (provider acuity). Manual blocks (provider 'manual') and recurring
-    // blocks (settings) are untouched. FK: attributions cascade with their
-    // appointment. Idempotent.
-    const [{ n: appointments }] = await this.sql`SELECT count(*)::int AS n FROM appointments WHERE acuity_appointment_id LIKE 'demo-%'`;
-    await this.sql`DELETE FROM appointments WHERE acuity_appointment_id LIKE 'demo-%'`;
-    const [{ n: blocked }] = await this.sql`SELECT count(*)::int AS n FROM blocked_times WHERE provider = 'acuity' AND external_id LIKE 'demo-%'`;
-    await this.sql`DELETE FROM blocked_times WHERE provider = 'acuity' AND external_id LIKE 'demo-%'`;
-    return { appointments: Number(appointments), blocked: Number(blocked) };
-  }
-
-  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null; payment_state?: string | null; booking_win_business_date?: string | null; payment_business_date_source?: string | null; first_seen_paid_at?: string | null })[]): Promise<number> {
-    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
-    await this.ensureSchema();
-    for (const r of rows) {
-      await this.sql`
-        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email)
-        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.payment_state ?? null}, ${r.booking_win_business_date ?? null}, ${r.payment_business_date_source ?? null}, ${r.first_seen_paid_at ?? null}, ${r.raw ?? null}, ${r.status}, ${r.cancelled}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
-        ON CONFLICT (acuity_appointment_id) DO UPDATE SET
-          contact_id = EXCLUDED.contact_id, calendar_id = EXCLUDED.calendar_id, calendar_name = EXCLUDED.calendar_name,
-          appointment_type = EXCLUDED.appointment_type, appointment_datetime = EXCLUDED.appointment_datetime,
-          duration_minutes = EXCLUDED.duration_minutes, created_at = EXCLUDED.created_at,
-          created_business_date = EXCLUDED.created_business_date, created_time_source = EXCLUDED.created_time_source,
-          created_time_precision = EXCLUDED.created_time_precision,
-          -- BOOKING WIN (rev 12): payment state always follows the latest raw
-          -- derivation; the WIN evidence (win date, provenance, first-seen
-          -- stamp) is WRITE-ONCE — an existing non-null value is never
-          -- overwritten, so an appointment never counts twice and its win date
-          -- never moves after the fact.
-          payment_state = EXCLUDED.payment_state,
-          booking_win_business_date = COALESCE(appointments.booking_win_business_date, EXCLUDED.booking_win_business_date),
-          payment_business_date_source = COALESCE(appointments.payment_business_date_source, EXCLUDED.payment_business_date_source),
-          first_seen_paid_at = COALESCE(appointments.first_seen_paid_at, EXCLUDED.first_seen_paid_at),
-          raw = EXCLUDED.raw,
-          status = EXCLUDED.status, cancelled = EXCLUDED.cancelled,
-          client_name = EXCLUDED.client_name, client_phone = EXCLUDED.client_phone, client_email = EXCLUDED.client_email, updated_at = now()
-      `;
-    }
-    return rows.length;
+    };
   }
   private apptRow(r: Record<string, unknown>): AppointmentRow {
     return {

@@ -11,9 +11,10 @@
  *   the narrative sections (editable, persisted per week).
  *
  * HONESTY RULES (SPEC: never invent data):
- *  - Alliance/Auction/Website LEADS are NOT synced (the leads table holds only
- *    the Family/Animalia sheets) → rendered as "not synced", never a number.
- *  - "Website" is not a distinct Acuity booking type → its bookings render "—".
+ *  - Alliance/Auction LEADS are synced from GHL opportunities (owner-verified
+ *    2026-09-29: the channels' pipelines) → real counts, ET created-date week.
+ *  - "Website" has no synced lead source and is not a distinct Acuity booking
+ *    type → its leads and bookings render "—", never a number.
  *  - Empty appointments / Holes / 1st Call Completed are not yet defined against
  *    our data → blank fields the owner fills until the owner defines them.
  *  - A missing monthly goal renders "—" (never September's goal in October).
@@ -24,7 +25,14 @@ import { formatDateHumanFull } from "../date-logic";
 import { formatInt, formatPercent } from "./report-text";
 import { goalVsActual, monthKeyLabel, WEEKLY_CC_SECTIONS } from "./weekly";
 
-const NOT_SYNCED = "not synced";
+const NO_SOURCE = "—";
+
+/** Leads + bookings of one channel; website leads/bookings have no synced source (null → "—"). */
+export interface ChannelSplitLine {
+  alliance: number;
+  auction: number;
+  website: number | null;
+}
 
 export interface WeeklyCcReportInput {
   /** The report week (Monday..Sunday). */
@@ -33,8 +41,10 @@ export interface WeeklyCcReportInput {
   monthKey: string;
   bookingsWeek: { total: number; goal: number | null };
   bookingsMonth: { total: number; goal: number | null };
-  /** Alliance/Auction counted from Acuity types; website always null (no such Acuity type). */
-  channels: { alliance: number; auction: number; website: number | null };
+  /** Alliance/Auction BOOKINGS counted from Acuity types; website always null (no such Acuity type). */
+  channels: ChannelSplitLine;
+  /** Alliance/Auction LEADS from GHL opportunities (ET created-date week); website null (no synced source). */
+  channelLeads: ChannelSplitLine;
   leads: { family: number; animalia: number; total: number };
   conversion: { overall: number | null; family: number | null; animalia: number | null };
   /**
@@ -82,9 +92,9 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   lines.push(`Bookings (Week): ${goalVsActual(input.bookingsWeek.total, input.bookingsWeek.goal)}`);
   lines.push(`Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.bookingsMonth.total, input.bookingsMonth.goal)}`);
   lines.push("");
-  lines.push(`Alliance — Leads: ${NOT_SYNCED} · Bookings: ${formatInt(input.channels.alliance)}`);
-  lines.push(`Auction — Leads: ${NOT_SYNCED} · Bookings: ${formatInt(input.channels.auction)}`);
-  lines.push(`Website — Leads: ${NOT_SYNCED} · Bookings: ${input.channels.website == null ? "—" : formatInt(input.channels.website)}`);
+  lines.push(`Alliance — Leads: ${formatInt(input.channelLeads.alliance)} · Bookings: ${formatInt(input.channels.alliance)}`);
+  lines.push(`Auction — Leads: ${formatInt(input.channelLeads.auction)} · Bookings: ${formatInt(input.channels.auction)}`);
+  lines.push(`Website — Leads: ${input.channelLeads.website == null ? NO_SOURCE : formatInt(input.channelLeads.website)} · Bookings: ${input.channels.website == null ? NO_SOURCE : formatInt(input.channels.website)}`);
   lines.push("");
   lines.push("Leads (week — synced Family/Animalia sheets):");
   lines.push(`Family: ${formatInt(input.leads.family)}`);
