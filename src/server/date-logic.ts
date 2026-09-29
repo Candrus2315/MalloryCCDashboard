@@ -176,6 +176,40 @@ export function daysLeftInWorkWeek(reportDate: string): number {
   return wd >= 1 && wd <= 5 ? 6 - wd : 0; // Mon(1)=5 … Fri(5)=1; weekend=0
 }
 
+/**
+ * ET wall-clock cutoff for the DAILY PACE figures (owner-ratified 2026-09-29):
+ * at/after 18:30 America/New_York the working day is over for pace purposes —
+ * today no longer counts as a remaining working day.
+ */
+export const PACE_DAY_CUTOFF_ET_MINUTES = 18 * 60 + 30; // 18:30 ET
+
+/** Current America/New_York wall-clock as minutes since midnight (0–1439). */
+export function etNowMinutes(now: Date = new Date()): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(now);
+  const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0") % 24;
+  const m = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return h * 60 + m;
+}
+
+/**
+ * PACE-ONLY sibling of daysLeftInWorkWeek (owner-ratified rule): today counts
+ * as a remaining working day ONLY before 18:30 America/New_York; at/after the
+ * cutoff it is worked out and excluded (Mon 18:29 → 5, Mon 18:30 → 4,
+ * Fri 18:29 → 1, Fri 18:30 → 0). Weekend behavior unchanged (0 — pace resumes
+ * Monday); never negative. daysLeftInWorkWeek keeps the always-count-today
+ * semantics for non-pace callers.
+ */
+export function daysLeftInWorkWeekAt(date: string, etMinutes: number): number {
+  const base = daysLeftInWorkWeek(date);
+  if (base === 0) return 0; // weekend — unchanged
+  return etMinutes >= PACE_DAY_CUTOFF_ET_MINUTES ? base - 1 : base;
+}
+
 /** True when the date is a working day (Mon–Fri). */
 export function isWorkday(dateStr: string): boolean {
   const wd = weekday(dateStr);

@@ -18,6 +18,7 @@ import {
   etDayEndUtc,
   etDayStartUtc,
   etRangeBounds,
+  etNowMinutes,
   etToday,
   formatDateHuman,
   formatDateHumanFull,
@@ -343,6 +344,8 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
       today,
       thresholdSeconds,
       activeRepIds: eligibility.activeIds,
+      // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET.
+      etNowMinutes: etNowMinutes(),
     });
 
     const trends = buildTeamTrends({
@@ -616,6 +619,8 @@ export async function todayPageData(deps?: PageDeps) {
     openSlotsByDay,
     reps: todayReps,
     repGoals: resolvedRepGoals,
+    // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET.
+    etNowMinutes: etNowMinutes(),
   });
 
   // PENDING PAYMENTS drill-down (owner directive, rev 12): unpaid bookings
@@ -724,6 +729,8 @@ export async function dailyReportPageData(deps?: PageDeps) {
     teamBookingGoal: teamGoal?.booking_goal ?? 79,
     weeklyLeadBudget: teamGoal?.lead_budget ?? 700,
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
+    // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET.
+    etNowMinutes: etNowMinutes(),
   });
   const saved = priorities ?? { date: today, priority1: null, priority2: null, priority3: null, updated_at: null };
   // Missing-data warnings — never render a plausible number for absent data.

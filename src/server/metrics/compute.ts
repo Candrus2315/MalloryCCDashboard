@@ -19,7 +19,9 @@
  *    attribution window (enforced by the attribution engine at sync time;
  *    re-checked here against the configured threshold).
  *  - Daily Pace Needed = remaining bookings this week ÷ days left in week
- *    (Mon–Sun week, counting today).
+ *    (Mon–Sun week; OWNER 18:30 RULE: the pace paths count today as a
+ *    remaining working day only before 18:30 America/New_York — see
+ *    daysLeftInWorkWeekAt).
  *  - Weekly leads counted by work_date (the operational week Mon..Sun).
  */
 
@@ -27,6 +29,8 @@ import {
   addDays,
   dateRange,
   daysLeftInWorkWeek,
+  daysLeftInWorkWeekAt,
+  PACE_DAY_CUTOFF_ET_MINUTES,
   workingDaysBetween,
   etToday,
   formatDateHuman,
@@ -545,8 +549,17 @@ export function leadsRemaining(weekLeads: number, weeklyBudget: number): number 
   return Math.max(0, weeklyBudget - weekLeads);
 }
 
-export function dailyLeadsNeeded(weekLeads: number, weeklyBudget: number, reportDate: string): number {
-  return paceNeeded(leadsRemaining(weekLeads, weeklyBudget), daysLeftInWorkWeek(reportDate));
+export function dailyLeadsNeeded(
+  weekLeads: number,
+  weeklyBudget: number,
+  reportDate: string,
+  etNowMinutes?: number,
+): number {
+  // OWNER 18:30 RULE (pace path only): when the caller threads the live ET
+  // time, today stops counting as a remaining working day at/after 18:30 ET.
+  const daysLeft =
+    etNowMinutes == null ? daysLeftInWorkWeek(reportDate) : daysLeftInWorkWeekAt(reportDate, etNowMinutes);
+  return paceNeeded(leadsRemaining(weekLeads, weeklyBudget), daysLeft);
 }
 
 /** Assigned leads per rep: leads (work_date in range) whose assigned rep matches. */
@@ -662,6 +675,13 @@ export function buildTodayMetrics(input: {
   openSlotsByDay: { date: string; slots: string[] }[];
   reps: Rep[];
   repGoals: RepGoalRow[];
+  /**
+   * OWNER 18:30 RULE (pace figures only): live America/New_York minutes since
+   * midnight. When provided, the DAILY PACE days-left counts today as a
+   * remaining working day only before 18:30 ET. Omitted (tests/legacy callers)
+   * → daysLeftInWorkWeek semantics (today always counts).
+   */
+  etNowMinutes?: number;
 }): TodayMetrics {
   const reportDate = input.reportDate ?? etToday();
   const ws = weekStart(reportDate);
@@ -693,7 +713,12 @@ export function buildTodayMetrics(input: {
   );
 
   const remaining = Math.max(0, input.teamBookingGoal - bookingsWtd);
-  const dLeft = daysLeftInWorkWeek(reportDate); // working days only — agents work Mon–Fri
+  // PACE days-left (owner 18:30 rule): pace figures only — every other use of
+  // the report date keeps daysLeftInWorkWeek semantics.
+  const dLeft =
+    input.etNowMinutes == null
+      ? daysLeftInWorkWeek(reportDate) // working days only — agents work Mon–Fri
+      : daysLeftInWorkWeekAt(reportDate, input.etNowMinutes);
 
   const repRows = buildRepPerformanceRows({
     reps: input.reps,
@@ -735,7 +760,7 @@ export function buildTodayMetrics(input: {
       weeklyBudget: input.weeklyLeadBudget,
       percentUsed: leadBudgetUsage(weeklyLeads.total, input.weeklyLeadBudget),
       remaining: leadsRemaining(weeklyLeads.total, input.weeklyLeadBudget),
-      dailyNeeded: dailyLeadsNeeded(weeklyLeads.total, input.weeklyLeadBudget, reportDate),
+      dailyNeeded: dailyLeadsNeeded(weeklyLeads.total, input.weeklyLeadBudget, reportDate, input.etNowMinutes),
     },
     openSlotsByDay: input.openSlotsByDay,
     repRows,
@@ -1070,11 +1095,26 @@ export function resolveTeamGoal(input: {
  * this matches the Today page's daysLeftInWorkWeek — same semantics, extra
  * working days only when a custom range extends past the current week.
  */
-export function paceDaysLeftForRange(input: { rangeEnd: string; lastWeekStart: string; today: string }): number {
+export function paceDaysLeftForRange(input: {
+  rangeEnd: string;
+  lastWeekStart: string;
+  today: string;
+  /** OWNER 18:30 RULE (pace only): live ET minutes — today stops counting at/after 18:30. */
+  etNowMinutes?: number;
+}): number {
   if (input.rangeEnd < input.today) return 0; // range fully elapsed — no pace needed
   const horizon = addDays(input.lastWeekStart, 4); // Friday of the last covered week
   if (horizon < input.today) return 0;
-  return workingDaysBetween(input.today, horizon);
+  // At/after 18:30 ET on a working day, today is worked out for pace purposes —
+  // count from tomorrow (same sibling semantics as daysLeftInWorkWeekAt).
+  const from =
+    input.etNowMinutes != null &&
+    input.etNowMinutes >= PACE_DAY_CUTOFF_ET_MINUTES &&
+    daysLeftInWorkWeek(input.today) > 0
+      ? addDays(input.today, 1)
+      : input.today;
+  if (from > horizon) return 0;
+  return workingDaysBetween(from, horizon);
 }
 
 export interface TeamRangeMetrics {
@@ -1123,6 +1163,8 @@ export function buildTeamRangeMetrics(input: {
    * only the CC team).
    */
   activeRepIds?: Set<string>;
+  /** OWNER 18:30 RULE (pace figures only) — see daysLeftInWorkWeekAt. */
+  etNowMinutes?: number;
 }): TeamRangeMetrics {
   const cs = summarizeCalls(input.calls, input.thresholdSeconds);
   const totalBookings = countBookingsCreatedBetween(input.appts, "", "9999");
@@ -1144,6 +1186,7 @@ export function buildTeamRangeMetrics(input: {
     rangeEnd: input.workEnd,
     lastWeekStart: input.weeks[input.weeks.length - 1],
     today: input.today,
+    etNowMinutes: input.etNowMinutes,
   });
   const horizon = addDays(input.weeks[input.weeks.length - 1], 4); // Friday of the last covered week
   const paceNote =
@@ -1804,6 +1847,8 @@ export function buildDailyReportMetrics(input: {
   teamBookingGoal: number;
   weeklyLeadBudget: number;
   thresholdSeconds: number;
+  /** OWNER 18:30 RULE (pace figures only) — see daysLeftInWorkWeekAt. */
+  etNowMinutes?: number;
 }): DailyReportMetrics {
   const reportDate = input.reportDate;
   const ws = weekStart(reportDate);
@@ -1832,7 +1877,11 @@ export function buildDailyReportMetrics(input: {
   );
 
   const bookingsLeft = Math.max(0, input.teamBookingGoal - bookingsWtd);
-  const workDaysLeft = daysLeftInWorkWeek(reportDate);
+  // PACE days-left (owner 18:30 rule): pace figures only.
+  const workDaysLeft =
+    input.etNowMinutes == null
+      ? daysLeftInWorkWeek(reportDate)
+      : daysLeftInWorkWeekAt(reportDate, input.etNowMinutes);
 
   return {
     reportDate,
@@ -1855,7 +1904,7 @@ export function buildDailyReportMetrics(input: {
     weeklyLeads: weekly.total,
     leadBudgetUsedPct: leadBudgetUsage(weekly.total, input.weeklyLeadBudget),
     leadsRemaining: leadsRemaining(weekly.total, input.weeklyLeadBudget),
-    dailyLeadsNeeded: dailyLeadsNeeded(weekly.total, input.weeklyLeadBudget, reportDate),
+    dailyLeadsNeeded: dailyLeadsNeeded(weekly.total, input.weeklyLeadBudget, reportDate, input.etNowMinutes),
   };
 }
 

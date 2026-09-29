@@ -20,7 +20,7 @@ import {
   restrainedDiff,
   SMALL_SAMPLE_FOOTNOTE,
 } from "~/components/team-views";
-import type { TeamRangeMetrics, TrendPoint } from "~/server/metrics/compute";
+import { paceDaysLeftForRange, paceNeeded, type TeamRangeMetrics, type TrendPoint } from "~/server/metrics/compute";
 import type { RepStripRow } from "~/server/queries";
 
 const metrics = (over: Partial<TeamRangeMetrics> = {}): TeamRangeMetrics => ({
@@ -594,5 +594,42 @@ describe("bookingSplitLine — three mutually exclusive states, never folded", (
     expect(bookingSplitLine({ attributed: 0, ambiguous: 0, unattributed: 5, withoutVerdict: 0 })).toBe(
       "0 attributed · 0 ambiguous · 5 unattributed",
     );
+  });
+});
+
+// ---------- OWNER-RATIFIED 18:30 ET PACE CUTOFF (2026-09-29) ----------
+describe("paceSummary after the 18:30 ET cutoff — Mon evening math (66 remaining ÷ 4)", () => {
+  test("at/after 18:30 ET Monday, today is no longer a remaining working day → ceil(66 ÷ 4) = 17", () => {
+    // The exact composition buildTeamRangeMetrics feeds paceSummary, with the
+    // live ET clock threaded (18:30 = the cutoff): 13 of the 79 weekly goal
+    // booked by Monday evening → 66 remaining over Tue..Fri = 4 working days.
+    // Raw quotient 66/4 = 16.5; the displayed value keeps the existing ceil.
+    const MON = "2026-09-28";
+    const paceDaysLeft = paceDaysLeftForRange({
+      rangeEnd: "2026-10-02",
+      lastWeekStart: MON,
+      today: MON,
+      etNowMinutes: 18 * 60 + 30,
+    });
+    expect(paceDaysLeft).toBe(4);
+    const remaining = 79 - 13;
+    const needed = paceNeeded(remaining, paceDaysLeft);
+    expect(needed).toBe(17);
+    const ps = paceSummary({
+      metrics: metrics({
+        actual: 13,
+        remaining,
+        goalAchievement: 13 / 79,
+        paceNeeded: needed,
+        paceDaysLeft,
+        paceNote: "4 working days left through Fri, Oct 2",
+      }),
+      rangeEnd: "2026-10-02",
+      today: MON,
+    });
+    expect(ps.paceClause).toBe("17 needed per working day");
+    expect(ps.paceFootnote).toBe("4 working days left through Fri, Oct 2");
+    // Contrast: BEFORE the cutoff the same Monday still counts today (5 days).
+    expect(paceDaysLeftForRange({ rangeEnd: "2026-10-02", lastWeekStart: MON, today: MON, etNowMinutes: 18 * 60 + 29 })).toBe(5);
   });
 });
