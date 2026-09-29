@@ -23,7 +23,7 @@
  */
 import { addDays, weekStart } from "../date-logic";
 import type { AppointmentRow, AttributionRow, LeadRow } from "./compute";
-import { bookingWinBusinessDateOf, isBookingWin } from "./compute";
+import { bookingWinBusinessDateOf, filterApptsInWinBucketRange, isBookingWin } from "./compute";
 
 /** Session-type split (owner definition): animalia = type contains "animalia" (case-insensitive); everything else family. */
 export function isAnimaliaSession(appointmentType: string): boolean {
@@ -218,6 +218,52 @@ export function splitWinsByChannel(wins: AppointmentRow[]): { alliance: number; 
     if (/auction/i.test(w.appointment_type ?? "")) auction += 1;
   }
   return { alliance, auction };
+}
+
+// ---------- BOOKINGS FROM LEADS funnel (owner request 2026-09-29) ----------
+
+/** Weeks in the "recent weeks" funnel strip (the owner's 5-week view). */
+export const FUNNEL_SERIES_WEEKS = 5;
+
+/**
+ * Mondays of the last N COMPLETED Mon–Sun work weeks, OLDEST first. The
+ * in-progress week is NEVER in the series — its funnel % is meaningless
+ * mid-week (a Mon–Sun week completes only when the next Monday has begun,
+ * the same rule as lastCompletedWeekStart, which this builds on).
+ */
+export function recentCompletedWeekStarts(today: string, count: number = FUNNEL_SERIES_WEEKS): string[] {
+  const latest = lastCompletedWeekStart(today);
+  return Array.from({ length: count }, (_, i) => addDays(latest, -7 * (count - 1 - i)));
+}
+
+/** One "bookings from leads" row: sheet leads vs paid bookings of one Mon–Sun week. */
+export interface WeekFunnelRow {
+  weekStart: string;
+  weekEnd: string;
+  /** Sheet leads whose source_date falls in the week — ALL sheets, no rep filter. */
+  leads: number;
+  /** Paid bookings whose booking_win_business_date falls in the week — ALL bookings incl. online/unattributed. */
+  wins: number;
+  /** wins ÷ leads; null when the week had no sheet leads (never a fabricated 0%). */
+  pct: number | null;
+}
+
+/**
+ * Bucket in-scope BOOKING WINS + sheet leads into Mon–Sun weeks.
+ * Wins are bucketed with the SAME win-bucket filter every page counts
+ * (filterApptsInWinBucketRange — win date, created-date fallback for legacy
+ * paid rows); leads by source_date, the funnel's sheet-date convention.
+ * Callers pass wins already filtered to isBookingWin + scope over the SERIES
+ * window — sub-window filtering of that set is lossless.
+ * READ-ONLY: pure bucketing over rows the caller already fetched.
+ */
+export function weekFunnelRows(weekStarts: string[], wins: AppointmentRow[], leads: LeadRow[]): WeekFunnelRow[] {
+  return weekStarts.map((mon) => {
+    const sun = addDays(mon, 6);
+    const weekWins = filterApptsInWinBucketRange(wins, mon, sun).length;
+    const weekLeads = leads.filter((l) => l.source_date >= mon && l.source_date <= sun).length;
+    return { weekStart: mon, weekEnd: sun, leads: weekLeads, wins: weekWins, pct: conversionRate(weekWins, weekLeads) };
+  });
 }
 
 /**
