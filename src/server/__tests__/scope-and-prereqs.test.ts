@@ -115,11 +115,13 @@ describe("JOB 1: the Acuity scope gates every booking number", () => {
 
   test("DailyReport: Zoom excluded from WTD (1 not 2); empty scope → both count", async () => {
     const { store } = await seedStore(MALLORY_SCOPE);
-    const scoped = await dailyReportPageData({ store, today: FRI });
+    // Pinned morning clock: before 18:30 ET the anchor is the prior workday
+    // (Thursday), so the anchor-day wins bucket is 0 — never the live clock.
+    const scoped = await dailyReportPageData({ store, today: FRI, etNowMinutes: 9 * 60 });
     expect(scoped.metrics.bookingsWtd).toBe(1);
-    expect(scoped.metrics.bookingsYesterday).toBe(0);
+    expect(scoped.metrics.bookingsAnchorDay).toBe(0);
 
-    const open = await dailyReportPageData({ store: (await seedStore(EMPTY_SCOPE)).store, today: FRI });
+    const open = await dailyReportPageData({ store: (await seedStore(EMPTY_SCOPE)).store, today: FRI, etNowMinutes: 9 * 60 });
     expect(open.metrics.bookingsWtd).toBe(2);
   });
 

@@ -15,6 +15,7 @@ import type { AppSettings, AppointmentRow, Store } from "./store/types";
 import {
   addDays,
   dateRange,
+  dailyReportAnchorDate,
   etDayEndUtc,
   etDayStartUtc,
   etRangeBounds,
@@ -47,7 +48,7 @@ import {
   repRangeSummaries,
   resolveRepGoal,
 } from "./metrics/compute";
-import { big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
+import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
 import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
@@ -71,6 +72,8 @@ async function loadPageMeta(): Promise<PageMeta> {
 export interface PageDeps {
   store?: Store;
   today?: string;
+  /** Injected ET wall-clock (minutes since midnight) for deterministic tests — dailyReportPageData's anchor rule uses it. */
+  etNowMinutes?: number;
 }
 
 export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
@@ -666,51 +669,61 @@ export async function todayPageData(deps?: PageDeps) {
   };
 }
 
-/** DAILY REPORT page — yesterday's performance + current week progress. */
+/** DAILY REPORT page — anchor-day performance + current week progress. */
 export async function dailyReportPageData(deps?: PageDeps) {
   const today = deps?.today ?? etToday();
+  const etMinutes = deps?.etNowMinutes ?? etNowMinutes();
+  // OWNER ANCHOR RULE (dailyReportAnchorDate): performance figures cover the
+  // most recent COMPLETE operating day — today after 18:30 ET, else the most
+  // recent prior workday (Mon→Fri, Tue–Fri→yesterday, Sat/Sun→Fri).
+  const anchorDate = dailyReportAnchorDate(today, etMinutes);
   // PERF: meta + settings run inside the main batch (were sequential before it).
   const metaPromise: Promise<PageMeta> = deps?.store
     ? Promise.resolve({ mode: "memory", dbReason: null, today, demoSeeded: false })
     : loadPageMeta();
   const store = deps?.store ?? (await getStore());
 
-  const yesterday = addDays(today, -1);
   const ws = weekStart(today);
 
   const todayStart = etDayStartUtc(today);
-  const todayEnd = etDayEndUtc(today);
-  const yesterdayStart = etDayStartUtc(yesterday);
+  const anchorStart = etDayStartUtc(anchorDate);
   const weekStartUtc = etDayStartUtc(ws);
+  // The join pool (conversation conversion) and the lead cohorts must cover the
+  // anchor day even when it falls in the PREVIOUS week (Monday morning →
+  // Friday) — widen the fetch floors, never the filters downstream.
+  const poolStartUtc = anchorStart < weekStartUtc ? anchorStart : weekStartUtc;
+  const workDatesFrom = anchorDate < ws ? anchorDate : ws;
 
-  const [meta, settings, callsYesterday, apptsYesterday, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
+  const [meta, settings, callsAnchorDay, apptsAnchorDay, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
-      store.getCallsBetween(yesterdayStart, todayStart),
-      // REV 12 WIN BUCKET: yesterday/WTD = BOOKING WINS by deposit date
-      // (booking_win_business_date); not-yet-derived rows fall back to created.
-      store.getAppointmentsByWinBusinessDateBetween(yesterday, yesterday),
+      // roster-eligible calls STARTED on the anchor day (conversation conversion)
+      store.getCallsBetween(anchorStart, etDayEndUtc(anchorDate)),
+      // REV 12 WIN BUCKET + owner anchor: anchor-day/WTD = BOOKING WINS by
+      // deposit date (booking_win_business_date); not-yet-derived rows fall
+      // back to created.
+      store.getAppointmentsByWinBusinessDateBetween(anchorDate, anchorDate),
       store.getAppointmentsByWinBusinessDateBetween(ws, today),
-      store.getAllCallsSince(weekStartUtc),
-      // all leads worked this week so far (work_date Mon..today) — covers both
-      // today's cohort and yesterday's for the conversion denominators
-      store.getLeadsByWorkDates(dateRange(ws, today)),
+      store.getAllCallsSince(poolStartUtc),
+      // all leads worked from the anchor week-floor through today — covers the
+      // anchor-day cohort (e.g. Friday's, for Monday mornings) and today's
+      store.getLeadsByWorkDates(dateRange(workDatesFrom, today)),
       store.getTeamGoal(ws),
       store.getDailyPriorities(today),
-      store.getLeadCountAdjustments(dateRange(ws, addDays(ws, 6))),
+      store.getLeadCountAdjustments(dateRange(workDatesFrom, addDays(ws, 6))),
     ]);
 
   const scope = settings.acuity;
   // Scope BEFORE any booking computation (owner directive — see apptsInScope).
-  const apptsYesterdayScoped = apptsInScope(apptsYesterday, scope);
+  const apptsAnchorDayScoped = apptsInScope(apptsAnchorDay, scope);
   const apptsWtdScoped = apptsInScope(apptsWtd, scope);
 
   // ROSTER ELIGIBILITY (mapping-aware): report call metrics cover roster reps
   // + mapped HL users only, computed at query time (source rows untouched).
   const rosterUsers = await store.getUsers();
   const eligibility = buildRosterEligibility(rosterUsers, settings.rep_mappings ?? []);
-  const rosterCallsYesterday = applyRosterEligibility(callsYesterday, eligibility);
+  const rosterCallsAnchorDay = applyRosterEligibility(callsAnchorDay, eligibility);
   const rosterCallsForAttribution = applyRosterEligibility(callsForAttribution, eligibility);
   const attributionsEligible = applyAttributionEligibility(
     await store.getAttributions(),
@@ -719,8 +732,8 @@ export async function dailyReportPageData(deps?: PageDeps) {
   );
   const metrics = buildDailyReportMetrics({
     reportDate: today,
-    callsYesterday: rosterCallsYesterday,
-    apptsCreatedYesterday: apptsYesterdayScoped,
+    callsAnchorDay: rosterCallsAnchorDay,
+    apptsCreatedAnchorDay: apptsAnchorDayScoped,
     apptsCreatedWtd: apptsWtdScoped,
     allCallsForWeek: rosterCallsForAttribution,
     attributions: attributionsEligible,
@@ -729,16 +742,21 @@ export async function dailyReportPageData(deps?: PageDeps) {
     teamBookingGoal: teamGoal?.booking_goal ?? 79,
     weeklyLeadBudget: teamGoal?.lead_budget ?? 700,
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
-    // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET.
-    etNowMinutes: etNowMinutes(),
+    // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET, and
+    // the performance anchor follows the same cutoff.
+    etNowMinutes: etMinutes,
   });
   const saved = priorities ?? { date: today, priority1: null, priority2: null, priority3: null, updated_at: null };
   // Missing-data warnings — never render a plausible number for absent data.
+  // The banners name the ACTUAL day the figures cover (owner directive): the
+  // phrase is "yesterday" only when the anchor really is the calendar prior
+  // day; on a Monday-morning report it names Friday, after EOD it says today.
+  const anchorPhrase = anchorDayPhrase(anchorDate, today);
   const warnings: string[] = [];
   if (metrics.conversationConversion == null)
-    warnings.push("No qualifying calls recorded yesterday — Conversation Conversion is unavailable.");
+    warnings.push(`No qualifying calls recorded ${anchorPhrase} — Conversation Conversion is unavailable.`);
   if (metrics.assignedLeadConversion == null)
-    warnings.push("No leads worked yesterday — Assigned Lead Conversion is unavailable.");
+    warnings.push(`No leads worked ${anchorPhrase} — Assigned Lead Conversion is unavailable.`);
   if (metrics.goalAchievement == null)
     warnings.push("Weekly booking goal is 0 — Goal Achievement is unavailable.");
   if (metrics.leadsToday === 0 && metrics.weeklyLeads === 0)

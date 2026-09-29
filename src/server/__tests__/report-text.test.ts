@@ -15,9 +15,10 @@ import type { AppointmentRow, AttributionRow, CallRow, LeadRow } from "../metric
 
 const specExampleMetrics = (): DailyReportMetrics => ({
   reportDate: "2026-09-25",
+  anchorDate: "2026-09-24", // calendar yesterday — the SPEC's "next morning" report
   weekStart: "2026-09-21",
   leadCohortSourceDates: ["2026-09-24"],
-  bookingsYesterday: 11,
+  bookingsAnchorDay: 11,
   bookingsWtd: 37,
   weeklyBookingGoal: 79,
   bookingsLeft: 42,
@@ -164,9 +165,9 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
     const m = buildDailyReportMetrics({
       reportDate: T,
       // yesterday (Thu Sep 24, ET) calls: 2 total, 1 over threshold
-      callsYesterday: [call("c1", "2026-09-24T14:00:00.000Z", 300), call("c2", "2026-09-24T15:00:00.000Z", 60)],
+      callsAnchorDay: [call("c1", "2026-09-24T14:00:00.000Z", 300), call("c2", "2026-09-24T15:00:00.000Z", 60)],
       // bookings created yesterday: 2 (1 cancelled → excluded)
-      apptsCreatedYesterday: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z", "cancelled"), appt("a3", "2026-09-24T18:00:00.000Z")],
+      apptsCreatedAnchorDay: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z", "cancelled"), appt("a3", "2026-09-24T18:00:00.000Z")],
       // WTD: yesterday's 2 + today's 1 = 3
       apptsCreatedWtd: [
         appt("a1", "2026-09-24T16:00:00.000Z"),
@@ -188,7 +189,7 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
       thresholdSeconds: 120,
     });
 
-    expect(m.bookingsYesterday).toBe(2); // cancelled excluded
+    expect(m.bookingsAnchorDay).toBe(2); // cancelled excluded
     expect(m.bookingsWtd).toBe(3);
     expect(m.bookingsLeft).toBe(76); // 79 - 3
     expect(m.dailyBookingsNeeded).toBe(Math.ceil(76 / 1)); // Friday → 1 WORKING day left (Mon–Fri)
@@ -207,8 +208,8 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
   test("missing yesterday data → null conversions (page shows a warning, not a number)", () => {
     const m = buildDailyReportMetrics({
       reportDate: T,
-      callsYesterday: [],
-      apptsCreatedYesterday: [],
+      callsAnchorDay: [],
+      apptsCreatedAnchorDay: [],
       apptsCreatedWtd: [],
       allCallsForWeek: [],
       attributions: [],
@@ -219,14 +220,14 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
     });
     expect(m.conversationConversion).toBeNull();
     expect(m.assignedLeadConversion).toBeNull();
-    expect(m.bookingsYesterday).toBe(0);
+    expect(m.bookingsAnchorDay).toBe(0);
   });
 
   test("WEEKEND report (owner-corrected): pace 0 with honest weekend flag", () => {
     const m = buildDailyReportMetrics({
       reportDate: "2026-09-26", // Saturday — agents work Mon–Fri
-      callsYesterday: [],
-      apptsCreatedYesterday: [],
+      callsAnchorDay: [],
+      apptsCreatedAnchorDay: [],
       apptsCreatedWtd: [],
       allCallsForWeek: [],
       attributions: [],

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { getDailyReportData, saveDailyPriorities } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
-import { formatInt, formatPercent } from "~/server/metrics/report-text";
+import { formatInt, formatPercent, anchorDayPhrase, bookingsAnchorLabel } from "~/server/metrics/report-text";
 import { InfoTip } from "~/components/InfoTip";
 
 export const Route = createFileRoute("/daily-report")({
@@ -95,7 +95,8 @@ function DailyReportPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Daily Report</h1>
           <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm text-(--text-muted)">
             <span>
-              {formatDateHuman(m.reportDate)} · yesterday's performance + week of {formatDateHuman(m.weekStart)}
+              {formatDateHuman(m.reportDate)} · {formatDateHuman(m.anchorDate)} performance + week of{" "}
+              {formatDateHuman(m.weekStart)}
             </span>
             {/* live-state indicator (owner hard rule): the report is always the live week */}
             <span className="inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 text-xs font-semibold text-(--pos-text)">
@@ -119,7 +120,9 @@ function DailyReportPage() {
       <section>
         <p className="section-title mb-4">Bookings</p>
         <div className="grid grid-cols-2 gap-x-8 gap-y-6 md:grid-cols-4">
-          <Kpi label="Bookings Yesterday" value={formatInt(m.bookingsYesterday)} />
+          {/* OWNER ANCHOR RULE: the performance figure covers the anchor day
+              (most recent complete operating day), so the label names it. */}
+          <Kpi label={bookingsAnchorLabel(m.anchorDate, m.reportDate)} value={formatInt(m.bookingsAnchorDay)} />
           <Kpi label="Bookings WTD" value={formatInt(m.bookingsWtd)} />
           <Kpi label="Weekly Booking Goal" value={formatInt(m.weeklyBookingGoal)} />
           <Kpi label="Bookings Left" value={formatInt(m.bookingsLeft)} sub="to reach goal" />
@@ -128,8 +131,16 @@ function DailyReportPage() {
             value={formatInt(m.dailyBookingsNeeded)}
             sub={m.paceWeekend ? "team is off — pace resumes Monday" : "pace to goal"}
           />
-          <Kpi label="Conversation Conversion" value={formatPercent(m.conversationConversion)} sub="yesterday" />
-          <Kpi label="Assigned Lead Conversion" value={formatPercent(m.assignedLeadConversion)} sub="yesterday" />
+          <Kpi
+            label="Conversation Conversion"
+            value={formatPercent(m.conversationConversion)}
+            sub={anchorDayPhrase(m.anchorDate, m.reportDate)}
+          />
+          <Kpi
+            label="Assigned Lead Conversion"
+            value={formatPercent(m.assignedLeadConversion)}
+            sub={anchorDayPhrase(m.anchorDate, m.reportDate)}
+          />
           <Kpi label="Goal Achievement" value={formatPercent(m.goalAchievement)} sub="week to date" />
         </div>
       </section>

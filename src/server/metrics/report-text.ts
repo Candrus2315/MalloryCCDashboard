@@ -12,7 +12,7 @@
  */
 
 import type { DailyReportMetrics } from "./compute";
-import { formatDateHuman } from "../date-logic";
+import { addDays, formatDateHuman, weekdayName } from "../date-logic";
 
 export interface Big3Input {
   priority1?: string | null;
@@ -21,6 +21,33 @@ export interface Big3Input {
 }
 
 const EMPTY = "—";
+
+/**
+ * The day the Daily Report performance figures cover, as a phrase:
+ * "yesterday" when the anchor is the calendar prior day, "today" when the
+ * anchor IS the report date (EOD rule), otherwise the anchor's weekday name
+ * ("Friday" on a Monday-morning report). Drives the KPI sublabels and the
+ * missing-data banners so they never say "yesterday" about a day that isn't.
+ */
+export function anchorDayPhrase(anchorDate: string, reportDate: string): string {
+  if (anchorDate === reportDate) return "today";
+  if (anchorDate === addDays(reportDate, -1)) return "yesterday";
+  return weekdayName(anchorDate, true);
+}
+
+/** KPI label for the anchor-day bookings figure ("Bookings Yesterday" / "Bookings Friday" / "Bookings Today"). */
+export function bookingsAnchorLabel(anchorDate: string, reportDate: string): string {
+  if (anchorDate === reportDate) return "Bookings Today";
+  if (anchorDate === addDays(reportDate, -1)) return "Bookings Yesterday";
+  return `Bookings ${weekdayName(anchorDate, true)}`;
+}
+
+/** Compact label for the copied report's Bookings line ("Bookings" / "Bookings (Fri)" / "Bookings (Today)"). */
+export function bookingsAnchorLineLabel(anchorDate: string, reportDate: string): string {
+  if (anchorDate === addDays(reportDate, -1)) return "Bookings";
+  if (anchorDate === reportDate) return "Bookings (Today)";
+  return `Bookings (${weekdayName(anchorDate, false)})`;
+}
 
 /**
  * Percent with `digits` decimals, rounding exact half-values UP (63.625 →
@@ -89,7 +116,7 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
   return [
     "Daily CC Report",
     "",
-    `Bookings: ${formatInt(m.bookingsYesterday)}`,
+    `${bookingsAnchorLineLabel(m.anchorDate, m.reportDate)}: ${formatInt(m.bookingsAnchorDay)}`,
     `Bookings for the Week: ${formatInt(m.bookingsWtd)}`,
     `Key Driver: ${formatInt(m.weeklyBookingGoal)}`,
     `Left: ${formatInt(m.bookingsLeft)}`,

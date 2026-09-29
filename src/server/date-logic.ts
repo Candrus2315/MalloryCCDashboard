@@ -216,6 +216,44 @@ export function isWorkday(dateStr: string): boolean {
   return wd >= 1 && wd <= 5;
 }
 
+/**
+ * Weekday name for an ET calendar date: "Friday" (long) or "Fri" (short).
+ * Used by the Daily Report labels/banners, which name the day the
+ * performance figures cover.
+ */
+export function weekdayName(dateStr: string, long = true): string {
+  assertDateStr(dateStr);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: long ? "long" : "short",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/**
+ * OWNER DIRECTIVE — the Daily Report PERFORMANCE ANCHOR date. The Daily
+ * Report's performance figures (bookings, conversation conversion, assigned
+ * lead conversion) cover a complete OPERATING DAY, never the calendar prior
+ * day and never a weekend:
+ *  - Workday at/after 18:30 ET (the owner-established operating-day end,
+ *    PACE_DAY_CUTOFF_ET_MINUTES) → anchor = TODAY (EOD: show today's numbers).
+ *  - Otherwise (before 18:30 on a workday, or Sat/Sun at any time) → anchor =
+ *    the most recent PRIOR workday: Mon→Fri, Tue–Fri→yesterday, Sat/Sun→Fri.
+ *    Never Sunday, never Saturday.
+ *
+ * `etNowMinutes` is injectable for deterministic tests; default is the live
+ * America/New_York wall clock (aliased below to dodge param shadowing).
+ */
+const liveEtNowMinutes = () => etNowMinutes();
+
+export function dailyReportAnchorDate(today: string, etNowMinutes?: number): string {
+  const minutes = etNowMinutes ?? liveEtNowMinutes();
+  if (isWorkday(today) && minutes >= PACE_DAY_CUTOFF_ET_MINUTES) return today;
+  let prior = addDays(today, -1);
+  while (!isWorkday(prior)) prior = addDays(prior, -1);
+  return prior;
+}
+
 // ---------- rep operating state (call_start_date, design/data-terminology.md) ----------
 
 export type RepOperatingState = "active" | "not-yet-active";

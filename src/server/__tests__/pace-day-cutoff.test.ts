@@ -86,7 +86,7 @@ describe("builders thread the cutoff into the pace figures only (13 of 79 booked
     reportDate: MON,
     calls: [],
     apptsCreatedToday: thirteenth,
-    apptsCreatedYesterday: [],
+    apptsCreatedYesterday: [], // Today-page field — NOT the Daily Report anchor input
     apptsCreatedWtd: thirteenth,
     callsWtd: [],
     allCallsForWeek: [],
@@ -101,8 +101,8 @@ describe("builders thread the cutoff into the pace figures only (13 of 79 booked
   } as const;
   const reportInput = {
     reportDate: MON,
-    callsYesterday: [],
-    apptsCreatedYesterday: [],
+    callsAnchorDay: [],
+    apptsCreatedAnchorDay: [],
     apptsCreatedWtd: thirteenth,
     allCallsForWeek: [],
     attributions: [],

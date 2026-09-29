@@ -194,11 +194,11 @@ describe("HISTORICAL WIN AGGREGATION — rev 12/15 re-baseline invariants", () =
     expect(trends.points).toHaveLength(1);
     expect(trends.points[0].bookings).toBe(1);
 
-    // Daily Report (yesterday bucket = W1_MON): bookingsYesterday counts only wins.
+    // Daily Report (yesterday bucket = W1_MON): bookingsAnchorDay counts only wins.
     const report = buildDailyReportMetrics({
       reportDate: W2_MON,
-      callsYesterday: [],
-      apptsCreatedYesterday: appts,
+      callsAnchorDay: [],
+      apptsCreatedAnchorDay: appts,
       apptsCreatedWtd: appts,
       allCallsForWeek: [],
       attributions: attrs,
@@ -207,7 +207,7 @@ describe("HISTORICAL WIN AGGREGATION — rev 12/15 re-baseline invariants", () =
       weeklyLeadBudget: 700,
       thresholdSeconds: 120,
     });
-    expect(report.bookingsYesterday).toBe(1);
+    expect(report.bookingsAnchorDay).toBe(1);
     expect(report.bookingsWtd).toBe(1);
   });
 

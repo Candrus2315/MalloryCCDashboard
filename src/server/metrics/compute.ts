@@ -28,6 +28,7 @@
 import {
   addDays,
   dateRange,
+  dailyReportAnchorDate,
   daysLeftInWorkWeek,
   daysLeftInWorkWeekAt,
   PACE_DAY_CUTOFF_ET_MINUTES,
@@ -1802,14 +1803,19 @@ export function attributionDegradation(
 /**
  * The full Daily Report metric model. Every number on the Daily Report page
  * (and in the copied report text) comes from here — the page never computes.
- * Performance is YESTERDAY'S (the report is written the next morning) plus
- * CURRENT WEEK progress for goals/leads, exactly per SPEC.
+ * Performance covers the ANCHOR DAY (owner directive: the most recent
+ * complete operating day — see dailyReportAnchorDate) plus CURRENT WEEK
+ * progress for goals/leads, exactly per SPEC. Leads stay on TODAY's
+ * work-date cohort (owner: leads data unchanged by the anchor).
  */
 export interface DailyReportMetrics {
   reportDate: string;
+  /** The operating day the performance figures cover (never Sat/Sun). */
+  anchorDate: string;
   weekStart: string;
   leadCohortSourceDates: string[];
-  bookingsYesterday: number;
+  /** Booking WINS with booking_win_business_date == anchorDate. */
+  bookingsAnchorDay: number;
   bookingsWtd: number;
   weeklyBookingGoal: number;
   bookingsLeft: number;
@@ -1818,9 +1824,9 @@ export interface DailyReportMetrics {
   workDaysLeft: number;
   /** True when no working days remain (Sat/Sun) — pace figures show 0 + a note. */
   paceWeekend: boolean;
-  /** Bookings from >threshold calls yesterday ÷ calls >threshold yesterday. */
+  /** Wins from >threshold calls ÷ calls >threshold on the ANCHOR day. */
   conversationConversion: number | null;
-  /** Bookings created yesterday ÷ leads worked yesterday (work-date logic). */
+  /** Wins on the anchor day ÷ leads worked on the anchor day (work_date logic). */
   assignedLeadConversion: number | null;
   /** Bookings WTD ÷ weekly booking goal. */
   goalAchievement: number | null;
@@ -1837,43 +1843,52 @@ export interface DailyReportMetrics {
 /** Assemble the Daily Report metrics from raw rows. Pure — no DB, no Date.now. */
 export function buildDailyReportMetrics(input: {
   reportDate: string;
-  callsYesterday: CallRow[]; // calls started yesterday (ET)
-  apptsCreatedYesterday: AppointmentRow[];
-  apptsCreatedWtd: AppointmentRow[]; // week-to-date, includes yesterday+today
+  callsAnchorDay: CallRow[]; // roster-eligible calls started on the anchor day (ET)
+  apptsCreatedAnchorDay: AppointmentRow[]; // wins with booking_win_business_date == anchorDate
+  apptsCreatedWtd: AppointmentRow[]; // week-to-date, includes anchor+today
   allCallsForWeek: CallRow[]; // for the over-threshold join
   attributions: AttributionRow[];
-  leadsAllRecent: LeadRow[]; // leads whose work_date falls in this week (incl today's cohort)
+  leadsAllRecent: LeadRow[]; // leads whose work_date falls in the week(s) covering anchor+today (incl today's cohort)
   leadCountAdjustments?: LeadCountAdjustment[];
   teamBookingGoal: number;
   weeklyLeadBudget: number;
   thresholdSeconds: number;
-  /** OWNER 18:30 RULE (pace figures only) — see daysLeftInWorkWeekAt. */
+  /** OWNER 18:30 RULE (pace figures + performance anchor) — see daysLeftInWorkWeekAt / dailyReportAnchorDate. */
   etNowMinutes?: number;
 }): DailyReportMetrics {
   const reportDate = input.reportDate;
   const ws = weekStart(reportDate);
 
-  const bookingsYesterday = countBookingsCreatedBetween(input.apptsCreatedYesterday, "", "9999");
+  // OWNER ANCHOR RULE: performance covers the anchor day, not the calendar
+  // prior day. Without a threaded clock (legacy callers/tests) the anchor
+  // stays the calendar yesterday — the pre-anchor semantics.
+  const anchorDate =
+    input.etNowMinutes == null
+      ? addDays(reportDate, -1)
+      : dailyReportAnchorDate(reportDate, input.etNowMinutes);
+
+  const bookingsAnchorDay = countBookingsCreatedBetween(input.apptsCreatedAnchorDay, "", "9999");
   const bookingsWtd = countBookingsCreatedBetween(input.apptsCreatedWtd, "", "9999");
 
-  const fromOverYesterday = bookingsFromOverThresholdCalls(
-    input.apptsCreatedYesterday,
+  const fromOverAnchor = bookingsFromOverThresholdCalls(
+    input.apptsCreatedAnchorDay,
     input.attributions,
     input.allCallsForWeek,
     input.thresholdSeconds,
   );
-  const callsYesterday = summarizeCalls(input.callsYesterday, input.thresholdSeconds);
+  const callsAnchorDay = summarizeCalls(input.callsAnchorDay, input.thresholdSeconds);
 
   const adj = input.leadCountAdjustments;
   const todayCohort = leadsToday(input.leadsAllRecent, reportDate, adj);
   const weekly = leadsForWeek(input.leadsAllRecent, reportDate, adj);
-  const yesterdayWork = addDays(reportDate, -1);
-  // Leads the team WORKED yesterday = work_date === yesterday (Mon handled by
-  // the work_date stored per lead — getWorkDate already folded Fri–Sun → Mon).
-  const yesterdayLeads = applyLeadAdjustments(
-    summarizeLeadRows(input.leadsAllRecent.filter((l) => l.work_date === yesterdayWork)),
+  // Leads the team WORKED on the anchor day = work_date === anchorDate. The
+  // work-date logic folds Fri–Sun source days → Monday, so FRIDAY has a real
+  // cohort — assigned-lead conversion stays available on Monday mornings when
+  // Friday had data (that is the intended effect of the anchor rule).
+  const anchorDayLeads = applyLeadAdjustments(
+    summarizeLeadRows(input.leadsAllRecent.filter((l) => l.work_date === anchorDate)),
     adj,
-    (a) => a.work_date === yesterdayWork,
+    (a) => a.work_date === anchorDate,
   );
 
   const bookingsLeft = Math.max(0, input.teamBookingGoal - bookingsWtd);
@@ -1885,17 +1900,18 @@ export function buildDailyReportMetrics(input: {
 
   return {
     reportDate,
+    anchorDate,
     weekStart: ws,
     leadCohortSourceDates: getLeadCohort(reportDate),
-    bookingsYesterday,
+    bookingsAnchorDay,
     bookingsWtd,
     weeklyBookingGoal: input.teamBookingGoal,
     bookingsLeft,
     dailyBookingsNeeded: paceNeeded(bookingsLeft, workDaysLeft),
     workDaysLeft,
     paceWeekend: workDaysLeft === 0,
-    conversationConversion: conversationConversion(fromOverYesterday.length, callsYesterday.overThreshold),
-    assignedLeadConversion: assignedLeadConversion(bookingsYesterday, yesterdayLeads.total),
+    conversationConversion: conversationConversion(fromOverAnchor.length, callsAnchorDay.overThreshold),
+    assignedLeadConversion: assignedLeadConversion(bookingsAnchorDay, anchorDayLeads.total),
     goalAchievement: goalAchievement(bookingsWtd, input.teamBookingGoal),
     weeklyLeadBudget: input.weeklyLeadBudget,
     leadsToday: todayCohort.total,
