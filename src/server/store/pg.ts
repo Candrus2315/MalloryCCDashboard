@@ -833,18 +833,43 @@ export class PgStore implements Store {
   async upsertOpportunities(rows: OpportunityRow[]): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
+    // DEFENSIVE (lead review 9/29): the live dataset shifts between fetch and
+    // write (a GHL-side import landed mid-run and postgres.js hard-throws
+    // UNDEFINED_VALUE on any undefined bind). Every non-key column is nullable
+    // in the schema — coerce undefined to null at the boundary instead of
+    // letting one transient row kill a whole snapshot write.
+    const norm = rows.map((r) => ({
+      provider: r.provider,
+      external_id: r.external_id,
+      name: r.name ?? null,
+      status: r.status ?? null,
+      monetary_value: r.monetary_value ?? null,
+      contact_id: r.contact_id ?? null,
+      rep_id: r.rep_id ?? null,
+      pipeline_id: r.pipeline_id ?? null,
+      stage_id: r.stage_id ?? null,
+      source_created_at: r.source_created_at ?? null,
+      source_updated_at: r.source_updated_at ?? null,
+    }));
     const CHUNK = 500;
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const chunk = rows.slice(i, i + CHUNK);
-      await this.sql`
-        INSERT INTO opportunities (provider, external_id, name, status, monetary_value, contact_id, rep_id, pipeline_id, stage_id, source_created_at, source_updated_at)
-        VALUES ${this.sql(chunk, "provider", "external_id", "name", "status", "monetary_value", "contact_id", "rep_id", "pipeline_id", "stage_id", "source_created_at", "source_updated_at")}
-        ON CONFLICT (provider, external_id) DO UPDATE SET
-          name = EXCLUDED.name, status = EXCLUDED.status, monetary_value = EXCLUDED.monetary_value,
-          contact_id = EXCLUDED.contact_id, rep_id = EXCLUDED.rep_id,
-          pipeline_id = EXCLUDED.pipeline_id, stage_id = EXCLUDED.stage_id,
-          source_created_at = EXCLUDED.source_created_at, source_updated_at = EXCLUDED.source_updated_at, updated_at = now()
-      `;
+    for (let i = 0; i < norm.length; i += CHUNK) {
+      const chunk = norm.slice(i, i + CHUNK);
+      // Per-row explicit binds — the SAME proven pattern as upsertContacts.
+      // (The sql(array, cols) object helper AND sql.join of fragments BOTH
+      // threw UNDEFINED_VALUE under this runtime even on fully-defined rows;
+      // reproduced 2026-09-29. Sequential loop on one pooled connection is
+      // exactly how the contacts sync already runs at scale — pool-safe.)
+      for (const r of chunk) {
+        await this.sql`
+          INSERT INTO opportunities (provider, external_id, name, status, monetary_value, contact_id, rep_id, pipeline_id, stage_id, source_created_at, source_updated_at)
+          VALUES (${r.provider}, ${r.external_id}, ${r.name}, ${r.status}, ${r.monetary_value}, ${r.contact_id}, ${r.rep_id}, ${r.pipeline_id}, ${r.stage_id}, ${r.source_created_at}, ${r.source_updated_at})
+          ON CONFLICT (provider, external_id) DO UPDATE SET
+            name = EXCLUDED.name, status = EXCLUDED.status, monetary_value = EXCLUDED.monetary_value,
+            contact_id = EXCLUDED.contact_id, rep_id = EXCLUDED.rep_id,
+            pipeline_id = EXCLUDED.pipeline_id, stage_id = EXCLUDED.stage_id,
+            source_created_at = EXCLUDED.source_created_at, source_updated_at = EXCLUDED.source_updated_at, updated_at = now()
+        `;
+      }
     }
     return rows.length;
   }
