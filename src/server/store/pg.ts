@@ -857,10 +857,11 @@ export class PgStore implements Store {
       // Per-row explicit binds — the SAME proven pattern as upsertContacts.
       // (The sql(array, cols) object helper AND sql.join of fragments BOTH
       // threw UNDEFINED_VALUE under this runtime even on fully-defined rows;
-      // reproduced 2026-09-29. Sequential loop on one pooled connection is
-      // exactly how the contacts sync already runs at scale — pool-safe.)
-      for (const r of chunk) {
-        await this.sql`
+      // reproduced 2026-09-29.) Small concurrent waves keep wall time sane
+      // over the network RTT while staying well under the pool ceiling.
+      const WAVE = 8;
+      for (let j = 0; j < chunk.length; j += WAVE) {
+        await Promise.all(chunk.slice(j, j + WAVE).map((r) => this.sql`
           INSERT INTO opportunities (provider, external_id, name, status, monetary_value, contact_id, rep_id, pipeline_id, stage_id, source_created_at, source_updated_at)
           VALUES (${r.provider}, ${r.external_id}, ${r.name}, ${r.status}, ${r.monetary_value}, ${r.contact_id}, ${r.rep_id}, ${r.pipeline_id}, ${r.stage_id}, ${r.source_created_at}, ${r.source_updated_at})
           ON CONFLICT (provider, external_id) DO UPDATE SET
@@ -868,7 +869,7 @@ export class PgStore implements Store {
             contact_id = EXCLUDED.contact_id, rep_id = EXCLUDED.rep_id,
             pipeline_id = EXCLUDED.pipeline_id, stage_id = EXCLUDED.stage_id,
             source_created_at = EXCLUDED.source_created_at, source_updated_at = EXCLUDED.source_updated_at, updated_at = now()
-        `;
+        `));
       }
     }
     return rows.length;
