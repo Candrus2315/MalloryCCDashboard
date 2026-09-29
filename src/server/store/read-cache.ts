@@ -53,8 +53,10 @@ export class TtlReadCache {
 
   /**
    * Serve `key` from cache when it was stored in the CURRENT generation and is
-   * younger than the TTL; otherwise run `fn`, cache a clone, and return the
-   * original value to the first caller.
+   * younger than the TTL; otherwise run `fn`, cache a clone, and hand the
+   * first caller its OWN clone. EVERY value leaving wrap (hit or miss) is a
+   * caller-owned copy — no caller can mutate a cached value, the underlying
+   * read result, or another caller's copy.
    */
   async wrap<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const hit = this.map.get(key);
@@ -62,8 +64,9 @@ export class TtlReadCache {
       return structuredClone(hit.value) as T;
     }
     const value = await fn();
+    const stored = structuredClone(value);
     if (this.map.size >= MAX_ENTRIES) this.map.clear();
-    this.map.set(key, { gen: this.gen, at: Date.now(), value: structuredClone(value) });
-    return value;
+    this.map.set(key, { gen: this.gen, at: Date.now(), value: stored });
+    return structuredClone(stored) as T;
   }
 }

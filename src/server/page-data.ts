@@ -507,6 +507,15 @@ export async function todayPageData(deps?: PageDeps) {
       // PENDING PAYMENTS drill-down window (rev 12): unpaid bookings in the
       // last 30 days (created OR session inside) — visible, never counted.
       store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30))),
+      // PERF: one connections read feeds BOTH the banner lines (was two
+      // sequential getConnections() round trips at the end of the builder).
+      // POSITIONAL CONTRACT: keep this array in the same order as the
+      // destructuring above — slotDayResults is itself a Promise.all, so a
+      // mis-ordered entry silently swaps whole result sets (that is exactly
+      // the bug this PERF pass shipped: connections read last in the array but
+      // bound before slotDayResults, feeding connection rows into the
+      // open-slot engine).
+      store.getConnections(),
       // Spec §7.1: open slots for today + the next 6 days — per-day store
       // queries (appointments overlapping + blocked times), no new methods.
       Promise.all(
@@ -518,9 +527,6 @@ export async function todayPageData(deps?: PageDeps) {
           ];
         }),
       ),
-      // PERF: one connections read feeds BOTH the banner lines (was two
-      // sequential getConnections() round trips at the end of the builder).
-      store.getConnections(),
     ]);
 
   const scope = settings.acuity;
