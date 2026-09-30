@@ -540,7 +540,13 @@ export async function todayPageData(deps?: PageDeps) {
       store.getLeadCountAdjustments(dateRange(ws, addDays(ws, 6))),
       // PENDING PAYMENTS drill-down window (rev 12): unpaid bookings in the
       // last 30 days (created OR session inside) — visible, never counted.
-      store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30))),
+      // OWNER REQUEST 9/30 (✕ dismiss): exclude pending_dismissed_at rows at
+      // the query layer — a dismissed appointment leaves the pending list
+      // PERMANENTLY (the dismissal is owner-controlled state the sync never
+      // touches). Only this fetch passes the flag: wins/metrics read the
+      // separate win-bucket selectors and the attribution tick + unattributed
+      // queue use the default, so dismissed appointments stay in the engine.
+      store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30)), { excludePendingDismissed: true }),
       // PERF: one connections read feeds BOTH the banner lines (was two
       // sequential getConnections() round trips at the end of the builder).
       // POSITIONAL CONTRACT: keep this array in the same order as the

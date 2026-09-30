@@ -149,6 +149,15 @@ export interface AppointmentRow {
   payment_business_date_source?: string | null;
   /** First time the system observed the paid evidence (write-once). */
   first_seen_paid_at?: string | null;
+  /**
+   * PENDING PAYMENT DISMISSAL (owner request 2026-09-30): when non-null, the
+   * owner removed this appointment from the Today page's Pending Payments
+   * list (✕ button). Owner-controlled state — the Acuity sync's upsert never
+   * touches or clears it, so the dismissal survives syncs/restarts. It affects
+   * ONLY the pending list: if the appointment later becomes paid it still
+   * counts as a Booking Win everywhere.
+   */
+  pending_dismissed_at?: string | null;
   /** FULL provider object as Acuity returned it (forensics; written by the live sync). */
   raw?: Record<string, unknown> | null;
 }

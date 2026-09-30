@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { demoAwarenessLine, getTodayData } from "~/server/queries";
+import { demoAwarenessLine, dismissPendingPayment, getTodayData } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
 import { AttentionPanel } from "~/components/AttentionPanel";
 import { DayCardStrip, type DayCardData } from "~/components/DayCardStrip";
@@ -75,46 +75,103 @@ export interface PendingPaymentRow {
  * until paid.
  */
 function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
-  const fmtAmount = (n: number | null) => (n == null ? "—" : `$${n.toFixed(2).replace(/\.00$/, "")}`);
+  const fmtAmount = (n: number | null) => (n == null ? "—" : `${n.toFixed(2).replace(/\.00$/, "")}`);
+  // OWNER REQUEST 9/30 (✕ dismiss): each pending row carries a ✕ that removes
+  // it from this list immediately and permanently — optimistic removal, no
+  // confirm dialog ("as i see fit"). On a server error the card snaps back
+  // and the message surfaces inline. The dismissal is server-persisted, so
+  // it survives syncs/restarts; a later-paid appointment still counts as a
+  // Booking Win everywhere.
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const visible = rows.filter((r) => !dismissedIds.has(r.appointment_id));
+  const dismiss = async (appointmentId: string) => {
+    setError(null);
+    setBusyId(appointmentId);
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      next.add(appointmentId);
+      return next;
+    });
+    try {
+      await dismissPendingPayment({ data: { appointmentId } });
+    } catch (e) {
+      setDismissedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(appointmentId);
+        return next;
+      });
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
   return (
     <details className="card card-dense mt-3">
       <summary className="cursor-pointer select-none">
         <span className="section-heading inline-flex items-center gap-2">
-          Pending Payments ({rows.length})
+          Pending Payments ({visible.length})
           <span className="text-xs font-normal text-(--text-muted)">— awaiting deposit · not counted</span>
         </span>
       </summary>
-      <div className="mt-3 overflow-x-auto">
-        <table className="data-table min-w-[560px]">
-          <thead>
-            <tr>
-              <th scope="col" className="text-left">Client</th>
-              <th scope="col" className="text-right">Amount Due</th>
-              <th scope="col" className="text-left">Rep</th>
-              <th scope="col" className="text-left">Session Type</th>
-              <th scope="col" className="text-left">Booked On</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.appointment_id}>
-                <td className="text-left font-medium text-(--text-primary)">{r.client_name ?? "—"}</td>
-                <td className="text-right tabular-nums">{fmtAmount(r.amount)}</td>
-                <td className="text-left">
-                  {r.rep_name ?? <span className="text-(--text-faint)">Unattributed</span>}
-                </td>
-                <td className="text-left text-(--text-caption)">{r.appointment_type || "—"}</td>
-                <td className="text-left text-(--text-caption)">
-                  {r.created_business_date ? formatDateHuman(r.created_business_date) : "—"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="mt-2 text-xs text-(--text-muted)">
-        Deposit not yet received (Acuity paid = no). These bookings hold studio availability and stay visible here, but count toward no bookings, conversion, or goal number until the deposit is paid.
-      </p>
+      {error && (
+        <p role="alert" className="mt-2 text-xs font-medium text-(--chip-risk-fg)">
+          Could not dismiss: {error}
+        </p>
+      )}
+      {visible.length === 0 ? (
+        <p className="mt-3 text-xs text-(--text-muted)">All pending payments dismissed — nothing awaiting deposit.</p>
+      ) : (
+        <>
+          <div className="mt-3 overflow-x-auto">
+            <table className="data-table min-w-[560px]">
+              <thead>
+                <tr>
+                  <th scope="col" className="text-left">Client</th>
+                  <th scope="col" className="text-right">Amount Due</th>
+                  <th scope="col" className="text-left">Rep</th>
+                  <th scope="col" className="text-left">Session Type</th>
+                  <th scope="col" className="text-left">Booked On</th>
+                  <th scope="col" className="w-8">
+                    <span className="sr-only">Dismiss</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((r) => (
+                  <tr key={r.appointment_id}>
+                    <td className="text-left font-medium text-(--text-primary)">{r.client_name ?? "—"}</td>
+                    <td className="text-right tabular-nums">{fmtAmount(r.amount)}</td>
+                    <td className="text-left">
+                      {r.rep_name ?? <span className="text-(--text-faint)">Unattributed</span>}
+                    </td>
+                    <td className="text-left text-(--text-caption)">{r.appointment_type || "—"}</td>
+                    <td className="text-left text-(--text-caption)">
+                      {r.created_business_date ? formatDateHuman(r.created_business_date) : "—"}
+                    </td>
+                    <td className="text-right align-middle">
+                      <button
+                        type="button"
+                        onClick={() => void dismiss(r.appointment_id)}
+                        disabled={busyId === r.appointment_id}
+                        aria-label={`Dismiss from pending payments: ${r.client_name ?? r.appointment_type ?? "unknown client"}`}
+                        title="Dismiss from pending payments (the appointment is kept — it only leaves this list)"
+                        className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--text-muted) hover:bg-(--surface-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) disabled:opacity-40"
+                      >
+                        <span aria-hidden="true">✕</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-(--text-muted)">
+            Deposit not yet received (Acuity paid = no). These bookings hold studio availability and stay visible here, but count toward no bookings, conversion, or goal number until the deposit is paid. ✕ removes an item from this list permanently — if the deposit arrives later, the booking still counts as a Booking Win.
+          </p>
+        </>
+      )}
     </details>
   );
 }
