@@ -32,6 +32,16 @@ import type {
   ManualOverrideRow,
   MonthlyGoalRow,
   OpportunityRow,
+  PipCheckinRow,
+  PipCreateInput,
+  PipDraftPatch,
+  PipEvidenceSnapshotRow,
+  PipEventRow,
+  PipRow,
+  PipStatus,
+  PipTemplateCreateInput,
+  PipTemplatePatch,
+  PipTemplateRow,
   RepGoalRowFull,
   Store,
   SyncRunRow,
@@ -39,7 +49,21 @@ import type {
   UserRow,
   WeeklyReportNotesRow,
 } from "./types";
-import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import {
+  applyPipDraftPatch,
+  assertCancelRequirements,
+  assertCheckinAllowed,
+  assertCompleteRequirements,
+  assertIssueRequirements,
+  buildPipRow,
+  pipAuditValue,
+  pipDateString,
+  pipEventToManualOverride,
+  pipOptionalInt,
+  pipOptionalText,
+  pipRequiredText,
+} from "./pip-helpers";
 
 interface CallExt extends CallRow {
   external_call_id: string;
@@ -90,6 +114,12 @@ export class MemoryStore implements Store {
   private overrides: ManualOverrideRow[] = [];
   private dailyPriorities = new Map<string, DailyPrioritiesRow>();
   private leadAdjustments = new Map<string, LeadCountAdjustmentRow>(); // keyed work_date:sheet
+  // Performance Management (PIP module): plain arrays — append-only histories.
+  private pips: PipRow[] = [];
+  private pipSnapshots: PipEvidenceSnapshotRow[] = [];
+  private pipCheckins: PipCheckinRow[] = [];
+  private pipTemplates: PipTemplateRow[] = [];
+  private pipEvents: PipEventRow[] = [];
   private seq = 0;
 
   private nextId(prefix: string): string {
@@ -852,5 +882,307 @@ export class MemoryStore implements Store {
       callFlagged: inWindow.filter((c) => c.message_types.includes(1) || c.last_message_type === "TYPE_CALL").length,
       byDay: [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([day, v]) => ({ day, ...v })),
     };
+  }
+
+  // ---- Performance Management (PIP module — mirrors PgStore semantics exactly) ----
+  private recordPipEvent(
+    event: Omit<PipEventRow, "id" | "created_at">,
+  ): void {
+    this.pipEvents.push({ ...event, id: this.nextId("pipevt"), created_at: new Date().toISOString() });
+    // Compact mirror into the existing audit trail (Settings → Audit page).
+    this.overrides.push({
+      ...pipEventToManualOverride(event.event_type, {
+        entityId: event.pip_id ?? event.template_id ?? "",
+        field: event.field,
+        previousValue: event.previous_value,
+        newValue: event.new_value,
+        actor: event.actor,
+      }),
+      id: this.nextId("ovr"),
+      changed_at: new Date().toISOString(),
+    });
+  }
+
+  async createPip(input: PipCreateInput): Promise<PipRow> {
+    const nowIso = new Date().toISOString();
+    const row = buildPipRow(input, this.nextId("pip"), nowIso);
+    this.pips.push(row);
+    this.recordPipEvent({
+      pip_id: row.id,
+      template_id: null,
+      event_type: "pip_created",
+      actor: row.created_by,
+      field: "status",
+      previous_value: null,
+      new_value: "draft",
+      details: { title: row.title, rep_id: row.rep_id },
+    });
+    return { ...row };
+  }
+
+  async updatePipDraft(id: string, patch: PipDraftPatch): Promise<PipRow> {
+    const row = this.pips.find((p) => p.id === id);
+    if (!row) throw new Error(`PIP not found: ${id}`);
+    const { next, changed, observationsBefore } = applyPipDraftPatch(row, patch);
+    if (changed.length === 0) return { ...row };
+    next.updated_at = new Date().toISOString();
+    Object.assign(row, next);
+    const actor = patch.actor ? String(patch.actor).trim() || null : null;
+    this.recordPipEvent({
+      pip_id: row.id,
+      template_id: null,
+      event_type: "pip_edited",
+      actor,
+      field: "draft",
+      previous_value: null,
+      new_value: changed.join(", "),
+      details: { changed },
+    });
+    if (observationsBefore !== undefined && changed.includes("manager_observations")) {
+      this.recordPipEvent({
+        pip_id: row.id,
+        template_id: null,
+        event_type: "pip_observation_changed",
+        actor,
+        field: "manager_observations",
+        previous_value: pipAuditValue(observationsBefore),
+        new_value: pipAuditValue(row.manager_observations),
+        details: null,
+      });
+    }
+    return { ...row };
+  }
+
+  async getPip(id: string): Promise<PipRow | null> {
+    const row = this.pips.find((p) => p.id === id);
+    return row ? { ...row } : null;
+  }
+
+  async listPips(status?: PipStatus | null): Promise<PipRow[]> {
+    return this.pips
+      .filter((p) => !status || p.status === status)
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+      .map((p) => ({ ...p }));
+  }
+
+  async issuePip(id: string, opts: { issuedBy: string }): Promise<PipRow> {
+    const row = this.pips.find((p) => p.id === id);
+    if (!row) throw new Error(`PIP not found: ${id}`);
+    assertIssueRequirements(row);
+    // Freeze the evidence FIRST (the exact document being issued), then flip.
+    const snapshot = JSON.parse(JSON.stringify(row)) as Record<string, unknown>;
+    this.pipSnapshots.push({
+      id: this.nextId("pipsnap"),
+      pip_id: row.id,
+      version: 1,
+      snapshot,
+      created_by: opts.issuedBy || null,
+      created_at: new Date().toISOString(),
+    });
+    row.status = "issued";
+    row.issued_at = new Date().toISOString();
+    row.issued_by = opts.issuedBy || null;
+    row.updated_at = row.issued_at;
+    this.recordPipEvent({
+      pip_id: row.id,
+      template_id: null,
+      event_type: "pip_issued",
+      actor: opts.issuedBy || null,
+      field: "status",
+      previous_value: "draft",
+      new_value: "issued",
+      details: { version: 1, snapshot: "pip_evidence_snapshots v1 written" },
+    });
+    return { ...row };
+  }
+
+  async completePip(id: string, opts: { conclusionCategory: string; conclusionNotes: string; actor: string }): Promise<PipRow> {
+    const row = this.pips.find((p) => p.id === id);
+    if (!row) throw new Error(`PIP not found: ${id}`);
+    const { category, notes } = assertCompleteRequirements(row, opts.conclusionCategory, opts.conclusionNotes);
+    row.status = "completed";
+    row.conclusion_category = category;
+    row.conclusion_notes = notes;
+    row.completed_at = new Date().toISOString();
+    row.manager_acked_at = row.completed_at;
+    row.manager_acked_by = opts.actor || null;
+    row.updated_at = row.completed_at;
+    this.recordPipEvent({
+      pip_id: row.id,
+      template_id: null,
+      event_type: "pip_completed",
+      actor: opts.actor || null,
+      field: "status",
+      previous_value: "issued",
+      new_value: "completed",
+      details: { conclusion_category: category },
+    });
+    return { ...row };
+  }
+
+  async cancelPip(id: string, opts: { cancelledBy: string; reason: string }): Promise<PipRow> {
+    const row = this.pips.find((p) => p.id === id);
+    if (!row) throw new Error(`PIP not found: ${id}`);
+    const reason = assertCancelRequirements(row, opts.reason);
+    row.status = "cancelled";
+    row.cancellation_reason = reason;
+    row.cancelled_at = new Date().toISOString();
+    row.cancelled_by = opts.cancelledBy || null;
+    row.updated_at = row.cancelled_at;
+    this.recordPipEvent({
+      pip_id: row.id,
+      template_id: null,
+      event_type: "pip_cancelled",
+      actor: opts.cancelledBy || null,
+      field: "status",
+      previous_value: "issued",
+      new_value: "cancelled",
+      details: { reason: pipAuditValue(reason) },
+    });
+    return { ...row };
+  }
+
+  async addPipCheckin(row: Omit<PipCheckinRow, "id" | "created_at">): Promise<PipCheckinRow> {
+    const pip = this.pips.find((p) => p.id === row.pip_id);
+    if (!pip) throw new Error(`PIP not found: ${row.pip_id}`);
+    assertCheckinAllowed(pip);
+    const checkinDate = pipDateString(row.checkin_date, "checkin_date");
+    const full: PipCheckinRow = {
+      ...row,
+      pip_id: row.pip_id,
+      checkin_date: checkinDate ?? new Date().toISOString().slice(0, 10),
+      manager_name: row.manager_name ?? null,
+      employee_name: row.employee_name ?? null,
+      current_performance: row.current_performance ?? null,
+      topics_discussed: row.topics_discussed ?? null,
+      coaching_provided: row.coaching_provided ?? null,
+      employee_comments: row.employee_comments ?? null,
+      manager_notes: row.manager_notes ?? null,
+      next_actions: row.next_actions ?? null,
+      next_checkin_date: pipDateString(row.next_checkin_date, "next_checkin_date"),
+      id: this.nextId("pipchk"),
+      created_at: new Date().toISOString(),
+    };
+    this.pipCheckins.push(full);
+    this.recordPipEvent({
+      pip_id: row.pip_id,
+      template_id: null,
+      event_type: "pip_checkin_added",
+      actor: row.manager_name || null,
+      field: "checkin",
+      previous_value: null,
+      new_value: full.checkin_date,
+      details: null,
+    });
+    return { ...full };
+  }
+
+  async getPipCheckins(pipId: string): Promise<PipCheckinRow[]> {
+    return this.pipCheckins
+      .filter((c) => c.pip_id === pipId)
+      .sort((a, b) => (a.created_at > b.created_at ? 1 : -1))
+      .map((c) => ({ ...c }));
+  }
+
+  async getPipEvidenceSnapshots(pipId: string): Promise<PipEvidenceSnapshotRow[]> {
+    return this.pipSnapshots
+      .filter((s) => s.pip_id === pipId)
+      .sort((a, b) => a.version - b.version)
+      .map((s) => ({ ...s, snapshot: { ...s.snapshot } }));
+  }
+
+  async createPipTemplate(input: PipTemplateCreateInput): Promise<PipTemplateRow> {
+    const name = pipRequiredText(input.name, "template name", 200);
+    const nowIso = new Date().toISOString();
+    const row: PipTemplateRow = {
+      id: this.nextId("piptpl"),
+      name,
+      category: pipOptionalText(input.category ?? null, 120),
+      default_goal_text: pipOptionalText(input.default_goal_text ?? null),
+      default_action_plan: normalizePipActionList(input.default_action_plan ?? []),
+      default_personal: normalizePipActionList(input.default_personal ?? []),
+      default_professional: normalizePipActionList(input.default_professional ?? []),
+      default_checkin_cadence_days: pipOptionalInt(input.default_checkin_cadence_days ?? null, "default_checkin_cadence_days"),
+      default_duration_weeks: pipOptionalInt(input.default_duration_weeks ?? null, "default_duration_weeks"),
+      created_by: input.created_by ? String(input.created_by).trim() || null : null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    this.pipTemplates.push(row);
+    this.recordPipEvent({
+      pip_id: null,
+      template_id: row.id,
+      event_type: "pip_template_created",
+      actor: row.created_by,
+      field: "name",
+      previous_value: null,
+      new_value: row.name,
+      details: null,
+    });
+    return { ...row };
+  }
+
+  async updatePipTemplate(id: string, patch: PipTemplatePatch): Promise<PipTemplateRow> {
+    const row = this.pipTemplates.find((t) => t.id === id);
+    if (!row) throw new Error(`PIP template not found: ${id}`);
+    if (patch.name !== undefined) row.name = pipRequiredText(patch.name, "template name", 200);
+    if (patch.category !== undefined) row.category = pipOptionalText(patch.category, 120);
+    if (patch.default_goal_text !== undefined) row.default_goal_text = pipOptionalText(patch.default_goal_text);
+    if (patch.default_action_plan !== undefined) row.default_action_plan = normalizePipActionList(patch.default_action_plan);
+    if (patch.default_personal !== undefined) row.default_personal = normalizePipActionList(patch.default_personal);
+    if (patch.default_professional !== undefined) row.default_professional = normalizePipActionList(patch.default_professional);
+    if (patch.default_checkin_cadence_days !== undefined)
+      row.default_checkin_cadence_days = pipOptionalInt(patch.default_checkin_cadence_days, "default_checkin_cadence_days");
+    if (patch.default_duration_weeks !== undefined)
+      row.default_duration_weeks = pipOptionalInt(patch.default_duration_weeks, "default_duration_weeks");
+    row.updated_at = new Date().toISOString();
+    this.recordPipEvent({
+      pip_id: null,
+      template_id: row.id,
+      event_type: "pip_template_updated",
+      actor: patch.actor || null,
+      field: "template",
+      previous_value: null,
+      new_value: row.name,
+      details: null,
+    });
+    return { ...row };
+  }
+
+  async deletePipTemplate(id: string): Promise<void> {
+    const idx = this.pipTemplates.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const [removed] = this.pipTemplates.splice(idx, 1);
+    this.recordPipEvent({
+      pip_id: null,
+      template_id: id,
+      event_type: "pip_template_deleted",
+      actor: null,
+      field: "name",
+      previous_value: removed.name,
+      new_value: null,
+      details: null,
+    });
+  }
+
+  async getPipTemplate(id: string): Promise<PipTemplateRow | null> {
+    const row = this.pipTemplates.find((t) => t.id === id);
+    return row ? { ...row } : null;
+  }
+
+  async listPipTemplates(): Promise<PipTemplateRow[]> {
+    return this.pipTemplates.map((t) => ({ ...t }));
+  }
+
+  async insertPipEvent(row: Omit<PipEventRow, "id" | "created_at">): Promise<void> {
+    this.recordPipEvent(row);
+  }
+
+  async getPipEvents(opts?: { pipId?: string; limit?: number }): Promise<PipEventRow[]> {
+    const rows = opts?.pipId ? this.pipEvents.filter((e) => e.pip_id === opts.pipId) : [...this.pipEvents];
+    return rows
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+      .slice(0, opts?.limit ?? 200)
+      .map((e) => ({ ...e, details: e.details ? { ...e.details } : null }));
   }
 }

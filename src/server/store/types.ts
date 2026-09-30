@@ -576,6 +576,228 @@ export function defaultSettings(): AppSettings {
   return JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as AppSettings;
 }
 
+// ========================================================================
+// PERFORMANCE MANAGEMENT (PIP module, Phase 1 — owner directive 9/30)
+// ------------------------------------------------------------------------
+// DETERMINISTIC + EVIDENCE-BASED, explicitly NOT an AI feature: the system
+// stores and displays verified facts; the manager decides everything. There
+// is deliberately NO second performance-calculation engine here — later
+// phases reuse the existing verified metric functions. PIP rows are
+// sensitive HR material: they must never surface on leaderboards, team
+// comparisons, or any non-manager view.
+// ========================================================================
+
+/** PIP lifecycle: draft → issued (frozen snapshot) → completed | cancelled. */
+export type PipStatus = "draft" | "issued" | "completed" | "cancelled";
+export const PIP_STATUSES: PipStatus[] = ["draft", "issued", "completed", "cancelled"];
+
+export function isPipStatus(v: unknown): v is PipStatus {
+  return v === "draft" || v === "issued" || v === "completed" || v === "cancelled";
+}
+
+/**
+ * One editable action item inside the JSONB action sections. `completed_at`
+ * is set by the manager when they mark it done (never system-derived).
+ */
+export interface PipActionItem {
+  text: string;
+  completed: boolean;
+  completed_at: string | null; // ISO
+}
+
+/** Sanitize a stored/entered action list: keep well-formed items, drop junk. */
+export function normalizePipActionList(raw: unknown): PipActionItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PipActionItem[] = [];
+  for (const item of raw) {
+    const r = (item ?? {}) as Partial<PipActionItem>;
+    const text = typeof r.text === "string" ? r.text.trim() : "";
+    if (!text) continue;
+    out.push({
+      text,
+      completed: r.completed === true,
+      completed_at: typeof r.completed_at === "string" ? r.completed_at : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * One Performance Improvement Plan. The `issued` state is a PERMANENT frozen
+ * evidence boundary: the pips row itself keeps its live fields, but the
+ * issued document (version snapshot in pip_evidence_snapshots) never changes —
+ * later live-data changes never rewrite an issued PIP; corrections happen via
+ * documented amendments (a later phase adds NEW snapshot version rows).
+ */
+export interface PipRow {
+  id: string;
+  rep_id: string | null; // internal users.id; FK ON DELETE SET NULL (app requires a rep on create)
+  title: string;
+  status: PipStatus;
+  goal_text: string | null;
+  /** Nullable int — the weekly goal for the review period (single source: rep_goals semantics; never a second calc engine). */
+  weekly_goal_min: number | null;
+  /** OWNER RULE: hard weekly minimums are never averaged across weeks. */
+  hard_weekly_minimum: boolean;
+  review_start_date: string | null; // YYYY-MM-DD
+  review_end_date: string | null; // YYYY-MM-DD
+  pip_start_date: string | null; // YYYY-MM-DD (required to issue)
+  pip_end_date: string | null; // YYYY-MM-DD (required to issue)
+  manager_observations: string | null;
+  action_plan: PipActionItem[];
+  personal_development_actions: PipActionItem[];
+  professional_development_actions: PipActionItem[];
+  conclusion_category: string | null; // required to complete (manager choice)
+  conclusion_notes: string | null; // required to complete
+  issued_at: string | null; // ISO
+  issued_by: string | null;
+  completed_at: string | null; // ISO
+  cancelled_at: string | null; // ISO
+  cancelled_by: string | null;
+  cancellation_reason: string | null; // required to cancel
+  employee_visible: boolean;
+  /** Current frozen-evidence version (1 = the original issue; amendments bump). */
+  current_version: number;
+  employee_acked_at: string | null;
+  employee_acked_by: string | null;
+  manager_acked_at: string | null;
+  manager_acked_by: string | null;
+  created_by: string | null;
+  created_at: string; // ISO
+  updated_at: string; // ISO
+}
+
+/** Manager-entered fields for a new PIP draft (status is always born 'draft'). */
+export interface PipCreateInput {
+  rep_id: string;
+  title: string;
+  goal_text?: string | null;
+  weekly_goal_min?: number | null;
+  hard_weekly_minimum?: boolean;
+  review_start_date?: string | null;
+  review_end_date?: string | null;
+  pip_start_date?: string | null;
+  pip_end_date?: string | null;
+  manager_observations?: string | null;
+  action_plan?: PipActionItem[];
+  personal_development_actions?: PipActionItem[];
+  professional_development_actions?: PipActionItem[];
+  created_by?: string;
+}
+
+/** Editable fields of a DRAFT (the only mutable state of the document). */
+export interface PipDraftPatch {
+  rep_id?: string;
+  title?: string;
+  goal_text?: string | null;
+  weekly_goal_min?: number | null;
+  hard_weekly_minimum?: boolean;
+  review_start_date?: string | null;
+  review_end_date?: string | null;
+  pip_start_date?: string | null;
+  pip_end_date?: string | null;
+  manager_observations?: string | null;
+  action_plan?: PipActionItem[];
+  personal_development_actions?: PipActionItem[];
+  professional_development_actions?: PipActionItem[];
+  /** Who made the edit (audit trail). */
+  actor?: string;
+}
+
+/**
+ * One frozen-evidence snapshot of a PIP document, written ONLY at issue time
+ * (and later by amendments as NEW version rows). NEVER updated in place —
+ * the UNIQUE (pip_id, version) key enforces write-once.
+ */
+export interface PipEvidenceSnapshotRow {
+  id: string;
+  pip_id: string;
+  version: number;
+  snapshot: Record<string, unknown>; // full frozen document (the pip row at issue)
+  created_by: string | null;
+  created_at: string; // ISO
+}
+
+/** One manager-logged check-in during an ISSUED PIP's review period. */
+export interface PipCheckinRow {
+  id: string;
+  pip_id: string;
+  checkin_date: string; // YYYY-MM-DD
+  manager_name: string | null;
+  employee_name: string | null;
+  current_performance: string | null;
+  topics_discussed: string | null;
+  coaching_provided: string | null;
+  employee_comments: string | null;
+  manager_notes: string | null;
+  next_actions: string | null;
+  next_checkin_date: string | null; // YYYY-MM-DD
+  created_at: string; // ISO
+}
+
+/** Manager-created reusable PIP template (Phase 1: CRUD only; applying to drafts is a later phase). */
+export interface PipTemplateRow {
+  id: string;
+  name: string;
+  category: string | null;
+  default_goal_text: string | null;
+  default_action_plan: PipActionItem[];
+  default_personal: PipActionItem[];
+  default_professional: PipActionItem[];
+  default_checkin_cadence_days: number | null;
+  default_duration_weeks: number | null;
+  created_by: string | null;
+  created_at: string; // ISO
+  updated_at: string; // ISO
+}
+
+export interface PipTemplateCreateInput {
+  name: string;
+  category?: string | null;
+  default_goal_text?: string | null;
+  default_action_plan?: PipActionItem[];
+  default_personal?: PipActionItem[];
+  default_professional?: PipActionItem[];
+  default_checkin_cadence_days?: number | null;
+  default_duration_weeks?: number | null;
+  created_by?: string;
+}
+
+export type PipTemplatePatch = Partial<Omit<PipTemplateCreateInput, "created_by">> & { actor?: string };
+
+/**
+ * PIP event log (module audit trail). The existing manual_overrides table CAN
+ * represent lifecycle events (and receives a compact mirror row for every
+ * one, so the Settings → Audit page never misses a PIP action), but the
+ * module keeps its OWN typed log — before/after JSONB, template events,
+ * amendment-ready — which later phases (History page, amendments) query.
+ * History is NEVER deleted.
+ */
+export type PipEventType =
+  | "pip_created"
+  | "pip_edited"
+  | "pip_observation_changed"
+  | "pip_issued"
+  | "pip_completed"
+  | "pip_cancelled"
+  | "pip_checkin_added"
+  | "pip_template_created"
+  | "pip_template_updated"
+  | "pip_template_deleted";
+
+export interface PipEventRow {
+  id: string;
+  pip_id: string | null;
+  template_id: string | null;
+  event_type: PipEventType;
+  actor: string | null;
+  field: string | null;
+  previous_value: string | null;
+  new_value: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string; // ISO
+}
+
 export interface Store {
   mode: "postgres" | "memory";
   ensureSchema(): Promise<void>;
@@ -882,4 +1104,45 @@ export interface Store {
   // manual overrides
   insertManualOverride(row: Omit<ManualOverrideRow, "id" | "changed_at">): Promise<void>;
   getManualOverrides(limit: number): Promise<ManualOverrideRow[]>;
+
+  // ---- Performance Management (PIP module, Phase 1 — owner directive 9/30) ----
+  // STATUS GUARDS (enforced INSIDE both stores — the UI can never bypass):
+  //   draft     → fully editable (document fields only)
+  //   issued    → document FROZEN (snapshot written once at issue); check-ins only
+  //   completed → fully immutable
+  //   cancelled → fully immutable
+  // Transitions happen ONLY via these explicit manager actions — nothing
+  // auto-transitions, ever.
+  /** Create a PIP draft (status born 'draft'; requires rep_id + title). Audit: pip_created. */
+  createPip(input: PipCreateInput): Promise<PipRow>;
+  /** Edit a DRAFT's document fields. Rejects on any non-draft status. Audit: pip_edited (+ pip_observation_changed). */
+  updatePipDraft(id: string, patch: PipDraftPatch): Promise<PipRow>;
+  getPip(id: string): Promise<PipRow | null>;
+  /** All PIPs (newest first), or only one status when given. */
+  listPips(status?: PipStatus | null): Promise<PipRow[]>;
+  /**
+   * draft → issued. Requires goal_text + pip_start_date + pip_end_date.
+   * Writes the version-1 frozen-evidence snapshot (pip_evidence_snapshots)
+   * transactionally with the status flip. Audit: pip_issued.
+   */
+  issuePip(id: string, opts: { issuedBy: string }): Promise<PipRow>;
+  /** issued → completed. Requires conclusion_category + conclusion_notes. Audit: pip_completed. */
+  completePip(id: string, opts: { conclusionCategory: string; conclusionNotes: string; actor: string }): Promise<PipRow>;
+  /** issued → cancelled. Requires a cancellation reason. Audit: pip_cancelled. */
+  cancelPip(id: string, opts: { cancelledBy: string; reason: string }): Promise<PipRow>;
+  /** Log a check-in (ISSUED pips only — drafts have no review period yet; terminal states are frozen). Audit: pip_checkin_added. */
+  addPipCheckin(row: Omit<PipCheckinRow, "id" | "created_at">): Promise<PipCheckinRow>;
+  /** Check-ins of one PIP, oldest first (append-only history). */
+  getPipCheckins(pipId: string): Promise<PipCheckinRow[]>;
+  /** Frozen-evidence snapshots of one PIP, version ascending. Write-once rows — never updated. */
+  getPipEvidenceSnapshots(pipId: string): Promise<PipEvidenceSnapshotRow[]>;
+  createPipTemplate(input: PipTemplateCreateInput): Promise<PipTemplateRow>;
+  updatePipTemplate(id: string, patch: PipTemplatePatch): Promise<PipTemplateRow>;
+  deletePipTemplate(id: string): Promise<void>;
+  getPipTemplate(id: string): Promise<PipTemplateRow | null>;
+  listPipTemplates(): Promise<PipTemplateRow[]>;
+  /** Append a typed module event (also mirrored compactly into manual_overrides by callers' store methods). */
+  insertPipEvent(row: Omit<PipEventRow, "id" | "created_at">): Promise<void>;
+  /** Module event log, newest first; optionally scoped to one PIP. */
+  getPipEvents(opts?: { pipId?: string; limit?: number }): Promise<PipEventRow[]>;
 }

@@ -36,8 +36,32 @@ import type {
   TeamGoalRow,
   UserRow,
   WeeklyReportNotesRow,
+  PipCheckinRow,
+  PipCreateInput,
+  PipDraftPatch,
+  PipEvidenceSnapshotRow,
+  PipEventRow,
+  PipRow,
+  PipStatus,
+  PipTemplateCreateInput,
+  PipTemplatePatch,
+  PipTemplateRow,
 } from "./types";
-import { DEFAULT_SETTINGS, normalizeAppSettings, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_SETTINGS, isPipStatus, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import {
+  applyPipDraftPatch,
+  assertCancelRequirements,
+  assertCheckinAllowed,
+  assertCompleteRequirements,
+  assertIssueRequirements,
+  buildPipRow,
+  pipAuditValue,
+  pipDateString,
+  pipEventToManualOverride,
+  pipOptionalInt,
+  pipOptionalText,
+  pipRequiredText,
+} from "./pip-helpers";
 import { TtlReadCache } from "./read-cache";
 
 // Ordered DDL: each statement idempotent, safe to run on every cold start.
@@ -403,6 +427,109 @@ const DDL: string[] = [
     messages_scanned int NOT NULL DEFAULT 0,
     stopped_reason text
   )`,
+  // ================= PERFORMANCE MANAGEMENT (PIP module, Phase 1) =================
+  // Owner directive 9/30: deterministic, evidence-based, manager-driven.
+  // Lifecycle draft → issued (frozen evidence snapshot) → completed|cancelled.
+  // History is never deleted. rep_id FK is ON DELETE SET NULL (NOT NULL is
+  // enforced at the app layer) so the demo-user purge can never wedge on a PIP
+  // row — the FK-safe-delete lesson from the demo-purge hotfixes.
+  `CREATE TABLE IF NOT EXISTS pips (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    rep_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    title text NOT NULL,
+    status text NOT NULL DEFAULT 'draft',
+    goal_text text,
+    weekly_goal_min integer,
+    hard_weekly_minimum boolean NOT NULL DEFAULT false,
+    review_start_date date,
+    review_end_date date,
+    pip_start_date date,
+    pip_end_date date,
+    manager_observations text,
+    action_plan jsonb NOT NULL DEFAULT '[]'::jsonb,
+    personal_development_actions jsonb NOT NULL DEFAULT '[]'::jsonb,
+    professional_development_actions jsonb NOT NULL DEFAULT '[]'::jsonb,
+    conclusion_category text,
+    conclusion_notes text,
+    issued_at timestamptz,
+    issued_by text,
+    completed_at timestamptz,
+    cancelled_at timestamptz,
+    cancelled_by text,
+    cancellation_reason text,
+    employee_visible boolean NOT NULL DEFAULT false,
+    current_version integer NOT NULL DEFAULT 1,
+    employee_acked_at timestamptz,
+    employee_acked_by text,
+    manager_acked_at timestamptz,
+    manager_acked_by text,
+    created_by text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS pips_status_idx ON pips (status)`,
+  `CREATE INDEX IF NOT EXISTS pips_rep_idx ON pips (rep_id)`,
+  // Frozen-evidence snapshots: written ONLY at issue time (amendments later
+  // add NEW version rows). Write-once enforced by UNIQUE (pip_id, version);
+  // nothing in the store ever UPDATEs these rows.
+  `CREATE TABLE IF NOT EXISTS pip_evidence_snapshots (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    pip_id uuid NOT NULL REFERENCES pips(id) ON DELETE CASCADE,
+    version integer NOT NULL,
+    snapshot jsonb NOT NULL,
+    created_by text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (pip_id, version)
+  )`,
+  // Manager check-ins during an ISSUED review (append-only; never updated).
+  `CREATE TABLE IF NOT EXISTS pip_checkins (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    pip_id uuid NOT NULL REFERENCES pips(id) ON DELETE CASCADE,
+    checkin_date date NOT NULL,
+    manager_name text,
+    employee_name text,
+    current_performance text,
+    topics_discussed text,
+    coaching_provided text,
+    employee_comments text,
+    manager_notes text,
+    next_actions text,
+    next_checkin_date date,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS pip_checkins_pip_idx ON pip_checkins (pip_id)`,
+  // Manager-created reusable templates (applying them to drafts is a later phase).
+  `CREATE TABLE IF NOT EXISTS pip_templates (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    category text,
+    default_goal_text text,
+    default_action_plan jsonb NOT NULL DEFAULT '[]'::jsonb,
+    default_personal jsonb NOT NULL DEFAULT '[]'::jsonb,
+    default_professional jsonb NOT NULL DEFAULT '[]'::jsonb,
+    default_checkin_cadence_days integer,
+    default_duration_weeks integer,
+    created_by text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  // Typed module event log (primary PIP audit trail; every event is ALSO
+  // mirrored compactly into manual_overrides for the existing Audit page).
+  // History never deleted — deliberately NO FK on pip_id so log rows outlive
+  // everything else.
+  `CREATE TABLE IF NOT EXISTS pip_event_log (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    pip_id uuid,
+    template_id uuid,
+    event_type text NOT NULL,
+    actor text,
+    field text,
+    previous_value text,
+    new_value text,
+    details jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS pip_event_log_pip_idx ON pip_event_log (pip_id, created_at DESC)`,
 ];
 
 /**
@@ -1719,5 +1846,606 @@ export class PgStore implements Store {
           updated_at = now()
         WHERE id = ${r.call_id}::uuid`;
     }
+  }
+
+  // ---- Performance Management (PIP module — mirrors MemoryStore semantics exactly) ----
+  private pipRowFromDb(r: Record<string, unknown>): PipRow {
+    return {
+      id: String(r.id),
+      rep_id: r.rep_id == null ? null : String(r.rep_id),
+      title: String(r.title),
+      status: (isPipStatus(r.status) ? r.status : "draft") as PipStatus,
+      goal_text: r.goal_text == null ? null : String(r.goal_text),
+      weekly_goal_min: r.weekly_goal_min == null ? null : Number(r.weekly_goal_min),
+      hard_weekly_minimum: r.hard_weekly_minimum === true,
+      review_start_date: r.review_start_date == null ? null : String(r.review_start_date).slice(0, 10),
+      review_end_date: r.review_end_date == null ? null : String(r.review_end_date).slice(0, 10),
+      pip_start_date: r.pip_start_date == null ? null : String(r.pip_start_date).slice(0, 10),
+      pip_end_date: r.pip_end_date == null ? null : String(r.pip_end_date).slice(0, 10),
+      manager_observations: r.manager_observations == null ? null : String(r.manager_observations),
+      action_plan: normalizePipActionList(r.action_plan),
+      personal_development_actions: normalizePipActionList(r.personal_development_actions),
+      professional_development_actions: normalizePipActionList(r.professional_development_actions),
+      conclusion_category: r.conclusion_category == null ? null : String(r.conclusion_category),
+      conclusion_notes: r.conclusion_notes == null ? null : String(r.conclusion_notes),
+      issued_at: r.issued_at == null ? null : new Date(r.issued_at as string).toISOString(),
+      issued_by: r.issued_by == null ? null : String(r.issued_by),
+      completed_at: r.completed_at == null ? null : new Date(r.completed_at as string).toISOString(),
+      cancelled_at: r.cancelled_at == null ? null : new Date(r.cancelled_at as string).toISOString(),
+      cancelled_by: r.cancelled_by == null ? null : String(r.cancelled_by),
+      cancellation_reason: r.cancellation_reason == null ? null : String(r.cancellation_reason),
+      employee_visible: r.employee_visible === true,
+      current_version: Number(r.current_version ?? 1),
+      employee_acked_at: r.employee_acked_at == null ? null : new Date(r.employee_acked_at as string).toISOString(),
+      employee_acked_by: r.employee_acked_by == null ? null : String(r.employee_acked_by),
+      manager_acked_at: r.manager_acked_at == null ? null : new Date(r.manager_acked_at as string).toISOString(),
+      manager_acked_by: r.manager_acked_by == null ? null : String(r.manager_acked_by),
+      created_by: r.created_by == null ? null : String(r.created_by),
+      created_at: r.created_at == null ? "" : new Date(r.created_at as string).toISOString(),
+      updated_at: r.updated_at == null ? "" : new Date(r.updated_at as string).toISOString(),
+    };
+  }
+
+
+  /** Both audit sinks inside ONE transaction (typed log + manual_overrides mirror). */
+  private static async recordPipEventTx(
+    sql: ReturnType<typeof postgres>,
+    event: Omit<PipEventRow, "id" | "created_at">,
+  ): Promise<void> {
+    await sql`INSERT INTO pip_event_log (pip_id, template_id, event_type, actor, field, previous_value, new_value, details)
+      VALUES (${event.pip_id}, ${event.template_id}, ${event.event_type}, ${event.actor}, ${event.field}, ${event.previous_value}, ${event.new_value},
+        ${event.details}::jsonb)`;
+    const mirror = pipEventToManualOverride(event.event_type, {
+      entityId: event.pip_id ?? event.template_id ?? "",
+      field: event.field,
+      previousValue: event.previous_value,
+      newValue: event.new_value,
+      actor: event.actor,
+    });
+    await sql`INSERT INTO manual_overrides (entity_type, entity_id, field, previous_value, new_value, changed_by)
+      VALUES (${mirror.entity_type}, ${mirror.entity_id}, ${mirror.field}, ${mirror.previous_value}, ${mirror.new_value}, ${mirror.changed_by})`;
+  }
+
+  async createPip(input: PipCreateInput): Promise<PipRow> {
+    await this.ensureSchema();
+    const nowIso = new Date().toISOString();
+    const row = buildPipRow(input, crypto.randomUUID(), nowIso);
+    this.cache.bump();
+    await this.sql`INSERT INTO pips (id, rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+        review_start_date, review_end_date, pip_start_date, pip_end_date, manager_observations,
+        action_plan, personal_development_actions, professional_development_actions,
+        created_by, created_at, updated_at)
+      VALUES (${row.id}::uuid, ${row.rep_id}::uuid, ${row.title}, ${row.status}, ${row.goal_text}, ${row.weekly_goal_min},
+        ${row.hard_weekly_minimum}, ${row.review_start_date}::date, ${row.review_end_date}::date,
+        ${row.pip_start_date}::date, ${row.pip_end_date}::date, ${row.manager_observations},
+        ${row.action_plan}::jsonb, ${row.personal_development_actions}::jsonb,
+        ${row.professional_development_actions}::jsonb,
+        ${row.created_by}, ${row.created_at}, ${row.updated_at})`;
+    await this.sql.begin(async (sql) => {
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: row.id,
+        template_id: null,
+        event_type: "pip_created",
+        actor: row.created_by,
+        field: "status",
+        previous_value: null,
+        new_value: "draft",
+        details: { title: row.title, rep_id: row.rep_id },
+      });
+    });
+    return row;
+  }
+
+  async updatePipDraft(id: string, patch: PipDraftPatch): Promise<PipRow> {
+    await this.ensureSchema();
+    this.cache.bump();
+    return this.sql.begin(async (sql) => {
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
+      const current = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
+      const { next, changed, observationsBefore } = applyPipDraftPatch(current, patch);
+      if (changed.length === 0) return current;
+      const actor = patch.actor ? String(patch.actor).trim() || null : null;
+      const updated = await sql`UPDATE pips SET rep_id = ${next.rep_id}::uuid, title = ${next.title},
+          goal_text = ${next.goal_text}, weekly_goal_min = ${next.weekly_goal_min},
+          hard_weekly_minimum = ${next.hard_weekly_minimum},
+          review_start_date = ${next.review_start_date}::date, review_end_date = ${next.review_end_date}::date,
+          pip_start_date = ${next.pip_start_date}::date, pip_end_date = ${next.pip_end_date}::date,
+          manager_observations = ${next.manager_observations},
+          action_plan = ${next.action_plan}::jsonb,
+          personal_development_actions = ${next.personal_development_actions}::jsonb,
+          professional_development_actions = ${next.professional_development_actions}::jsonb,
+          updated_at = now()
+        WHERE id = ${id}::uuid RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: id,
+        template_id: null,
+        event_type: "pip_edited",
+        actor,
+        field: "draft",
+        previous_value: null,
+        new_value: changed.join(", "),
+        details: { changed },
+      });
+      if (changed.includes("manager_observations")) {
+        await PgStore.recordPipEventTx(sql, {
+          pip_id: id,
+          template_id: null,
+          event_type: "pip_observation_changed",
+          actor,
+          field: "manager_observations",
+          previous_value: pipAuditValue(observationsBefore),
+          new_value: pipAuditValue(next.manager_observations),
+          details: null,
+        });
+      }
+      return this.pipRowFromDb(updated[0] as unknown as Record<string, unknown>);
+    });
+  }
+
+  async getPip(id: string): Promise<PipRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid`;
+    return rows.length ? this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>) : null;
+  }
+
+  async listPips(status?: PipStatus | null): Promise<PipRow[]> {
+    await this.ensureSchema();
+    const rows = status
+      ? await this.sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE status = ${status} ORDER BY created_at DESC`
+      : await this.sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips ORDER BY created_at DESC`;
+    return rows.map((r) => this.pipRowFromDb(r as unknown as Record<string, unknown>));
+  }
+
+  async issuePip(id: string, opts: { issuedBy: string }): Promise<PipRow> {
+    await this.ensureSchema();
+    this.cache.bump();
+    return this.sql.begin(async (sql) => {
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
+      const row = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
+      assertIssueRequirements(row);
+      // FROZEN EVIDENCE: the version-1 snapshot is the exact document being
+      // issued, written in the SAME transaction as the status flip. Snapshot
+      // rows are never updated afterwards (write-once, UNIQUE (pip_id, version)).
+      await sql`INSERT INTO pip_evidence_snapshots (pip_id, version, snapshot, created_by)
+        VALUES (${id}::uuid, 1, ${row}::jsonb, ${opts.issuedBy || null})`;
+      const updated = await sql`UPDATE pips SET status = 'issued', issued_at = now(), issued_by = ${opts.issuedBy || null},
+          updated_at = now()
+        WHERE id = ${id}::uuid AND status = 'draft' RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
+      if (updated.length === 0) throw new Error(`Only DRAFT PIPs can be issued — this PIP is "${row.status}"`);
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: id,
+        template_id: null,
+        event_type: "pip_issued",
+        actor: opts.issuedBy || null,
+        field: "status",
+        previous_value: "draft",
+        new_value: "issued",
+        details: { version: 1, snapshot: "pip_evidence_snapshots v1 written" },
+      });
+      return this.pipRowFromDb(updated[0] as unknown as Record<string, unknown>);
+    });
+  }
+
+  async completePip(id: string, opts: { conclusionCategory: string; conclusionNotes: string; actor: string }): Promise<PipRow> {
+    await this.ensureSchema();
+    this.cache.bump();
+    return this.sql.begin(async (sql) => {
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
+      const row = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
+      const { category, notes } = assertCompleteRequirements(row, opts.conclusionCategory, opts.conclusionNotes);
+      const updated = await sql`UPDATE pips SET status = 'completed', conclusion_category = ${category},
+          conclusion_notes = ${notes}, completed_at = now(), manager_acked_at = now(),
+          manager_acked_by = ${opts.actor || null}, updated_at = now()
+        WHERE id = ${id}::uuid AND status = 'issued' RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
+      if (updated.length === 0) throw new Error(`Only ISSUED PIPs can be completed — this PIP is "${row.status}"`);
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: id,
+        template_id: null,
+        event_type: "pip_completed",
+        actor: opts.actor || null,
+        field: "status",
+        previous_value: "issued",
+        new_value: "completed",
+        details: { conclusion_category: category },
+      });
+      return this.pipRowFromDb(updated[0] as unknown as Record<string, unknown>);
+    });
+  }
+
+  async cancelPip(id: string, opts: { cancelledBy: string; reason: string }): Promise<PipRow> {
+    await this.ensureSchema();
+    this.cache.bump();
+    return this.sql.begin(async (sql) => {
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
+      const row = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
+      const reason = assertCancelRequirements(row, opts.reason);
+      const updated = await sql`UPDATE pips SET status = 'cancelled', cancellation_reason = ${reason},
+          cancelled_at = now(), cancelled_by = ${opts.cancelledBy || null}, updated_at = now()
+        WHERE id = ${id}::uuid AND status = 'issued' RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
+      if (updated.length === 0) throw new Error(`Only ISSUED PIPs can be cancelled — this PIP is "${row.status}"`);
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: id,
+        template_id: null,
+        event_type: "pip_cancelled",
+        actor: opts.cancelledBy || null,
+        field: "status",
+        previous_value: "issued",
+        new_value: "cancelled",
+        details: { reason: pipAuditValue(reason) },
+      });
+      return this.pipRowFromDb(updated[0] as unknown as Record<string, unknown>);
+    });
+  }
+
+  async addPipCheckin(row: Omit<PipCheckinRow, "id" | "created_at">): Promise<PipCheckinRow> {
+    await this.ensureSchema();
+    this.cache.bump();
+    return this.sql.begin(async (sql) => {
+      const rows = await sql`SELECT status FROM pips WHERE id = ${row.pip_id}::uuid FOR UPDATE`;
+      if (rows.length === 0) throw new Error(`PIP not found: ${row.pip_id}`);
+      assertCheckinAllowed({ status: rows[0].status as PipStatus } as PipRow);
+      const checkinDate = pipDateString(row.checkin_date, "checkin_date") ?? new Date().toISOString().slice(0, 10);
+      const nextCheckin = pipDateString(row.next_checkin_date, "next_checkin_date");
+      const inserted = await sql`INSERT INTO pip_checkins (pip_id, checkin_date, manager_name, employee_name,
+          current_performance, topics_discussed, coaching_provided, employee_comments, manager_notes,
+          next_actions, next_checkin_date)
+        VALUES (${row.pip_id}::uuid, ${checkinDate}::date, ${row.manager_name ?? null}, ${row.employee_name ?? null},
+          ${row.current_performance ?? null}, ${row.topics_discussed ?? null}, ${row.coaching_provided ?? null},
+          ${row.employee_comments ?? null}, ${row.manager_notes ?? null}, ${row.next_actions ?? null}, ${nextCheckin}::date)
+        RETURNING id::text AS id, pip_id::text AS pip_id, checkin_date::text AS checkin_date,
+          manager_name, employee_name, current_performance, topics_discussed, coaching_provided,
+          employee_comments, manager_notes, next_actions, next_checkin_date::text AS next_checkin_date,
+          created_at::text AS created_at`;
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: row.pip_id,
+        template_id: null,
+        event_type: "pip_checkin_added",
+        actor: row.manager_name || null,
+        field: "checkin",
+        previous_value: null,
+        new_value: checkinDate,
+        details: null,
+      });
+      const r = inserted[0] as unknown as Record<string, unknown>;
+      return {
+        id: String(r.id),
+        pip_id: String(r.pip_id),
+        checkin_date: String(r.checkin_date).slice(0, 10),
+        manager_name: r.manager_name == null ? null : String(r.manager_name),
+        employee_name: r.employee_name == null ? null : String(r.employee_name),
+        current_performance: r.current_performance == null ? null : String(r.current_performance),
+        topics_discussed: r.topics_discussed == null ? null : String(r.topics_discussed),
+        coaching_provided: r.coaching_provided == null ? null : String(r.coaching_provided),
+        employee_comments: r.employee_comments == null ? null : String(r.employee_comments),
+        manager_notes: r.manager_notes == null ? null : String(r.manager_notes),
+        next_actions: r.next_actions == null ? null : String(r.next_actions),
+        next_checkin_date: r.next_checkin_date == null ? null : String(r.next_checkin_date).slice(0, 10),
+        created_at: new Date(r.created_at as string).toISOString(),
+      };
+    });
+  }
+
+  async getPipCheckins(pipId: string): Promise<PipCheckinRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, pip_id::text AS pip_id, checkin_date::text AS checkin_date,
+        manager_name, employee_name, current_performance, topics_discussed, coaching_provided,
+        employee_comments, manager_notes, next_actions, next_checkin_date::text AS next_checkin_date,
+        created_at::text AS created_at
+      FROM pip_checkins WHERE pip_id = ${pipId}::uuid ORDER BY created_at`;
+    return rows.map((r0) => {
+      const r = r0 as unknown as Record<string, unknown>;
+      return {
+        id: String(r.id),
+        pip_id: String(r.pip_id),
+        checkin_date: String(r.checkin_date).slice(0, 10),
+        manager_name: r.manager_name == null ? null : String(r.manager_name),
+        employee_name: r.employee_name == null ? null : String(r.employee_name),
+        current_performance: r.current_performance == null ? null : String(r.current_performance),
+        topics_discussed: r.topics_discussed == null ? null : String(r.topics_discussed),
+        coaching_provided: r.coaching_provided == null ? null : String(r.coaching_provided),
+        employee_comments: r.employee_comments == null ? null : String(r.employee_comments),
+        manager_notes: r.manager_notes == null ? null : String(r.manager_notes),
+        next_actions: r.next_actions == null ? null : String(r.next_actions),
+        next_checkin_date: r.next_checkin_date == null ? null : String(r.next_checkin_date).slice(0, 10),
+        created_at: new Date(r.created_at as string).toISOString(),
+      };
+    });
+  }
+
+  async getPipEvidenceSnapshots(pipId: string): Promise<PipEvidenceSnapshotRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, pip_id::text AS pip_id, version, snapshot,
+        created_by, created_at::text AS created_at
+      FROM pip_evidence_snapshots WHERE pip_id = ${pipId}::uuid ORDER BY version`;
+    return rows.map((r0) => {
+      const r = r0 as unknown as Record<string, unknown>;
+      return {
+        id: String(r.id),
+        pip_id: String(r.pip_id),
+        version: Number(r.version),
+        snapshot: (r.snapshot ?? {}) as Record<string, unknown>,
+        created_by: r.created_by == null ? null : String(r.created_by),
+        created_at: new Date(r.created_at as string).toISOString(),
+      };
+    });
+  }
+
+  async createPipTemplate(input: PipTemplateCreateInput): Promise<PipTemplateRow> {
+    await this.ensureSchema();
+    const name = pipRequiredText(input.name, "template name", 200);
+    const nowIso = new Date().toISOString();
+    const row: PipTemplateRow = {
+      id: crypto.randomUUID(),
+      name,
+      category: pipOptionalText(input.category ?? null, 120),
+      default_goal_text: pipOptionalText(input.default_goal_text ?? null),
+      default_action_plan: normalizePipActionList(input.default_action_plan ?? []),
+      default_personal: normalizePipActionList(input.default_personal ?? []),
+      default_professional: normalizePipActionList(input.default_professional ?? []),
+      default_checkin_cadence_days: pipOptionalInt(input.default_checkin_cadence_days ?? null, "default_checkin_cadence_days"),
+      default_duration_weeks: pipOptionalInt(input.default_duration_weeks ?? null, "default_duration_weeks"),
+      created_by: input.created_by ? String(input.created_by).trim() || null : null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    this.cache.bump();
+    await this.sql`INSERT INTO pip_templates (id, name, category, default_goal_text, default_action_plan,
+        default_personal, default_professional, default_checkin_cadence_days, default_duration_weeks,
+        created_by, created_at, updated_at)
+      VALUES (${row.id}::uuid, ${row.name}, ${row.category}, ${row.default_goal_text},
+        ${row.default_action_plan}::jsonb, ${row.default_personal}::jsonb,
+        ${row.default_professional}::jsonb, ${row.default_checkin_cadence_days},
+        ${row.default_duration_weeks}, ${row.created_by}, ${row.created_at}, ${row.updated_at})`;
+    await this.sql.begin(async (sql) => {
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: null,
+        template_id: row.id,
+        event_type: "pip_template_created",
+        actor: row.created_by,
+        field: "name",
+        previous_value: null,
+        new_value: row.name,
+        details: null,
+      });
+    });
+    return row;
+  }
+
+  async updatePipTemplate(id: string, patch: PipTemplatePatch): Promise<PipTemplateRow> {
+    await this.ensureSchema();
+    this.cache.bump();
+    return this.sql.begin(async (sql) => {
+      const rows = await sql`SELECT id::text AS id, name, category, default_goal_text, default_action_plan,
+          default_personal, default_professional, default_checkin_cadence_days, default_duration_weeks,
+          created_by, created_at::text AS created_at, updated_at::text AS updated_at
+        FROM pip_templates WHERE id = ${id}::uuid FOR UPDATE`;
+      if (rows.length === 0) throw new Error(`PIP template not found: ${id}`);
+      const r = rows[0] as unknown as Record<string, unknown>;
+      const name = patch.name !== undefined ? pipRequiredText(patch.name, "template name", 200) : String(r.name);
+      const category = patch.category !== undefined ? pipOptionalText(patch.category, 120) : r.category == null ? null : String(r.category);
+      const goalText = patch.default_goal_text !== undefined ? pipOptionalText(patch.default_goal_text) : r.default_goal_text == null ? null : String(r.default_goal_text);
+      const actionPlan = patch.default_action_plan !== undefined ? normalizePipActionList(patch.default_action_plan) : normalizePipActionList(r.default_action_plan);
+      const personal = patch.default_personal !== undefined ? normalizePipActionList(patch.default_personal) : normalizePipActionList(r.default_personal);
+      const professional = patch.default_professional !== undefined ? normalizePipActionList(patch.default_professional) : normalizePipActionList(r.default_professional);
+      const cadence = patch.default_checkin_cadence_days !== undefined ? pipOptionalInt(patch.default_checkin_cadence_days, "default_checkin_cadence_days") : r.default_checkin_cadence_days == null ? null : Number(r.default_checkin_cadence_days);
+      const duration = patch.default_duration_weeks !== undefined ? pipOptionalInt(patch.default_duration_weeks, "default_duration_weeks") : r.default_duration_weeks == null ? null : Number(r.default_duration_weeks);
+      const updated = await sql`UPDATE pip_templates SET name = ${name}, category = ${category},
+          default_goal_text = ${goalText}, default_action_plan = ${actionPlan}::jsonb,
+          default_personal = ${personal}::jsonb, default_professional = ${professional}::jsonb,
+          default_checkin_cadence_days = ${cadence}, default_duration_weeks = ${duration}, updated_at = now()
+        WHERE id = ${id}::uuid RETURNING id::text AS id, name, category, default_goal_text,
+          default_action_plan, default_personal, default_professional, default_checkin_cadence_days,
+          default_duration_weeks, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: null,
+        template_id: id,
+        event_type: "pip_template_updated",
+        actor: patch.actor || null,
+        field: "template",
+        previous_value: null,
+        new_value: name,
+        details: null,
+      });
+      const u = updated[0] as unknown as Record<string, unknown>;
+      return {
+        id: String(u.id),
+        name: String(u.name),
+        category: u.category == null ? null : String(u.category),
+        default_goal_text: u.default_goal_text == null ? null : String(u.default_goal_text),
+        default_action_plan: normalizePipActionList(u.default_action_plan),
+        default_personal: normalizePipActionList(u.default_personal),
+        default_professional: normalizePipActionList(u.default_professional),
+        default_checkin_cadence_days: u.default_checkin_cadence_days == null ? null : Number(u.default_checkin_cadence_days),
+        default_duration_weeks: u.default_duration_weeks == null ? null : Number(u.default_duration_weeks),
+        created_by: u.created_by == null ? null : String(u.created_by),
+        created_at: new Date(u.created_at as string).toISOString(),
+        updated_at: new Date(u.updated_at as string).toISOString(),
+      };
+    });
+  }
+
+  async deletePipTemplate(id: string): Promise<void> {
+    await this.ensureSchema();
+    this.cache.bump();
+    await this.sql.begin(async (sql) => {
+      const rows = await sql`DELETE FROM pip_templates WHERE id = ${id}::uuid RETURNING name`;
+      if (rows.length > 0) {
+        await PgStore.recordPipEventTx(sql, {
+          pip_id: null,
+          template_id: id,
+          event_type: "pip_template_deleted",
+          actor: null,
+          field: "name",
+          previous_value: String((rows[0] as Record<string, unknown>).name ?? ""),
+          new_value: null,
+          details: null,
+        });
+      }
+    });
+  }
+
+  async getPipTemplate(id: string): Promise<PipTemplateRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, name, category, default_goal_text, default_action_plan,
+        default_personal, default_professional, default_checkin_cadence_days, default_duration_weeks,
+        created_by, created_at::text AS created_at, updated_at::text AS updated_at
+      FROM pip_templates WHERE id = ${id}::uuid`;
+    if (rows.length === 0) return null;
+    const u = rows[0] as unknown as Record<string, unknown>;
+    return {
+      id: String(u.id),
+      name: String(u.name),
+      category: u.category == null ? null : String(u.category),
+      default_goal_text: u.default_goal_text == null ? null : String(u.default_goal_text),
+      default_action_plan: normalizePipActionList(u.default_action_plan),
+      default_personal: normalizePipActionList(u.default_personal),
+      default_professional: normalizePipActionList(u.default_professional),
+      default_checkin_cadence_days: u.default_checkin_cadence_days == null ? null : Number(u.default_checkin_cadence_days),
+      default_duration_weeks: u.default_duration_weeks == null ? null : Number(u.default_duration_weeks),
+      created_by: u.created_by == null ? null : String(u.created_by),
+      created_at: new Date(u.created_at as string).toISOString(),
+      updated_at: new Date(u.updated_at as string).toISOString(),
+    };
+  }
+
+  async listPipTemplates(): Promise<PipTemplateRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, name, category, default_goal_text, default_action_plan,
+        default_personal, default_professional, default_checkin_cadence_days, default_duration_weeks,
+        created_by, created_at::text AS created_at, updated_at::text AS updated_at
+      FROM pip_templates ORDER BY name`;
+    return rows.map((r0) => {
+      const u = r0 as unknown as Record<string, unknown>;
+      return {
+        id: String(u.id),
+        name: String(u.name),
+        category: u.category == null ? null : String(u.category),
+        default_goal_text: u.default_goal_text == null ? null : String(u.default_goal_text),
+        default_action_plan: normalizePipActionList(u.default_action_plan),
+        default_personal: normalizePipActionList(u.default_personal),
+        default_professional: normalizePipActionList(u.default_professional),
+        default_checkin_cadence_days: u.default_checkin_cadence_days == null ? null : Number(u.default_checkin_cadence_days),
+        default_duration_weeks: u.default_duration_weeks == null ? null : Number(u.default_duration_weeks),
+        created_by: u.created_by == null ? null : String(u.created_by),
+        created_at: new Date(u.created_at as string).toISOString(),
+        updated_at: new Date(u.updated_at as string).toISOString(),
+      };
+    });
+  }
+
+  async insertPipEvent(row: Omit<PipEventRow, "id" | "created_at">): Promise<void> {
+    await this.ensureSchema();
+    this.cache.bump();
+    await this.sql.begin(async (sql) => {
+      await PgStore.recordPipEventTx(sql, row);
+    });
+  }
+
+  async getPipEvents(opts?: { pipId?: string; limit?: number }): Promise<PipEventRow[]> {
+    await this.ensureSchema();
+    const limit = Math.min(Math.max(opts?.limit ?? 200, 1), 1000);
+    const rows = opts?.pipId
+      ? await this.sql`SELECT id::text AS id, pip_id::text AS pip_id, template_id::text AS template_id,
+          event_type, actor, field, previous_value, new_value, details, created_at::text AS created_at
+        FROM pip_event_log WHERE pip_id = ${opts.pipId}::uuid ORDER BY created_at DESC LIMIT ${limit}`
+      : await this.sql`SELECT id::text AS id, pip_id::text AS pip_id, template_id::text AS template_id,
+          event_type, actor, field, previous_value, new_value, details, created_at::text AS created_at
+        FROM pip_event_log ORDER BY created_at DESC LIMIT ${limit}`;
+    return rows.map((r0) => {
+      const r = r0 as unknown as Record<string, unknown>;
+      return {
+        id: String(r.id),
+        pip_id: r.pip_id == null ? null : String(r.pip_id),
+        template_id: r.template_id == null ? null : String(r.template_id),
+        event_type: String(r.event_type) as PipEventRow["event_type"],
+        actor: r.actor == null ? null : String(r.actor),
+        field: r.field == null ? null : String(r.field),
+        previous_value: r.previous_value == null ? null : String(r.previous_value),
+        new_value: r.new_value == null ? null : String(r.new_value),
+        details: (r.details ?? null) as Record<string, unknown> | null,
+        created_at: new Date(r.created_at as string).toISOString(),
+      };
+    });
   }
 }
