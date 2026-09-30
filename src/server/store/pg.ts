@@ -1886,15 +1886,6 @@ export class PgStore implements Store {
     };
   }
 
-  private static readonly PIP_COLUMNS =
-    `id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
-     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
-     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
-     manager_observations, action_plan, personal_development_actions, professional_development_actions,
-     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
-     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
-     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
-     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
 
   /** Both audit sinks inside ONE transaction (typed log + manual_overrides mirror). */
   private static async recordPipEventTx(
@@ -1903,7 +1894,7 @@ export class PgStore implements Store {
   ): Promise<void> {
     await sql`INSERT INTO pip_event_log (pip_id, template_id, event_type, actor, field, previous_value, new_value, details)
       VALUES (${event.pip_id}, ${event.template_id}, ${event.event_type}, ${event.actor}, ${event.field}, ${event.previous_value}, ${event.new_value},
-        ${event.details ? JSON.stringify(event.details) : null}::jsonb)`;
+        ${event.details}::jsonb)`;
     const mirror = pipEventToManualOverride(event.event_type, {
       entityId: event.pip_id ?? event.template_id ?? "",
       field: event.field,
@@ -1927,8 +1918,8 @@ export class PgStore implements Store {
       VALUES (${row.id}::uuid, ${row.rep_id}::uuid, ${row.title}, ${row.status}, ${row.goal_text}, ${row.weekly_goal_min},
         ${row.hard_weekly_minimum}, ${row.review_start_date}::date, ${row.review_end_date}::date,
         ${row.pip_start_date}::date, ${row.pip_end_date}::date, ${row.manager_observations},
-        ${JSON.stringify(row.action_plan)}::jsonb, ${JSON.stringify(row.personal_development_actions)}::jsonb,
-        ${JSON.stringify(row.professional_development_actions)}::jsonb,
+        ${row.action_plan}::jsonb, ${row.personal_development_actions}::jsonb,
+        ${row.professional_development_actions}::jsonb,
         ${row.created_by}, ${row.created_at}, ${row.updated_at})`;
     await this.sql.begin(async (sql) => {
       await PgStore.recordPipEventTx(sql, {
@@ -1949,7 +1940,14 @@ export class PgStore implements Store {
     await this.ensureSchema();
     this.cache.bump();
     return this.sql.begin(async (sql) => {
-      const rows = await sql`SELECT ${PgStore.PIP_COLUMNS} FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
       if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
       const current = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
       const { next, changed, observationsBefore } = applyPipDraftPatch(current, patch);
@@ -1961,11 +1959,18 @@ export class PgStore implements Store {
           review_start_date = ${next.review_start_date}::date, review_end_date = ${next.review_end_date}::date,
           pip_start_date = ${next.pip_start_date}::date, pip_end_date = ${next.pip_end_date}::date,
           manager_observations = ${next.manager_observations},
-          action_plan = ${JSON.stringify(next.action_plan)}::jsonb,
-          personal_development_actions = ${JSON.stringify(next.personal_development_actions)}::jsonb,
-          professional_development_actions = ${JSON.stringify(next.professional_development_actions)}::jsonb,
+          action_plan = ${next.action_plan}::jsonb,
+          personal_development_actions = ${next.personal_development_actions}::jsonb,
+          professional_development_actions = ${next.professional_development_actions}::jsonb,
           updated_at = now()
-        WHERE id = ${id}::uuid RETURNING ${PgStore.PIP_COLUMNS}`;
+        WHERE id = ${id}::uuid RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
       await PgStore.recordPipEventTx(sql, {
         pip_id: id,
         template_id: null,
@@ -1994,15 +1999,36 @@ export class PgStore implements Store {
 
   async getPip(id: string): Promise<PipRow | null> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT ${PgStore.PIP_COLUMNS} FROM pips WHERE id = ${id}::uuid`;
+    const rows = await this.sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid`;
     return rows.length ? this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>) : null;
   }
 
   async listPips(status?: PipStatus | null): Promise<PipRow[]> {
     await this.ensureSchema();
     const rows = status
-      ? await this.sql`SELECT ${PgStore.PIP_COLUMNS} FROM pips WHERE status = ${status} ORDER BY created_at DESC`
-      : await this.sql`SELECT ${PgStore.PIP_COLUMNS} FROM pips ORDER BY created_at DESC`;
+      ? await this.sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE status = ${status} ORDER BY created_at DESC`
+      : await this.sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips ORDER BY created_at DESC`;
     return rows.map((r) => this.pipRowFromDb(r as unknown as Record<string, unknown>));
   }
 
@@ -2010,7 +2036,14 @@ export class PgStore implements Store {
     await this.ensureSchema();
     this.cache.bump();
     return this.sql.begin(async (sql) => {
-      const rows = await sql`SELECT ${PgStore.PIP_COLUMNS} FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
       if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
       const row = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
       assertIssueRequirements(row);
@@ -2018,10 +2051,17 @@ export class PgStore implements Store {
       // issued, written in the SAME transaction as the status flip. Snapshot
       // rows are never updated afterwards (write-once, UNIQUE (pip_id, version)).
       await sql`INSERT INTO pip_evidence_snapshots (pip_id, version, snapshot, created_by)
-        VALUES (${id}::uuid, 1, ${JSON.stringify(JSON.parse(JSON.stringify(row)))}::jsonb, ${opts.issuedBy || null})`;
+        VALUES (${id}::uuid, 1, ${row}::jsonb, ${opts.issuedBy || null})`;
       const updated = await sql`UPDATE pips SET status = 'issued', issued_at = now(), issued_by = ${opts.issuedBy || null},
           updated_at = now()
-        WHERE id = ${id}::uuid AND status = 'draft' RETURNING ${PgStore.PIP_COLUMNS}`;
+        WHERE id = ${id}::uuid AND status = 'draft' RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
       if (updated.length === 0) throw new Error(`Only DRAFT PIPs can be issued — this PIP is "${row.status}"`);
       await PgStore.recordPipEventTx(sql, {
         pip_id: id,
@@ -2041,14 +2081,28 @@ export class PgStore implements Store {
     await this.ensureSchema();
     this.cache.bump();
     return this.sql.begin(async (sql) => {
-      const rows = await sql`SELECT ${PgStore.PIP_COLUMNS} FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
       if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
       const row = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
       const { category, notes } = assertCompleteRequirements(row, opts.conclusionCategory, opts.conclusionNotes);
       const updated = await sql`UPDATE pips SET status = 'completed', conclusion_category = ${category},
           conclusion_notes = ${notes}, completed_at = now(), manager_acked_at = now(),
           manager_acked_by = ${opts.actor || null}, updated_at = now()
-        WHERE id = ${id}::uuid AND status = 'issued' RETURNING ${PgStore.PIP_COLUMNS}`;
+        WHERE id = ${id}::uuid AND status = 'issued' RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
       if (updated.length === 0) throw new Error(`Only ISSUED PIPs can be completed — this PIP is "${row.status}"`);
       await PgStore.recordPipEventTx(sql, {
         pip_id: id,
@@ -2068,13 +2122,27 @@ export class PgStore implements Store {
     await this.ensureSchema();
     this.cache.bump();
     return this.sql.begin(async (sql) => {
-      const rows = await sql`SELECT ${PgStore.PIP_COLUMNS} FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      const rows = await sql`SELECT id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
       if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
       const row = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
       const reason = assertCancelRequirements(row, opts.reason);
       const updated = await sql`UPDATE pips SET status = 'cancelled', cancellation_reason = ${reason},
           cancelled_at = now(), cancelled_by = ${opts.cancelledBy || null}, updated_at = now()
-        WHERE id = ${id}::uuid AND status = 'issued' RETURNING ${PgStore.PIP_COLUMNS}`;
+        WHERE id = ${id}::uuid AND status = 'issued' RETURNING id::text AS id, rep_id::text AS rep_id, title, status, goal_text, weekly_goal_min, hard_weekly_minimum,
+     review_start_date::text AS review_start_date, review_end_date::text AS review_end_date,
+     pip_start_date::text AS pip_start_date, pip_end_date::text AS pip_end_date,
+     manager_observations, action_plan, personal_development_actions, professional_development_actions,
+     conclusion_category, conclusion_notes, issued_at::text AS issued_at, issued_by,
+     completed_at::text AS completed_at, cancelled_at::text AS cancelled_at, cancelled_by, cancellation_reason,
+     employee_visible, current_version, employee_acked_at::text AS employee_acked_at, employee_acked_by,
+     manager_acked_at::text AS manager_acked_at, manager_acked_by, created_by, created_at::text AS created_at, updated_at::text AS updated_at`;
       if (updated.length === 0) throw new Error(`Only ISSUED PIPs can be cancelled — this PIP is "${row.status}"`);
       await PgStore.recordPipEventTx(sql, {
         pip_id: id,
@@ -2206,8 +2274,8 @@ export class PgStore implements Store {
         default_personal, default_professional, default_checkin_cadence_days, default_duration_weeks,
         created_by, created_at, updated_at)
       VALUES (${row.id}::uuid, ${row.name}, ${row.category}, ${row.default_goal_text},
-        ${JSON.stringify(row.default_action_plan)}::jsonb, ${JSON.stringify(row.default_personal)}::jsonb,
-        ${JSON.stringify(row.default_professional)}::jsonb, ${row.default_checkin_cadence_days},
+        ${row.default_action_plan}::jsonb, ${row.default_personal}::jsonb,
+        ${row.default_professional}::jsonb, ${row.default_checkin_cadence_days},
         ${row.default_duration_weeks}, ${row.created_by}, ${row.created_at}, ${row.updated_at})`;
     await this.sql.begin(async (sql) => {
       await PgStore.recordPipEventTx(sql, {
@@ -2243,8 +2311,8 @@ export class PgStore implements Store {
       const cadence = patch.default_checkin_cadence_days !== undefined ? pipOptionalInt(patch.default_checkin_cadence_days, "default_checkin_cadence_days") : r.default_checkin_cadence_days == null ? null : Number(r.default_checkin_cadence_days);
       const duration = patch.default_duration_weeks !== undefined ? pipOptionalInt(patch.default_duration_weeks, "default_duration_weeks") : r.default_duration_weeks == null ? null : Number(r.default_duration_weeks);
       const updated = await sql`UPDATE pip_templates SET name = ${name}, category = ${category},
-          default_goal_text = ${goalText}, default_action_plan = ${JSON.stringify(actionPlan)}::jsonb,
-          default_personal = ${JSON.stringify(personal)}::jsonb, default_professional = ${JSON.stringify(professional)}::jsonb,
+          default_goal_text = ${goalText}, default_action_plan = ${actionPlan}::jsonb,
+          default_personal = ${personal}::jsonb, default_professional = ${professional}::jsonb,
           default_checkin_cadence_days = ${cadence}, default_duration_weeks = ${duration}, updated_at = now()
         WHERE id = ${id}::uuid RETURNING id::text AS id, name, category, default_goal_text,
           default_action_plan, default_personal, default_professional, default_checkin_cadence_days,

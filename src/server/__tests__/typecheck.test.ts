@@ -84,6 +84,17 @@ describe("typecheck tripwire", () => {
         timeout: 120_000,
       });
       const output = `${res.stdout ?? ""}${res.stderr ?? ""}`;
+      // STORE-INTERFACE COMPLETENESS (closes the PR#17/18/19 debt): any tsc
+      // diagnostic inside src/server/store/satisfies.ts fails the gate. That
+      // file carries the compile-time assignability asserts + the
+      // compiler-checked Store member list, so an error there means a store
+      // class no longer satisfies the Store interface (a missing/renamed
+      // method — exactly the class of outage the satisfies module exists to
+      // prevent; codes TS2420/TS2720/TS2322 are NOT dangling-reference codes,
+      // which is how that class historically slipped through this tripwire).
+      const satisfiesFailures = output
+        .split("\n")
+        .filter((line) => /store[/\\]satisfies\.ts/.test(line) && /error TS\d+/.test(line));
       const dangling = output
         .split("\n")
         // "Cannot find module 'bun:test'" is a known benign false positive:
@@ -93,7 +104,8 @@ describe("typecheck tripwire", () => {
         .filter((line) => {
           const m = line.match(/error (TS\d+)/);
           return m !== null && DANGLING_REFERENCE_CODES.has(m[1]);
-        });
+        })
+        .concat(satisfiesFailures);
       expect(dangling, `Unresolvable identifiers found (these compile but throw ReferenceError at runtime):\n${dangling.join("\n")}\n\nFull tsc output:\n${output}`).toEqual([]);
     } finally {
       // Restore whatever the workspace had — the tree must look untouched.
