@@ -31,6 +31,7 @@ import {
 } from "./date-logic";
 import {
   type RepGoalInfo,
+  appointmentPaymentStateOf,
   bookingAttributionSplit,
   buildTeamRangeMetrics,
   buildTeamTrends,
@@ -692,6 +693,55 @@ export const removeBlockedTime = createServerFn({ method: "POST" })
     });
     return { ok: true };
   });
+/**
+ * PENDING PAYMENT DISMISSAL (owner request 2026-09-30: "for the pending
+ * payments on todays tab i want to be able to exit out of them, can you put a
+ * x exit to them to delete from that list as i see fit"). POST endpoint that
+ * marks ONE pending payment dismissed — it disappears from the Today page's
+ * Pending Payments list IMMEDIATELY and PERMANENTLY (survives syncs: the
+ * dismissal is owner-controlled state the Acuity sync's upsert never touches).
+ * The appointment row itself is NEVER deleted — Acuity is the source of truth
+ * and the sync would re-create it.
+ *
+ * Guards:
+ *  - only PENDING payments are dismissible: a PAID booking (Booking Win) is
+ *    rejected here, and a prior dismissal never affects a win — if the deposit
+ *    arrives later the appointment still counts as a Booking Win everywhere;
+ *  - an audit row (manual_override) records the dismissal with the
+ *    appointment id ("pending payment dismissed by owner").
+ */
+export interface DismissPendingPaymentInput {
+  appointmentId: string;
+}
+/** Core of the dismissPendingPayment server fn (test seam — no TanStack runtime). */
+export async function dismissPendingPaymentCore(store: Store, input: DismissPendingPaymentInput): Promise<{ ok: true }> {
+  const appointmentId = String(input.appointmentId);
+  // The Today page's pending window: the same selector the pending list reads
+  // (unpaid bookings, created OR session inside the last 30 days) — read
+  // WITHOUT the exclusion so an already-dismissed id resolves honestly.
+  const windowStart = etDayStartUtc(addDays(etToday(), -30));
+  const appt = (await store.getAppointmentsWithClientsSince(windowStart)).find((a) => a.id === appointmentId);
+  if (!appt) throw new Error("Appointment not found in the pending payments window");
+  const state = appointmentPaymentStateOf(appt);
+  if (state !== "pending_payment") {
+    throw new Error(`Only pending payments can be dismissed — this appointment's payment state is "${state}"`);
+  }
+  await store.dismissPendingPayment(appointmentId);
+  await store.insertManualOverride({
+    entity_type: "appointment",
+    entity_id: appointmentId,
+    field: "pending_payment",
+    previous_value: "pending",
+    new_value: "pending payment dismissed by owner",
+    changed_by: "christopher",
+  });
+  return { ok: true };
+}
+export const dismissPendingPayment = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { appointmentId: string })
+  .handler(async ({ data }) =>
+    dismissPendingPaymentCore(await getStore(), { appointmentId: String(data.appointmentId) }),
+  );
 
 /**
  * MANUAL ATTRIBUTION (owner spec: the Unattributed queue is manually

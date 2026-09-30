@@ -412,6 +412,9 @@ export class MemoryStore implements Store {
         booking_win_business_date: existing?.booking_win_business_date ?? r.booking_win_business_date ?? null,
         payment_business_date_source: existing?.payment_business_date_source ?? r.payment_business_date_source ?? null,
         first_seen_paid_at: existing?.first_seen_paid_at ?? r.first_seen_paid_at ?? null,
+        // PENDING PAYMENT DISMISSAL (owner request 9/30): owner-controlled
+        // state — a re-sync never overwrites or clears the dismissal.
+        pending_dismissed_at: existing?.pending_dismissed_at ?? null,
         id: existing?.id ?? this.nextId("appt"),
       });
     }
@@ -469,15 +472,17 @@ export class MemoryStore implements Store {
       .filter((a) => a.appointment_datetime >= startUtc || a.created_at >= startUtc)
       .map((a) => this.stripAppt(a));
   }
-  async getAppointmentsWithClientsSince(startUtc: string): Promise<(AppointmentRow & {
+  async getAppointmentsWithClientsSince(startUtc: string, opts?: { excludePendingDismissed?: boolean }): Promise<(AppointmentRow & {
     acuity_appointment_id: string | null;
     client_name: string | null;
     client_phone: string | null;
     client_email: string | null;
     calendar_name: string | null;
   })[]> {
+    // Mirror of the pg store: excludePendingDismissed drops owner-dismissed
+    // pending payments (pending_dismissed_at non-null) — pending list only.
     return [...this.appointments.values()]
-      .filter((a) => a.appointment_datetime >= startUtc || a.created_at >= startUtc)
+      .filter((a) => (a.appointment_datetime >= startUtc || a.created_at >= startUtc) && (!opts?.excludePendingDismissed || a.pending_dismissed_at == null))
       .map((a) => ({
         ...this.stripAppt(a),
         acuity_appointment_id: a.acuity_appointment_id,
@@ -485,7 +490,20 @@ export class MemoryStore implements Store {
         client_phone: a.client_phone ?? null,
         client_email: a.client_email ?? null,
         calendar_name: (a as unknown as { calendar_name?: string | null }).calendar_name ?? null,
+        pending_dismissed_at: a.pending_dismissed_at ?? null,
       }));
+  }
+  async dismissPendingPayment(appointmentId: string): Promise<void> {
+    // KEEP-FIRST (idempotent): a re-dismiss never moves the original timestamp.
+    // The appointment row itself is NEVER deleted (Acuity is the source of
+    // truth; the sync would re-create it) — this only hides it from the
+    // pending list. Unknown id: no-op (callers validate existence first).
+    for (const [key, a] of this.appointments) {
+      if (a.id === appointmentId) {
+        this.appointments.set(key, { ...a, pending_dismissed_at: a.pending_dismissed_at ?? new Date().toISOString() });
+        return;
+      }
+    }
   }
 
   async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {

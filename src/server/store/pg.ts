@@ -137,6 +137,10 @@ const DDL: string[] = [
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS booking_win_business_date date`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS payment_business_date_source text`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS first_seen_paid_at timestamptz`,
+  // PENDING PAYMENT DISMISSAL (owner request 2026-09-30): the owner's ✕ on the
+  // Today page's Pending Payments list. Written ONLY by the dismiss endpoint;
+  // the Acuity sync's upsert never touches it (owner-controlled state).
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS pending_dismissed_at timestamptz`,
   `CREATE INDEX IF NOT EXISTS appt_win_bdate_idx ON appointments (booking_win_business_date)`,
   `CREATE TABLE IF NOT EXISTS booking_attributions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -964,6 +968,9 @@ export class PgStore implements Store {
           booking_win_business_date = COALESCE(appointments.booking_win_business_date, EXCLUDED.booking_win_business_date),
           payment_business_date_source = COALESCE(appointments.payment_business_date_source, EXCLUDED.payment_business_date_source),
           first_seen_paid_at = COALESCE(appointments.first_seen_paid_at, EXCLUDED.first_seen_paid_at),
+          -- PENDING PAYMENT DISMISSAL (owner request 9/30): pending_dismissed_at is
+          -- NOT in this SET list on purpose — the owner's ✕ dismissal is
+          -- owner-controlled state; the Acuity sync never overwrites or clears it.
           raw = EXCLUDED.raw,
           status = EXCLUDED.status, cancelled = EXCLUDED.cancelled,
           client_name = EXCLUDED.client_name, client_phone = EXCLUDED.client_phone, client_email = EXCLUDED.client_email, updated_at = now()
@@ -1040,16 +1047,16 @@ export class PgStore implements Store {
     const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
-  async getAppointmentsWithClientsSince(startUtc: string): Promise<(AppointmentRow & {
+  async getAppointmentsWithClientsSince(startUtc: string, opts?: { excludePendingDismissed?: boolean }): Promise<(AppointmentRow & {
     acuity_appointment_id: string | null;
     client_name: string | null;
     client_phone: string | null;
     client_email: string | null;
     calendar_name: string | null;
   })[]> {
-    return this.cache.wrap("getAppointmentsWithClientsSince:" + JSON.stringify([startUtc]), () => this.getAppointmentsWithClientsSinceCached(startUtc));
+    return this.cache.wrap("getAppointmentsWithClientsSince:" + JSON.stringify([startUtc, opts]), () => this.getAppointmentsWithClientsSinceCached(startUtc, opts));
   }
-  private async getAppointmentsWithClientsSinceCached(startUtc: string): Promise<(AppointmentRow & {
+  private async getAppointmentsWithClientsSinceCached(startUtc: string, opts?: { excludePendingDismissed?: boolean }): Promise<(AppointmentRow & {
     acuity_appointment_id: string | null;
     client_name: string | null;
     client_phone: string | null;
@@ -1057,7 +1064,17 @@ export class PgStore implements Store {
     calendar_name: string | null;
   })[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
+    // excludePendingDismissed (owner request 9/30): the Today page's PENDING
+    // LIST uses this to drop owner-dismissed pending payments permanently —
+    // the dismissal is owner-controlled state the sync never touches. Only
+    // the pending list passes the flag; the attribution tick + unattributed
+    // queue use the default (dismissed appointments stay in the engine), and
+    // wins/metrics are unaffected (they read the win-bucket selectors).
+    // Two explicit query forms — postgres.js treats every ${} as a bound
+    // parameter, so the conditional filter must live in the template itself.
+    const rows = opts?.excludePendingDismissed
+      ? await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, pending_dismissed_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE (appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}) AND pending_dismissed_at IS NULL`
+      : await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, pending_dismissed_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => ({
       ...this.apptRow(r as Record<string, unknown>),
       acuity_appointment_id: r.acuity_appointment_id ? String(r.acuity_appointment_id) : null,
@@ -1065,9 +1082,19 @@ export class PgStore implements Store {
       client_phone: r.client_phone ? String(r.client_phone) : null,
       client_email: r.client_email ? String(r.client_email) : null,
       calendar_name: r.calendar_name ? String(r.calendar_name) : null,
+      pending_dismissed_at: r.pending_dismissed_at == null ? null : new Date(r.pending_dismissed_at as string).toISOString(),
     }));
   }
 
+  async dismissPendingPayment(appointmentId: string): Promise<void> {
+    this.cache.bump(); // write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    // KEEP-FIRST (idempotent): a re-dismiss never moves the original
+    // timestamp. The appointment row itself is NEVER deleted — Acuity is the
+    // source of truth and the sync would re-create it; this only hides the
+    // row from the pending list. Callers guard: paid wins are never dismissed.
+    await this.sql`UPDATE appointments SET pending_dismissed_at = COALESCE(pending_dismissed_at, now()) WHERE id = ${appointmentId}::uuid`;
+  }
   async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();

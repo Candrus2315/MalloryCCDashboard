@@ -714,14 +714,27 @@ export interface Store {
   getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]>;
   getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]>;
   getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]>;
-  /** Appointments with client contact fields joined (unattributed-bookings queue). */
-  getAppointmentsWithClientsSince(startUtc: string): Promise<(AppointmentRow & {
+  /** Appointments with client contact fields joined (unattributed-bookings queue).
+   *  excludePendingDismissed (owner request 2026-09-30): drops owner-dismissed
+   *  pending payments (pending_dismissed_at non-null) — ONLY the Today page's
+   *  pending list passes it; the attribution tick + unattributed queue use the
+   *  default so dismissed appointments stay in the engine. */
+  getAppointmentsWithClientsSince(startUtc: string, opts?: { excludePendingDismissed?: boolean }): Promise<(AppointmentRow & {
     acuity_appointment_id: string | null;
     client_name: string | null;
     client_phone: string | null;
     client_email: string | null;
     calendar_name: string | null;
   })[]>;
+  /**
+   * PENDING PAYMENT DISMISSAL (owner request 2026-09-30): mark ONE appointment's
+   * pending payment as dismissed by the owner. Sets pending_dismissed_at
+   * (keep-first, idempotent); the appointment row itself is NEVER deleted —
+   * Acuity is the source of truth and the sync would re-create it. Affects
+   * ONLY the pending list: a later-paid appointment still counts as a Booking
+   * Win everywhere (paid wins are never dismissible — callers guard).
+   */
+  dismissPendingPayment(appointmentId: string): Promise<void>;
 
   // attributions
   /**
