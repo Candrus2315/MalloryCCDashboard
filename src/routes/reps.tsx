@@ -11,8 +11,10 @@ import {
   isHistoricalWeek,
   recentMondays,
   weekStart,
+  weekdayName,
   type RangeMode,
 } from "~/server/date-logic";
+import { assignedLeadsCsv, type AssignedByDayCell } from "~/server/metrics/assigned-by-day";
 import {
   formatCount,
   formatDiff,
@@ -41,12 +43,14 @@ export const Route = createFileRoute("/reps")({
     range: typeof search.range === "string" ? search.range : undefined,
     from: typeof search.from === "string" ? search.from : undefined,
     to: typeof search.to === "string" ? search.to : undefined,
+    week: typeof search.week === "string" ? search.week : undefined,
   }),
   loaderDeps: ({ search }) => ({
     rep: search.rep,
     range: search.range,
     from: search.from,
     to: search.to,
+    week: search.week,
   }),
   loader: ({ deps }) => getRepsData({ data: deps }),
   component: RepsPage,
@@ -135,11 +139,34 @@ function RepsPage() {
       to: "/reps",
       search: (prev) => ({
         rep: prev.rep,
-        range: "custom",
+        range: "custom" as const,
         from: customFrom || undefined,
         to: customTo || undefined,
       }),
     });
+  };
+
+  // ASSIGNED LEADS BY DAY: its own Mon–Sun week — navigations elsewhere on the
+  // page keep it, and changing it keeps every other filter.
+  const setAssignedWeek = (monday: string) => {
+    router.navigate({
+      to: "/reps",
+      search: (prev) => ({ ...prev, week: monday }),
+    });
+  };
+
+  const downloadAssignedCsv = () => {
+    const grid = data.assignedByDay;
+    if (!grid) return;
+    const blob = new Blob([assignedLeadsCsv(grid)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `assigned-leads-${grid.week_start}-to-${grid.week_end}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   const selectRep = (id: string) => {
@@ -744,7 +771,129 @@ function RepsPage() {
           )}
         </section>
       )}
+
+      {/* ASSIGNED LEADS BY DAY (owner directive 2026-10-01) — the weekly table
+          the owner assembles by hand today. Assigned sheet leads (work-date
+          cohort) + Alliance/Auction opportunities per rep × ET day, from the
+          same verified sources as every other page — no new math. Its own
+          Mon–Sun week (picker includes the current week); CSV matches the
+          owner's shared file schema. */}
+      <section className="card card-dense" aria-label="Assigned leads by day">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <span className="inline-flex items-center gap-1.5">
+            <p className="section-heading">Assigned Leads by Day</p>
+            <InfoTip
+              tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by their HighLevel rep (bucketed by created date). Unassigned sheet leads are excluded. Each cell reads Animalia / Family; Al · Au are Alliance/Auction when that rep owns them."
+              label="What Assigned Leads by Day shows"
+            />
+          </span>
+          <span className="flex flex-wrap items-center gap-2">
+            <WeekOfSelect
+              mondays={data.assignedWeek.mondays}
+              value={data.assignedByDay.week_start}
+              onChange={(monday) => setAssignedWeek(monday)}
+            />
+            <button
+              type="button"
+              onClick={downloadAssignedCsv}
+              className="rounded-lg bg-(--accent-solid) px-3 py-1.5 text-[13px] font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover)"
+            >
+              Download CSV
+            </button>
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-(--text-caption)">
+          {formatDateHuman(data.assignedByDay.week_start)} – {formatDateHuman(data.assignedByDay.week_end)} ·
+          America/New_York · sheet leads with an assigned rep + Alliance/Auction opportunities · unassigned leads
+          excluded
+        </p>
+        <div className="mt-3 overflow-x-auto">
+          <table className="data-table min-w-[760px] [&_td]:py-1.5 [&_td]:text-right [&_td:first-child]:text-left">
+            <thead>
+              <tr>
+                <th scope="col" className="sticky left-0 z-[2] bg-(--card-bg) text-left">Rep</th>
+                {data.assignedByDay.dates.map((date) => (
+                  <th key={date} scope="col" className="text-right">
+                    {assignedDayHeader(date)}
+                  </th>
+                ))}
+                <th scope="col" className="text-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.assignedByDay.rows.map((r) => (
+                <tr key={r.rep_id}>
+                  <td className="sticky left-0 z-[1] bg-(--card-bg) text-left font-medium text-(--text-body)">
+                    {r.rep_name}
+                  </td>
+                  {r.days.map((c, i) => (
+                    <td key={i}>
+                      <AssignedCell c={c} />
+                    </td>
+                  ))}
+                  <td className="font-medium text-(--text-primary)">
+                    <AssignedCell c={r.total} />
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t border-(--table-border)">
+                <td className="sticky left-0 z-[1] bg-(--card-bg) text-left font-semibold text-(--text-primary)">
+                  Week Total
+                </td>
+                {data.assignedByDay.dayTotals.map((c, i) => (
+                  <td key={i} className="font-semibold text-(--text-primary)">
+                    <AssignedCell c={c} />
+                  </td>
+                ))}
+                <td className="font-semibold text-(--text-primary)">
+                  <AssignedCell c={data.assignedByDay.weekTotal} />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {data.assignedByDay.warnings.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {data.assignedByDay.warnings.map((w) => (
+              <li key={w} className="flex items-start gap-1.5 text-xs text-(--text-muted)">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
+                <span className="min-w-0">{w}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-(--text-muted)">
+          <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
+          Cell = Animalia / Family · Al / Au = Alliance / Auction leads owned by the rep. CSV columns:
+          rep, day, genre, assigned_leads.
+        </p>
+      </section>
     </div>
+  );
+}
+
+/** Day column header: "Mon 9/21" (ET calendar date of the column). */
+function assignedDayHeader(date: string): string {
+  return `${weekdayName(date, false)} ${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+}
+
+/** One grid cell: "animalia / family" split; Alliance/Auction appended when owned. All-zero renders — (never a fake 0). */
+function AssignedCell({ c }: { c: AssignedByDayCell }) {
+  const allZero = c.animalia === 0 && c.family === 0 && c.alliance === 0 && c.auction === 0;
+  if (allZero) return <span className="text-(--text-faint)">—</span>;
+  return (
+    <span className="whitespace-nowrap leading-tight tabular-nums">
+      <span className="text-(--text-primary)">{c.animalia}</span>
+      <span className="text-(--text-faint)"> / </span>
+      <span className="text-(--text-body)">{c.family}</span>
+      {(c.alliance > 0 || c.auction > 0) && (
+        <span className="ml-1.5 text-[11px] text-(--text-muted)">
+          {c.alliance > 0 && <span>Al {c.alliance}</span>}
+          {c.alliance > 0 && c.auction > 0 && <span> · </span>}
+          {c.auction > 0 && <span>Au {c.auction}</span>}
+        </span>
+      )}
+    </span>
   );
 }
 
