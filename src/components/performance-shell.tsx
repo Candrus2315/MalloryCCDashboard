@@ -10,7 +10,7 @@
 import { Link } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import type { PipListItem } from "~/server/pip-api";
-import type { PipStatus } from "~/server/store/types";
+import type { PipActionItem, PipStatus } from "~/server/store/types";
 import { StatusChip } from "./StatusChip";
 import { InfoTip } from "./InfoTip";
 
@@ -212,6 +212,60 @@ export function Field({ label, children }: { label: string; children: ReactNode 
       <span className="mb-1 block font-medium text-(--text-caption)">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** Add/remove list editor for PipActionItem rows (wizard steps 4–5 + template editor). */
+export function ListEditor({
+  items,
+  onChange,
+  addLabel,
+}: {
+  items: PipActionItem[];
+  onChange: (items: PipActionItem[]) => void;
+  addLabel: string;
+}) {
+  if (items.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={() => onChange([{ text: "", completed: false, completed_at: null }])}
+        className="rounded-md border border-(--card-border) px-3 py-2 text-[12px] text-(--text-caption) transition-colors hover:border-(--input-border) hover:text-(--text-primary)"
+      >
+        {addLabel}
+      </button>
+    );
+  }
+  return (
+    <div>
+      <div className="space-y-1.5">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <input
+              className={inputClass}
+              value={item.text}
+              placeholder="Describe the action…"
+              onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
+            />
+            <button
+              type="button"
+              aria-label={`Remove action ${i + 1}`}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-(--text-muted) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary)"
+              onClick={() => onChange(items.filter((_, j) => j !== i))}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange([...items, { text: "", completed: false, completed_at: null }])}
+        className="mt-1.5 rounded-md border border-(--card-border) px-3 py-2 text-[12px] text-(--text-caption) transition-colors hover:border-(--input-border) hover:text-(--text-primary)"
+      >
+        {addLabel}
+      </button>
+    </div>
   );
 }
 

@@ -37,6 +37,18 @@ function isStatusFilter(v: unknown): v is StatusFilter {
 
 type SortKey = "days" | "checkins" | "employee" | "window";
 
+/**
+ * Spec §5 microcopy migration: policy lives in the header InfoTip, one per
+ * status filter; the visible line stays operational.
+ */
+const FILTER_TIP: Record<StatusFilter, string> = {
+  issued: "The issued document is a permanent frozen snapshot — check-ins append; conclusions and cancellations are explicit manager actions.",
+  draft: "Issue freezes the document permanently as version 1 — corrections only via documented amendment. A draft needs a goal and PIP start/end dates before it can issue.",
+  completed: "The issued document is a permanent frozen snapshot — completed plans keep the exact content they were issued with.",
+  cancelled: "Ending a plan records the reason permanently; the issued document itself is never rewritten.",
+  all: "Every record, every status — the issued document is a permanent frozen snapshot; conclusions and cancellations are explicit manager actions.",
+};
+
 type PipSearch = { status?: string; sort?: string; p?: string };
 
 export const Route = createFileRoute("/performance")({
@@ -228,14 +240,17 @@ function PipsPage() {
       {/* Active PIPs — compact dense table (spec §2) */}
       <div className="mt-8">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[13px] text-(--text-caption)">
+          <p className="flex items-center gap-1.5 text-[13px] text-(--text-caption)">
             {filter === "draft"
               ? "Editable drafts."
               : filter === "all"
                 ? "Every record, every status."
                 : filter === "issued"
                   ? "Issued plans in force."
-                  : "Closed plans."}
+                  : filter === "completed"
+                    ? "Closed plans."
+                    : "Plans ended without completion."}
+            <InfoTip tip={FILTER_TIP[filter]} />
           </p>
           <button
             type="button"
@@ -599,7 +614,8 @@ function PipExpandedRow({ pip, colSpan }: { pip: PipLandingItem; colSpan: number
                     </span>
                   ))}
                   <span className="self-center text-[11px] text-(--text-muted)">
-                    {evidence.weeks_goal_met}/{evidence.weeks_completed} weeks met — never averaged
+                    {evidence.weeks_goal_met}/{evidence.weeks_completed} weeks met
+                    <InfoTip className="ml-1 inline-flex align-middle" tip="Each week is evaluated individually against the weekly minimum; weeks are never averaged." />
                   </span>
                 </div>
               ) : error ? (

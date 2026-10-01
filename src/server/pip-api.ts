@@ -19,6 +19,7 @@ import type {
   PipActionItem,
   PipCheckinRow,
   PipEventRow,
+  PipEventType,
   PipEvidenceSnapshotRow,
   PipRow,
   PipStatus,
@@ -158,7 +159,54 @@ export interface PipDetail {
   pip: PipListItem;
   checkins: PipCheckinRow[];
   snapshots: Pick<PipEvidenceSnapshotRow, "id" | "version" | "created_by" | "created_at">[];
-  events: PipEventRow[];
+  events: PipEventView[];
+}
+
+/**
+ * Serializable event view for server-fn boundaries. The raw store row's
+ * `details: Record<string, unknown> | null` fails TanStack Start's
+ * serializable-return validation, which collapses the WHOLE typed payload to
+ * `{}` at the call site (the wizard's TS2339 wall). Details are normalized to
+ * plain string values here — a presentation boundary, not a store change:
+ * unknown-typed values JSON-stringify exactly as the audit JSONB stores them.
+ */
+export interface PipEventView {
+  id: string;
+  pip_id: string | null;
+  template_id: string | null;
+  event_type: PipEventType;
+  actor: string | null;
+  field: string | null;
+  previous_value: string | null;
+  new_value: string | null;
+  details: Record<string, string> | null;
+  created_at: string;
+}
+
+/** Raw audit JSONB values → plain strings (strings pass through; others JSON-stringify). */
+export function normalizeEventDetails(raw: Record<string, unknown> | null): Record<string, string> | null {
+  if (!raw) return null;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v == null) continue;
+    out[k] = typeof v === "string" ? v : JSON.stringify(v);
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+export function pipEventView(e: PipEventRow): PipEventView {
+  return {
+    id: e.id,
+    pip_id: e.pip_id,
+    template_id: e.template_id,
+    event_type: e.event_type,
+    actor: e.actor,
+    field: e.field,
+    previous_value: e.previous_value,
+    new_value: e.new_value,
+    details: normalizeEventDetails(e.details),
+    created_at: e.created_at,
+  };
 }
 
 /** Full manager detail for one PIP: row + check-ins + snapshot index + event log. */
@@ -175,7 +223,43 @@ export async function getPipDetailCore(store: Store, id: string): Promise<PipDet
     pip: withName,
     checkins,
     snapshots: snapshots.map((s) => ({ id: s.id, version: s.version, created_by: s.created_by, created_at: s.created_at })),
-    events,
+    events: events.map(pipEventView),
+  };
+}
+
+/**
+ * HISTORY SEGMENT (refinement spec §5): the full event ledger with SUBJECTS
+ * RESOLVED TO NAMES — employee name + PIP title for PIP events, template name
+ * for template events. Raw IDs never render as a subject/employee anywhere.
+ * Read-only join over store lists; history itself is never modified.
+ */
+export interface PipHistorySubject {
+  employee: string | null;
+  title: string | null;
+}
+
+export interface PipHistoryPayload {
+  events: PipEventView[];
+  /** pip_id → employee + PIP title (resolved from the pips table). */
+  pipSubjects: [string, PipHistorySubject][];
+  /** template_id → template name (resolved from the templates table). */
+  templateNames: [string, string][];
+}
+
+export async function getPerformanceHistoryCore(store: Store): Promise<PipHistoryPayload> {
+  const [events, pips, templates] = await Promise.all([
+    store.getPipEvents({ limit: 300 }),
+    withRepNames(store, await store.listPips(null)),
+    store.listPipTemplates(),
+  ]);
+  const pipSubjects = new Map<string, PipHistorySubject>(
+    pips.map((p) => [p.id, { employee: p.rep_name, title: p.title }]),
+  );
+  const templateNames = new Map<string, string>(templates.map((t) => [t.id, t.name]));
+  return {
+    events: events.map(pipEventView),
+    pipSubjects: Array.from(pipSubjects.entries()),
+    templateNames: Array.from(templateNames.entries()),
   };
 }
 
@@ -417,12 +501,9 @@ export const getPipDetail = createServerFn()
   .validator((input: unknown) => input as { pipId: string })
   .handler(async ({ data }): Promise<PipDetail | null> => getPipDetailCore(await getStore(), String(data.pipId)));
 
-export const getPerformanceEvents = createServerFn()
-  .validator((input: unknown) => (input ?? {}) as { limit?: number })
-  .handler(async ({ data }): Promise<{ events: PipEventRow[] }> => {
-    const store = await getStore();
-    return { events: await store.getPipEvents({ limit: data?.limit ?? 300 }) };
-  });
+export const getPerformanceHistory = createServerFn().handler(async (): Promise<PipHistoryPayload> =>
+  getPerformanceHistoryCore(await getStore()),
+);
 
 export const listPipTemplates = createServerFn().handler(async (): Promise<{ templates: PipTemplateRow[] }> => {
   const store = await getStore();
@@ -434,6 +515,15 @@ export const getPipTemplateUsage = createServerFn().handler(async (): Promise<{ 
   const store = await getStore();
   return { usage: Array.from((await store.getPipTemplateUsage()).entries()) };
 });
+
+/** Templates segment load (refinement spec §4): cards + in-use counts in one roundtrip. */
+export const listPipTemplatesWithUsage = createServerFn().handler(
+  async (): Promise<{ templates: PipTemplateRow[]; usage: [string, number][] }> => {
+    const store = await getStore();
+    const [templates, usage] = await Promise.all([store.listPipTemplates(), store.getPipTemplateUsage()]);
+    return { templates, usage: Array.from(usage.entries()) };
+  },
+);
 
 /**
  * LIVE evidence for a draft (the creation workflow renders it as the manager

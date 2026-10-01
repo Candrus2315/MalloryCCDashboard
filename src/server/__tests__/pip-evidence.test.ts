@@ -107,7 +107,6 @@ async function runEvidenceBattery(
     // attempts; over-threshold = duration > the Settings threshold, read from
     // the store so the test holds against any live threshold value).
     const th = (await store.getSettings()).meaningful_call_threshold_seconds;
-    const over = (d: number) => (d > th ? 1 : 0);
     await store.upsertCalls([
       // repA week 1: 10 attempts — 6 long (300s), 4 short (45s)
       ...Array.from({ length: 6 }, (_, i) => ({
@@ -132,7 +131,7 @@ async function runEvidenceBattery(
         external_call_id: `pip-ev-call-${stamp}-b`, provider: "highlevel", rep_id: repB.id, contact_id: null,
         started_at: `${w1}T17:00:00.000Z`, duration_seconds: 300, over_two_minutes: true,
       },
-    ]);
+    ] as unknown as Parameters<Store["upsertCalls"]>[0]);
     const seededCalls = await store.getCallsBetween(
       new Date(Date.parse(`${w1}T00:00:00.000Z`)).toISOString(),
       new Date(Date.parse(`${w3}T23:59:59.000Z`)).toISOString(),
