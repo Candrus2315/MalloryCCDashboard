@@ -11,16 +11,23 @@ import { Link } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import type { PipListItem } from "~/server/pip-api";
 import type { PipStatus } from "~/server/store/types";
+import { StatusChip } from "./StatusChip";
+import { InfoTip } from "./InfoTip";
 
 /**
  * ONE Performance nav item (owner ruling 9/30) with THREE routed segments —
  * PIPs | Templates | History — styled exactly like the Settings SubNav pills
  * (see src/components/page-tabs.tsx for the shared mechanics).
+ *
+ * ROUTE NOTE (refinement pass 9/30): the segment routes are the DASH-NAMED
+ * literal routes (/performance-templates, /performance-history) that actually
+ * exist in the route tree — the nested /performance/* restructure is deferred
+ * to Phase 3 (needs a layout + Outlet change).
  */
 export const PERFORMANCE_TABS = [
   { to: "/performance", label: "PIPs" },
-  { to: "/performance/templates", label: "Templates" },
-  { to: "/performance/history", label: "History" },
+  { to: "/performance-templates", label: "Templates" },
+  { to: "/performance-history", label: "History" },
 ] as const;
 
 export function PerformanceShell({
@@ -32,11 +39,23 @@ export function PerformanceShell({
 }) {
   return (
     <div>
-      <h1 className="text-xl font-semibold tracking-tight">Performance</h1>
-      <p className="mt-0.5 text-[15px] text-(--text-caption)">Performance Management</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Performance</h1>
+          <p className="mt-0.5 text-[15px] text-(--text-caption)">
+            <span className="text-(--text-primary)">Management workspace</span>
+          </p>
+        </div>
+        <span className="pt-1">
+          <InfoTip
+            align="right"
+            tip="Management only — visible to authorized managers, never ordinary CC users, never a leaderboard. The system stores and displays verified data; every decision, observation, and conclusion is entered by a manager."
+          />
+        </span>
+      </div>
       <p className="mt-1 flex items-center gap-2 text-xs text-(--text-caption)">
         <span aria-hidden="true" className="inline-block h-1 w-1 rounded-full bg-(--dot-muted)" />
-        Management record · changes audited · America/New_York
+        America/New_York
       </p>
       <nav
         aria-label="Performance sections"
@@ -75,15 +94,15 @@ const STATUS_LABEL: Record<PipStatus, string> = {
   cancelled: "Cancelled",
 };
 
-/** Design-spec §4a: amber = attention/in force, emerald = resolved, neutral = administrative. Never red. */
+/**
+ * Design-spec §4a tones, re-pointed at the SHARED StatusChip (refinement spec
+ * §2): issued/active = risk + caution dot, completed = positive, draft +
+ * cancelled = neutral. NO line-through on Cancelled — plain neutral chip.
+ */
 export function PipStatusChip({ status }: { status: PipStatus }) {
-  const tone =
-    status === "issued"
-      ? "chip chip-risk"
-      : status === "completed"
-        ? "chip chip-positive"
-        : "chip chip-neutral";
-  return <span className={tone}>{STATUS_LABEL[status]}</span>;
+  const kind: "risk" | "positive" | "neutral" =
+    status === "issued" ? "risk" : status === "completed" ? "positive" : "neutral";
+  return <StatusChip kind={kind} label={STATUS_LABEL[status]} />;
 }
 
 export function EmptyState({ title, hint }: { title: string; hint: string }) {

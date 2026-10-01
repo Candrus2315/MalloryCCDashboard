@@ -24,9 +24,23 @@ import type {
   PipStatus,
   PipTemplateRow,
 } from "./store/types";
-import { isPipStatus } from "./store/types";
 import { pipEvidenceCore, type PipEvidence } from "./pip-evidence";
 import { statementsFromEvidence } from "./pip-statements";
+import { addDays, etDayStartUtc, etToday, weekStart } from "./date-logic";
+import { bookingsByRep, filterApptsInWinBucketRange } from "./metrics/compute";
+import { appointmentInScope } from "./metrics/availability";
+import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
+import {
+  pipAttentionSeed,
+  pipCheckinState,
+  pipDaysUntil,
+  pipEndingSoon,
+  pipKpiCounts,
+  pipWindowOverdue,
+  type PipAttentionSeed,
+  type PipKpiCounts,
+} from "./pip-landing";
+import { syncStaleWarnings } from "./queries";
 
 // ---------- shared view shapes ----------
 
@@ -45,6 +59,99 @@ async function withRepNames(store: Store, pips: PipRow[]): Promise<PipListItem[]
 /** List PIPs (optionally one status) with rep names — the manager list views. */
 export async function listPipsCore(store: Store, status?: PipStatus | null): Promise<PipListItem[]> {
   return withRepNames(store, await store.listPips(status ?? null));
+}
+
+/**
+ * Command-center landing row (refinement spec §1–§2): rule-based date math +
+ * counts ONLY. No scoring, no lifecycle change — every field is derived from
+ * stored dates (America/New_York) via pip-landing.ts.
+ */
+export interface PipLandingItem extends PipListItem {
+  /** Signed days from today (ET) to pip_end_date; negative = past end. */
+  days_left: number | null;
+  ending_soon: boolean;
+  window_overdue: boolean;
+  next_checkin_date: string | null;
+  checkin_count: number;
+  /** "check-in {n} of {m}" — m from the manager's own cadence entry; null when unset. */
+  checkin_expected_total: number | null;
+  checkin_overdue: boolean;
+  checkin_unscheduled: boolean;
+  /** Paid wins THIS WEEK for the rep (in-progress week) — null when the PIP has no rep. */
+  this_week_wins: number | null;
+  attention: PipAttentionSeed | null;
+}
+
+export interface PipLandingPayload {
+  pips: PipLandingItem[];
+  today: string;
+  week_start: string;
+  kpis: PipKpiCounts;
+  mode: "postgres" | "memory";
+  warnings: string[];
+}
+
+/**
+ * All PIPs + the landing derivations, in one server read. The current-week
+ * win count per rep comes through the EXACT chain the pages use (win-bucket
+ * selector → scope → eligibility → bookingsByRep) — no second calculation.
+ */
+export async function performanceLandingCore(store: Store): Promise<PipLandingPayload> {
+  const today = etToday();
+  const [pips, settings, allUsers, connections] = await Promise.all([
+    listPipsCore(store, null),
+    store.getSettings(),
+    store.getAllUsers(),
+    store.getConnections(),
+  ]);
+  const issued = pips.filter((p) => p.status === "issued");
+  const checkinsByPip = new Map<string, PipCheckinRow[]>();
+  await Promise.all(
+    issued.map(async (p) => {
+      checkinsByPip.set(p.id, await store.getPipCheckins(p.id));
+    }),
+  );
+
+  // THIS WEEK's paid wins per rep — same chain as repsPageData for the
+  // current-week window (in-progress week: Monday → today).
+  const ws = weekStart(today);
+  const [apptsRaw, attributions, lookBackCalls] = await Promise.all([
+    store.getAppointmentsByWinBusinessDateBetween(ws, today),
+    store.getAttributions(),
+    store.getAllCallsSince(etDayStartUtc(addDays(ws, -Math.ceil(settings.attribution_window_hours / 24) - 1))),
+  ]);
+  const eligibility = buildRosterEligibility(allUsers, settings.rep_mappings ?? []);
+  const rosterLookBackCalls = applyRosterEligibility(lookBackCalls, eligibility);
+  const attributionsEligible = applyAttributionEligibility(attributions, rosterLookBackCalls, eligibility);
+  const weekAppts = filterApptsInWinBucketRange(apptsRaw, ws, today).filter((a) => appointmentInScope(a, settings.acuity));
+  const winsByRep = bookingsByRep(weekAppts, attributionsEligible);
+
+  const landing: PipLandingItem[] = pips.map((p) => {
+    const daysLeft = pipDaysUntil(p.pip_end_date, today);
+    const cs = pipCheckinState(p, checkinsByPip.get(p.id) ?? [], today);
+    return {
+      ...p,
+      days_left: daysLeft,
+      ending_soon: p.status === "issued" && pipEndingSoon(daysLeft),
+      window_overdue: p.status === "issued" && pipWindowOverdue(daysLeft),
+      next_checkin_date: cs.next_checkin_date,
+      checkin_count: cs.count,
+      checkin_expected_total: cs.expected_total,
+      checkin_overdue: p.status === "issued" && cs.overdue,
+      checkin_unscheduled: p.status === "issued" && cs.unscheduled,
+      this_week_wins: p.rep_id ? (winsByRep.get(p.rep_id) ?? 0) : null,
+      attention: pipAttentionSeed(p, p.rep_name, daysLeft, cs),
+    };
+  });
+
+  return {
+    pips: landing,
+    today,
+    week_start: ws,
+    kpis: pipKpiCounts(landing),
+    mode: store.mode,
+    warnings: syncStaleWarnings(connections),
+  };
 }
 
 export interface PipDetail {
@@ -304,11 +411,7 @@ export const getRosterReps = createServerFn().handler(async (): Promise<{ reps: 
 
 export const getPerformanceList = createServerFn()
   .validator((input: unknown) => (input ?? {}) as { status?: string })
-  .handler(async ({ data }): Promise<{ pips: PipListItem[] }> => {
-    const store = await getStore();
-    const status = data.status && isPipStatus(data.status) ? (data.status as PipStatus) : null;
-    return { pips: await listPipsCore(store, status) };
-  });
+  .handler(async (): Promise<PipLandingPayload> => performanceLandingCore(await getStore()));
 
 export const getPipDetail = createServerFn()
   .validator((input: unknown) => input as { pipId: string })

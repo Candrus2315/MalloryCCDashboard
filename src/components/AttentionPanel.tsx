@@ -9,6 +9,7 @@
  */
 import type { AttentionNote } from "./today-views";
 import { InfoTip } from "./InfoTip";
+import { Link } from "@tanstack/react-router";
 
 export function AttentionPanel({
   notes,
@@ -44,7 +45,17 @@ export function AttentionPanel({
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1 text-[13px] text-(--text-body)">{n.text}</span>
-              {n.rep && <span className="shrink-0 text-xs font-medium text-(--text-caption)">{n.rep}</span>}
+              {n.rep && (
+                <span className="shrink-0 text-xs font-medium text-(--text-caption)">
+                  {n.href ? (
+                    <Link to={n.href} className="transition-colors hover:text-(--text-primary) hover:underline">
+                      {n.rep} · Open →
+                    </Link>
+                  ) : (
+                    n.rep
+                  )}
+                </span>
+              )}
             </li>
           ))}
         </ul>

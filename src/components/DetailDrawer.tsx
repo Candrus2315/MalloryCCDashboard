@@ -20,9 +20,11 @@ export function DetailDrawer(props: {
   loading?: boolean;
   /** Honest empty/unavailable message rendered when there is nothing to list. */
   emptyMessage?: string;
+  /** "lg" = max-w-lg (512px) — the PIP Manage drawer needs the wider panel (refinement spec §2). Default "md". */
+  width?: "md" | "lg";
   children?: ReactNode;
 }) {
-  const { open, onClose, title, contextLines, loading, emptyMessage, children } = props;
+  const { open, onClose, title, contextLines, loading, emptyMessage, width = "md", children } = props;
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
 
@@ -54,7 +56,10 @@ export function DetailDrawer(props: {
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-(--card-border) shadow-xl outline-none"
+        className={
+          "absolute right-0 top-0 flex h-full w-full flex-col border-l border-(--card-border) shadow-xl outline-none " +
+          (width === "lg" ? "max-w-lg" : "max-w-md")
+        }
         style={{ backgroundColor: "var(--card-bg)" }}
       >
         <div className="flex items-start justify-between gap-3 border-b border-(--table-border-weak) px-5 py-4">
