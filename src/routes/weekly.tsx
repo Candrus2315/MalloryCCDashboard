@@ -312,7 +312,12 @@ function WeeklyPage() {
                 </p>
               </div>
             </div>
-            {/* right / supporting — the week's booking mix as one visual system */}
+            {/* right / supporting — the week's booking mix as one visual system.
+                Session type covers EVERY win (family + animalia = total exactly);
+                online/unattributed is an attribution property that overlaps the
+                genres — so the bar splits by session type only, and the
+                unattributed count is stated as INSIDE the total (never a third
+                segment that would double-count it). */}
             <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
               <p className="kpi-label">Booking Mix</p>
               <p className="mt-2 flex items-baseline gap-2">
@@ -321,10 +326,9 @@ function WeeklyPage() {
                 </span>
                 <span className="kpi-sub">paid bookings</span>
               </p>
-              <div className="mt-4 flex h-2.5 w-full gap-[3px] overflow-hidden rounded-full" aria-hidden="true">
-                <div className="rounded-full bg-(--bar-fill)" style={{ width: `${mixSeg(b.animalia)}%` }} />
-                <div className="rounded-full bg-(--text-muted)" style={{ width: `${mixSeg(b.family)}%` }} />
-                <div className="rounded-full" style={{ width: `${mixSeg(b.unattributed)}%`, background: "color-mix(in srgb, var(--text-muted) 50%, transparent)" }} />
+              <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
+                <div className="bg-(--bar-fill)" style={{ width: `${mixSeg(b.animalia)}%` }} />
+                <div className="bg-(--text-muted)" style={{ width: `${mixSeg(b.family)}%` }} />
               </div>
               <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
                 <li className="flex items-center gap-1.5">
@@ -335,17 +339,9 @@ function WeeklyPage() {
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--text-muted)" aria-hidden="true" />
                   <span className="tabular-nums">{formatInt(b.family)}</span> Family
                 </li>
-                <li className="flex items-center gap-1.5">
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full"
-                    style={{ background: "color-mix(in srgb, var(--text-muted) 50%, transparent)" }}
-                    aria-hidden="true"
-                  />
-                  <span className="tabular-nums">{formatInt(b.unattributed)}</span> Online / unattributed
-                </li>
               </ul>
               <p className="kpi-sub mt-3 border-t border-(--table-border-weak) pt-3">
-                Online / unattributed wins count toward the team total only — never a rep row.
+                {formatInt(b.unattributed)} online / unattributed (inside the {formatInt(b.total)}) — team total only, never a rep row.
               </p>
             </div>
           </div>
