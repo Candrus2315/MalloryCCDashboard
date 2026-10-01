@@ -19,14 +19,29 @@ import type {
   PipActionItem,
   PipCheckinRow,
   PipEventRow,
+  PipEventType,
   PipEvidenceSnapshotRow,
   PipRow,
   PipStatus,
   PipTemplateRow,
 } from "./store/types";
-import { isPipStatus } from "./store/types";
 import { pipEvidenceCore, type PipEvidence } from "./pip-evidence";
 import { statementsFromEvidence } from "./pip-statements";
+import { addDays, etDayStartUtc, etToday, weekStart } from "./date-logic";
+import { bookingsByRep, filterApptsInWinBucketRange } from "./metrics/compute";
+import { appointmentInScope } from "./metrics/availability";
+import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
+import {
+  pipAttentionSeed,
+  pipCheckinState,
+  pipDaysUntil,
+  pipEndingSoon,
+  pipKpiCounts,
+  pipWindowOverdue,
+  type PipAttentionSeed,
+  type PipKpiCounts,
+} from "./pip-landing";
+import { syncStaleWarnings } from "./queries";
 
 // ---------- shared view shapes ----------
 
@@ -47,11 +62,151 @@ export async function listPipsCore(store: Store, status?: PipStatus | null): Pro
   return withRepNames(store, await store.listPips(status ?? null));
 }
 
+/**
+ * Command-center landing row (refinement spec §1–§2): rule-based date math +
+ * counts ONLY. No scoring, no lifecycle change — every field is derived from
+ * stored dates (America/New_York) via pip-landing.ts.
+ */
+export interface PipLandingItem extends PipListItem {
+  /** Signed days from today (ET) to pip_end_date; negative = past end. */
+  days_left: number | null;
+  ending_soon: boolean;
+  window_overdue: boolean;
+  next_checkin_date: string | null;
+  checkin_count: number;
+  /** "check-in {n} of {m}" — m from the manager's own cadence entry; null when unset. */
+  checkin_expected_total: number | null;
+  checkin_overdue: boolean;
+  checkin_unscheduled: boolean;
+  /** Paid wins THIS WEEK for the rep (in-progress week) — null when the PIP has no rep. */
+  this_week_wins: number | null;
+  attention: PipAttentionSeed | null;
+}
+
+export interface PipLandingPayload {
+  pips: PipLandingItem[];
+  today: string;
+  week_start: string;
+  kpis: PipKpiCounts;
+  mode: "postgres" | "memory";
+  warnings: string[];
+}
+
+/**
+ * All PIPs + the landing derivations, in one server read. The current-week
+ * win count per rep comes through the EXACT chain the pages use (win-bucket
+ * selector → scope → eligibility → bookingsByRep) — no second calculation.
+ */
+export async function performanceLandingCore(store: Store): Promise<PipLandingPayload> {
+  const today = etToday();
+  const [pips, settings, allUsers, connections] = await Promise.all([
+    listPipsCore(store, null),
+    store.getSettings(),
+    store.getAllUsers(),
+    store.getConnections(),
+  ]);
+  const issued = pips.filter((p) => p.status === "issued");
+  const checkinsByPip = new Map<string, PipCheckinRow[]>();
+  await Promise.all(
+    issued.map(async (p) => {
+      checkinsByPip.set(p.id, await store.getPipCheckins(p.id));
+    }),
+  );
+
+  // THIS WEEK's paid wins per rep — same chain as repsPageData for the
+  // current-week window (in-progress week: Monday → today).
+  const ws = weekStart(today);
+  const [apptsRaw, attributions, lookBackCalls] = await Promise.all([
+    store.getAppointmentsByWinBusinessDateBetween(ws, today),
+    store.getAttributions(),
+    store.getAllCallsSince(etDayStartUtc(addDays(ws, -Math.ceil(settings.attribution_window_hours / 24) - 1))),
+  ]);
+  const eligibility = buildRosterEligibility(allUsers, settings.rep_mappings ?? []);
+  const rosterLookBackCalls = applyRosterEligibility(lookBackCalls, eligibility);
+  const attributionsEligible = applyAttributionEligibility(attributions, rosterLookBackCalls, eligibility);
+  const weekAppts = filterApptsInWinBucketRange(apptsRaw, ws, today).filter((a) => appointmentInScope(a, settings.acuity));
+  const winsByRep = bookingsByRep(weekAppts, attributionsEligible);
+
+  const landing: PipLandingItem[] = pips.map((p) => {
+    const daysLeft = pipDaysUntil(p.pip_end_date, today);
+    const cs = pipCheckinState(p, checkinsByPip.get(p.id) ?? [], today);
+    return {
+      ...p,
+      days_left: daysLeft,
+      ending_soon: p.status === "issued" && pipEndingSoon(daysLeft),
+      window_overdue: p.status === "issued" && pipWindowOverdue(daysLeft),
+      next_checkin_date: cs.next_checkin_date,
+      checkin_count: cs.count,
+      checkin_expected_total: cs.expected_total,
+      checkin_overdue: p.status === "issued" && cs.overdue,
+      checkin_unscheduled: p.status === "issued" && cs.unscheduled,
+      this_week_wins: p.rep_id ? (winsByRep.get(p.rep_id) ?? 0) : null,
+      attention: pipAttentionSeed(p, p.rep_name, daysLeft, cs),
+    };
+  });
+
+  return {
+    pips: landing,
+    today,
+    week_start: ws,
+    kpis: pipKpiCounts(landing),
+    mode: store.mode,
+    warnings: syncStaleWarnings(connections),
+  };
+}
+
 export interface PipDetail {
   pip: PipListItem;
   checkins: PipCheckinRow[];
   snapshots: Pick<PipEvidenceSnapshotRow, "id" | "version" | "created_by" | "created_at">[];
-  events: PipEventRow[];
+  events: PipEventView[];
+}
+
+/**
+ * Serializable event view for server-fn boundaries. The raw store row's
+ * `details: Record<string, unknown> | null` fails TanStack Start's
+ * serializable-return validation, which collapses the WHOLE typed payload to
+ * `{}` at the call site (the wizard's TS2339 wall). Details are normalized to
+ * plain string values here — a presentation boundary, not a store change:
+ * unknown-typed values JSON-stringify exactly as the audit JSONB stores them.
+ */
+export interface PipEventView {
+  id: string;
+  pip_id: string | null;
+  template_id: string | null;
+  event_type: PipEventType;
+  actor: string | null;
+  field: string | null;
+  previous_value: string | null;
+  new_value: string | null;
+  details: Record<string, string> | null;
+  created_at: string;
+}
+
+/** Raw audit JSONB values → plain strings (strings pass through; others JSON-stringify). */
+export function normalizeEventDetails(raw: Record<string, unknown> | null): Record<string, string> | null {
+  if (!raw) return null;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (v == null) continue;
+    out[k] = typeof v === "string" ? v : JSON.stringify(v);
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+export function pipEventView(e: PipEventRow): PipEventView {
+  return {
+    id: e.id,
+    pip_id: e.pip_id,
+    template_id: e.template_id,
+    event_type: e.event_type,
+    actor: e.actor,
+    field: e.field,
+    previous_value: e.previous_value,
+    new_value: e.new_value,
+    details: normalizeEventDetails(e.details),
+    created_at: e.created_at,
+  };
 }
 
 /** Full manager detail for one PIP: row + check-ins + snapshot index + event log. */
@@ -68,7 +223,43 @@ export async function getPipDetailCore(store: Store, id: string): Promise<PipDet
     pip: withName,
     checkins,
     snapshots: snapshots.map((s) => ({ id: s.id, version: s.version, created_by: s.created_by, created_at: s.created_at })),
-    events,
+    events: events.map(pipEventView),
+  };
+}
+
+/**
+ * HISTORY SEGMENT (refinement spec §5): the full event ledger with SUBJECTS
+ * RESOLVED TO NAMES — employee name + PIP title for PIP events, template name
+ * for template events. Raw IDs never render as a subject/employee anywhere.
+ * Read-only join over store lists; history itself is never modified.
+ */
+export interface PipHistorySubject {
+  employee: string | null;
+  title: string | null;
+}
+
+export interface PipHistoryPayload {
+  events: PipEventView[];
+  /** pip_id → employee + PIP title (resolved from the pips table). */
+  pipSubjects: [string, PipHistorySubject][];
+  /** template_id → template name (resolved from the templates table). */
+  templateNames: [string, string][];
+}
+
+export async function getPerformanceHistoryCore(store: Store): Promise<PipHistoryPayload> {
+  const [events, pips, templates] = await Promise.all([
+    store.getPipEvents({ limit: 300 }),
+    withRepNames(store, await store.listPips(null)),
+    store.listPipTemplates(),
+  ]);
+  const pipSubjects = new Map<string, PipHistorySubject>(
+    pips.map((p) => [p.id, { employee: p.rep_name, title: p.title }]),
+  );
+  const templateNames = new Map<string, string>(templates.map((t) => [t.id, t.name]));
+  return {
+    events: events.map(pipEventView),
+    pipSubjects: Array.from(pipSubjects.entries()),
+    templateNames: Array.from(templateNames.entries()),
   };
 }
 
@@ -304,22 +495,15 @@ export const getRosterReps = createServerFn().handler(async (): Promise<{ reps: 
 
 export const getPerformanceList = createServerFn()
   .validator((input: unknown) => (input ?? {}) as { status?: string })
-  .handler(async ({ data }): Promise<{ pips: PipListItem[] }> => {
-    const store = await getStore();
-    const status = data.status && isPipStatus(data.status) ? (data.status as PipStatus) : null;
-    return { pips: await listPipsCore(store, status) };
-  });
+  .handler(async (): Promise<PipLandingPayload> => performanceLandingCore(await getStore()));
 
 export const getPipDetail = createServerFn()
   .validator((input: unknown) => input as { pipId: string })
   .handler(async ({ data }): Promise<PipDetail | null> => getPipDetailCore(await getStore(), String(data.pipId)));
 
-export const getPerformanceEvents = createServerFn()
-  .validator((input: unknown) => (input ?? {}) as { limit?: number })
-  .handler(async ({ data }): Promise<{ events: PipEventRow[] }> => {
-    const store = await getStore();
-    return { events: await store.getPipEvents({ limit: data?.limit ?? 300 }) };
-  });
+export const getPerformanceHistory = createServerFn().handler(async (): Promise<PipHistoryPayload> =>
+  getPerformanceHistoryCore(await getStore()),
+);
 
 export const listPipTemplates = createServerFn().handler(async (): Promise<{ templates: PipTemplateRow[] }> => {
   const store = await getStore();
@@ -331,6 +515,15 @@ export const getPipTemplateUsage = createServerFn().handler(async (): Promise<{ 
   const store = await getStore();
   return { usage: Array.from((await store.getPipTemplateUsage()).entries()) };
 });
+
+/** Templates segment load (refinement spec §4): cards + in-use counts in one roundtrip. */
+export const listPipTemplatesWithUsage = createServerFn().handler(
+  async (): Promise<{ templates: PipTemplateRow[]; usage: [string, number][] }> => {
+    const store = await getStore();
+    const [templates, usage] = await Promise.all([store.listPipTemplates(), store.getPipTemplateUsage()]);
+    return { templates, usage: Array.from(usage.entries()) };
+  },
+);
 
 /**
  * LIVE evidence for a draft (the creation workflow renders it as the manager

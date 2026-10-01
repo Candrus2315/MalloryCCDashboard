@@ -101,6 +101,64 @@ async function runEvidenceBattery(
     // availability path carries it (same store reads the pages use).
     const overlap = await store.getAppointmentsOverlapping(cfg.resolveWindowUtc[0], cfg.resolveWindowUtc[1]);
     const internalId = (acuityId: string) => overlap.find((a) => a.acuity_appointment_id === acuityId)!.id;
+
+    // ---- activity seeds (audit 10/1 wiring): calls + assigned leads ----
+    // Calls are the SAME rows summarizeCalls/repRangeSummaries consume (all
+    // attempts; over-threshold = duration > the Settings threshold, read from
+    // the store so the test holds against any live threshold value).
+    const th = (await store.getSettings()).meaningful_call_threshold_seconds;
+    await store.upsertCalls([
+      // repA week 1: 10 attempts — 6 long (300s), 4 short (45s)
+      ...Array.from({ length: 6 }, (_, i) => ({
+        external_call_id: `pip-ev-call-${stamp}-ov-${i}`, provider: "highlevel", rep_id: repA.id, contact_id: null,
+        started_at: `${w1}T15:00:00.000Z`, duration_seconds: 300, over_two_minutes: true,
+      })),
+      ...Array.from({ length: 4 }, (_, i) => ({
+        external_call_id: `pip-ev-call-${stamp}-sh-${i}`, provider: "highlevel", rep_id: repA.id, contact_id: null,
+        started_at: `${w1}T16:00:00.000Z`, duration_seconds: 45, over_two_minutes: false,
+      })),
+      // repA week 2: 2 attempts, both long; week 3 (in progress): 1 short
+      ...Array.from({ length: 2 }, (_, i) => ({
+        external_call_id: `pip-ev-call-${stamp}-w2-${i}`, provider: "highlevel", rep_id: repA.id, contact_id: null,
+        started_at: `${w2}T15:00:00.000Z`, duration_seconds: 300, over_two_minutes: true,
+      })),
+      {
+        external_call_id: `pip-ev-call-${stamp}-w3`, provider: "highlevel", rep_id: repA.id, contact_id: null,
+        started_at: `${w3}T15:00:00.000Z`, duration_seconds: 45, over_two_minutes: false,
+      },
+      // repB week 1 long call — must NOT leak into repA's counts
+      {
+        external_call_id: `pip-ev-call-${stamp}-b`, provider: "highlevel", rep_id: repB.id, contact_id: null,
+        started_at: `${w1}T17:00:00.000Z`, duration_seconds: 300, over_two_minutes: true,
+      },
+    ] as unknown as Parameters<Store["upsertCalls"]>[0]);
+    const seededCalls = await store.getCallsBetween(
+      new Date(Date.parse(`${w1}T00:00:00.000Z`)).toISOString(),
+      new Date(Date.parse(`${w3}T23:59:59.000Z`)).toISOString(),
+    );
+    const joinedCallId = seededCalls.find((c) => c.external_call_id === `pip-ev-call-${stamp}-ov-0`)!.id;
+    await store.upsertLeads([
+      // source_date is REQUIRED on every lead row (leads.source_date NOT NULL;
+      // postgres.js throws UNDEFINED_VALUE on an undefined parameter — the
+      // Monday sources here map 1:1 to their work_date, same as prod writes).
+      ...Array.from({ length: 3 }, (_, i) => ({
+        source_id: `pip-ev-lead-${stamp}-w1-${i}`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
+        source_date: w1, work_date: w1, contact_id: null, assigned_rep_id: repA.id, name: null, phone: null, email: null,
+      })),
+      ...Array.from({ length: 2 }, (_, i) => ({
+        source_id: `pip-ev-lead-${stamp}-w2-${i}`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
+        source_date: w2, work_date: w2, contact_id: null, assigned_rep_id: repA.id, name: null, phone: null, email: null,
+      })),
+      {
+        source_id: `pip-ev-lead-${stamp}-b`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
+        source_date: w1, work_date: w1, contact_id: null, assigned_rep_id: repB.id, name: null, phone: null, email: null,
+      },
+      {
+        source_id: `pip-ev-lead-${stamp}-un`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
+        source_date: w1, work_date: w1, contact_id: null, assigned_rep_id: null, name: null, phone: null, email: null,
+      },
+    ]);
+
     const attrRows: AttributionRow[] = apptSeqs
       // repA's wins (seqs 1–5, 10–18) + repB's (6) + the pending row (9,
       // attributed but unpaid — never counts); the two online rows (7,8) stay UNATTRIBUTED.
@@ -108,7 +166,10 @@ async function runEvidenceBattery(
       .map(({ seq: n }, i) => ({
         id: `pip-ev-attr-${stampForSeed}-${i}`,
         appointment_id: internalId(`pip-ev-${stampForSeed}-${n}`),
-        call_id: null,
+        // Week-1 win #1 rides an OVER-THRESHOLD call — the conversation-
+        // conversion join (bookingsFromOverThresholdCalls) needs this to have
+        // a non-null numerator; every other attribution stays call-less.
+        call_id: n === 1 ? joinedCallId : null,
         rep_id: n === 6 ? repB.id : repA.id,
         method: "manual",
         confidence: 1,
@@ -204,6 +265,36 @@ async function runEvidenceBattery(
     expect(e.goal_hit_rate_pct).toBe(50);
     expect(e.total_wins_to_date).toBe(14); // 5 + 7 + 2 (partials count; future null adds nothing)
     expect(e.total_wins_completed_weeks).toBe(12);
+
+    // ---- activity metrics (audit 10/1 wiring — SAME repRangeSummaries, windowed) ----
+    // Calls = ALL attempts; >2min per the store's own threshold; conversion =
+    // calls>2min → paid wins via attribution call_id (1 joined win); assigned
+    // leads = work-date cohort; repB's call/lead must not leak into repA.
+    expect(e.call_threshold_seconds).toBe(th);
+    const w1a = e.weekly[0].activity!;
+    expect(w1a.calls).toBe(10);
+    expect(w1a.assigned_leads).toBe(3);
+    expect(e.weekly[1].activity!.calls).toBe(2);
+    expect(e.weekly[1].activity!.assigned_leads).toBe(2);
+    expect(e.weekly[2].activity!.calls).toBe(1);
+    expect(e.weekly[2].activity!.assigned_leads).toBe(0);
+    expect(e.weekly[2].activity!.assigned_lead_conversion).toBeNull(); // no assigned leads → null, never 0
+    expect(e.weekly[3].activity).toBeNull(); // future week: not yet evaluable
+    expect(e.activity.calls).toBe(13);
+    expect(e.activity.assigned_leads).toBe(5);
+    if (th < 300) {
+      // 6 + 2 long calls (300s) clear any sane threshold; 45s attempts never do.
+      expect(w1a.calls_over_2min).toBe(6);
+      expect(w1a.conversation_conversion).toBeCloseTo(1 / 6, 5); // 1 joined win ÷ 6 over-threshold calls
+      expect(w1a.assigned_lead_conversion).toBeCloseTo(5 / 3, 5); // 5 wins ÷ 3 assigned leads
+      expect(e.weekly[1].activity!.calls_over_2min).toBe(2);
+      expect(e.weekly[1].activity!.conversation_conversion).toBe(0); // 2 over-threshold calls, 0 joined wins
+      expect(e.weekly[2].activity!.calls_over_2min).toBe(0);
+      expect(e.weekly[2].activity!.conversation_conversion).toBeNull(); // denominator 0 → null
+      expect(e.activity.calls_over_2min).toBe(8);
+      expect(e.activity.conversation_conversion).toBeCloseTo(1 / 8, 5);
+      expect(e.activity.assigned_lead_conversion).toBeCloseTo(14 / 5, 5);
+    }
 
     // ---- statements off the same payload (the issue path freezes THESE) ----
     const statements = statementsFromEvidence(e);
@@ -312,6 +403,9 @@ describe.skipIf(!TEST_DATABASE_URL)("pipEvidenceCore — PgStore (real Postgres)
           await sql`DELETE FROM booking_attributions WHERE appointment_id IN (SELECT id FROM appointments WHERE acuity_appointment_id LIKE 'pip-ev-%')`;
           await sql`DELETE FROM manual_overrides WHERE entity_id IN (SELECT id::text FROM appointments WHERE acuity_appointment_id LIKE 'pip-ev-%')`;
           await sql`DELETE FROM appointments WHERE acuity_appointment_id LIKE 'pip-ev-%'`;
+          await sql`DELETE FROM calls WHERE external_call_id LIKE 'pip-ev-call-%'`;
+          await sql`DELETE FROM manual_overrides WHERE entity_id IN (SELECT id::text FROM calls WHERE external_call_id LIKE 'pip-ev-call-%')`;
+          await sql`DELETE FROM leads WHERE source_id LIKE 'pip-ev-lead-%'`;
           await sql`DELETE FROM rep_goals WHERE rep_id = ANY(${userIds})`;
           if (userIds.length) {
             await sql`DELETE FROM manual_overrides WHERE entity_type = 'user' AND entity_id = ANY(${userIds})`;

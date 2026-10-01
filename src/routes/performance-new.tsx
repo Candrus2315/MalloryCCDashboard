@@ -30,7 +30,7 @@ import type { PipEvidence } from "~/server/pip-evidence";
 import type { PipActionItem, PipTemplateRow } from "~/server/store/types";
 import { EvidencePanel, EvidenceWeekTable } from "~/components/pip-evidence-panel";
 import { InfoTip } from "~/components/InfoTip";
-import { inputClass } from "~/components/performance-shell";
+import { inputClass, ListEditor } from "~/components/performance-shell";
 
 type NewSearch = { step?: string; pip?: string; template?: string };
 
@@ -857,59 +857,5 @@ function PreviewSection({
       </div>
       <div className="mt-1.5">{children}</div>
     </section>
-  );
-}
-
-/** Add/remove list editor for action rows (spec §3 steps 4–5). */
-function ListEditor({
-  items,
-  onChange,
-  addLabel,
-}: {
-  items: PipActionItem[];
-  onChange: (items: PipActionItem[]) => void;
-  addLabel: string;
-}) {
-  if (items.length === 0) {
-    return (
-      <button
-        type="button"
-        onClick={() => onChange([{ text: "", completed: false, completed_at: null }])}
-        className="rounded-md border border-(--card-border) px-3 py-2 text-[12px] text-(--text-caption) transition-colors hover:border-(--input-border) hover:text-(--text-primary)"
-      >
-        {addLabel}
-      </button>
-    );
-  }
-  return (
-    <div>
-      <div className="space-y-1.5">
-        {items.map((item, i) => (
-          <div key={i} className="flex items-center gap-1.5">
-            <input
-              className={inputClass}
-              value={item.text}
-              placeholder="Describe the action…"
-              onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
-            />
-            <button
-              type="button"
-              aria-label={`Remove action ${i + 1}`}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-(--text-muted) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary)"
-              onClick={() => onChange(items.filter((_, j) => j !== i))}
-            >
-              ✕
-            </button>
-          </div>
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={() => onChange([...items, { text: "", completed: false, completed_at: null }])}
-        className="mt-1.5 rounded-md border border-(--card-border) px-3 py-2 text-[12px] text-(--text-caption) transition-colors hover:border-(--input-border) hover:text-(--text-primary)"
-      >
-        {addLabel}
-      </button>
-    </div>
   );
 }

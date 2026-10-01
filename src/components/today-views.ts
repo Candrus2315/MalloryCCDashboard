@@ -92,6 +92,11 @@ export interface AttentionNote {
   severity: "risk" | "positive";
   text: string;
   rep: string;
+  /**
+   * Optional in-app link target (refinement spec §1: "Open →"). Additive —
+   * Today/Team pass none and render exactly as before.
+   */
+  href?: string;
 }
 
 /** OWNER-CORRECTED: working days only (Mon–Fri) — Mon 1/5 … Fri 5/5; Sat/Sun 5/5. */
