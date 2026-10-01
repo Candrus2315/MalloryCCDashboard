@@ -978,17 +978,18 @@ function GenreCount({
 /** One structured grid cell (owner redesign 2026-10-02): the count is primary,
     genre labels sit small + muted beside it, Alliance/Auction render as a
     tertiary line underneath ("Al 2 · Au 8"). The old "61 / 46" slash form is
-    gone. All-zero renders a quiet em dash — never a fake 0. `dim` mutes a
-    weekend column one step; `strong` marks rollup cells (Weekly Total, Team
-    Total row). */
+    gone. Zero genres render no line — the cell only stacks genres that have
+    leads (a channel-only day reads just "Au 2"); an entirely empty cell
+    renders a quiet em dash — never a fake 0. `dim` mutes a weekend column one
+    step; `strong` marks rollup cells (Weekly Total, Team Total row). */
 function AssignedCellBlock({ c, dim, strong }: { c: AssignedByDayCell; dim?: boolean; strong?: boolean }) {
   const allZero = c.animalia === 0 && c.family === 0 && c.alliance === 0 && c.auction === 0;
   if (allZero) return <span className="text-xs text-(--text-faint)">—</span>;
   const tone = dim ? "text-(--text-body)" : "text-(--text-primary)";
   return (
     <span className="block whitespace-nowrap tabular-nums">
-      <GenreCount n={c.animalia} genre="Animalia" tone={tone} strong={strong} />
-      <GenreCount n={c.family} genre="Family" tone={tone} strong={strong} />
+      {c.animalia > 0 && <GenreCount n={c.animalia} genre="Animalia" tone={tone} strong={strong} />}
+      {c.family > 0 && <GenreCount n={c.family} genre="Family" tone={tone} strong={strong} />}
       {(c.alliance > 0 || c.auction > 0) && (
         <span className={"mt-1 block text-[11px] leading-none text-(--text-muted)" + (dim ? " opacity-75" : "")}>
           {c.alliance > 0 && <span>Al {c.alliance}</span>}
