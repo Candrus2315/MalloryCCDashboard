@@ -102,9 +102,12 @@ export function Card({ children }: { children: ReactNode }) {
 /** Compact PIP list — the shared table across Active/Drafts/Completed/Cancelled. */
 export function PipTable({
   pips,
+  templatesById,
   actions,
 }: {
   pips: PipListItem[];
+  /** Template names for record provenance chips ("Template: {name} v{n}") — Unit 3. */
+  templatesById?: Map<string, { name: string; version: number }>;
   actions?: (pip: PipListItem) => ReactNode;
 }) {
   return (
@@ -122,22 +125,32 @@ export function PipTable({
           </tr>
         </thead>
         <tbody>
-          {pips.map((p) => (
-            <tr key={p.id}>
-              <td className="py-2 font-medium">{p.rep_name ?? "—"}</td>
-              <td className="py-2">{p.title}</td>
-              <td className="py-2"><PipStatusChip status={p.status} /></td>
-              <td className="py-2 text-(--text-muted)">
-                {p.pip_start_date ?? "—"} → {p.pip_end_date ?? "—"}
-              </td>
-              <td className="py-2 text-right">
-                {p.weekly_goal_min == null ? "—" : p.weekly_goal_min}
-                {p.hard_weekly_minimum && <span className="ml-1 text-[11px] text-(--text-muted)">(hard min)</span>}
-              </td>
-              <td className="py-2 text-(--text-muted)">{p.issued_at ? p.issued_at.slice(0, 10) : "—"}</td>
-              {actions && <td className="py-2 text-right">{actions(p)}</td>}
-            </tr>
-          ))}
+          {pips.map((p) => {
+            const tpl = p.template_id ? templatesById?.get(p.template_id) : undefined;
+            return (
+              <tr key={p.id}>
+                <td className="py-2 font-medium">{p.rep_name ?? "—"}</td>
+                <td className="py-2">
+                  {p.title}
+                  {tpl && (
+                    <span className="chip chip-neutral ml-2 align-middle text-[11px]">
+                      Template: {tpl.name} v{p.template_version ?? tpl.version}
+                    </span>
+                  )}
+                </td>
+                <td className="py-2"><PipStatusChip status={p.status} /></td>
+                <td className="py-2 text-(--text-muted)">
+                  {p.pip_start_date ?? "—"} → {p.pip_end_date ?? "—"}
+                </td>
+                <td className="py-2 text-right">
+                  {p.weekly_goal_min == null ? "—" : p.weekly_goal_min}
+                  {p.hard_weekly_minimum && <span className="ml-1 text-[11px] text-(--text-muted)">(hard min)</span>}
+                </td>
+                <td className="py-2 text-(--text-muted)">{p.issued_at ? p.issued_at.slice(0, 10) : "—"}</td>
+                {actions && <td className="py-2 text-right">{actions(p)}</td>}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
