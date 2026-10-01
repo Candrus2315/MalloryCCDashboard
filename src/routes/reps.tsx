@@ -460,7 +460,7 @@ function RepsPage() {
                     <span
                       className={
                         "h-1.5 w-1.5 shrink-0 rounded-full " +
-                        (r.isSelected ? "bg-(--accent-solid)" : "bg-(--dot-muted)")
+                        (r.isSelected ? "bg-(--text-primary)" : "bg-(--dot-muted)")
                       }
                       aria-hidden="true"
                     />
