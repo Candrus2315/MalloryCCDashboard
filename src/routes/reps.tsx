@@ -14,7 +14,11 @@ import {
   weekdayName,
   type RangeMode,
 } from "~/server/date-logic";
-import { assignedLeadsCsv, type AssignedByDayCell } from "~/server/metrics/assigned-by-day";
+import {
+  assignedLeadsCsv,
+  type AssignedByDayCell,
+  type AssignedByDayRow,
+} from "~/server/metrics/assigned-by-day";
 import {
   formatCount,
   formatDiff,
@@ -103,6 +107,9 @@ function RepsPage() {
   const [customTo, setCustomTo] = useState(search.to ?? "");
   const [sortKey, setSortKey] = useState<SortKey>("metric");
   const [sortAsc, setSortAsc] = useState(true);
+  // Other Lead Owners disclosure (owner redesign): collapsed by default — the
+  // rows never disappear, they just stop competing with the CC roster.
+  const [showOtherOwners, setShowOtherOwners] = useState(false);
 
   const setRange = (mode: RangeMode) => {
     // week-of needs a Monday anchor (same rule as the Team page): stay on the
@@ -168,6 +175,26 @@ function RepsPage() {
     a.remove();
     URL.revokeObjectURL(url);
   };
+
+  // ---------- ASSIGNED GRID GROUPING (owner redesign, presentation only) ----
+  // CC roster vs other lead owners is DERIVED from the payload, not hardcoded:
+  // data.repList is the exact active-roster list the grid's builder seeds as
+  // rosterReps (page-data maps the same `reps` array), so a row whose rep_id
+  // is in repList is a CC roster rep and everything else (Mallory Portraits
+  // Accounts, Amy Clark, Lexa Brandis …) is an "Other Lead Owner". Dan
+  // McKillop keeps his existing derived behavior — roster-active ⇒ CC group.
+  // Both groups render the SAME verified rows in the builder's order; nothing
+  // is filtered, recomputed, or dropped. Team Total below stays the builder's
+  // full-grid rollup (dayTotals + weekTotal include every lead owner).
+  const assignedGrid = data.assignedByDay;
+  const rosterIdSet = useMemo(() => new Set(data.repList.map((r) => r.id)), [data.repList]);
+  const ccRows = assignedGrid.rows.filter((r) => rosterIdSet.has(r.rep_id));
+  const otherRows = assignedGrid.rows.filter((r) => !rosterIdSet.has(r.rep_id));
+  const otherLeadCount = otherRows.reduce(
+    (n, r) => n + r.total.animalia + r.total.family + r.total.alliance + r.total.auction,
+    0,
+  );
+  const weekendCols = useMemo(() => assignedGrid.dates.map(isWeekendColumn), [assignedGrid.dates]);
 
   const selectRep = (id: string) => {
     router.navigate({
@@ -772,89 +799,129 @@ function RepsPage() {
         </section>
       )}
 
-      {/* ASSIGNED LEADS BY DAY (owner directive 2026-10-01) — the weekly table
-          the owner assembles by hand today. Assigned sheet leads (work-date
-          cohort) + Alliance/Auction opportunities per rep × ET day, from the
-          same verified sources as every other page — no new math. Its own
-          Mon–Sun week (picker includes the current week); CSV matches the
-          owner's shared file schema. */}
+      {/* ASSIGNED LEADS BY DAY (owner directive 2026-10-01) — presentation
+          redesign per owner spec: same payload, same CSV, zero math changes.
+          Structured stack cells (count primary, genre label muted), Weekly
+          Total as a separated rollup column, CC roster rows first, other lead
+          owners collapsed below, Team Total as the elevated full-grid rollup. */}
       <section className="card card-dense" aria-label="Assigned leads by day">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <span className="inline-flex items-center gap-1.5">
-            <p className="section-heading">Assigned Leads by Day</p>
-            <InfoTip
-              tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by their HighLevel rep (bucketed by created date). Unassigned sheet leads are excluded. Each cell reads Animalia / Family; Al · Au are Alliance/Auction when that rep owns them."
-              label="What Assigned Leads by Day shows"
-            />
-          </span>
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <span className="inline-flex items-center gap-1.5">
+              <p className="section-heading">Assigned Leads by Day</p>
+              <InfoTip
+                tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by the rep's HighLevel user (bucketed by ET created date). All dates America/New_York; unassigned sheet leads are excluded. Each cell stacks the count with its genre label — Animalia or Family — and Al · Au mark Alliance/Auction leads that rep owns. Team Total sums every lead owner shown, including the collapsed Other Lead Owners. CSV columns: rep, day, genre, assigned_leads."
+                label="What Assigned Leads by Day shows"
+              />
+            </span>
+            <p className="mt-1 text-xs text-(--text-caption)">
+              Lead distribution by rep · Week of {formatDateHuman(assignedGrid.week_start)} –{" "}
+              {formatDateHuman(assignedGrid.week_end)} · America/New_York
+            </p>
+          </div>
           <span className="flex flex-wrap items-center gap-2">
             <WeekOfSelect
               mondays={data.assignedWeek.mondays}
-              value={data.assignedByDay.week_start}
+              value={assignedGrid.week_start}
               onChange={(monday) => setAssignedWeek(monday)}
             />
-            <button
-              type="button"
-              onClick={downloadAssignedCsv}
-              className="rounded-lg bg-(--accent-solid) px-3 py-1.5 text-[13px] font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover)"
-            >
+            <button type="button" onClick={downloadAssignedCsv} className="btn-secondary">
               Download CSV
             </button>
           </span>
         </div>
-        <p className="mt-1 text-xs text-(--text-caption)">
-          {formatDateHuman(data.assignedByDay.week_start)} – {formatDateHuman(data.assignedByDay.week_end)} ·
-          America/New_York · sheet leads with an assigned rep + Alliance/Auction opportunities · unassigned leads
-          excluded
-        </p>
         <div className="mt-3 overflow-x-auto">
-          <table className="data-table min-w-[760px] [&_td]:py-1.5 [&_td]:text-right [&_td:first-child]:text-left">
+          <table className="data-table min-w-[820px]">
             <thead>
               <tr>
-                <th scope="col" className="sticky left-0 z-[2] bg-(--card-bg) text-left">Rep</th>
-                {data.assignedByDay.dates.map((date) => (
-                  <th key={date} scope="col" className="text-right">
+                <th scope="col" className="sticky left-0 z-[2] bg-(--card-bg) pr-3 text-left">Rep</th>
+                {assignedGrid.dates.map((date, i) => (
+                  <th
+                    key={date}
+                    scope="col"
+                    className={
+                      "pl-3 pr-2 text-left whitespace-nowrap" + (weekendCols[i] ? " opacity-60" : "")
+                    }
+                  >
                     {assignedDayHeader(date)}
                   </th>
                 ))}
-                <th scope="col" className="text-right">Total</th>
+                <th
+                  scope="col"
+                  className="sticky right-0 z-[2] border-l border-(--table-border-weak) bg-(--card-bg) pl-3 pr-2 text-left"
+                >
+                  Weekly Total
+                </th>
               </tr>
             </thead>
+            {/* CC roster rows — the builder's verified order (week total desc, then name). */}
             <tbody>
-              {data.assignedByDay.rows.map((r) => (
-                <tr key={r.rep_id}>
-                  <td className="sticky left-0 z-[1] bg-(--card-bg) text-left font-medium text-(--text-body)">
-                    {r.rep_name}
-                  </td>
-                  {r.days.map((c, i) => (
-                    <td key={i}>
-                      <AssignedCell c={c} />
-                    </td>
-                  ))}
-                  <td className="font-medium text-(--text-primary)">
-                    <AssignedCell c={r.total} />
-                  </td>
-                </tr>
+              {ccRows.map((r) => (
+                <AssignedGridRow key={r.rep_id} r={r} weekend={weekendCols} />
               ))}
-              <tr className="border-t border-(--table-border)">
-                <td className="sticky left-0 z-[1] bg-(--card-bg) text-left font-semibold text-(--text-primary)">
-                  Week Total
+            </tbody>
+            {otherRows.length > 0 && (
+              <>
+                <tbody>
+                  <tr className="hover:bg-transparent">
+                    <td colSpan={assignedGrid.dates.length + 2} className="border-b border-(--table-border-weak) py-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowOtherOwners((v) => !v)}
+                        aria-expanded={showOtherOwners}
+                        aria-controls="assigned-other-owners"
+                        className="sticky left-0 flex w-fit cursor-pointer items-center gap-1.5 rounded-md text-[12px] font-medium text-(--text-caption) transition-colors hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
+                      >
+                        <svg
+                          viewBox="0 0 12 12"
+                          className={
+                            "h-3 w-3 shrink-0 transition-transform " + (showOtherOwners ? "rotate-90" : "")
+                          }
+                          aria-hidden="true"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                        >
+                          <path d="M4.5 2.5 8 6l-3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        Other Lead Owners
+                        <span className="font-normal text-(--text-muted)">
+                          · {otherRows.length} {otherRows.length === 1 ? "owner" : "owners"} ·{" "}
+                          {formatInt(otherLeadCount)} {otherLeadCount === 1 ? "lead" : "leads"} this week
+                        </span>
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+                <tbody id="assigned-other-owners" hidden={!showOtherOwners}>
+                  {otherRows.map((r) => (
+                    <AssignedGridRow key={r.rep_id} r={r} weekend={weekendCols} other />
+                  ))}
+                </tbody>
+              </>
+            )}
+            {/* TEAM TOTAL — the builder's full-grid rollup, elevated surface so it
+                reads instantly as the summary row (owner redesign spec). */}
+            <tbody>
+              <tr className="border-t border-(--table-border) hover:bg-transparent">
+                <td className="sticky left-0 z-[1] bg-(--surface-selected) py-1.5 pr-3 font-semibold text-(--text-primary)">
+                  Team Total
                 </td>
-                {data.assignedByDay.dayTotals.map((c, i) => (
-                  <td key={i} className="font-semibold text-(--text-primary)">
-                    <AssignedCell c={c} />
+                {assignedGrid.dayTotals.map((c, i) => (
+                  <td key={i} className="bg-(--surface-selected) py-1.5 pl-3 pr-2">
+                    <AssignedCellBlock c={c} strong />
                   </td>
                 ))}
-                <td className="font-semibold text-(--text-primary)">
-                  <AssignedCell c={data.assignedByDay.weekTotal} />
+                <td className="sticky right-0 z-[1] border-l border-(--table-border-weak) bg-(--surface-selected) py-1.5 pl-3 pr-2">
+                  <AssignedCellBlock c={assignedGrid.weekTotal} strong />
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-        {data.assignedByDay.warnings.length > 0 && (
+        {assignedGrid.warnings.length > 0 && (
           <ul className="mt-2 space-y-1">
-            {data.assignedByDay.warnings.map((w) => (
+            {assignedGrid.warnings.map((w) => (
               <li key={w} className="flex items-start gap-1.5 text-xs text-(--text-muted)">
                 <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
                 <span className="min-w-0">{w}</span>
@@ -862,11 +929,6 @@ function RepsPage() {
             ))}
           </ul>
         )}
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-(--text-muted)">
-          <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
-          Cell = Animalia / Family · Al / Au = Alliance / Auction leads owned by the rep. CSV columns:
-          rep, day, genre, assigned_leads.
-        </p>
       </section>
     </div>
   );
@@ -877,23 +939,96 @@ function assignedDayHeader(date: string): string {
   return `${weekdayName(date, false)} ${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 }
 
-/** One grid cell: "animalia / family" split; Alliance/Auction appended when owned. All-zero renders — (never a fake 0). */
-function AssignedCell({ c }: { c: AssignedByDayCell }) {
-  const allZero = c.animalia === 0 && c.family === 0 && c.alliance === 0 && c.auction === 0;
-  if (allZero) return <span className="text-(--text-faint)">—</span>;
+/** Sat/Sun columns read one step quieter (owner redesign spec) — content stays fully visible. */
+function isWeekendColumn(date: string): boolean {
+  const wd = weekdayName(date, false);
+  return wd === "Sat" || wd === "Sun";
+}
+
+/** Genre label marker: small neutral ink ticks — consistent per genre, theme-safe, no color badges. */
+const GENRE_TICK: Record<"Animalia" | "Family", string> = {
+  Animalia: "bg-(--text-body)",
+  Family: "bg-(--text-muted)",
+};
+
+/** One count + genre label line: the count is the primary element (larger,
+    warm white), the label small and muted with its genre tick. */
+function GenreCount({
+  n,
+  genre,
+  tone,
+  strong,
+}: {
+  n: number;
+  genre: "Animalia" | "Family";
+  tone: string;
+  strong?: boolean;
+}) {
   return (
-    <span className="whitespace-nowrap leading-tight tabular-nums">
-      <span className="text-(--text-primary)">{c.animalia}</span>
-      <span className="text-(--text-faint)"> / </span>
-      <span className="text-(--text-body)">{c.family}</span>
+    <span className="flex items-center gap-1.5">
+      <span className={"text-[15px] leading-none " + (strong ? "font-semibold " : "font-medium ") + tone}>
+        {n}
+      </span>
+      <span className={"h-[7px] w-[2px] shrink-0 rounded-full " + GENRE_TICK[genre]} aria-hidden="true" />
+      <span className="text-[10px] leading-none text-(--text-muted)">{genre}</span>
+    </span>
+  );
+}
+
+/** One structured grid cell (owner redesign 2026-10-02): the count is primary,
+    genre labels sit small + muted beside it, Alliance/Auction render as a
+    tertiary line underneath ("Al 2 · Au 8"). The old "61 / 46" slash form is
+    gone. Zero genres render no line — the cell only stacks genres that have
+    leads (a channel-only day reads just "Au 2"); an entirely empty cell
+    renders a quiet em dash — never a fake 0. `dim` mutes a weekend column one
+    step; `strong` marks rollup cells (Weekly Total, Team Total row). */
+function AssignedCellBlock({ c, dim, strong }: { c: AssignedByDayCell; dim?: boolean; strong?: boolean }) {
+  const allZero = c.animalia === 0 && c.family === 0 && c.alliance === 0 && c.auction === 0;
+  if (allZero) return <span className="text-xs text-(--text-faint)">—</span>;
+  const tone = dim ? "text-(--text-body)" : "text-(--text-primary)";
+  return (
+    <span className="block whitespace-nowrap tabular-nums">
+      {c.animalia > 0 && <GenreCount n={c.animalia} genre="Animalia" tone={tone} strong={strong} />}
+      {c.family > 0 && <GenreCount n={c.family} genre="Family" tone={tone} strong={strong} />}
       {(c.alliance > 0 || c.auction > 0) && (
-        <span className="ml-1.5 text-[11px] text-(--text-muted)">
+        <span className={"mt-1 block text-[11px] leading-none text-(--text-muted)" + (dim ? " opacity-75" : "")}>
           {c.alliance > 0 && <span>Al {c.alliance}</span>}
           {c.alliance > 0 && c.auction > 0 && <span> · </span>}
           {c.auction > 0 && <span>Au {c.auction}</span>}
         </span>
       )}
     </span>
+  );
+}
+
+/** One rep row of the assigned-leads grid (presentation only — rows render in
+    the builder's verified order, grouped CC-first). Name anchors the row;
+    subtle hover; rows are NOT interactive (no per-rep drill-down route behind
+    this grid, so nothing here may fake one). The Weekly Total cell is a
+    separated rollup surface (tint + hairline divider) and stays sticky-right
+    on narrow viewports. */
+function AssignedGridRow({ r, weekend, other }: { r: AssignedByDayRow; weekend: boolean[]; other?: boolean }) {
+  return (
+    <tr className="group">
+      <td
+        className={
+          "sticky left-0 z-[1] bg-(--card-bg) py-1.5 pr-3 group-hover:bg-(--hover-row) " +
+          (other
+            ? "pl-6 text-[12px] font-normal text-(--text-body)"
+            : "text-[13px] font-medium text-(--text-primary)")
+        }
+      >
+        {r.rep_name}
+      </td>
+      {r.days.map((c, i) => (
+        <td key={i} className="py-1.5 pl-3 pr-2">
+          <AssignedCellBlock c={c} dim={weekend[i]} />
+        </td>
+      ))}
+      <td className="sticky right-0 z-[1] border-l border-(--table-border-weak) bg-(--surface-selected) py-1.5 pl-3 pr-2">
+        <AssignedCellBlock c={r.total} strong />
+      </td>
+    </tr>
   );
 }
 
