@@ -28,7 +28,22 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export function CopyButton({ label, text }: { label: string; text: string }) {
+/**
+ * variant (PRESENTATION ONLY, default "primary" = the original look so every
+ * existing call site is untouched): the strongest filled style is reserved
+ * for the page's true primary copy action; utility copies (email/slack) render
+ * as the restrained bordered style (owner spec: strongest button = primary
+ * actions only). Copy behavior, labels and states are identical.
+ */
+export function CopyButton({
+  label,
+  text,
+  variant = "primary",
+}: {
+  label: string;
+  text: string;
+  variant?: "primary" | "secondary";
+}) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   return (
     <button
@@ -42,7 +57,9 @@ export function CopyButton({ label, text }: { label: string; text: string }) {
         "rounded-lg px-4 py-2 text-[13px] font-medium transition-colors " +
         (state === "copied"
           ? "bg-(--btn-success) text-white"
-          : "bg-(--accent-solid) text-(--accent-solid-fg) hover:bg-(--accent-hover)")
+          : variant === "secondary"
+            ? "border border-(--card-border) text-(--text-caption) hover:border-(--input-border) hover:bg-(--surface-hover) hover:text-(--text-primary)"
+            : "bg-(--accent-solid) text-(--accent-solid-fg) hover:bg-(--accent-hover)")
       }
     >
       {state === "copied" ? "Copied ✓" : state === "failed" ? "Copy failed — select the text below" : label}
