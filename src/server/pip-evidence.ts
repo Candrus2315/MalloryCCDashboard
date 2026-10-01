@@ -32,10 +32,12 @@ import { etToday, etDayStartUtc, mondaysInRange, addDays, weekStart } from "./da
 import {
   bookingsByRep,
   filterApptsInWinBucketRange,
+  filterCallsInEtRange,
+  repRangeSummaries,
   resolveRepGoal,
   type AppointmentRow,
-  type AttributionRow,
   type GoalBasis,
+  type Rep,
 } from "./metrics/compute";
 import { appointmentInScope } from "./metrics/availability";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
@@ -44,6 +46,20 @@ import type { Store } from "./store/types";
 
 /** State of one Mon–Sun week inside the review period (relative to `today`). */
 export type PipWeekState = "completed" | "in_progress" | "future";
+
+/** Actual: number | null; met: boolean | null; state: PipWeekState */
+export interface PipActivitySummary {
+  /** ALL call attempts (incl. voicemail/no-answer) — the same "Calls" the pages show. */
+  calls: number;
+  /** Calls whose duration exceeds the meaningful-call threshold (Settings). */
+  calls_over_2min: number;
+  /** calls>2min → paid Booking Wins, via attribution call_id — null when no over-threshold calls. */
+  conversation_conversion: number | null;
+  /** Leads assigned to the rep with a work_date in the window (WORK-DATE cohort). */
+  assigned_leads: number;
+  /** paid wins ÷ assigned leads (work-date cohort) — null when no assigned leads. */
+  assigned_lead_conversion: number | null;
+}
 
 export interface PipEvidenceWeekRow {
   week_start: string; // Monday, YYYY-MM-DD
@@ -62,6 +78,13 @@ export interface PipEvidenceWeekRow {
   /** actual >= pip_goal, evaluated ONLY for completed weeks — null otherwise (never averaged). */
   met: boolean | null;
   state: PipWeekState;
+  /**
+   * Activity metrics (audit 10/1) — the SAME repRangeSummaries the Reps page
+   * uses, windowed to the clamped week. Null fields ONLY for future weeks
+   * (not yet evaluable — honest "—", never 0); an in-progress week shows the
+   * real partial counts.
+   */
+  activity: PipActivitySummary | null;
 }
 
 export interface PipEvidence {
@@ -86,11 +109,27 @@ export interface PipEvidence {
   current_dashboard_goal: { value: number; basis: GoalBasis; note: string } | null;
   current_week_start: string; // Monday of `today`'s week
   hard_weekly_minimum: boolean;
+  /**
+   * Activity metrics over the WHOLE review period (same repRangeSummaries
+   * chain, windowed to [review_start, review_end]). Future-only windows yield
+   * real zeros — no calls/leads exist there yet — which is honest, not
+   * estimated; the week table shows per-week detail with honest future nulls.
+   */
+  activity: PipActivitySummary;
+  /** The meaningful-call threshold (Settings) the >2 min / conversion metrics used. */
+  call_threshold_seconds: number;
   warnings: string[];
 }
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+
+/** Every calendar date in [start, end] inclusive (work-date list for getLeadsByWorkDates). */
+function reviewDatesInclusive(start: string, end: string): string[] {
+  const out: string[] = [];
+  for (let d = start; d <= end; d = addDays(d, 1)) out.push(d);
+  return out;
 }
 
 /** Human short ET date for statements/UI ("Sep 21") — deterministic formatting of a stored YYYY-MM-DD. */
@@ -135,13 +174,17 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
     throw new Error(`Review period end (${reviewEnd}) cannot precede its start (${reviewStart})`);
   }
 
-  const [settings, allUsers, rosterUsers, apptsRaw, attributions, connections] = await Promise.all([
+  const [settings, allUsers, rosterUsers, apptsRaw, attributions, connections, leads] = await Promise.all([
     store.getSettings(),
     store.getAllUsers(),
     store.getUsers(),
     store.getAppointmentsByWinBusinessDateBetween(reviewStart, reviewEnd),
     store.getAttributions(),
     store.getConnections(),
+    // ASSIGNED LEADS (work-date cohort) — the same store read the pages use
+    // (getLeadsByWorkDates); assignedLeadsByRep inside repRangeSummaries
+    // applies the per-window work-date filter.
+    store.getLeadsByWorkDates(reviewDatesInclusive(reviewStart, reviewEnd)),
   ]);
 
   const rep = allUsers.find((u) => u.id === input.repId);
@@ -159,6 +202,37 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
   const appts: AppointmentRow[] = filterApptsInWinBucketRange(apptsRaw, reviewStart, reviewEnd).filter((a) =>
     appointmentInScope(a, settings.acuity),
   );
+
+  // ACTIVITY METRICS (metrics audit 10/1 — the four owner-requested call/lead
+  // metrics): computed through repRangeSummaries, the SAME per-rep aggregate
+  // the Reps page builds its detail from — windowed per week (windowing only,
+  // no new math). Calls come from the look-back superset already fetched for
+  // the attribution join (it starts before the review window, so it covers the
+  // whole window); the pure filters re-apply the ET bounds exactly as the
+  // pages do (filterCallsInEtRange / filterApptsInWinBucketRange).
+  const thresholdSeconds = settings.meaningful_call_threshold_seconds;
+  const repAsRange: Rep = { id: rep.id, name: rep.name, call_start_date: rep.call_start_date ?? null };
+  const activityFor = (start: string, end: string): PipActivitySummary => {
+    const s = repRangeSummaries({
+      reps: [repAsRange],
+      calls: filterCallsInEtRange(lookBackCalls, start, end),
+      appts: filterApptsInWinBucketRange(appts, start, end),
+      attributions: attributionsEligible,
+      allCallsForJoin: lookBackCalls,
+      leads,
+      workStart: start,
+      workEnd: end,
+      thresholdSeconds,
+    }).get(input.repId);
+    if (!s) return { calls: 0, calls_over_2min: 0, conversation_conversion: null, assigned_leads: 0, assigned_lead_conversion: null };
+    return {
+      calls: s.totalCalls,
+      calls_over_2min: s.callsOverThreshold,
+      conversation_conversion: s.conversationConversion,
+      assigned_leads: s.assignedLeads,
+      assigned_lead_conversion: s.assignedLeadConversion,
+    };
+  };
 
   // Goals: the exact per-week maps the pages build (per-week rep_goals rows +
   // team goal, then resolveRepGoal — the SAME resolution the pages run).
@@ -197,6 +271,9 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
       const weekAppts = filterApptsInWinBucketRange(appts, clampedStart, clampedEnd);
       actual = bookingsByRep(weekAppts, attributionsEligible).get(input.repId) ?? 0;
     }
+    // Activity (audit 10/1): future weeks are NOT yet evaluable → null fields,
+    // honest "—" in the UI. In-progress weeks carry the real partial counts.
+    const activity = state === "future" ? null : activityFor(clampedStart, clampedEnd);
     const resolved = resolveRepGoal({ weeks: [ws], repGoalsByWeek, teamGoalByWeek, repCount });
     const met = state === "completed" && input.weeklyGoalMin != null && actual != null
       ? actual >= input.weeklyGoalMin
@@ -213,6 +290,7 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
       actual,
       met,
       state,
+      activity,
     });
   }
 
@@ -239,6 +317,8 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
     current_dashboard_goal: currentDashboardGoal,
     current_week_start: currentWeekStart,
     hard_weekly_minimum: input.hardWeeklyMinimum === true,
+    activity: activityFor(reviewStart, reviewEnd),
+    call_threshold_seconds: thresholdSeconds,
     warnings,
   };
 }

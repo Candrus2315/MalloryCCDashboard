@@ -5,11 +5,15 @@
  * no second calculation, no scoring, no labels. "—" means not verifiable,
  * never zero. Used in wizard Step 2 and reused read-only on the record.
  *
- * Reserved metric slots (calls / calls>2min / conversation conversion /
- * assigned-lead conversion / booking hours / bookings-per-hour) are OMITTED —
- * the engine doesn't supply them and the owner rule is never estimate.
+ * Activity row-group (metrics audit 10/1): Calls · Calls over 2 min ·
+ * Conversation conversion · Assigned-lead conversion (WORK-DATE cohort,
+ * labeled) come through repRangeSummaries — the same per-rep aggregate the
+ * Reps page uses, windowed per week. Booking hours + bookings-per-hour stay
+ * OMITTED: no such aggregation exists anywhere in the metrics layer (owner
+ * rule = never estimate, and never a new calculation to fill a slot).
  */
-import type { PipEvidence } from "~/server/pip-evidence";
+import type { PipEvidence, PipActivitySummary } from "~/server/pip-evidence";
+import { formatPercent } from "~/server/metrics/report-text";
 import { InfoTip } from "./InfoTip";
 import { WarningList } from "./warnings";
 
@@ -36,11 +40,37 @@ function MetChip({ met }: { met: boolean | null }) {
   return met ? <span className="chip chip-positive">Yes</span> : <span className="chip chip-risk">No</span>;
 }
 
+function Dash() {
+  return <span className="text-(--text-faint)">—</span>;
+}
+
+/** Per-week activity cells (audit 10/1): null fields only for future weeks. */
+function ActivityCells({ a }: { a: PipActivitySummary | null }) {
+  if (a == null) {
+    return (
+      <>
+        <td className="py-2 text-right tabular-nums"><Dash /></td>
+        <td className="py-2 text-right tabular-nums"><Dash /></td>
+        <td className="py-2 text-right tabular-nums"><Dash /></td>
+        <td className="py-2 text-right tabular-nums"><Dash /></td>
+      </>
+    );
+  }
+  return (
+    <>
+      <td className="py-2 text-right tabular-nums">{a.calls}</td>
+      <td className="py-2 text-right tabular-nums">{a.calls_over_2min}</td>
+      <td className="py-2 text-right tabular-nums">{a.conversation_conversion == null ? <Dash /> : formatPercent(a.conversation_conversion, 1)}</td>
+      <td className="py-2 text-right tabular-nums">{a.assigned_leads}</td>
+    </>
+  );
+}
+
 /** Just the per-week table — reused by wizard Step 3's live goal-met preview and the Step 6 preview. */
 export function EvidenceWeekTable({ evidence }: { evidence: PipEvidence }) {
   return (
     <div className="overflow-x-auto">
-      <table className="data-table w-full text-[12px]">
+      <table className="data-table w-full min-w-[640px] text-[12px]">
         <thead>
           <tr>
             <th scope="col" className="text-left">Week</th>
@@ -52,6 +82,30 @@ export function EvidenceWeekTable({ evidence }: { evidence: PipEvidence }) {
             </th>
             <th scope="col" className="text-right">Actual</th>
             <th scope="col" className="text-left">Met</th>
+            <th scope="col" className="text-right">
+              <span className="inline-flex items-center gap-1">
+                Calls
+                <InfoTip tip="All call attempts in the week, including voicemail and no-answer — the same “Calls” the Reps and Team pages show." />
+              </span>
+            </th>
+            <th scope="col" className="text-right">
+              <span className="inline-flex items-center gap-1">
+                Calls &gt; 2 min
+                <InfoTip tip={`Calls longer than the meaningful-call threshold (${evidence.call_threshold_seconds}s, Settings).`} />
+              </span>
+            </th>
+            <th scope="col" className="text-right">
+              <span className="inline-flex items-center gap-1">
+                Conv %
+                <InfoTip tip="Conversation conversion: paid bookings that came from a call over the threshold, as a share of calls over the threshold. “—” when the week had no over-threshold calls." />
+              </span>
+            </th>
+            <th scope="col" className="text-right">
+              <span className="inline-flex items-center gap-1">
+                Assigned leads
+                <InfoTip tip="Leads assigned to this employee with a WORK DATE in the week — the work-date cohort the operational pages use." />
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -66,13 +120,14 @@ export function EvidenceWeekTable({ evidence }: { evidence: PipEvidence }) {
               </td>
               <td className="py-2 text-right tabular-nums">
                 {w.dashboard_goal == null ? (
-                  <span className="text-(--text-faint)">—</span>
+                  <Dash />
                 ) : (
                   <span title={w.dashboard_goal_note ?? undefined}>{w.dashboard_goal}</span>
                 )}
               </td>
-              <td className="py-2 text-right tabular-nums">{w.actual == null ? <span className="text-(--text-faint)">—</span> : w.actual}</td>
+              <td className="py-2 text-right tabular-nums">{w.actual == null ? <Dash /> : w.actual}</td>
               <td className="py-2"><MetChip met={w.met} /></td>
+              <ActivityCells a={w.activity} />
             </tr>
           ))}
         </tbody>
@@ -125,6 +180,54 @@ export function EvidencePanel({
       {/* Week table — dashboard goal carries its provenance (rep goal > team share) */}
       <div className="mt-3">
         <EvidenceWeekTable evidence={evidence} />
+      </div>
+
+      {/* Activity row-group (metrics audit 10/1): the four owner-requested call/lead
+          metrics over the review period — same repRangeSummaries chain, no new math.
+          Booking hours + bookings-per-hour stay omitted (no such verified metric). */}
+      <div className="card mt-3 overflow-hidden p-0">
+        <div className="grid grid-cols-2 md:grid-cols-4 md:divide-x divide-(--table-border-weak)">
+          <div className="px-5 py-4 border-t border-(--table-border-weak) md:border-t-0">
+            <p className="kpi-label">
+              <span className="inline-flex items-center gap-1">
+                Calls
+                <InfoTip tip="All call attempts in the review window, including voicemail and no-answer." />
+              </span>
+            </p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-(--text-primary)">{evidence.activity.calls}</p>
+          </div>
+          <div className="px-5 py-4 border-t border-(--table-border-weak) md:border-t-0">
+            <p className="kpi-label">
+              <span className="inline-flex items-center gap-1">
+                Calls over 2 min
+                <InfoTip tip={`Calls longer than the meaningful-call threshold (${evidence.call_threshold_seconds}s — Settings).`} />
+              </span>
+            </p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-(--text-primary)">{evidence.activity.calls_over_2min}</p>
+          </div>
+          <div className="px-5 py-4 border-t border-(--table-border-weak)">
+            <p className="kpi-label">
+              <span className="inline-flex items-center gap-1">
+                Conversation conversion
+                <InfoTip tip="Paid bookings that came from a call over the threshold, as a share of calls over the threshold. “—” when there were none." />
+              </span>
+            </p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-(--text-primary)">
+              {evidence.activity.conversation_conversion == null ? "—" : formatPercent(evidence.activity.conversation_conversion, 1)}
+            </p>
+          </div>
+          <div className="px-5 py-4 border-t border-(--table-border-weak)">
+            <p className="kpi-label">
+              <span className="inline-flex items-center gap-1">
+                Assigned-lead conversion
+                <InfoTip tip="Paid bookings as a share of leads assigned to this employee with a work date in the window (work-date cohort — the operational pages' standard). “—” when there were no assigned leads." />
+              </span>
+            </p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-(--text-primary)">
+              {evidence.activity.assigned_lead_conversion == null ? "—" : formatPercent(evidence.activity.assigned_lead_conversion, 1)}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Fixed factual statements — frozen verbatim at issue */}
