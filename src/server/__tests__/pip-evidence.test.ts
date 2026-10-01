@@ -138,21 +138,24 @@ async function runEvidenceBattery(
     );
     const joinedCallId = seededCalls.find((c) => c.external_call_id === `pip-ev-call-${stamp}-ov-0`)!.id;
     await store.upsertLeads([
+      // source_date is REQUIRED on every lead row (leads.source_date NOT NULL;
+      // postgres.js throws UNDEFINED_VALUE on an undefined parameter — the
+      // Monday sources here map 1:1 to their work_date, same as prod writes).
       ...Array.from({ length: 3 }, (_, i) => ({
         source_id: `pip-ev-lead-${stamp}-w1-${i}`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
-        work_date: w1, contact_id: null, assigned_rep_id: repA.id, name: null, phone: null, email: null,
+        source_date: w1, work_date: w1, contact_id: null, assigned_rep_id: repA.id, name: null, phone: null, email: null,
       })),
       ...Array.from({ length: 2 }, (_, i) => ({
         source_id: `pip-ev-lead-${stamp}-w2-${i}`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
-        work_date: w2, contact_id: null, assigned_rep_id: repA.id, name: null, phone: null, email: null,
+        source_date: w2, work_date: w2, contact_id: null, assigned_rep_id: repA.id, name: null, phone: null, email: null,
       })),
       {
         source_id: `pip-ev-lead-${stamp}-b`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
-        work_date: w1, contact_id: null, assigned_rep_id: repB.id, name: null, phone: null, email: null,
+        source_date: w1, work_date: w1, contact_id: null, assigned_rep_id: repB.id, name: null, phone: null, email: null,
       },
       {
         source_id: `pip-ev-lead-${stamp}-un`, provider: "google_sheets", lead_type: "family", source_sheet: "family",
-        work_date: w1, contact_id: null, assigned_rep_id: null, name: null, phone: null, email: null,
+        source_date: w1, work_date: w1, contact_id: null, assigned_rep_id: null, name: null, phone: null, email: null,
       },
     ]);
 
