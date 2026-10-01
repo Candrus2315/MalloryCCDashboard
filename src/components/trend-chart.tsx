@@ -59,6 +59,14 @@ export interface TrendCardProps {
   onPointClick?: (index: number) => void;
   /** Hover tooltip content, composed by the caller from the metrics layer. */
   tooltip?: (index: number) => TrendTooltipView | null;
+  /**
+   * Optional presentation formatter for the header's latest value ONLY (additive
+   * — Weekly funnel pass 2026-10-01). The default `fmt` rounds percent units to
+   * whole % so axis labels stay short; callers whose headline number needs
+   * two-digit precision (Weekly: 9.27%) pass formatValue. Plot geometry, axis
+   * labels and tooltips are unchanged.
+   */
+  formatValue?: (v: number) => string;
 }
 
 function fmt(v: number, unit: TrendUnit): string {
@@ -76,7 +84,7 @@ const H = 176;
 const WIDE_H = 200;
 const M = { l: 40, r: 10, t: 12, b: 20 };
 
-export function TrendCard({ title, points, unit, refLine, note, info, wide, meta, onPointClick, tooltip }: TrendCardProps) {
+export function TrendCard({ title, points, unit, refLine, note, info, wide, meta, onPointClick, tooltip, formatValue }: TrendCardProps) {
   const w = wide ? WIDE_W : W;
   const h = wide ? WIDE_H : H;
   const PW = w - M.l - M.r;
@@ -158,7 +166,7 @@ export function TrendCard({ title, points, unit, refLine, note, info, wide, meta
           {info && <InfoTip tip={info} label={`About ${title}`} />}
         </span>
         <p className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-          {latest == null ? "—" : fmt(latest, unit)}
+          {latest == null ? "—" : formatValue ? formatValue(latest) : fmt(latest, unit)}
         </p>
       </div>
       <div className="relative mt-2">
