@@ -665,6 +665,12 @@ export interface PipRow {
   created_by: string | null;
   created_at: string; // ISO
   updated_at: string; // ISO
+  /** Template this draft was created from (provenance; frozen into the issue snapshot). */
+  template_id: string | null;
+  /** The template's version at creation — issued PIPs keep this even after the template moves on. */
+  template_version: number | null;
+  /** Manager-entered check-in cadence in days (Phase 3 schedules use it; frozen at issue). */
+  checkin_cadence_days: number | null;
 }
 
 /** Manager-entered fields for a new PIP draft (status is always born 'draft'). */
@@ -683,6 +689,12 @@ export interface PipCreateInput {
   personal_development_actions?: PipActionItem[];
   professional_development_actions?: PipActionItem[];
   created_by?: string;
+  /** When set, the draft records this template as its origin; defaults are applied by the caller. */
+  template_id?: string | null;
+  /** The template version applied (resolved by the caller at creation). */
+  template_version?: number | null;
+  /** Manager-entered check-in cadence in days. */
+  checkin_cadence_days?: number | null;
 }
 
 /** Editable fields of a DRAFT (the only mutable state of the document). */
@@ -702,6 +714,7 @@ export interface PipDraftPatch {
   professional_development_actions?: PipActionItem[];
   /** Who made the edit (audit trail). */
   actor?: string;
+  checkin_cadence_days?: number | null;
 }
 
 /**
@@ -746,6 +759,8 @@ export interface PipTemplateRow {
   default_professional: PipActionItem[];
   default_checkin_cadence_days: number | null;
   default_duration_weeks: number | null;
+  /** Bumped by EVERY update — issued PIPs keep the version they were issued with (frozen in their snapshots). */
+  version: number;
   created_by: string | null;
   created_at: string; // ISO
   updated_at: string; // ISO
@@ -1125,7 +1140,7 @@ export interface Store {
    * Writes the version-1 frozen-evidence snapshot (pip_evidence_snapshots)
    * transactionally with the status flip. Audit: pip_issued.
    */
-  issuePip(id: string, opts: { issuedBy: string }): Promise<PipRow>;
+  issuePip(id: string, opts: { issuedBy: string; snapshotExtras?: Record<string, unknown> }): Promise<PipRow>;
   /** issued → completed. Requires conclusion_category + conclusion_notes. Audit: pip_completed. */
   completePip(id: string, opts: { conclusionCategory: string; conclusionNotes: string; actor: string }): Promise<PipRow>;
   /** issued → cancelled. Requires a cancellation reason. Audit: pip_cancelled. */
@@ -1141,6 +1156,8 @@ export interface Store {
   deletePipTemplate(id: string): Promise<void>;
   getPipTemplate(id: string): Promise<PipTemplateRow | null>;
   listPipTemplates(): Promise<PipTemplateRow[]>;
+  /** Non-draft PIPs per template id (the factual "In use" counts — issued/completed/cancelled hold a template in use). */
+  getPipTemplateUsage(): Promise<Map<string, number>>;
   /** Append a typed module event (also mirrored compactly into manual_overrides by callers' store methods). */
   insertPipEvent(row: Omit<PipEventRow, "id" | "created_at">): Promise<void>;
   /** Module event log, newest first; optionally scoped to one PIP. */

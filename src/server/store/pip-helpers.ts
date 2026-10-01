@@ -30,6 +30,7 @@ export const PIP_EDITABLE_FIELDS = [
   "action_plan",
   "personal_development_actions",
   "professional_development_actions",
+  "checkin_cadence_days",
 ] as const;
 
 /** Guard: ET calendar dates are stored as YYYY-MM-DD text (or NULL). */
@@ -104,6 +105,9 @@ export function buildPipRow(input: PipCreateInput, id: string, nowIso: string): 
     created_by: input.created_by ? String(input.created_by).trim() || null : null,
     created_at: nowIso,
     updated_at: nowIso,
+    template_id: input.template_id ? String(input.template_id).trim() || null : null,
+    template_version: input.template_version == null ? null : pipOptionalInt(input.template_version, "template_version"),
+    checkin_cadence_days: pipOptionalInt(input.checkin_cadence_days ?? null, "checkin_cadence_days"),
   };
 }
 
@@ -151,6 +155,8 @@ export function applyPipDraftPatch(row: PipRow, patch: PipDraftPatch): PipDraftP
     bump("personal_development_actions", normalizePipActionList(patch.personal_development_actions));
   if (patch.professional_development_actions !== undefined)
     bump("professional_development_actions", normalizePipActionList(patch.professional_development_actions));
+  if (patch.checkin_cadence_days !== undefined)
+    bump("checkin_cadence_days", pipOptionalInt(patch.checkin_cadence_days, "checkin_cadence_days"));
 
   const observationsBefore = changed.includes("manager_observations") ? row.manager_observations : null;
   return { next, changed, observationsBefore };

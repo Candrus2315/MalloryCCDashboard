@@ -155,6 +155,7 @@ const STORE_METHOD_FLAGS = {
   deletePipTemplate: 1,
   getPipTemplate: 1,
   listPipTemplates: 1,
+  getPipTemplateUsage: 1,
   insertPipEvent: 1,
   getPipEvents: 1,
 } satisfies Record<keyof Store, number>;

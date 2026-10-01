@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { getPerformanceEvents } from "~/server/pip-api";
 import { EmptyState, PerformanceShell } from "~/components/performance-shell";
 
-export const Route = createFileRoute("/performance-history")({
+export const Route = createFileRoute("/performance/history")({
   loader: () => getPerformanceEvents({ data: { limit: 300 } }),
   component: HistoryPage,
 });
@@ -23,11 +23,7 @@ const EVENT_LABELS: Record<string, string> = {
 function HistoryPage() {
   const data = Route.useLoaderData();
   return (
-    <PerformanceShell
-      path="/performance-history"
-      title="History"
-      subtitle="The module's full audit trail — every creation, edit, issue, conclusion, cancellation, check-in, and template change, with actor and before/after where applicable. History is never deleted."
-    >
+    <PerformanceShell path="/performance/history">
       {data.events.length === 0 ? (
         <EmptyState title="No events yet" hint="Every action taken anywhere in Performance Management is recorded here automatically." />
       ) : (
