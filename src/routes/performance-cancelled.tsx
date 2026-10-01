@@ -1,28 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { getPerformanceList } from "~/server/pip-api";
-import { EmptyState, PerformanceShell, PipTable } from "~/components/performance-shell";
-
+/** OWNER RULING 9/30: the four statuses are filter chips on /performance — this legacy route redirects so no old link breaks. */
+import { createFileRoute, redirect } from "@tanstack/react-router";
 export const Route = createFileRoute("/performance-cancelled")({
-  loader: () => getPerformanceList({ data: { status: "cancelled" } }),
-  component: CancelledPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/performance", search: { status: "cancelled" }, replace: true });
+  },
 });
-
-function CancelledPage() {
-  const data = Route.useLoaderData();
-  return (
-    <PerformanceShell
-      path="/performance-cancelled"
-      title="Cancelled PIPs"
-      subtitle="Plans ended without completion, each with its recorded cancellation reason. Cancelled PIPs are fully immutable and kept permanently."
-    >
-      {data.pips.length === 0 ? (
-        <EmptyState
-          title="No cancelled PIPs"
-          hint="A cancelled PIP is one a manager ended with a recorded reason instead of a conclusion."
-        />
-      ) : (
-        <PipTable pips={data.pips} />
-      )}
-    </PerformanceShell>
-  );
-}

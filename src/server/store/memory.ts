@@ -965,19 +965,30 @@ export class MemoryStore implements Store {
       .map((p) => ({ ...p }));
   }
 
-  async issuePip(id: string, opts: { issuedBy: string }): Promise<PipRow> {
+  async issuePip(id: string, opts: { issuedBy: string; snapshotExtras?: Record<string, unknown> }): Promise<PipRow> {
     const row = this.pips.find((p) => p.id === id);
     if (!row) throw new Error(`PIP not found: ${id}`);
     assertIssueRequirements(row);
     // Freeze the evidence FIRST (the exact document being issued), then flip.
-    const snapshot = JSON.parse(JSON.stringify(row)) as Record<string, unknown>;
+    // PHASE 2 shape: the frozen document carries the pip row AS IT STOOD plus
+    // the pre-computed evidence extras — never recomputed, never rewritten.
+    const capturedAt = new Date().toISOString();
+    const doc = JSON.parse(
+      JSON.stringify({
+        snapshot_schema: 2,
+        captured_at: capturedAt,
+        captured_by: opts.issuedBy || null,
+        pip: row,
+        ...(opts.snapshotExtras ?? {}),
+      }),
+    ) as Record<string, unknown>;
     this.pipSnapshots.push({
       id: this.nextId("pipsnap"),
       pip_id: row.id,
       version: 1,
-      snapshot,
+      snapshot: doc,
       created_by: opts.issuedBy || null,
-      created_at: new Date().toISOString(),
+      created_at: capturedAt,
     });
     row.status = "issued";
     row.issued_at = new Date().toISOString();
@@ -1104,6 +1115,7 @@ export class MemoryStore implements Store {
       default_professional: normalizePipActionList(input.default_professional ?? []),
       default_checkin_cadence_days: pipOptionalInt(input.default_checkin_cadence_days ?? null, "default_checkin_cadence_days"),
       default_duration_weeks: pipOptionalInt(input.default_duration_weeks ?? null, "default_duration_weeks"),
+      version: 1,
       created_by: input.created_by ? String(input.created_by).trim() || null : null,
       created_at: nowIso,
       updated_at: nowIso,
@@ -1135,6 +1147,9 @@ export class MemoryStore implements Store {
       row.default_checkin_cadence_days = pipOptionalInt(patch.default_checkin_cadence_days, "default_checkin_cadence_days");
     if (patch.default_duration_weeks !== undefined)
       row.default_duration_weeks = pipOptionalInt(patch.default_duration_weeks, "default_duration_weeks");
+    // EVERY edit is a new version — issued PIPs keep the version they were
+    // issued with (frozen in their snapshots; the template moves on).
+    row.version += 1;
     row.updated_at = new Date().toISOString();
     this.recordPipEvent({
       pip_id: null,
@@ -1144,7 +1159,7 @@ export class MemoryStore implements Store {
       field: "template",
       previous_value: null,
       new_value: row.name,
-      details: null,
+      details: { version: row.version },
     });
     return { ...row };
   }
@@ -1172,6 +1187,15 @@ export class MemoryStore implements Store {
 
   async listPipTemplates(): Promise<PipTemplateRow[]> {
     return this.pipTemplates.map((t) => ({ ...t }));
+  }
+
+  async getPipTemplateUsage(): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (const p of this.pips) {
+      if (!p.template_id || p.status === "draft") continue;
+      out.set(p.template_id, (out.get(p.template_id) ?? 0) + 1);
+    }
+    return out;
   }
 
   async insertPipEvent(row: Omit<PipEventRow, "id" | "created_at">): Promise<void> {

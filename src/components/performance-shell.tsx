@@ -12,80 +12,78 @@ import { useState, type ReactNode } from "react";
 import type { PipListItem } from "~/server/pip-api";
 import type { PipStatus } from "~/server/store/types";
 
+/**
+ * ONE Performance nav item (owner ruling 9/30) with THREE routed segments —
+ * PIPs | Templates | History — styled exactly like the Settings SubNav pills
+ * (see src/components/page-tabs.tsx for the shared mechanics).
+ */
 export const PERFORMANCE_TABS = [
-  { to: "/performance", label: "Active PIPs" },
-  { to: "/performance-drafts", label: "Drafts" },
-  { to: "/performance-completed", label: "Completed" },
-  { to: "/performance-cancelled", label: "Cancelled" },
-  { to: "/performance-templates", label: "Templates" },
-  { to: "/performance-history", label: "History" },
+  { to: "/performance", label: "PIPs" },
+  { to: "/performance/templates", label: "Templates" },
+  { to: "/performance/history", label: "History" },
 ] as const;
 
 export function PerformanceShell({
   path,
-  title,
-  subtitle,
   children,
 }: {
   path: string;
-  title: string;
-  subtitle: string;
   children: ReactNode;
 }) {
   return (
     <div>
-      <h1 className="text-[19px] font-semibold tracking-tight">Performance Management</h1>
-      <p className="mt-0.5 text-[13px] text-(--text-muted)">
-        Confidential manager workspace — deterministic and evidence-based. The system stores and displays;
-        every decision, observation, and conclusion is entered by a manager. Nothing here appears on rep-facing
-        or comparison surfaces.
+      <h1 className="text-xl font-semibold tracking-tight">Performance</h1>
+      <p className="mt-0.5 text-[15px] text-(--text-caption)">Performance Management</p>
+      <p className="mt-1 flex items-center gap-2 text-xs text-(--text-caption)">
+        <span aria-hidden="true" className="inline-block h-1 w-1 rounded-full bg-(--dot-muted)" />
+        Management record · changes audited · America/New_York
       </p>
-      <nav aria-label="Performance Management sections" className="mt-3 flex flex-wrap items-center gap-1">
-        {PERFORMANCE_TABS.map((t) => {
-          const active = path === t.to;
-          return (
-            <Link
-              key={t.to}
-              to={t.to}
-              aria-current={active ? "page" : undefined}
-              className={
-                "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors " +
-                (active
-                  ? "bg-(--accent-solid) text-(--accent-solid-fg)"
-                  : "text-(--text-caption) hover:bg-(--surface-subtle) hover:text-(--text-primary)")
-              }
-            >
-              {t.label}
-            </Link>
-          );
-        })}
+      <nav
+        aria-label="Performance sections"
+        className="sticky top-[68px] z-[1] -mx-4 mt-3 border-b border-(--card-border) bg-(--sticky-header-bg) px-4 backdrop-blur-sm sm:-mx-6 sm:px-6 md:top-14"
+      >
+        <div className="flex items-center gap-1 overflow-x-auto py-2 whitespace-nowrap">
+          {PERFORMANCE_TABS.map((t) => {
+            const active = path === t.to;
+            return (
+              <Link
+                key={t.to}
+                to={t.to}
+                aria-current={active ? "page" : undefined}
+                className={
+                  "rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors " +
+                  (active
+                    ? "bg-(--surface-subtle) text-(--text-primary)"
+                    : "text-(--text-caption) hover:bg-(--surface-subtle) hover:text-(--text-primary)")
+                }
+              >
+                {t.label}
+              </Link>
+            );
+          })}
+        </div>
       </nav>
-      <div className="mt-5">
-        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
-        <p className="mt-0.5 text-[13px] text-(--text-muted)">{subtitle}</p>
-        <div className="mt-3">{children}</div>
-      </div>
+      <div className="mt-4">{children}</div>
     </div>
   );
 }
 
 const STATUS_LABEL: Record<PipStatus, string> = {
   draft: "Draft",
-  issued: "Active",
+  issued: "Issued",
   completed: "Completed",
   cancelled: "Cancelled",
 };
 
+/** Design-spec §4a: amber = attention/in force, emerald = resolved, neutral = administrative. Never red. */
 export function PipStatusChip({ status }: { status: PipStatus }) {
   const tone =
     status === "issued"
-      ? "bg-(--surface-subtle) text-(--text-primary)"
+      ? "chip chip-risk"
       : status === "completed"
-        ? "bg-(--surface-subtle) text-(--text-muted)"
-        : status === "cancelled"
-          ? "bg-(--surface-subtle) text-(--text-muted) line-through"
-          : "bg-(--surface-subtle) text-(--text-caption)";
-  return <span className={"inline-block rounded px-1.5 py-0.5 text-[11px] font-medium " + tone}>{STATUS_LABEL[status]}</span>;
+        ? "chip chip-positive"
+        : "chip chip-neutral";
+  return <span className={tone}>{STATUS_LABEL[status]}</span>;
 }
 
 export function EmptyState({ title, hint }: { title: string; hint: string }) {
@@ -104,9 +102,12 @@ export function Card({ children }: { children: ReactNode }) {
 /** Compact PIP list — the shared table across Active/Drafts/Completed/Cancelled. */
 export function PipTable({
   pips,
+  templatesById,
   actions,
 }: {
   pips: PipListItem[];
+  /** Template names for record provenance chips ("Template: {name} v{n}") — Unit 3. */
+  templatesById?: Map<string, { name: string; version: number }>;
   actions?: (pip: PipListItem) => ReactNode;
 }) {
   return (
@@ -124,22 +125,32 @@ export function PipTable({
           </tr>
         </thead>
         <tbody>
-          {pips.map((p) => (
-            <tr key={p.id}>
-              <td className="py-2 font-medium">{p.rep_name ?? "—"}</td>
-              <td className="py-2">{p.title}</td>
-              <td className="py-2"><PipStatusChip status={p.status} /></td>
-              <td className="py-2 text-(--text-muted)">
-                {p.pip_start_date ?? "—"} → {p.pip_end_date ?? "—"}
-              </td>
-              <td className="py-2 text-right">
-                {p.weekly_goal_min == null ? "—" : p.weekly_goal_min}
-                {p.hard_weekly_minimum && <span className="ml-1 text-[11px] text-(--text-muted)">(hard min)</span>}
-              </td>
-              <td className="py-2 text-(--text-muted)">{p.issued_at ? p.issued_at.slice(0, 10) : "—"}</td>
-              {actions && <td className="py-2 text-right">{actions(p)}</td>}
-            </tr>
-          ))}
+          {pips.map((p) => {
+            const tpl = p.template_id ? templatesById?.get(p.template_id) : undefined;
+            return (
+              <tr key={p.id}>
+                <td className="py-2 font-medium">{p.rep_name ?? "—"}</td>
+                <td className="py-2">
+                  {p.title}
+                  {tpl && (
+                    <span className="chip chip-neutral ml-2 align-middle text-[11px]">
+                      Template: {tpl.name} v{p.template_version ?? tpl.version}
+                    </span>
+                  )}
+                </td>
+                <td className="py-2"><PipStatusChip status={p.status} /></td>
+                <td className="py-2 text-(--text-muted)">
+                  {p.pip_start_date ?? "—"} → {p.pip_end_date ?? "—"}
+                </td>
+                <td className="py-2 text-right">
+                  {p.weekly_goal_min == null ? "—" : p.weekly_goal_min}
+                  {p.hard_weekly_minimum && <span className="ml-1 text-[11px] text-(--text-muted)">(hard min)</span>}
+                </td>
+                <td className="py-2 text-(--text-muted)">{p.issued_at ? p.issued_at.slice(0, 10) : "—"}</td>
+                {actions && <td className="py-2 text-right">{actions(p)}</td>}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

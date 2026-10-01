@@ -25,6 +25,8 @@ import type {
   PipTemplateRow,
 } from "./store/types";
 import { isPipStatus } from "./store/types";
+import { pipEvidenceCore, type PipEvidence } from "./pip-evidence";
+import { statementsFromEvidence } from "./pip-statements";
 
 // ---------- shared view shapes ----------
 
@@ -86,6 +88,9 @@ export interface CreatePipDraftInput {
   actionPlan?: PipActionItem[];
   personalDevelopmentActions?: PipActionItem[];
   professionalDevelopmentActions?: PipActionItem[];
+  checkinCadenceDays?: number | null;
+  /** Provenance: the template the draft was created from (UI applies its defaults). */
+  templateId?: string | null;
   actor?: string;
 }
 
@@ -94,10 +99,20 @@ export async function createPipDraftCore(store: Store, input: CreatePipDraftInpu
   if (!repId) throw new Error("Pick a rep for the PIP");
   const rep = (await store.getAllUsers()).find((u) => u.id === repId);
   if (!rep) throw new Error("Unknown rep — pick a rep from this database");
+  // Template provenance + defaults: the UI applies defaults into its form; the
+  // API ALSO fills any field the caller left unset from the template, so an
+  // API caller creating a draft from a template gets the same content.
+  let template: PipTemplateRow | null = null;
+  const templateId = String(input.templateId ?? "").trim() || null;
+  if (templateId) {
+    template = await store.getPipTemplate(templateId);
+    if (!template) throw new Error("Unknown template — pick a template from this database");
+  }
+  const pick = (explicit: unknown, def: unknown) => (explicit !== undefined ? explicit : (def ?? null));
   return store.createPip({
     rep_id: repId,
     title: String(input.title ?? ""),
-    goal_text: input.goalText ?? null,
+    goal_text: pick(input.goalText, template?.default_goal_text) as string | null,
     weekly_goal_min: input.weeklyGoalMin ?? null,
     hard_weekly_minimum: input.hardWeeklyMinimum === true,
     review_start_date: input.reviewStartDate ?? null,
@@ -105,9 +120,16 @@ export async function createPipDraftCore(store: Store, input: CreatePipDraftInpu
     pip_start_date: input.pipStartDate ?? null,
     pip_end_date: input.pipEndDate ?? null,
     manager_observations: input.managerObservations ?? null,
-    action_plan: input.actionPlan ?? [],
-    personal_development_actions: input.personalDevelopmentActions ?? [],
-    professional_development_actions: input.professionalDevelopmentActions ?? [],
+    action_plan: (input.actionPlan ?? template?.default_action_plan ?? []) as PipActionItem[],
+    personal_development_actions: (input.personalDevelopmentActions ??
+      template?.default_personal ??
+      []) as PipActionItem[],
+    professional_development_actions: (input.professionalDevelopmentActions ??
+      template?.default_professional ??
+      []) as PipActionItem[],
+    checkin_cadence_days: pick(input.checkinCadenceDays, template?.default_checkin_cadence_days) as number | null,
+    template_id: templateId,
+    template_version: template?.version ?? null,
     created_by: input.actor || "christopher",
   });
 }
@@ -133,13 +155,50 @@ export async function updatePipDraftCore(store: Store, input: UpdatePipDraftInpu
     ...(input.actionPlan !== undefined ? { action_plan: input.actionPlan } : {}),
     ...(input.personalDevelopmentActions !== undefined ? { personal_development_actions: input.personalDevelopmentActions } : {}),
     ...(input.professionalDevelopmentActions !== undefined ? { professional_development_actions: input.professionalDevelopmentActions } : {}),
+    ...(input.checkinCadenceDays !== undefined ? { checkin_cadence_days: input.checkinCadenceDays } : {}),
     actor: input.actor || "christopher",
   });
 }
 
-/** draft → issued (explicit manager action; writes the frozen v1 evidence snapshot). */
+/**
+ * draft → issued (explicit manager action; writes the frozen v1 evidence
+ * snapshot). Phase 2: the snapshot now captures the FULL document — employee
+ * as of issue, the pip row as it stood, the computed evidence (weekly rows,
+ * goal provenance), the generated factual statements verbatim, and the
+ * template provenance. Evidence computation happens BEFORE the store's
+ * transactional flip; the store stamps captured_at/captured_by.
+ */
 export async function issuePipCore(store: Store, input: { pipId: string; actor?: string }): Promise<PipRow> {
-  return store.issuePip(String(input.pipId), { issuedBy: input.actor || "christopher" });
+  const pip = await store.getPip(String(input.pipId));
+  if (!pip) throw new Error(`PIP not found: ${input.pipId}`);
+  const extras: Record<string, unknown> = {};
+  if (pip.review_start_date && pip.review_end_date) {
+    const evidence = await pipEvidenceCore(store, {
+      repId: pip.rep_id ?? "",
+      reviewStart: pip.review_start_date,
+      reviewEnd: pip.review_end_date,
+      weeklyGoalMin: pip.weekly_goal_min,
+      hardWeeklyMinimum: pip.hard_weekly_minimum,
+    });
+    extras.evidence = evidence;
+    extras.statements = statementsFromEvidence(evidence);
+  } else {
+    extras.evidence = null;
+    extras.statements = [];
+    extras.evidence_note = "No review period was set at issue — the frozen snapshot carries no weekly evidence.";
+  }
+  const rep = pip.rep_id ? (await store.getAllUsers()).find((u) => u.id === pip.rep_id) : null;
+  extras.employee = rep
+    ? { id: rep.id, name: rep.name, email: rep.email ?? null, call_start_date: rep.call_start_date ?? null }
+    : null;
+  extras.template = pip.template_id
+    ? { id: pip.template_id, version: pip.template_version ?? null, name: null }
+    : null;
+  if (pip.template_id) {
+    const t = await store.getPipTemplate(pip.template_id);
+    if (t) extras.template = { id: t.id, version: pip.template_version ?? t.version, name: t.name };
+  }
+  return store.issuePip(String(input.pipId), { issuedBy: input.actor || "christopher", snapshotExtras: extras });
 }
 
 /** issued → completed (explicit manager action; requires conclusion category + notes). */
@@ -266,6 +325,32 @@ export const listPipTemplates = createServerFn().handler(async (): Promise<{ tem
   const store = await getStore();
   return { templates: await store.listPipTemplates() };
 });
+
+/** Factual "In use" counts per template (issued/completed/cancelled PIPs). */
+export const getPipTemplateUsage = createServerFn().handler(async (): Promise<{ usage: [string, number][] }> => {
+  const store = await getStore();
+  return { usage: Array.from((await store.getPipTemplateUsage()).entries()) };
+});
+
+/**
+ * LIVE evidence for a draft (the creation workflow renders it as the manager
+ * edits rep + review period + goal). Deterministic: the same pipEvidenceCore
+ * the issue path freezes — a draft's live evidence and its issued snapshot
+ * come from ONE function.
+ */
+export const getPipEvidence = createServerFn()
+  .validator((input: unknown) => input as { repId: string; reviewStart: string; reviewEnd: string; weeklyGoalMin: number | null; hardWeeklyMinimum?: boolean })
+  .handler(async ({ data }): Promise<{ evidence: PipEvidence; statements: { key: string; text: string }[] }> => {
+    const store = await getStore();
+    const evidence = await pipEvidenceCore(store, {
+      repId: String(data.repId),
+      reviewStart: String(data.reviewStart),
+      reviewEnd: String(data.reviewEnd),
+      weeklyGoalMin: data.weeklyGoalMin == null ? null : Number(data.weeklyGoalMin),
+      hardWeeklyMinimum: data.hardWeeklyMinimum === true,
+    });
+    return { evidence, statements: statementsFromEvidence(evidence) };
+  });
 
 export const createPipDraft = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as CreatePipDraftInput)

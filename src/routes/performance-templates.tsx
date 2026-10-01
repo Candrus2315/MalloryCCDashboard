@@ -12,11 +12,7 @@ export const Route = createFileRoute("/performance-templates")({
 function TemplatesPage() {
   const data = Route.useLoaderData();
   return (
-    <PerformanceShell
-      path="/performance-templates"
-      title="Templates"
-      subtitle="Manager-authored starting points for future plans. Templates are never applied automatically — applying one to a draft is always an explicit manager action (later phase)."
-    >
+    <PerformanceShell path="/performance/templates">
       <div className="space-y-4">
         <CreateTemplateForm />
         {data.templates.length === 0 ? (

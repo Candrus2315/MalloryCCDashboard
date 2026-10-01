@@ -1,33 +1,156 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useRouter, type SearchParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { addPipCheckin, cancelPip, completePip, getPerformanceList, getPipDetail, type PipListItem } from "~/server/pip-api";
+import {
+  addPipCheckin,
+  cancelPip,
+  completePip,
+  getPerformanceList,
+  getPipDetail,
+  listPipTemplates,
+  type PipListItem,
+} from "~/server/pip-api";
 import type { PipDetail } from "~/server/pip-api";
-import { Card, EmptyState, Field, GhostButton, PerformanceShell, PipTable, inputClass } from "~/components/performance-shell";
+import { Card, EmptyState, Field, GhostButton, PerformanceShell, PipStatusChip, PipTable, inputClass } from "~/components/performance-shell";
+
+/** Owner ruling 9/30: statuses are FILTER CHIPS on one list, not separate pages. */
+const STATUS_FILTERS = ["issued", "draft", "completed", "cancelled", "all"] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+const FILTER_LABEL: Record<StatusFilter, string> = {
+  issued: "Active",
+  draft: "Drafts",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  all: "All",
+};
+function isStatusFilter(v: unknown): v is StatusFilter {
+  return typeof v === "string" && (STATUS_FILTERS as readonly string[]).includes(v);
+}
+
+type PipSearch = { status?: string };
 
 export const Route = createFileRoute("/performance")({
-  loader: () => getPerformanceList({ data: { status: "issued" } }),
-  component: ActivePipsPage,
+  validateSearch: (search: SearchParams): PipSearch => ({
+    status: typeof search.status === "string" ? search.status : undefined,
+  }),
+  loader: () => getPerformanceList(),
+  component: PipsPage,
 });
 
-function ActivePipsPage() {
+function PipsPage() {
   const data = Route.useLoaderData();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const router = useRouter();
+  const filter: StatusFilter = isStatusFilter(search.status) ? search.status : "issued";
+  const all = data.pips;
+  const counts: Record<StatusFilter, number> = {
+    issued: all.filter((p) => p.status === "issued").length,
+    draft: all.filter((p) => p.status === "draft").length,
+    completed: all.filter((p) => p.status === "completed").length,
+    cancelled: all.filter((p) => p.status === "cancelled").length,
+    all: all.length,
+  };
+  const shown = filter === "all" ? all : all.filter((p) => p.status === filter);
+
+  // Template names for record chips ("Template: {name} v{n}") — read-only.
+  const [templatesById, setTemplatesById] = useState<Map<string, { name: string; version: number }>>(new Map());
+  useEffect(() => {
+    let alive = true;
+    listPipTemplates().then((t) => {
+      if (alive) setTemplatesById(new Map(t.templates.map((x) => [x.id, { name: x.name, version: x.version }])));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   return (
-    <PerformanceShell
-      path="/performance"
-      title="Active PIPs"
-      subtitle="Issued plans under review. The issued document is a frozen evidence snapshot — check-ins are appended; conclusions and cancellations are explicit manager actions."
-    >
-      {data.pips.length === 0 ? (
-        <EmptyState
-          title="No active PIPs"
-          hint="Issued plans appear here for the length of their review period. Drafts live on the Drafts tab until a manager issues them."
-        />
-      ) : (
-        <PipTable pips={data.pips} actions={(pip) => <ActivePipActions pip={pip} />} />
-      )}
+    <PerformanceShell path="/performance">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[13px] text-(--text-caption)">
+          {filter === "draft"
+            ? "Editable drafts, private to managers."
+            : filter === "all"
+              ? "Every record, every status — newest first."
+              : filter === "issued"
+                ? "Issued plans in force."
+                : "Closed plans."}
+        </p>
+        <button
+          type="button"
+          className="rounded-md bg-(--accent-solid) px-3 py-2 text-[13px] font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover)"
+          onClick={() => navigate({ to: "/performance/new" })}
+        >
+          New PIP
+        </button>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Status filter">
+        {STATUS_FILTERS.map((f) => (
+          <button
+            key={f}
+            type="button"
+            aria-pressed={filter === f}
+            className={
+              "rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors " +
+              (filter === f
+                ? "border-transparent bg-(--accent-solid) text-(--accent-solid-fg)"
+                : "border-(--card-border) bg-(--card-bg) text-(--text-caption) hover:border-(--input-border) hover:text-(--text-primary)")
+            }
+            onClick={() => navigate({ to: "/performance", search: { status: f } })}
+          >
+            {FILTER_LABEL[f]} <span className="tabular-nums">{counts[f]}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4">
+        {shown.length === 0 ? (
+          <EmptyState
+            title={filter === "issued" ? "No active PIPs" : `No ${FILTER_LABEL[filter].toLowerCase()} PIPs`}
+            hint={
+              filter === "issued"
+                ? "Issued plans appear here until completed or cancelled."
+                : filter === "draft"
+                  ? "Start a draft from the New PIP button or from a template."
+                  : "Nothing recorded under this status yet."
+            }
+          />
+        ) : (
+          <PipTable
+            pips={shown}
+            templatesById={templatesById}
+            actions={(pip) =>
+              pip.status === "draft" ? (
+                <DraftRowActions pip={pip} />
+              ) : pip.status === "issued" ? (
+                <ActivePipActions pip={pip} />
+              ) : undefined
+            }
+          />
+        )}
+      </div>
     </PerformanceShell>
   );
 }
+
+function DraftRowActions({ pip }: { pip: PipListItem }) {
+  const router = useRouter();
+  return (
+    <div className="flex justify-end">
+      <GhostButton
+        onClick={() => {
+          // The 7-step wizard (/performance/new?pip=…) is the only draft editor now.
+          void router.navigate({ to: "/performance/new", search: { step: "1", pip: pip.id } });
+        }}
+      >
+        Continue draft
+      </GhostButton>
+    </div>
+  );
+}
+
+// ---------- issued PIP management (Phase 1 panel, re-homed) ----------
 
 function ActivePipActions({ pip }: { pip: PipListItem }) {
   const [open, setOpen] = useState(false);
@@ -44,12 +167,9 @@ function ActivePipPanel({ pip, onClose }: { pip: PipListItem; onClose: () => voi
   const [detail, setDetail] = useState<PipDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  // Conclusion inputs (manager-entered; the system never proposes one).
   const [category, setCategory] = useState("");
   const [notes, setNotes] = useState("");
   const [cancelReason, setCancelReason] = useState("");
-  // Check-in inputs.
   const [checkinDate, setCheckinDate] = useState(new Date().toISOString().slice(0, 10));
   const [checkinNotes, setCheckinNotes] = useState("");
   const [nextCheckin, setNextCheckin] = useState("");

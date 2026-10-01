@@ -90,8 +90,16 @@ async function runLifecycleBattery(makeStore: () => Store, cleanup?: (pipIds: st
     const snaps = await store.getPipEvidenceSnapshots(draft.id);
     expect(snaps).toHaveLength(1);
     expect(snaps[0].version).toBe(1);
-    const frozenTitle = (snaps[0].snapshot as Record<string, unknown>).title;
-    expect(frozenTitle).toBe("Q4 booking goal review (revised)");
+    // PHASE 2 SNAPSHOT ENVELOPE (snapshot_schema 2): { captured_at, captured_by, pip: <row as it stood>, ...extras }
+    // The frozen document carries the pip row AS IT STOOD — the revised title DID land.
+    const snapDoc = snaps[0].snapshot as Record<string, unknown>;
+    expect(snapDoc.snapshot_schema).toBe(2);
+    expect(snapDoc.captured_by).toBe("christopher");
+    expect(typeof snapDoc.captured_at).toBe("string");
+    const frozenPip = snapDoc.pip as Record<string, unknown> | undefined;
+    expect(frozenPip).toBeDefined();
+    expect((frozenPip as Record<string, unknown>).title).toBe("Q4 booking goal review (revised)");
+    expect((frozenPip as Record<string, unknown>).manager_observations).toContain("roster median");
 
     // issued document is immutable — every document field rejects
     await expect(store.updatePipDraft(draft.id, { title: "nope" })).rejects.toThrow(/draft/i);

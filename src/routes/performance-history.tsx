@@ -23,11 +23,7 @@ const EVENT_LABELS: Record<string, string> = {
 function HistoryPage() {
   const data = Route.useLoaderData();
   return (
-    <PerformanceShell
-      path="/performance-history"
-      title="History"
-      subtitle="The module's full audit trail — every creation, edit, issue, conclusion, cancellation, check-in, and template change, with actor and before/after where applicable. History is never deleted."
-    >
+    <PerformanceShell path="/performance/history">
       {data.events.length === 0 ? (
         <EmptyState title="No events yet" hint="Every action taken anywhere in Performance Management is recorded here automatically." />
       ) : (
