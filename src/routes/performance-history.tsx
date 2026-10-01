@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { getPerformanceEvents } from "~/server/pip-api";
 import { EmptyState, PerformanceShell } from "~/components/performance-shell";
 
-export const Route = createFileRoute("/performance/history")({
+export const Route = createFileRoute("/performance-history")({
   loader: () => getPerformanceEvents({ data: { limit: 300 } }),
   component: HistoryPage,
 });

@@ -4,7 +4,7 @@ import { createPipTemplate, deletePipTemplate, listPipTemplates } from "~/server
 import type { PipTemplateRow } from "~/server/store/types";
 import { Card, EmptyState, Field, GhostButton, PerformanceShell, inputClass } from "~/components/performance-shell";
 
-export const Route = createFileRoute("/performance/templates")({
+export const Route = createFileRoute("/performance-templates")({
   loader: () => listPipTemplates(),
   component: TemplatesPage,
 });
