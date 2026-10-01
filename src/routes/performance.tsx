@@ -79,7 +79,7 @@ function PipsPage() {
         <button
           type="button"
           className="rounded-md bg-(--accent-solid) px-3 py-2 text-[13px] font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover)"
-          onClick={() => navigate({ to: "/performance/new" })}
+          onClick={() => navigate({ to: "/performance-new" })}
         >
           New PIP
         </button>
@@ -141,7 +141,7 @@ function DraftRowActions({ pip }: { pip: PipListItem }) {
       <GhostButton
         onClick={() => {
           // The 7-step wizard (/performance/new?pip=…) is the only draft editor now.
-          void router.navigate({ to: "/performance/new", search: { step: "1", pip: pip.id } });
+          void router.navigate({ to: "/performance-new", search: { step: "1", pip: pip.id } });
         }}
       >
         Continue draft

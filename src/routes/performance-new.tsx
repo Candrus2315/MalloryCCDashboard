@@ -318,7 +318,7 @@ function NewPipWizard() {
   const go = useCallback(
     (n: number) => {
       setError(null);
-      void navigate({ to: "/performance/new", search: { step: String(n), pip: pipId ?? undefined, template: undefined } });
+      void navigate({ to: "/performance-new", search: { step: String(n), pip: pipId ?? undefined, template: undefined } });
     },
     [navigate, pipId],
   );
@@ -362,7 +362,7 @@ function NewPipWizard() {
           setSavedAt(
             new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }).format(new Date()),
           );
-          void navigate({ to: "/performance/new", search: { step: "2", pip: created.id, template: undefined } });
+          void navigate({ to: "/performance-new", search: { step: "2", pip: created.id, template: undefined } });
           return true;
         }
       } else if (n === 2 && pipId) {
@@ -387,11 +387,11 @@ function NewPipWizard() {
           data: { pipId, personalDevelopmentActions: form.personal, professionalDevelopmentActions: form.professional },
         });
       } else if (n === 6) {
-        void navigate({ to: "/performance/new", search: { step: "7", pip: pipId ?? undefined, template: undefined } });
+        void navigate({ to: "/performance-new", search: { step: "7", pip: pipId ?? undefined, template: undefined } });
         return true;
       }
       markSaved();
-      void navigate({ to: "/performance/new", search: { step: String(Math.min(n + 1, 7)), pip: pipId ?? undefined, template: undefined } });
+      void navigate({ to: "/performance-new", search: { step: String(Math.min(n + 1, 7)), pip: pipId ?? undefined, template: undefined } });
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
