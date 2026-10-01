@@ -1008,6 +1008,8 @@ export interface RepsSearchParams {
   range?: string;
   from?: string;
   to?: string;
+  /** ASSIGNED LEADS BY DAY week anchor (any date in the week; normalized to its Monday). Absent = last completed week. */
+  week?: string;
 }
 
 export const getRepsData = createServerFn()

@@ -27,6 +27,7 @@ import {
   isHistoricalWeek,
   isRangeMode,
   mondaysInRange,
+  recentMondays,
   repOperatingState,
   resolveRange,
   weekStart,
@@ -79,6 +80,7 @@ import {
   type WeeklyRepRow,
 } from "./metrics/weekly";
 import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
+import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assigned-by-day";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
 import { serializableConnections, syncStaleWarnings, type PageMeta, type RepsSearchParams, type RepStripRow, type TeamSearchParams } from "./queries";
@@ -118,7 +120,16 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const { startUtc, endUtc } = etRangeBounds(range.start, range.end);
     const weeks = mondaysInRange(range.start, range.end);
 
-    const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers] = await Promise.all([
+    // ASSIGNED LEADS BY DAY (owner directive 2026-10-01): this section carries
+    // its OWN Mon–Sun week, independent of the page's range filter — ?week=
+    // accepts any date in the week and is normalized to its Monday; absent or
+    // malformed falls back to the last COMPLETED week (the weekly-page rule),
+    // current week included when requested.
+    const weekParam = data?.week && /^\d{4}-\d{2}-\d{2}$/.test(data.week) ? data.week : null;
+    const assignedMon = weekParam ? weekStart(weekParam) : lastCompletedWeekStart(today);
+    const assignedSun = addDays(assignedMon, 6);
+
+    const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers, assignedWeekLeads, channelOpps] = await Promise.all([
       store.getUsers(),
       store.getCallsBetween(startUtc, endUtc),
       // REV 12 WIN BUCKET: wins count on booking_win_business_date (the ET
@@ -134,6 +145,12 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       ),
       // ALL users (roster or not) — names the Unassigned rollup below
       store.getAllUsers(),
+      // ASSIGNED LEADS BY DAY: sheet leads for the section's OWN week (work-date
+      // cohort — the store fetch scopes the week; the builder re-filters) …
+      store.getLeadsByWorkDates(dateRange(assignedMon, assignedSun)),
+      // … and the channel opportunities (owner-verified pipeline ids; the
+      // builder buckets by ET created date exactly like splitChannelLeads).
+      store.getOpportunitiesByPipelines([ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID]),
     ]);
     const repGoalRows = await Promise.all(weeks.map((w) => store.getRepGoals(w)));
     const teamGoalRows = await Promise.all(weeks.map((w) => store.getTeamGoal(w)));
@@ -185,6 +202,17 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       workStart: range.start,
       workEnd: range.end,
       thresholdSeconds,
+    });
+
+    // ASSIGNED LEADS BY DAY grid (owner directive 2026-10-01) — pure builder
+    // over the two verified sources; no new math (module doc: assigned-by-day).
+    const assignedByDay: AssignedByDayGrid = buildAssignedLeadsByDay({
+      leads: assignedWeekLeads,
+      opps: channelOpps,
+      rosterReps: reps.map((r) => ({ id: r.id, name: r.name })),
+      nameById: new Map(allUsers.map((u) => [u.id, u.name])),
+      mon: assignedMon,
+      sun: assignedSun,
     });
 
     // selected rep: requested id when present in the active list, else first
@@ -275,6 +303,15 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       unattributed: buckets.unattributed,
       warnings,
       teamGoalDefault: teamGoalByWeek.get(weeks[0]) ?? 79,
+      assignedByDay,
+      assignedWeek: {
+        mon: assignedMon,
+        sun: assignedSun,
+        // picker options: current operating week first, ~3 months back — covers
+        // the entire synced Sheets window (2026-08-24+); any other week remains
+        // reachable by URL (?week=<date>).
+        mondays: recentMondays(today, 12),
+      },
     };
 }
 
