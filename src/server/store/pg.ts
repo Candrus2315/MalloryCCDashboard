@@ -46,6 +46,14 @@ import type {
   PipTemplateCreateInput,
   PipTemplatePatch,
   PipTemplateRow,
+  CommissionAdjustmentInput,
+  CommissionAdjustmentRow,
+  CommissionAssignment,
+  CommissionCycleRow,
+  CommissionProfileInput,
+  CommissionWeeklyRow,
+  CountedBookingSnapshot,
+  HoleAuditSnapshot,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -350,6 +358,18 @@ const DDL: string[] = [
   // backfilled when still unset, never overwriting an owner edit.
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS call_start_date text`,
   `UPDATE users SET call_start_date = '2026-09-28' WHERE name = 'Dan McKillop' AND call_start_date IS NULL`,
+  // COMMISSION TRACKER (owner directive 2026-10-01, spec §B): profile fields on
+  // the rep row. Seed profiles are FILL-ONLY-WHEN-UNSET (commission_tier IS
+  // NULL) so a later owner change in Settings never snaps back on cold start.
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS employment_type text`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS commission_tier integer`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS tier_effective_date text`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS tier_end_date text`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS commission_eligible boolean NOT NULL DEFAULT false`,
+  `UPDATE users SET employment_type = 'full_time', commission_tier = 5, tier_effective_date = '2026-08-31', commission_eligible = true WHERE name = 'Allison Wittner' AND commission_tier IS NULL`,
+  `UPDATE users SET employment_type = 'part_time', commission_tier = 3, tier_effective_date = '2026-08-31', commission_eligible = true WHERE name = 'Laura Rivera' AND commission_tier IS NULL`,
+  `UPDATE users SET employment_type = 'full_time', commission_tier = 1, tier_effective_date = '2026-08-31', commission_eligible = true WHERE name = 'Carmine Morgano' AND commission_tier IS NULL`,
+  `UPDATE users SET employment_type = 'full_time', commission_tier = 1, tier_effective_date = '2026-08-31', commission_eligible = true WHERE name = 'Jennifer Stitt' AND commission_tier IS NULL`,
   // Harvest-side call columns: roster-external rep id (kept even when the rep is
   // not on the active roster) + the HighLevel conversation the call came from.
   `ALTER TABLE calls ADD COLUMN IF NOT EXISTS provider_rep_external_id text`,
@@ -549,6 +569,69 @@ const DDL: string[] = [
     created_at timestamptz NOT NULL DEFAULT now()
   )`,
   `CREATE INDEX IF NOT EXISTS pip_event_log_pip_idx ON pip_event_log (pip_id, created_at DESC)`,
+  // COMMISSION WEEKLY RECORD (spec §F): one row per (user, week) — the close
+  // job writes it at the Sunday ET cutoff, the historical backfill writes past
+  // weeks deliberately. UNIQUE(user_id, week_start) makes re-runs idempotent.
+  // Money columns are dollars (numeric 12,2 — cents precision internal).
+  `CREATE TABLE IF NOT EXISTS commission_weekly (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL REFERENCES users(id),
+    rep_name text NOT NULL,
+    week_start date NOT NULL,
+    week_end date NOT NULL,
+    employment_type text NOT NULL,
+    tier integer NOT NULL,
+    tier_effective_date_used text,
+    qualifying_bookings integer NOT NULL,
+    base_commission numeric(12,2) NOT NULL DEFAULT 0,
+    additional_commission numeric(12,2) NOT NULL DEFAULT 0,
+    pool_bonus numeric(12,2) NOT NULL DEFAULT 0,
+    hole_bonus numeric(12,2) NOT NULL DEFAULT 0,
+    manual_adjustment numeric(12,2) NOT NULL DEFAULT 0,
+    total numeric(12,2) NOT NULL DEFAULT 0,
+    calc_date timestamptz NOT NULL,
+    calc_version integer NOT NULL DEFAULT 1,
+    status text NOT NULL DEFAULT 'final',
+    cycle_id text,
+    assignment text NOT NULL DEFAULT 'unassigned',
+    counted_bookings jsonb NOT NULL DEFAULT '[]'::jsonb,
+    hole_audit jsonb NOT NULL DEFAULT '[]'::jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (user_id, week_start)
+  )`,
+  `CREATE INDEX IF NOT EXISTS commission_weekly_week_idx ON commission_weekly (week_start)`,
+  // COMMISSION CYCLE (spec §S): stored composition, preserved forever. Text
+  // slug id so the historical backfill is deterministic.
+  `CREATE TABLE IF NOT EXISTS commission_cycles (
+    id text PRIMARY KEY,
+    label text NOT NULL,
+    start_date date NOT NULL,
+    end_date date NOT NULL,
+    submission_date date NOT NULL,
+    payroll_date date NOT NULL,
+    status text NOT NULL DEFAULT 'in_progress',
+    submitted_date date,
+    submitted_by text,
+    final_snapshot jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  // CORRECTIONS AUDIT (spec §O/§29): reason REQUIRED (store-enforced).
+  `CREATE TABLE IF NOT EXISTS commission_adjustments (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    cycle_id text,
+    user_id uuid,
+    target text NOT NULL,
+    target_id text NOT NULL,
+    field text NOT NULL,
+    old_value text,
+    new_value text,
+    reason text NOT NULL,
+    changed_by text NOT NULL,
+    changed_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS commission_adjustments_cycle_idx ON commission_adjustments (cycle_id, changed_at DESC)`
 ];
 
 /**
@@ -762,6 +845,7 @@ export class PgStore implements Store {
     await this.sql`UPDATE users SET call_start_date = ${date}, updated_at = now() WHERE id = ${repId}::uuid`;
   }
   private userRow(r: Record<string, unknown>): UserRow {
+    const employmentType = r.employment_type == null ? null : String(r.employment_type);
     return {
       id: String(r.id),
       provider: String(r.provider),
@@ -770,6 +854,13 @@ export class PgStore implements Store {
       email: r.email == null ? null : String(r.email),
       is_active: Boolean(r.is_active),
       call_start_date: r.call_start_date == null ? null : String(r.call_start_date),
+      // COMMISSION TRACKER profile (owner directive 2026-10-01) — always
+      // populated on read; defaults = ineligible.
+      employment_type: employmentType === "full_time" || employmentType === "part_time" ? employmentType : null,
+      commission_tier: r.commission_tier == null ? null : Number(r.commission_tier),
+      tier_effective_date: normalizePgBusinessDate(r.tier_effective_date),
+      tier_end_date: normalizePgBusinessDate(r.tier_end_date),
+      commission_eligible: Boolean(r.commission_eligible),
     };
   }
   async getUsers(): Promise<UserRow[]> {
@@ -777,7 +868,7 @@ export class PgStore implements Store {
   }
   private async getUsersCached(): Promise<UserRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date FROM users WHERE is_active ORDER BY name`;
+    const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date, employment_type, commission_tier, tier_effective_date::text::date::text AS tier_effective_date, tier_end_date::text::date::text AS tier_end_date, commission_eligible FROM users WHERE is_active ORDER BY name`;
     return rows.map((r) => this.userRow(r as Record<string, unknown>));
   }
   async getAllUsers(): Promise<UserRow[]> {
@@ -785,7 +876,7 @@ export class PgStore implements Store {
   }
   private async getAllUsersCached(): Promise<UserRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date FROM users ORDER BY name`;
+    const rows = await this.sql`SELECT id::text AS id, provider, external_id, name, email, is_active, call_start_date, employment_type, commission_tier, tier_effective_date::text::date::text AS tier_effective_date, tier_end_date::text::date::text AS tier_end_date, commission_eligible FROM users ORDER BY name`;
     return rows.map((r) => this.userRow(r as Record<string, unknown>));
   }
 
@@ -1159,6 +1250,8 @@ export class PgStore implements Store {
       payment_business_date_source: r.payment_business_date_source == null ? null : String(r.payment_business_date_source),
       first_seen_paid_at: r.first_seen_paid_at == null ? null : new Date(r.first_seen_paid_at as string).toISOString(),
       raw: (r.raw ?? null) as Record<string, unknown> | null,
+      acuity_appointment_id: r.acuity_appointment_id == null ? null : String(r.acuity_appointment_id),
+      client_name: r.client_name == null ? null : String(r.client_name),
       status: String(r.status),
       cancelled: Boolean(r.cancelled),
     };
@@ -1166,7 +1259,7 @@ export class PgStore implements Store {
   async getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
     // S7c: created-based metrics bucket on the ET BUSINESS DATE column.
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE created_business_date >= ${start}::date AND created_business_date <= ${end}::date`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE created_business_date >= ${start}::date AND created_business_date <= ${end}::date`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
@@ -1178,7 +1271,7 @@ export class PgStore implements Store {
     // the deposit was received, UNION not-yet-derived/legacy rows by created
     // date (the metrics layer applies the win filters + fallback rules; unpaid
     // rows returned here never count).
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE (booking_win_business_date >= ${start}::date AND booking_win_business_date <= ${end}::date) OR (booking_win_business_date IS NULL AND created_business_date >= ${start}::date AND created_business_date <= ${end}::date)`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE (booking_win_business_date >= ${start}::date AND booking_win_business_date <= ${end}::date) OR (booking_win_business_date IS NULL AND created_business_date >= ${start}::date AND created_business_date <= ${end}::date)`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
@@ -2434,6 +2527,204 @@ export class PgStore implements Store {
         new_value: r.new_value == null ? null : String(r.new_value),
         details: (r.details ?? null) as Record<string, unknown> | null,
         created_at: new Date(r.created_at as string).toISOString(),
+      };
+    });
+  }
+
+  // ---- Commission Tracker (owner directive 2026-10-01, Phase A) ----
+
+  async setUserCommissionProfile(repId: string, profile: CommissionProfileInput | null): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    if (profile === null) {
+      await this.sql`UPDATE users SET employment_type = NULL, commission_tier = NULL, tier_effective_date = NULL, tier_end_date = NULL, commission_eligible = false, updated_at = now() WHERE id = ${repId}::uuid`;
+      return;
+    }
+    await this.sql`
+      UPDATE users SET employment_type = ${profile.employment_type}, commission_tier = ${profile.commission_tier},
+        tier_effective_date = ${profile.tier_effective_date}, tier_end_date = ${profile.tier_end_date},
+        commission_eligible = ${profile.commission_eligible}, updated_at = now()
+      WHERE id = ${repId}::uuid
+    `;
+  }
+
+  async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    // Idempotent by (user_id, week_start): the close job and the backfill can
+    // both run; re-runs REPLACE the same logical record (never duplicates).
+    await this.sql`
+      INSERT INTO commission_weekly (user_id, rep_name, week_start, week_end, employment_type, tier,
+        tier_effective_date_used, qualifying_bookings, base_commission, additional_commission, pool_bonus,
+        hole_bonus, manual_adjustment, total, calc_date, calc_version, status, cycle_id, assignment, counted_bookings, hole_audit)
+      VALUES (${row.user_id}::uuid, ${row.rep_name}, ${row.week_start}::date, ${row.week_end}::date,
+        ${row.employment_type}, ${row.tier}, ${row.tier_effective_date_used}, ${row.qualifying_bookings},
+        ${row.base_commission}, ${row.additional_commission}, ${row.pool_bonus}, ${row.hole_bonus},
+        ${row.manual_adjustment}, ${row.total}, ${row.calc_date}::timestamptz, ${row.calc_version},
+        ${row.status}, ${row.cycle_id}, ${row.assignment}, ${this.sql.json(row.counted_bookings ?? [])}::jsonb, ${this.sql.json(row.hole_audit ?? [])}::jsonb)
+      ON CONFLICT (user_id, week_start) DO UPDATE SET
+        rep_name = EXCLUDED.rep_name, week_end = EXCLUDED.week_end, employment_type = EXCLUDED.employment_type,
+        tier = EXCLUDED.tier, tier_effective_date_used = EXCLUDED.tier_effective_date_used,
+        qualifying_bookings = EXCLUDED.qualifying_bookings, base_commission = EXCLUDED.base_commission,
+        additional_commission = EXCLUDED.additional_commission, pool_bonus = EXCLUDED.pool_bonus,
+        hole_bonus = EXCLUDED.hole_bonus, manual_adjustment = EXCLUDED.manual_adjustment,
+        total = EXCLUDED.total, calc_date = EXCLUDED.calc_date, calc_version = EXCLUDED.calc_version,
+        status = EXCLUDED.status, cycle_id = EXCLUDED.cycle_id, assignment = EXCLUDED.assignment,
+        counted_bookings = EXCLUDED.counted_bookings, hole_audit = EXCLUDED.hole_audit, updated_at = now()
+    `;
+  }
+
+  private commissionWeeklyRow(r: Record<string, unknown>): CommissionWeeklyRow {
+    return {
+      id: String(r.id),
+      user_id: String(r.user_id),
+      rep_name: String(r.rep_name),
+      week_start: normalizePgBusinessDate(r.week_start) as string,
+      week_end: normalizePgBusinessDate(r.week_end) as string,
+      employment_type: String(r.employment_type) as CommissionWeeklyRow["employment_type"],
+      tier: Number(r.tier),
+      tier_effective_date_used: normalizePgBusinessDate(r.tier_effective_date_used),
+      qualifying_bookings: Number(r.qualifying_bookings),
+      base_commission: Number(r.base_commission),
+      additional_commission: Number(r.additional_commission),
+      pool_bonus: Number(r.pool_bonus),
+      hole_bonus: Number(r.hole_bonus),
+      manual_adjustment: Number(r.manual_adjustment),
+      total: Number(r.total),
+      calc_date: new Date(r.calc_date as string).toISOString(),
+      calc_version: Number(r.calc_version),
+      status: String(r.status) as CommissionWeeklyRow["status"],
+      cycle_id: r.cycle_id == null ? null : String(r.cycle_id),
+      assignment: String(r.assignment) as CommissionWeeklyRow["assignment"],
+      counted_bookings: (r.counted_bookings ?? []) as CountedBookingSnapshot[],
+      hole_audit: (r.hole_audit ?? []) as HoleAuditSnapshot[],
+    };
+  }
+  private get commissionWeeklyCols() {
+    return this.sql`user_id::text AS user_id, rep_name, week_start::text::date::text AS week_start, week_end::text::date::text AS week_end, employment_type, tier, tier_effective_date_used::text::date::text AS tier_effective_date_used, qualifying_bookings, base_commission, additional_commission, pool_bonus, hole_bonus, manual_adjustment, total, calc_date, calc_version, status, cycle_id, assignment, counted_bookings, hole_audit`;
+  }
+
+  async getCommissionWeeklyRecords(filter?: { userId?: string; weekStart?: string; cycleId?: string; assignment?: CommissionAssignment }): Promise<CommissionWeeklyRow[]> {
+    await this.ensureSchema();
+    const f = filter ?? {};
+    // Explicit query forms per filter combination (postgres.js treats every ${}
+    // as a bound parameter — conditional SQL must live in the template itself).
+    const rows =
+      f.userId && f.weekStart
+        ? await this.sql`SELECT ${this.commissionWeeklyCols} FROM commission_weekly WHERE user_id = ${f.userId}::uuid AND week_start = ${f.weekStart}::date ORDER BY week_start DESC`
+        : f.userId
+          ? await this.sql`SELECT ${this.commissionWeeklyCols} FROM commission_weekly WHERE user_id = ${f.userId}::uuid ORDER BY week_start DESC`
+          : f.weekStart
+            ? await this.sql`SELECT ${this.commissionWeeklyCols} FROM commission_weekly WHERE week_start = ${f.weekStart}::date ORDER BY week_start DESC`
+            : f.cycleId
+              ? await this.sql`SELECT ${this.commissionWeeklyCols} FROM commission_weekly WHERE cycle_id = ${f.cycleId} ORDER BY week_start DESC`
+              : f.assignment
+                ? await this.sql`SELECT ${this.commissionWeeklyCols} FROM commission_weekly WHERE assignment = ${f.assignment} ORDER BY week_start DESC`
+                : await this.sql`SELECT ${this.commissionWeeklyCols} FROM commission_weekly ORDER BY week_start DESC`;
+    let out = rows.map((r) => this.commissionWeeklyRow(r as Record<string, unknown>));
+    // In-memory narrowing for combined filters not covered above (rare; keeps semantics total).
+    if (f.cycleId && (f.userId || f.weekStart)) out = out.filter((r) => r.cycle_id === f.cycleId);
+    if (f.assignment && (f.userId || f.weekStart || f.cycleId)) out = out.filter((r) => r.assignment === f.assignment);
+    return out;
+  }
+
+  async upsertCommissionCycle(cycle: CommissionCycleRow): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    await this.sql`
+      INSERT INTO commission_cycles (id, label, start_date, end_date, submission_date, payroll_date, status, submitted_date, submitted_by, final_snapshot)
+      VALUES (${cycle.id}, ${cycle.label}, ${cycle.start_date}::date, ${cycle.end_date}::date, ${cycle.submission_date}::date,
+        ${cycle.payroll_date}::date, ${cycle.status}, ${cycle.submitted_date}::date, ${cycle.submitted_by},
+        ${cycle.final_snapshot == null ? null : this.sql.json(cycle.final_snapshot)}::jsonb)
+      ON CONFLICT (id) DO UPDATE SET
+        label = EXCLUDED.label, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date,
+        submission_date = EXCLUDED.submission_date, payroll_date = EXCLUDED.payroll_date, status = EXCLUDED.status,
+        submitted_date = EXCLUDED.submitted_date, submitted_by = EXCLUDED.submitted_by,
+        final_snapshot = EXCLUDED.final_snapshot, updated_at = now()
+    `;
+  }
+
+  private commissionCycleRow(r: Record<string, unknown>): CommissionCycleRow {
+    return {
+      id: String(r.id),
+      label: String(r.label),
+      start_date: normalizePgBusinessDate(r.start_date) as string,
+      end_date: normalizePgBusinessDate(r.end_date) as string,
+      submission_date: normalizePgBusinessDate(r.submission_date) as string,
+      payroll_date: normalizePgBusinessDate(r.payroll_date) as string,
+      status: String(r.status) as CommissionCycleRow["status"],
+      submitted_date: normalizePgBusinessDate(r.submitted_date),
+      submitted_by: r.submitted_by == null ? null : String(r.submitted_by),
+      final_snapshot: (r.final_snapshot ?? null) as Record<string, unknown> | null,
+      created_at: new Date(r.created_at as string).toISOString(),
+      updated_at: new Date(r.updated_at as string).toISOString(),
+    };
+  }
+  private get commissionCycleCols() {
+    return this.sql`id, label, start_date::text::date::text AS start_date, end_date::text::date::text AS end_date, submission_date::text::date::text AS submission_date, payroll_date::text::date::text AS payroll_date, status, submitted_date::text::date::text AS submitted_date, submitted_by, final_snapshot, created_at, updated_at`;
+  }
+
+  async getCommissionCycle(cycleId: string): Promise<CommissionCycleRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT ${this.commissionCycleCols} FROM commission_cycles WHERE id = ${cycleId}`;
+    return rows[0] ? this.commissionCycleRow(rows[0] as Record<string, unknown>) : null;
+  }
+
+  async getCommissionCycles(): Promise<CommissionCycleRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT ${this.commissionCycleCols} FROM commission_cycles ORDER BY start_date DESC`;
+    return rows.map((r) => this.commissionCycleRow(r as Record<string, unknown>));
+  }
+
+  async insertCommissionAdjustment(row: CommissionAdjustmentInput): Promise<CommissionAdjustmentRow> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    // §O/§29: the reason is REQUIRED — enforced HERE (both stores), so no UI
+    // path can bypass it. old_value/new_value may be null (add/remove).
+    if (typeof row.reason !== "string" || row.reason.trim().length === 0) {
+      throw new Error("A correction reason is required (who/what/old/new/reason/when audit).");
+    }
+    const rows = await this.sql`
+      INSERT INTO commission_adjustments (cycle_id, user_id, target, target_id, field, old_value, new_value, reason, changed_by)
+      VALUES (${row.cycle_id}, ${row.user_id == null ? null : row.user_id}::uuid, ${row.target}, ${row.target_id},
+        ${row.field}, ${row.old_value}, ${row.new_value}, ${row.reason.trim()}, ${row.changed_by})
+      RETURNING id::text AS id, changed_at
+    `;
+    return {
+      ...row,
+      reason: row.reason.trim(),
+      id: String(rows[0].id),
+      changed_at: new Date(rows[0].changed_at as string).toISOString(),
+    };
+  }
+
+  async getCommissionAdjustments(filter?: { cycleId?: string; userId?: string; targetId?: string }): Promise<CommissionAdjustmentRow[]> {
+    await this.ensureSchema();
+    const f = filter ?? {};
+    const rows =
+      f.cycleId && f.targetId
+        ? await this.sql`SELECT id::text AS id, cycle_id, user_id::text AS user_id, target, target_id, field, old_value, new_value, reason, changed_by, changed_at FROM commission_adjustments WHERE cycle_id = ${f.cycleId} AND target_id = ${f.targetId} ORDER BY changed_at DESC`
+        : f.cycleId
+          ? await this.sql`SELECT id::text AS id, cycle_id, user_id::text AS user_id, target, target_id, field, old_value, new_value, reason, changed_by, changed_at FROM commission_adjustments WHERE cycle_id = ${f.cycleId} ORDER BY changed_at DESC`
+          : f.userId
+            ? await this.sql`SELECT id::text AS id, cycle_id, user_id::text AS user_id, target, target_id, field, old_value, new_value, reason, changed_by, changed_at FROM commission_adjustments WHERE user_id = ${f.userId}::uuid ORDER BY changed_at DESC`
+            : f.targetId
+              ? await this.sql`SELECT id::text AS id, cycle_id, user_id::text AS user_id, target, target_id, field, old_value, new_value, reason, changed_by, changed_at FROM commission_adjustments WHERE target_id = ${f.targetId} ORDER BY changed_at DESC`
+              : await this.sql`SELECT id::text AS id, cycle_id, user_id::text AS user_id, target, target_id, field, old_value, new_value, reason, changed_by, changed_at FROM commission_adjustments ORDER BY changed_at DESC`;
+    return rows.map((r) => {
+      const base = r as Record<string, unknown>;
+      return {
+        id: String(base.id),
+        cycle_id: base.cycle_id == null ? null : String(base.cycle_id),
+        user_id: base.user_id == null ? null : String(base.user_id),
+        target: String(base.target),
+        target_id: String(base.target_id),
+        field: String(base.field),
+        old_value: base.old_value == null ? null : String(base.old_value),
+        new_value: base.new_value == null ? null : String(base.new_value),
+        reason: String(base.reason),
+        changed_by: String(base.changed_by),
+        changed_at: new Date(base.changed_at as string).toISOString(),
       };
     });
   }

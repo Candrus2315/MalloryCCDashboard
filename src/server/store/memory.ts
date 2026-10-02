@@ -48,8 +48,14 @@ import type {
   TeamGoalRow,
   UserRow,
   WeeklyReportNotesRow,
+  CommissionAdjustmentInput,
+  CommissionAdjustmentRow,
+  CommissionAssignment,
+  CommissionCycleRow,
+  CommissionProfileInput,
+  CommissionWeeklyRow,
 } from "./types";
-import { DEFAULT_CALL_START_DATES, defaultSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -120,6 +126,10 @@ export class MemoryStore implements Store {
   private pipCheckins: PipCheckinRow[] = [];
   private pipTemplates: PipTemplateRow[] = [];
   private pipEvents: PipEventRow[] = [];
+  // Commission Tracker (owner directive 2026-10-01, Phase A).
+  private commissionWeekly = new Map<string, CommissionWeeklyRow>(); // keyed user_id:week_start
+  private commissionCycles = new Map<string, CommissionCycleRow>(); // keyed by slug id
+  private commissionAdjustments: CommissionAdjustmentRow[] = [];
   private seq = 0;
 
   private nextId(prefix: string): string {
@@ -133,12 +143,21 @@ export class MemoryStore implements Store {
     // Mirror the PG store's memoized DDL: the owner-set activation-date
     // backfill runs ONCE per store lifetime (Dan McKillop begins calling
     // 2026-09-28) so the Settings editor can later clear a date without it
-    // snapping back on the next read.
+    // snapping back on the next read. Commission seed profiles follow the
+    // SAME fill-only-when-unset pattern (owner directive 2026-10-01).
     if (this.schemaDone) return;
     this.schemaDone = true;
     for (const u of this.users.values()) {
       if (u.call_start_date == null && DEFAULT_CALL_START_DATES[u.name]) {
         u.call_start_date = DEFAULT_CALL_START_DATES[u.name];
+      }
+      const seed = DEFAULT_COMMISSION_PROFILES[u.name];
+      if (seed && u.commission_tier == null) {
+        u.employment_type = seed.employment_type;
+        u.commission_tier = seed.commission_tier;
+        u.tier_effective_date = seed.tier_effective_date;
+        u.tier_end_date = u.tier_end_date ?? null;
+        u.commission_eligible = true;
       }
     }
   }
@@ -199,7 +218,18 @@ export class MemoryStore implements Store {
       if (existing) this.users.set(existing.id, { ...existing, ...r, id: existing.id, call_start_date: r.call_start_date ?? existing.call_start_date ?? null });
       else {
         const key = this.nextId("u");
-        this.users.set(key, { ...r, id: key, call_start_date: r.call_start_date ?? null });
+        // Commission profile fields always present on read (defaults = ineligible).
+        const seeded: UserRow = {
+          ...r,
+          id: key,
+          call_start_date: r.call_start_date ?? null,
+          employment_type: r.employment_type ?? null,
+          commission_tier: r.commission_tier ?? null,
+          tier_effective_date: r.tier_effective_date ?? null,
+          tier_end_date: r.tier_end_date ?? null,
+          commission_eligible: r.commission_eligible ?? false,
+        };
+        this.users.set(key, seeded);
       }
     }
     return rows.length;
@@ -451,7 +481,10 @@ export class MemoryStore implements Store {
     return rows.length;
   }
   private stripAppt(a: ApptExt): AppointmentRow {
-    const { acuity_appointment_id: _a, client_name: _n, client_phone: _p, client_email: _e, ...rest } = a;
+    // acuity_appointment_id + client_name are PART of AppointmentRow (optional)
+    // since the commission counted-booking snapshots need the provider id +
+    // client label — only the phone/email extras stay stripped.
+    const { client_phone: _p, client_email: _e, ...rest } = a;
     return rest;
   }
   async getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
@@ -1208,5 +1241,66 @@ export class MemoryStore implements Store {
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
       .slice(0, opts?.limit ?? 200)
       .map((e) => ({ ...e, details: e.details ? { ...e.details } : null }));
+  }
+
+  // ---- Commission Tracker (owner directive 2026-10-01, Phase A) ----
+
+  async setUserCommissionProfile(repId: string, profile: CommissionProfileInput | null): Promise<void> {
+    const u = this.users.get(repId);
+    if (!u) return;
+    if (profile === null) {
+      this.users.set(repId, { ...u, employment_type: null, commission_tier: null, tier_effective_date: null, tier_end_date: null, commission_eligible: false });
+      return;
+    }
+    this.users.set(repId, { ...u, ...profile });
+  }
+
+  async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<void> {
+    // Idempotent by (user_id, week_start) — mirrors the pg UNIQUE key.
+    this.commissionWeekly.set(`${row.user_id}:${row.week_start}`, { ...row, counted_bookings: [...(row.counted_bookings ?? [])], hole_audit: [...(row.hole_audit ?? [])] });
+  }
+
+  async getCommissionWeeklyRecords(filter?: { userId?: string; weekStart?: string; cycleId?: string; assignment?: CommissionAssignment }): Promise<CommissionWeeklyRow[]> {
+    let rows = [...this.commissionWeekly.values()];
+    if (filter?.userId) rows = rows.filter((r) => r.user_id === filter.userId);
+    if (filter?.weekStart) rows = rows.filter((r) => r.week_start === filter.weekStart);
+    if (filter?.cycleId) rows = rows.filter((r) => r.cycle_id === filter.cycleId);
+    if (filter?.assignment) rows = rows.filter((r) => r.assignment === filter.assignment);
+    return rows
+      .sort((a, b) => (a.week_start < b.week_start ? 1 : -1))
+      .map((r) => ({ ...r, counted_bookings: [...r.counted_bookings], hole_audit: [...(r.hole_audit ?? [])] }));
+  }
+
+  async upsertCommissionCycle(cycle: CommissionCycleRow): Promise<void> {
+    this.commissionCycles.set(cycle.id, { ...cycle });
+  }
+
+  async getCommissionCycle(cycleId: string): Promise<CommissionCycleRow | null> {
+    const row = this.commissionCycles.get(cycleId);
+    return row ? { ...row } : null;
+  }
+
+  async getCommissionCycles(): Promise<CommissionCycleRow[]> {
+    return [...this.commissionCycles.values()]
+      .sort((a, b) => (a.start_date < b.start_date ? 1 : -1))
+      .map((c) => ({ ...c }));
+  }
+
+  async insertCommissionAdjustment(row: CommissionAdjustmentInput): Promise<CommissionAdjustmentRow> {
+    // §O/§29: the reason is REQUIRED — enforced HERE (both stores).
+    if (typeof row.reason !== "string" || row.reason.trim().length === 0) {
+      throw new Error("A correction reason is required (who/what/old/new/reason/when audit).");
+    }
+    const full: CommissionAdjustmentRow = { ...row, reason: row.reason.trim(), id: this.nextId("cadj"), changed_at: new Date().toISOString() };
+    this.commissionAdjustments.push(full);
+    return { ...full };
+  }
+
+  async getCommissionAdjustments(filter?: { cycleId?: string; userId?: string; targetId?: string }): Promise<CommissionAdjustmentRow[]> {
+    let rows = [...this.commissionAdjustments];
+    if (filter?.cycleId) rows = rows.filter((r) => r.cycle_id === filter.cycleId);
+    if (filter?.userId) rows = rows.filter((r) => r.user_id === filter.userId);
+    if (filter?.targetId) rows = rows.filter((r) => r.target_id === filter.targetId);
+    return rows.sort((a, b) => (a.changed_at < b.changed_at ? 1 : -1)).map((r) => ({ ...r }));
   }
 }
