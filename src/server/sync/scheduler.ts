@@ -36,10 +36,15 @@ import { recomputeAttributions, runDemoSync } from "./run";
 import { availabilityTick, type AvailabilityTickResult } from "./acuity-live";
 import { attributionTick, type AttributionTickResult } from "./attribution-tick";
 import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
+import { commissionCloseTick, type CommissionCloseResult } from "../commission/close";
 import type { LiveSheetsAdapter } from "./sheets-live";
 
 /** A "running" sync_runs row older than this is a crashed process, not a live one. */
 export const STALE_RUNNING_CUTOFF_HOURS = 12;
+
+/** COMMISSION CLOSE throttle: weekly data settles daily — a check every 15 min is plenty (manual triggers skip the throttle). */
+export const COMMISSION_CLOSE_MIN_INTERVAL_MS = 15 * 60_000;
+let lastCommissionCloseAt = 0;
 
 /**
  * STALE-RUN REAP WINDOW — the constant now lives in store/types (both stores
@@ -106,6 +111,8 @@ export interface SchedulerTickResult {
   contactsReconciliation?: { dbCount: number | null; sourceTotal: number | null; delta: number | null; status: string };
   /** Independent Google Sheets lead sync piggy-backed on the same tick (never fails the tick). */
   sheets?: SheetsTickResult;
+  /** Independent commission weekly close piggy-backed on the same tick (never fails the tick; throttled). */
+  commission?: CommissionCloseResult;
   /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
   reaped?: number;
 }
@@ -516,7 +523,20 @@ export async function schedulerTick(options?: {
   } catch (e) {
     sheets = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
-  return { ...base, availability, attribution, sheets, reaped };
+  // COMMISSION WEEKLY CLOSE (owner directive 2026-10-01): independent finalize
+  // of completed Mon–Sun weeks (idempotent — existing records are skipped).
+  // Throttled like the sheets sync (commission data settles daily; a check
+  // every COMMISSION_CLOSE_MIN_INTERVAL_MS is plenty) and never fails the tick.
+  let commission: CommissionCloseResult | undefined;
+  if (options?.trigger === "manual" || Date.now() - lastCommissionCloseAt >= COMMISSION_CLOSE_MIN_INTERVAL_MS) {
+    lastCommissionCloseAt = Date.now();
+    try {
+      commission = await commissionCloseTick(options?.store ?? (await getStore()), { now });
+    } catch (e) {
+      commission = { outcome: "error", weeksConsidered: 0, recordsWritten: 0, weeksClosed: [], error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  return { ...base, availability, attribution, sheets, commission, reaped };
 }
 
 // ---------- the always-on loop ----------

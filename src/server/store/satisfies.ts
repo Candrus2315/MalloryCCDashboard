@@ -158,6 +158,15 @@ const STORE_METHOD_FLAGS = {
   getPipTemplateUsage: 1,
   insertPipEvent: 1,
   getPipEvents: 1,
+  // commission tracker (owner directive 2026-10-01, Phase A)
+  setUserCommissionProfile: 1,
+  upsertCommissionWeeklyRecord: 1,
+  getCommissionWeeklyRecords: 1,
+  upsertCommissionCycle: 1,
+  getCommissionCycle: 1,
+  getCommissionCycles: 1,
+  insertCommissionAdjustment: 1,
+  getCommissionAdjustments: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

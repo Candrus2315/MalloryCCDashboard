@@ -31,6 +31,19 @@ export interface UserRow {
    * monitoring from whenever their rows start (existing reps).
    */
   call_start_date: string | null;
+  // ---- COMMISSION TRACKER profile fields (owner directive 2026-10-01, spec §B) ----
+  // Optional in construction (existing literals keep compiling); BOTH stores
+  // always populate them on read (defaults null/false = ineligible).
+  /** full_time | part_time — drives which §C/§D tier table applies. */
+  employment_type?: import("../commission/engine").EmploymentType | null;
+  /** 1–5; null = no tier assigned (never commission-eligible — e.g. Dan McKillop). */
+  commission_tier?: number | null;
+  /** The date the current tier took effect (ET). History uses the tier held that week (snapshot on the weekly record). */
+  tier_effective_date?: string | null;
+  /** When the tier ends (nullable) — a week qualifies for the tier only when [week_start, week_end] overlaps [effective, end]. */
+  tier_end_date?: string | null;
+  /** Master switch: false = never in the commission calc even with a tier. */
+  commission_eligible?: boolean;
 }
 
 /**
@@ -40,6 +53,29 @@ export interface UserRow {
  */
 export const DEFAULT_CALL_START_DATES: Record<string, string> = {
   "Dan McKillop": "2026-09-28",
+};
+
+/**
+ * COMMISSION TRACKER seed profiles (owner directive 2026-10-01, spec §B — the
+ * owner's four current assignments). Applied by BOTH stores' ensureSchema the
+ * same way as DEFAULT_CALL_START_DATES: fill-only-when-unset (commission_tier
+ * IS NULL), so a later owner change in Settings never snaps back on restart.
+ * Tier effective dates: the owner gave none — seeded to the first validation
+ * cycle start 2026-08-31 (interpretation note 5, flagged to the owner).
+ * Dan McKillop (roster entrant 9/28) has NO tier → stays ineligible.
+ */
+export interface CommissionProfileSeed {
+  employment_type: import("../commission/engine").EmploymentType;
+  commission_tier: number;
+  tier_effective_date: string;
+}
+
+export const DEFAULT_COMMISSION_PROFILES: Record<string, CommissionProfileSeed> = {
+  "Allison Wittner": { employment_type: "full_time", commission_tier: 5, tier_effective_date: "2026-08-31" },
+  "Laura Rivera": { employment_type: "part_time", commission_tier: 3, tier_effective_date: "2026-08-31" },
+  "Carmine Morgano": { employment_type: "full_time", commission_tier: 1, tier_effective_date: "2026-08-31" },
+  // Owner's "Jen" = Jennifer Stitt (the only Jennifer on the roster).
+  "Jennifer Stitt": { employment_type: "full_time", commission_tier: 1, tier_effective_date: "2026-08-31" },
 };
 
 export interface ContactRow {
@@ -813,6 +849,145 @@ export interface PipEventRow {
   created_at: string; // ISO
 }
 
+// ========================================================================
+// COMMISSION TRACKER (owner directive 2026-10-01, spec §F/§S/§O/§N)
+// ------------------------------------------------------------------------
+// Phase A foundation: weekly records, cycles, adjustments. The calculation
+// engine is PURE (src/server/commission/engine.ts); these are the PERSISTED
+// shapes. Weekly records are write-once per (user, week) at the Sunday cutoff
+// (close job) or the deliberate historical backfill; submitted payroll locks
+// forever (Phase C enforcement builds on the status fields here).
+// ========================================================================
+
+/** Money columns are dollars with 2-decimal (cents) precision. */
+export type CommissionWeeklyStatus = "final" | "superseded";
+
+/** §O: a weekly record belongs to exactly ONE submitted cycle — never double-counted. */
+export type CommissionAssignment = "unassigned" | "current_cycle" | "previously_submitted";
+
+/** §N approval workflow (cycle-level). */
+export type CommissionCycleStatus = "in_progress" | "ready_for_review" | "approved" | "submitted";
+
+/** One counted booking snapshot inside a weekly record (§10 audit — the actual records that produced the total). */
+export interface CountedBookingSnapshot {
+  /** Internal appointment id. */
+  id: string;
+  /** Provider id when known (click-out/audit). */
+  acuity_appointment_id?: string | null;
+  client_name?: string | null;
+  appointment_type?: string | null;
+  /** booking_win_business_date (ET) — the date the deposit was received. */
+  win_date: string;
+  /** True when the attribution was a manual owner assignment. */
+  manual: boolean;
+}
+
+/**
+ * RULING 3 per-bonus hole audit row (owner 10/1, REQUIRED): rep · appointment
+ * date/time · slot previously open (day + block/position) · the filling
+ * booking · the qualifying Booking Win · $10 · the week credited. Persisted
+ * ON the weekly record (hole_audit jsonb) so the money is auditable forever.
+ */
+export interface HoleAuditSnapshot {
+  userId: string;
+  /** The filling booking = the qualifying Booking Win (internal appointment id). */
+  appointmentId: string;
+  acuity_appointment_id?: string | null;
+  client_name?: string | null;
+  appointment_type?: string | null;
+  /** ET date of the session (== slot date). */
+  appointment_date_et: string;
+  /** ET clock time of the session (== slot position, e.g. "08:00"). */
+  appointment_time_et: string;
+  /** The previously-open slot's derived position. */
+  slot_date: string;
+  slot_time: string;
+  slot_block: "morning" | "afternoon";
+  /** booking_win_business_date (ET) of the qualifying win. */
+  win_date: string;
+  bonus_cents: number;
+  /** The week credited (Monday, ET). */
+  week_start: string;
+}
+
+/** §F WEEKLY RECORD — auto-created at the Sunday cutoff (or the deliberate historical backfill). */
+export interface CommissionWeeklyRow {
+  id: string;
+  user_id: string;
+  /** Name snapshot (records must stay readable even if a user row later changes/disappears). */
+  rep_name: string;
+  /** Monday (ET) — the upsert key with user_id. */
+  week_start: string;
+  /** Sunday (ET). */
+  week_end: string;
+  employment_type: import("../commission/engine").EmploymentType;
+  tier: number;
+  /** The tier_effective_date USED that week (§F "Tier Effective Date Used"). */
+  tier_effective_date_used: string | null;
+  qualifying_bookings: number;
+  base_commission: number; // dollars
+  additional_commission: number; // dollars (over-threshold portion; 0 on flat tiers)
+  pool_bonus: number; // dollars
+  hole_bonus: number; // dollars
+  manual_adjustment: number; // dollars (0 on the auto calc; corrections modify, Phase C)
+  total: number; // dollars = base + additional + pool + hole + manual_adjustment
+  calc_date: string; // ISO
+  calc_version: number;
+  status: CommissionWeeklyStatus;
+  cycle_id: string | null;
+  assignment: CommissionAssignment;
+  counted_bookings: CountedBookingSnapshot[];
+  /** RULING 3 per-bonus audit (one row per $10 filled hole). */
+  hole_audit: HoleAuditSnapshot[];
+}
+
+/** Commission profile fields the Settings editor sets (store-level upsert). */
+export interface CommissionProfileInput {
+  employment_type: import("../commission/engine").EmploymentType;
+  commission_tier: number;
+  tier_effective_date: string | null;
+  tier_end_date: string | null;
+  commission_eligible: boolean;
+}
+
+/** §S cycle composition — stored and preserved forever (never derived). */
+export interface CommissionCycleRow {
+  /** Stable slug id (deterministic for the historical backfill, e.g. "cycle-2026-08-31-2026-09-27"). */
+  id: string;
+  /** Human label, e.g. "Aug 31 – Sep 27, 2026". */
+  label: string;
+  start_date: string; // first included week's Monday
+  end_date: string; // last included week's Sunday
+  submission_date: string; // the first-Monday deadline
+  payroll_date: string;
+  status: CommissionCycleStatus;
+  submitted_date: string | null;
+  submitted_by: string | null;
+  /** Final snapshot frozen at submission (final counts, totals, calc version). */
+  final_snapshot: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** §O/§29 corrections audit — reason REQUIRED, who/what/old/new/when recorded. */
+export interface CommissionAdjustmentInput {
+  cycle_id: string | null;
+  user_id: string | null;
+  /** What kind of record was corrected: "weekly_record" | "cycle" | "booking". */
+  target: string;
+  target_id: string;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  reason: string; // REQUIRED (validated inside both stores)
+  changed_by: string;
+}
+
+export interface CommissionAdjustmentRow extends CommissionAdjustmentInput {
+  id: string;
+  changed_at: string; // ISO
+}
+
 export interface Store {
   mode: "postgres" | "memory";
   ensureSchema(): Promise<void>;
@@ -1162,4 +1337,28 @@ export interface Store {
   insertPipEvent(row: Omit<PipEventRow, "id" | "created_at">): Promise<void>;
   /** Module event log, newest first; optionally scoped to one PIP. */
   getPipEvents(opts?: { pipId?: string; limit?: number }): Promise<PipEventRow[]>;
+
+  // ---- Commission Tracker (owner directive 2026-10-01, Phase A) ----
+  /** Set/clear ONE rep's commission profile (Settings editor). Null clears (back to ineligible). */
+  setUserCommissionProfile(repId: string, profile: CommissionProfileInput | null): Promise<void>;
+  /**
+   * Upsert ONE weekly record keyed (user_id, week_start) — the close job and the
+   * historical backfill share it; re-running NEVER duplicates rows. Callers own
+   * the skip-if-finalized logic (Phase C adds submission locking).
+   */
+  upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<void>;
+  /** Weekly records, newest week first; any filter combination narrows the set. */
+  getCommissionWeeklyRecords(filter?: { userId?: string; weekStart?: string; cycleId?: string; assignment?: CommissionAssignment }): Promise<CommissionWeeklyRow[]>;
+  /** Upsert a cycle by id (deterministic slugs; submission freezes the final snapshot, Phase C). */
+  upsertCommissionCycle(cycle: CommissionCycleRow): Promise<void>;
+  getCommissionCycle(cycleId: string): Promise<CommissionCycleRow | null>;
+  /** All cycles, newest start_date first. */
+  getCommissionCycles(): Promise<CommissionCycleRow[]>;
+  /**
+   * Append a corrections-audit row (§O: reason REQUIRED — both stores throw on
+   * an empty/blank reason; who/what/old/new/reason/when is the contract).
+   */
+  insertCommissionAdjustment(row: CommissionAdjustmentInput): Promise<CommissionAdjustmentRow>;
+  /** Adjustments, newest first; any filter combination narrows the set. */
+  getCommissionAdjustments(filter?: { cycleId?: string; userId?: string; targetId?: string }): Promise<CommissionAdjustmentRow[]>;
 }
