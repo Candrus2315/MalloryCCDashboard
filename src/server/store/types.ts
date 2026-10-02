@@ -862,6 +862,18 @@ export interface PipEventRow {
 /** Money columns are dollars with 2-decimal (cents) precision. */
 export type CommissionWeeklyStatus = "final" | "superseded";
 
+/**
+ * Phase C upsert result: the store-level SUBMITTED-CYCLE LOCK (spec §O/§19)
+ * silently no-ops any rewrite of a locked weekly record and records the block
+ * in the audit trail, so callers (close tick, backfill) can report honestly.
+ * `written` false + `blocked` true = the stored record was frozen, never
+ * touched.
+ */
+export interface CommissionUpsertResult {
+  written: boolean;
+  blocked: boolean;
+}
+
 /** §O: a weekly record belongs to exactly ONE submitted cycle — never double-counted. */
 export type CommissionAssignment = "unassigned" | "current_cycle" | "previously_submitted";
 
@@ -1351,12 +1363,28 @@ export interface Store {
   setUserCommissionProfile(repId: string, profile: CommissionProfileInput | null): Promise<void>;
   /**
    * Upsert ONE weekly record keyed (user_id, week_start) — the close job and the
-   * historical backfill share it; re-running NEVER duplicates rows. Callers own
-   * the skip-if-finalized logic (Phase C adds submission locking).
+   * historical backfill share it; re-running NEVER duplicates rows. Phase C
+   * SUBMITTED-CYCLE LOCK: a rewrite of a record locked by a submitted cycle is
+   * a no-op with an audit row (returns written:false, blocked:true) — stored
+   * payroll freezes forever (spec §O/§19).
    */
-  upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<void>;
+  upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<CommissionUpsertResult>;
   /** Weekly records, newest week first; any filter combination narrows the set. */
   getCommissionWeeklyRecords(filter?: { userId?: string; weekStart?: string; cycleId?: string; assignment?: CommissionAssignment }): Promise<CommissionWeeklyRow[]>;
+  /**
+   * Phase C corrections (spec §O/§20): the ONE audited way stored money moves
+   * after approval — a dollars delta applied to manual_adjustment AND total
+   * (the auto-calc fields stay frozen). Caller inserts the reason-required
+   * adjustment row FIRST; this method only moves the money.
+   */
+  applyCommissionWeeklyCorrection(userId: string, weekStart: string, deltaDollars: number): Promise<void>;
+  /**
+   * Phase C week↔cycle membership (spec §S): targeted (user, week) update of
+   * ONLY cycle_id/assignment — never money. The lifecycle layer validates +
+   * audits; the store performs the surgical update (assignment flips at
+   * submission and week re-assignment must not re-run the money upsert).
+   */
+  setCommissionRecordAssignment(userId: string, weekStart: string, patch: { cycleId: string | null; assignment: CommissionAssignment }): Promise<void>;
   /** Upsert a cycle by id (deterministic slugs; submission freezes the final snapshot, Phase C). */
   upsertCommissionCycle(cycle: CommissionCycleRow): Promise<void>;
   getCommissionCycle(cycleId: string): Promise<CommissionCycleRow | null>;

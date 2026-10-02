@@ -161,6 +161,8 @@ const STORE_METHOD_FLAGS = {
   // commission tracker (owner directive 2026-10-01, Phase A)
   setUserCommissionProfile: 1,
   upsertCommissionWeeklyRecord: 1,
+  applyCommissionWeeklyCorrection: 1,
+  setCommissionRecordAssignment: 1,
   getCommissionWeeklyRecords: 1,
   upsertCommissionCycle: 1,
   getCommissionCycle: 1,

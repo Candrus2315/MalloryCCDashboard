@@ -729,11 +729,39 @@ export async function todayPageData(deps?: PageDeps) {
     })
     .sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
 
+  // §21 COMMISSION CARD payload (Phase C): the live estimate for the in-progress
+  // week (same helper as the Commission Center — one definition) + the next
+  // stored submission date. Read straight from the commission tables; a
+  // failure surfaces as estimateError and the card renders "—" honestly.
+  const commission = await (async () => {
+    const ws = weekStart(today);
+    try {
+      const est = await estimatedCommissionWeek(store, users, today, { attributions });
+      const next = nextCommissionSubmission(await store.getCommissionCycles(), today);
+      return {
+        weekStart: ws,
+        estimate: est.view,
+        estimateError: est.error,
+        nextSubmission: next
+          ? { cycleId: next.id, label: next.label, submissionDate: next.submission_date, status: next.status }
+          : null,
+      };
+    } catch (e) {
+      return {
+        weekStart: ws,
+        estimate: null,
+        estimateError: e instanceof Error ? e.message : String(e),
+        nextSubmission: null,
+      };
+    }
+  })();
+
   return {
     meta,
     settings,
     metrics,
     pendingPayments,
+    commission,
     connections: serializableConnections(connections),
     staleWarnings: syncStaleWarnings(connections),
     cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")}`,
@@ -1348,7 +1376,8 @@ import {
 import type { CommissionEmployeeInput } from "./commission/engine";
 import { BACKFILL_CYCLE_ID, computeValidationWeeks, VALIDATION_WEEK_STARTS } from "./commission/backfill";
 import { estimatedWeekView, reconcileStoredVsComputed, rollupStoredCycle, unassignedRidingNextCycle, type EstimatedWeekView, type RosterEntry, type StoredCycleRollup, type StoredVsComputed } from "../components/commission-views";
-import type { CommissionCycleRow, CommissionWeeklyRow } from "./store/types";
+import type { CommissionAdjustmentRow, CommissionCycleRow, CommissionWeeklyRow } from "./store/types";
+import { nextCommissionSubmission } from "./commission/lifecycle";
 
 /** §3.5 band payload: the in-progress week's pure-engine estimate (or null on loader error). */
 export interface CommissionEstimatedWeek {
@@ -1371,6 +1400,8 @@ export interface CommissionPageData {
   unassignedRiding: CommissionWeeklyRow[];
   roster: RosterEntry[];
   estimated: CommissionEstimatedWeek | null;
+  /** Phase C: the cycle's corrections + state-transition audit trail (newest first). */
+  adjustments: CommissionAdjustmentRow[];
 }
 
 /**
@@ -1427,14 +1458,45 @@ export async function commissionPageData(deps?: PageDeps): Promise<CommissionPag
 
   // §3.5 estimated band — the SAME pure engine on the in-progress week
   // (identical inputs to the close tick; no second engine, no client math).
-  let estimated: CommissionEstimatedWeek | null = null;
+  const estimated = await estimatedCommissionWeek(store, users, today);
+
+  const adjustments = cycle ? await store.getCommissionAdjustments({ cycleId: cycle.id }) : [];
+
+  const warnings: string[] = [...syncStaleWarnings(await store.getConnections())];
+  if (!cycle) {
+    warnings.push(
+      "No commission cycle is stored yet — the historical backfill writes the first cycle (bun scripts/commission-backfill.ts --write after the dry-run is reviewed).",
+    );
+  } else if (records.length === 0) {
+    warnings.push(
+      `This cycle has no stored weekly records yet — numbers appear after the backfill write or the Sunday cutoff close (records are never typed manually).`,
+    );
+  }
+
+  return { meta, today, warnings, cycle, cycles, records, unassignedRiding, roster, estimated, adjustments };
+}
+
+/**
+ * §3.5/§21 — the in-progress week's pure-engine estimate, shared by the
+ * Commission Center band AND the Today-page commission card (ONE helper, so
+ * the two surfaces can never disagree). Identical inputs to the close tick:
+ * the week's win-bucket appointments + session occupancy + stored
+ * attributions over the roster's commission-eligible employees. Never throws —
+ * failures surface as {view: null, error} and the UI renders "—" honestly.
+ */
+export async function estimatedCommissionWeek(
+  store: Store,
+  users: Awaited<ReturnType<Store["getUsers"]>>,
+  today: string,
+  opts?: { attributions?: Awaited<ReturnType<Store["getAttributions"]>> },
+): Promise<CommissionEstimatedWeek> {
   try {
     const ws = weekStart(today);
     const weekEnd = addDays(ws, 6);
     const [wins, sessions, attributions] = await Promise.all([
       store.getAppointmentsByWinBusinessDateBetween(ws, weekEnd),
       store.getAppointmentsOverlapping(etDayStartUtc(ws), etDayEndUtc(weekEnd)),
-      store.getAttributions(),
+      opts?.attributions ? Promise.resolve(opts.attributions) : store.getAttributions(),
     ]);
     const employees = users
       .map(commissionEmployeeOf)
@@ -1448,27 +1510,14 @@ export async function commissionPageData(deps?: PageDeps): Promise<CommissionPag
       sessionAppts: sessions,
       employees,
     });
-    estimated = { weekStart: ws, view: estimatedWeekView(computation), error: null };
+    return { weekStart: ws, view: estimatedWeekView(computation), error: null };
   } catch (e) {
-    estimated = {
+    return {
       weekStart: weekStart(today),
       view: null,
       error: e instanceof Error ? e.message : String(e),
     };
   }
-
-  const warnings: string[] = [...syncStaleWarnings(await store.getConnections())];
-  if (!cycle) {
-    warnings.push(
-      "No commission cycle is stored yet — the historical backfill writes the first cycle (bun scripts/commission-backfill.ts --write after the dry-run is reviewed).",
-    );
-  } else if (records.length === 0) {
-    warnings.push(
-      `This cycle has no stored weekly records yet — numbers appear after the backfill write or the Sunday cutoff close (records are never typed manually).`,
-    );
-  }
-
-  return { meta, today, warnings, cycle, cycles, records, unassignedRiding, roster, estimated };
 }
 
 // ---------- §26 VALIDATION payload ----------

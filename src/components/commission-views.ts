@@ -693,3 +693,44 @@ export function provenanceHeadline(written: boolean, recordsWritten: number, cal
       "Dry-run only — computed numbers below are NOT persisted yet. Run `bun scripts/commission-backfill.ts --write` after reviewing.",
   };
 }
+
+// ---------- §14/§16 COPY PAYROLL EMAIL (Phase C) ----------
+
+/** One payroll-email line group: name / Bookings / Commission Bonus. */
+export interface PayrollEmailLine {
+  name: string;
+  bookings: number;
+  bonusMoney: string;
+}
+
+/**
+ * Per-employee lines for the payroll email, summed from the cycle's STORED
+ * weekly records only (§Q — no recomputation, no manual totals). One line
+ * group per employee with a stored record in the cycle (the records ARE the
+ * eligible population); ranked bonus desc → name (the grid's rank order).
+ * A $0 total still appears (§5: no minimum to earn) — payroll sees everyone.
+ */
+export function payrollEmailLines(records: CommissionWeeklyRow[]): PayrollEmailLine[] {
+  const byUser = new Map<string, { name: string; bookings: number; cents: number }>();
+  for (const r of records) {
+    const row = byUser.get(r.user_id) ?? { name: r.rep_name, bookings: 0, cents: 0 };
+    row.bookings += r.qualifying_bookings;
+    row.cents += Math.round(r.total * 100);
+    byUser.set(r.user_id, row);
+  }
+  return [...byUser.values()]
+    .sort((a, b) => b.cents - a.cents || a.name.localeCompare(b.name))
+    .map((row) => ({ name: row.name, bookings: row.bookings, bonusMoney: formatMoney(row.cents / 100) }));
+}
+
+/**
+ * §M/§16: the ONE plain-text payroll block — exactly the owner's shape
+ * (name / Bookings / Commission Bonus, blank line between employees). Numbers
+ * come ONLY from the stored weekly records passed in; nothing is computed,
+ * rounded, or typed here.
+ */
+export function buildPayrollEmail(records: CommissionWeeklyRow[]): string {
+  return payrollEmailLines(records)
+    .map((l) => `${l.name}\nBookings: ${formatInt(l.bookings)}\nCommission Bonus: ${l.bonusMoney}`)
+    .join("\n\n");
+}

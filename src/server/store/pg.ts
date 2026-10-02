@@ -54,6 +54,7 @@ import type {
   CommissionWeeklyRow,
   CountedBookingSnapshot,
   HoleAuditSnapshot,
+  CommissionUpsertResult,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -2558,11 +2559,46 @@ export class PgStore implements Store {
     `;
   }
 
-  async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<void> {
+  /**
+   * Phase C SUBMITTED-CYCLE LOCK (spec §O/§19): a record whose assignment is
+   * 'previously_submitted' — or whose cycle row is status 'submitted' — can
+   * NEVER be rewritten (no tier/rate/setting/backfill re-run may touch stored
+   * payroll). The attempted rewrite no-ops and lands in the audit trail so the
+   * attempt is visible forever. Unlocked records keep the Phase-A idempotent
+   * replace behavior.
+   */
+async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<CommissionUpsertResult> {
+
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     // Idempotent by (user_id, week_start): the close job and the backfill can
-    // both run; re-runs REPLACE the same logical record (never duplicates).
+    // both run; re-runs REPLACE the same logical record (never duplicates) —
+    // UNLESS the stored record is locked by a submitted cycle (Phase C guard).
+    const lockRows = await this.sql`
+      SELECT cycle_id, assignment, qualifying_bookings, total, calc_version
+      FROM commission_weekly WHERE user_id = ${row.user_id}::uuid AND week_start = ${row.week_start}::date
+    `;
+    const lockExisting = lockRows[0] as Record<string, unknown> | undefined;
+    if (lockExisting) {
+      const lockCycleId = lockExisting.cycle_id == null ? null : String(lockExisting.cycle_id);
+      const lockAssignment = String(lockExisting.assignment);
+      const lockCycle = lockCycleId ? await this.getCommissionCycle(lockCycleId) : null;
+      const locked = lockAssignment === "previously_submitted" || lockCycle?.status === "submitted";
+      if (locked) {
+        await this.insertCommissionAdjustment({
+          cycle_id: lockCycleId,
+          user_id: row.user_id,
+          target: "weekly_record",
+          target_id: `${row.user_id}:${row.week_start}`,
+          field: "rewrite_blocked",
+          old_value: `bookings ${Number(lockExisting.qualifying_bookings)} · total ${Number(lockExisting.total).toFixed(2)} · calc v${Number(lockExisting.calc_version)}`,
+          new_value: `attempted bookings ${row.qualifying_bookings} · total ${row.total.toFixed(2)} · calc v${row.calc_version}`,
+          reason: `Blocked by submitted-cycle lock: record belongs to ${lockAssignment === "previously_submitted" ? "a previously submitted" : `submitted cycle ${lockCycleId ?? ""}`} — stored payroll is frozen (spec §19).`,
+          changed_by: "system:write-guard",
+        });
+        return { written: false, blocked: true };
+      }
+    }
     await this.sql`
       INSERT INTO commission_weekly (user_id, rep_name, week_start, week_end, employment_type, tier,
         tier_effective_date_used, qualifying_bookings, base_commission, additional_commission, pool_bonus,
@@ -2583,6 +2619,35 @@ export class PgStore implements Store {
         counted_bookings = EXCLUDED.counted_bookings, hole_audit = EXCLUDED.hole_audit,
         hole_bonus_capped = EXCLUDED.hole_bonus_capped, updated_at = now()
     `;
+    return { written: true, blocked: false };
+  }
+  /** §O/§20: move ONLY the audited money fields (manual_adjustment, total) by a dollars delta. */
+  async applyCommissionWeeklyCorrection(userId: string, weekStart: string, deltaDollars: number): Promise<void> {
+    this.cache.bump();
+    await this.ensureSchema();
+    const upd = await this.sql`
+      UPDATE commission_weekly
+      SET manual_adjustment = manual_adjustment + ${deltaDollars}, total = total + ${deltaDollars}, updated_at = now()
+      WHERE user_id = ${userId}::uuid AND week_start = ${weekStart}::date
+      RETURNING user_id
+    `;
+    if (upd.length === 0) {
+      throw new Error(`No stored weekly record for ${userId}:${weekStart} — corrections target stored records only.`);
+    }
+  }
+  /** §S membership update: cycle_id/assignment only — money columns untouched. */
+  async setCommissionRecordAssignment(userId: string, weekStart: string, patch: { cycleId: string | null; assignment: CommissionAssignment }): Promise<void> {
+    this.cache.bump();
+    await this.ensureSchema();
+    const upd = await this.sql`
+      UPDATE commission_weekly
+      SET cycle_id = ${patch.cycleId}, assignment = ${patch.assignment}, updated_at = now()
+      WHERE user_id = ${userId}::uuid AND week_start = ${weekStart}::date
+      RETURNING user_id
+    `;
+    if (upd.length === 0) {
+      throw new Error(`No stored weekly record for ${userId}:${weekStart} — membership updates target stored records only.`);
+    }
   }
 
   private commissionWeeklyRow(r: Record<string, unknown>): CommissionWeeklyRow {
