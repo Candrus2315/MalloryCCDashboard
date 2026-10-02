@@ -70,6 +70,12 @@ const weeksArg = argv.find((a) => a.startsWith("--weeks="))?.slice(8) ?? "w1,w2"
 const WEEKS = weeksArg.split(",").map((w) => w.trim().toLowerCase());
 const MODE = (argv.find((a) => a.startsWith("--mode="))?.slice(7) ?? "auto") as "auto" | "api" | "db";
 const DRY = argv.includes("--dry");
+// --revisit: ignore the conversation-level visited flag. The blanket harvest
+// marked conversations visited at LISTING time even when its budget cut the run
+// before their messages were scanned (2026-10-02: 106/106 target conversations
+// skipped, 0 calls captured). Re-visiting is safe: parse is idempotent by
+// provider message id.
+const REVISIT = argv.includes("--revisit");
 
 // Week → win-date ET band (Mon..Sun; booking_win_business_date is an ET date).
 const WEEK_BANDS: Record<string, { from: string; to: string }> = {
@@ -271,7 +277,7 @@ async function main(): Promise<void> {
           : [];
         const visitedSet = new Set(visitedRows.map((r) => String(r.conv_id)));
         for (const row of sink.rows) {
-          if (visitedSet.has(row.conv_id)) { stats.skippedVisited += 1; continue; }
+          if (!REVISIT && visitedSet.has(row.conv_id)) { stats.skippedVisited += 1; continue; }
           if (Date.now() >= deadline) break;
           try {
             await visitConv(row);
