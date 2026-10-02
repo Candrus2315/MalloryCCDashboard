@@ -55,6 +55,7 @@ import { ensureDemoData } from "./sync/run";
 import type { AuditOkBody } from "./audit-api";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
 import { normalizeRepMappings, type AppSettings, type RepMapping } from "./store/types";
+import { applyCommissionCorrection, assignCommissionWeeks, submitCommissionCycle, transitionCommissionCycle, unassignCommissionWeeks, type CommissionCycleStatus, type CorrectionKind } from "./commission/lifecycle";
 
 export interface PageMeta {
   mode: "postgres" | "memory";
@@ -1107,3 +1108,94 @@ export const getWeeklyData = createServerFn().handler(async () => weeklyPageData
 export const getCommissionData = createServerFn().handler(async () => commissionPageData());
 /** §26 VALIDATION page — fresh recompute vs stored records (READ-ONLY, page-data.ts). */
 export const getCommissionValidationData = createServerFn().handler(async () => commissionValidationPageData());
+
+// ==================== COMMISSION PHASE C — manager actions (§N/§O/§19/§S) ====================
+// Every action runs behind the global passphrase gate (the manager surface) and
+// lands an audited adjustment row (who/what/old→new/reason/when). No auto-
+// submission exists anywhere — submission is this one explicit call.
+
+export interface AdvanceCycleInput {
+  cycleId: string;
+  to: CommissionCycleStatus;
+  /** Optional manager note — becomes the audit reason (default text otherwise). */
+  note?: string;
+  /** Optional actor label for the audit trail (shared-gate app; default "manager"). */
+  actor?: string;
+}
+/** Advance the approval workflow ONE legal step (in_progress → ready_for_review → approved). */
+export const advanceCommissionCycle = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as AdvanceCycleInput)
+  .handler(async ({ data }) => {
+    if (data.to === "submitted") {
+      throw new Error("Use the explicit submit action — submission is never a routine status advance.");
+    }
+    return transitionCommissionCycle(await getStore(), {
+      cycleId: String(data.cycleId),
+      to: data.to,
+      actor: (data.actor ?? "manager").trim() || "manager",
+      note: data.note,
+    });
+  });
+
+/** SUBMIT an approved cycle — freezes every stored number forever (spec §19). */
+export const submitCommissionCycleFn = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { cycleId: string; actor?: string })
+  .handler(async ({ data }) => {
+    return submitCommissionCycle(await getStore(), {
+      cycleId: String(data.cycleId),
+      actor: (data.actor ?? "manager").trim() || "manager",
+    });
+  });
+
+/** Pull completed unassigned weeks INTO a live cycle (RULING 4 pre-approval, audited). */
+export const assignCommissionWeeksFn = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { cycleId: string; weekStarts: string[]; actor?: string; note?: string })
+  .handler(async ({ data }) => {
+    return assignCommissionWeeks(await getStore(), {
+      cycleId: String(data.cycleId),
+      weekStarts: (data.weekStarts ?? []).map(String),
+      actor: (data.actor ?? "manager").trim() || "manager",
+      note: data.note,
+    });
+  });
+
+/** Pull weeks OUT of a live cycle (§S: current cycle → unassigned, audited). */
+export const unassignCommissionWeeksFn = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { cycleId: string; weekStarts: string[]; actor?: string; note?: string })
+  .handler(async ({ data }) => {
+    return unassignCommissionWeeks(await getStore(), {
+      cycleId: String(data.cycleId),
+      weekStarts: (data.weekStarts ?? []).map(String),
+      actor: (data.actor ?? "manager").trim() || "manager",
+      note: data.note,
+    });
+  });
+
+export interface CommissionCorrectionInput {
+  cycleId: string | null;
+  userId: string;
+  weekStart: string;
+  kind: CorrectionKind;
+  deltaDollars?: number;
+  appointmentId?: string;
+  holeCount?: number;
+  /** REQUIRED — rejected without it (lifecycle + store both enforce). */
+  reason: string;
+  actor?: string;
+}
+/** §O/§20: apply ONE reason-required, fully audited correction to a stored weekly record. */
+export const applyCommissionCorrectionFn = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as CommissionCorrectionInput)
+  .handler(async ({ data }) => {
+    return applyCommissionCorrection(await getStore(), {
+      cycleId: data.cycleId == null ? null : String(data.cycleId),
+      userId: String(data.userId),
+      weekStart: String(data.weekStart),
+      kind: data.kind,
+      deltaDollars: data.deltaDollars == null ? undefined : Number(data.deltaDollars),
+      appointmentId: data.appointmentId == null ? undefined : String(data.appointmentId),
+      holeCount: data.holeCount == null ? undefined : Number(data.holeCount),
+      reason: String(data.reason ?? ""),
+      actor: (data.actor ?? "manager").trim() || "manager",
+    });
+  });

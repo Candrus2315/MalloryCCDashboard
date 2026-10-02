@@ -50,6 +50,7 @@ import type {
   WeeklyReportNotesRow,
   CommissionAdjustmentInput,
   CommissionAdjustmentRow,
+  CommissionUpsertResult,
   CommissionAssignment,
   CommissionCycleRow,
   CommissionProfileInput,
@@ -1255,9 +1256,53 @@ export class MemoryStore implements Store {
     this.users.set(repId, { ...u, ...profile });
   }
 
-  async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<void> {
+  /**
+   * Phase C SUBMITTED-CYCLE LOCK (spec §O/§19): a record whose assignment is
+   * 'previously_submitted' — or whose cycle row is status 'submitted' — can
+   * NEVER be rewritten. The attempted rewrite no-ops and lands in the audit
+   * trail (who=system guard / what=old→new / when) so the attempt is visible
+   * forever. Unlocked records keep the Phase-A idempotent replace behavior.
+   */
+  async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<CommissionUpsertResult> {
+    const key = `${row.user_id}:${row.week_start}`;
+    const existing = this.commissionWeekly.get(key);
+    if (existing) {
+      const cycle = existing.cycle_id ? this.commissionCycles.get(existing.cycle_id) : undefined;
+      const locked = existing.assignment === "previously_submitted" || cycle?.status === "submitted";
+      if (locked) {
+        await this.insertCommissionAdjustment({
+          cycle_id: existing.cycle_id,
+          user_id: row.user_id,
+          target: "weekly_record",
+          target_id: key,
+          field: "rewrite_blocked",
+          old_value: `bookings ${existing.qualifying_bookings} · total ${existing.total.toFixed(2)} · calc v${existing.calc_version}`,
+          new_value: `attempted bookings ${row.qualifying_bookings} · total ${row.total.toFixed(2)} · calc v${row.calc_version}`,
+          reason: `Blocked by submitted-cycle lock: record belongs to ${existing.assignment === "previously_submitted" ? "a previously submitted" : `submitted cycle ${existing.cycle_id}`} — stored payroll is frozen (spec §19).`,
+          changed_by: "system:write-guard",
+        });
+        return { written: false, blocked: true };
+      }
+    }
     // Idempotent by (user_id, week_start) — mirrors the pg UNIQUE key.
-    this.commissionWeekly.set(`${row.user_id}:${row.week_start}`, { ...row, counted_bookings: [...(row.counted_bookings ?? [])], hole_audit: [...(row.hole_audit ?? [])] });
+    this.commissionWeekly.set(key, { ...row, counted_bookings: [...(row.counted_bookings ?? [])], hole_audit: [...(row.hole_audit ?? [])] });
+    return { written: true, blocked: false };
+  }
+  /** §O/§20: move ONLY the audited money fields (manual_adjustment, total) by a dollars delta. */
+  async applyCommissionWeeklyCorrection(userId: string, weekStart: string, deltaDollars: number): Promise<void> {
+    const key = `${userId}:${weekStart}`;
+    const existing = this.commissionWeekly.get(key);
+    if (!existing) throw new Error(`No stored weekly record for ${key} — corrections target stored records only.`);
+    const cents = Math.round((existing.manual_adjustment + deltaDollars) * 100);
+    const totalCents = Math.round((existing.total + deltaDollars) * 100);
+    this.commissionWeekly.set(key, { ...existing, manual_adjustment: cents / 100, total: totalCents / 100 });
+  }
+  /** §S membership update: cycle_id/assignment only — money columns untouched. */
+  async setCommissionRecordAssignment(userId: string, weekStart: string, patch: { cycleId: string | null; assignment: CommissionAssignment }): Promise<void> {
+    const key = `${userId}:${weekStart}`;
+    const existing = this.commissionWeekly.get(key);
+    if (!existing) throw new Error(`No stored weekly record for ${key} — membership updates target stored records only.`);
+    this.commissionWeekly.set(key, { ...existing, cycle_id: patch.cycleId, assignment: patch.assignment });
   }
 
   async getCommissionWeeklyRecords(filter?: { userId?: string; weekStart?: string; cycleId?: string; assignment?: CommissionAssignment }): Promise<CommissionWeeklyRow[]> {

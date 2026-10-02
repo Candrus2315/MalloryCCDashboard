@@ -149,10 +149,12 @@ export async function commissionCloseTick(
           });
           const calcDateIso = now().toISOString();
           for (const emp of weekEmployees) {
-            await store.upsertCommissionWeeklyRecord(
+            // Phase C: the store guard no-ops (and audits) any rewrite of a
+            // record locked by a submitted cycle — only real writes count.
+            const res = await store.upsertCommissionWeeklyRecord(
               buildWeeklyRecord({ computation, employee: emp, calcDateIso }),
             );
-            result.recordsWritten += 1;
+            if (res.written) result.recordsWritten += 1;
           }
           result.weeksClosed.push(cursor);
         }

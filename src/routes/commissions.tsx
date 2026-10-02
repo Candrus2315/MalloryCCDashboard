@@ -1,12 +1,23 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { getCommissionData } from "~/server/queries";
+import {
+  advanceCommissionCycle,
+  applyCommissionCorrectionFn,
+  assignCommissionWeeksFn,
+  getCommissionData,
+  submitCommissionCycleFn,
+  unassignCommissionWeeksFn,
+} from "~/server/queries";
+import type { CommissionCycleStatus } from "~/server/commission/lifecycle";
+import type { CommissionAdjustmentRow, CommissionCycleRow, CommissionWeeklyRow } from "~/server/store/types";
 import { WarningList } from "~/components/warnings";
 import { InfoTip } from "~/components/InfoTip";
 import { CommissionsShell, CommissionChip } from "~/components/commission-shell";
 import { CommissionWeeklyDrawer } from "~/components/commission-drawer";
 import { EmptyState } from "~/components/performance-shell";
 import {
+  assignmentChip,
+  buildPayrollEmail,
   compositionWeekCards,
   cycleChip,
   cycleContextLine,
@@ -17,9 +28,9 @@ import {
   rollupStoredCycle,
   shortRange,
 } from "~/components/commission-views";
+import { CopyButton } from "~/components/CopyButton";
 import { formatInt, formatMoney } from "~/server/metrics/report-text";
 import { addDays, weekdayName } from "~/server/date-logic";
-import type { CommissionWeeklyRow } from "~/server/store/types";
 
 export const Route = createFileRoute("/commissions")({
   loader: () => getCommissionData(),
@@ -482,35 +493,22 @@ function CommissionsPage() {
           </section>
         )}
 
-        {/* 6 — PAYROLL SUBMISSION ZONE (Phase C placeholder — NO approval buttons) */}
+        {/* 6 — PAYROLL SUBMISSION ZONE (Phase C): approval workflow, Copy Payroll
+            Email, week membership, reason-required corrections — all audited. */}
         {data.cycle && (
-          <section aria-label="Payroll submission">
-            <Panel className="p-5 sm:p-6">
-              <div className="flex flex-wrap items-center gap-2">
-                <Eyebrow>Payroll Submission</Eyebrow>
-                <CommissionChip view={cycleStatus} />
-              </div>
-              <p className="mt-2 text-[13px] text-(--text-body)">
-                {data.cycle.submitted_date ? (
-                  <>
-                    Submitted {data.cycle.submitted_date}
-                    {data.cycle.submitted_by ? ` by ${data.cycle.submitted_by}` : ""}.
-                  </>
-                ) : (
-                  <>Not submitted yet — submissions lock the cycle's final counts and payroll date.</>
-                )}
-              </p>
-              <p className="mt-1.5 text-[13px] text-(--text-caption)">
-                Approval actions (Ready for Review → Approved → Submit) and Copy Payroll Email arrive with Phase C.
-              </p>
-            </Panel>
-          </section>
+          <PayrollZone
+            cycle={data.cycle}
+            cycleBound={data.records.filter((r) => r.cycle_id === data.cycle!.id)}
+            weeks={weeks}
+            ridingWeekStarts={ridingWeekStarts}
+            adjustments={data.adjustments}
+          />
         )}
 
         {/* 7 — AUDIT FOOTER */}
         <p className="text-[13px] text-(--text-caption)">
           Weekly records are frozen at the Sunday cutoff · {calcVersionsLabel} · corrections are reason-required and
-          audited (Phase C).
+          audited · submitted cycles lock forever (stored payroll never rewritten).
         </p>
       </div>
 
@@ -526,3 +524,494 @@ function CommissionsPage() {
   );
 }
 
+
+
+/* ---------------------------------------------------------------------------
+   PHASE C — PAYROLL SUBMISSION ZONE
+   §N approval workflow (In Progress → Ready for Review → Approved →
+   Submitted; forward-only, manager-only, every step audited), §14/§16 Copy
+   Payroll Email (stored numbers only, one block), §S week membership
+   (assign/unassign with no-double-count guards), §O/§20 reason-required
+   corrections, and the full cycle audit trail. No auto-submission exists.
+--------------------------------------------------------------------------- */
+
+/** Small solid action button (CopyButton's primary look, non-copy actions). */
+function ActionButton({
+  label, onClick, busy, tone = "primary",
+}: {
+  label: string;
+  onClick: () => void;
+  busy: boolean;
+  tone?: "primary" | "danger";
+}) {
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onClick}
+      className={
+        "rounded-lg px-4 py-2 text-[13px] font-medium transition-colors disabled:opacity-50 " +
+        (tone === "danger"
+          ? "border border-(--chip-risk-fg)/30 text-(--chip-risk-fg) hover:bg-(--chip-risk-bg)"
+          : "bg-(--accent-solid) text-(--accent-solid-fg) hover:bg-(--accent-hover)")
+      }
+    >
+      {label}
+    </button>
+  );
+}
+
+/** §N workflow stepper — four states, the reached/current one lit. */
+const WORKFLOW_STEPS: Array<{ status: CommissionCycleStatus; label: string }> = [
+  { status: "in_progress", label: "In Progress" },
+  { status: "ready_for_review", label: "Ready for Review" },
+  { status: "approved", label: "Approved" },
+  { status: "submitted", label: "Submitted" },
+];
+
+const STEP_ORDER: Record<CommissionCycleStatus, number> = {
+  in_progress: 0,
+  ready_for_review: 1,
+  approved: 2,
+  submitted: 3,
+};
+
+function PayrollZone({
+  cycle,
+  cycleBound,
+  weeks,
+  ridingWeekStarts,
+  adjustments,
+}: {
+  cycle: CommissionCycleRow;
+  cycleBound: CommissionWeeklyRow[];
+  weeks: string[];
+  ridingWeekStarts: string[];
+  adjustments: CommissionAdjustmentRow[];
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const act = async (fn: () => Promise<unknown>, ok: string) => {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      await fn();
+      await router.invalidate();
+      setMessage(ok);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const status = cycle.status;
+  const current = STEP_ORDER[status] ?? 0;
+  const emailText = buildPayrollEmail(cycleBound);
+  const teamBookings = cycleBound.reduce((s, r) => s + r.qualifying_bookings, 0);
+  const teamBonus = Math.round(cycleBound.reduce((s, r) => s + r.total, 0) * 100) / 100;
+  const advance = (to: CommissionCycleStatus, ok: string) =>
+    act(() => advanceCommissionCycle({ data: { cycleId: cycle.id, to } }), ok);
+
+  return (
+    <section aria-label="Payroll submission">
+      <Panel className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <Eyebrow>Payroll Submission</Eyebrow>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {WORKFLOW_STEPS.map((step, i) => {
+              const reached = i <= current;
+              return (
+                <span
+                  key={step.status}
+                  className={
+                    "chip " + (i === current ? "chip-positive" : reached ? "chip-neutral" : "chip-neutral opacity-50")
+                  }
+                >
+                  <span
+                    className={
+                      "h-1.5 w-1.5 rounded-full " +
+                      (i === current ? "bg-(--dot-positive)" : reached ? "bg-(--dot-muted)" : "bg-(--dot-muted) opacity-40")
+                    }
+                    aria-hidden="true"
+                  />
+                  {step.label}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+
+        {error && (
+          <p role="alert" className="mt-3 text-[13px] font-medium text-(--chip-risk-fg)">
+            {error}
+          </p>
+        )}
+        {message && !error && (
+          <p role="status" className="mt-3 text-[13px] font-medium text-(--chip-positive-fg)">
+            {message}
+          </p>
+        )}
+
+        <div className="mt-4 space-y-4">
+          {status === "in_progress" && (
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+              <p className="text-[13px] text-(--text-body)">
+                The cycle is being assembled. When its numbers look right, mark it ready for review.
+              </p>
+              <ActionButton
+                busy={busy}
+                label="Mark Ready for Review"
+                onClick={() => advance("ready_for_review", "Cycle marked Ready for Review.")}
+              />
+            </div>
+          )}
+          {status === "ready_for_review" && (
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+              <p className="text-[13px] text-(--text-body)">
+                Under review — verify the grid and the validation screen before approving.
+              </p>
+              <ActionButton
+                busy={busy}
+                label="Approve cycle"
+                onClick={() => advance("approved", "Cycle approved — Copy Payroll Email is available.")}
+              />
+            </div>
+          )}
+          {(status === "approved" || status === "submitted") && (
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+              <div>
+                <p className="text-[13px] font-medium text-(--text-body)">
+                  Payroll email — all commission employees in one block (stored numbers only)
+                </p>
+                <p className="kpi-sub mt-1">
+                  {cycleBound.length} stored records · {teamBookings} bookings · {formatMoney(teamBonus)} total bonus
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <CopyButton label="Copy Payroll Email" text={emailText} />
+                {status === "approved" && (
+                  <ActionButton
+                    busy={busy}
+                    tone="danger"
+                    label="Submit cycle — locks forever"
+                    onClick={() =>
+                      act(async () => {
+                        await submitCommissionCycleFn({ data: { cycleId: cycle.id } });
+                      }, "Cycle submitted — all records locked (assignment: previously submitted).")
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          )}
+          {status === "submitted" && (
+            <p className="text-[13px] text-(--text-caption)">
+              Submitted {cycle.submitted_date}
+              {cycle.submitted_by ? ` by ${cycle.submitted_by}` : ""} — this cycle is LOCKED: no tier/rate/setting
+              change can ever rewrite its stored records or payroll totals (spec §19). Corrections remain possible and
+              are audited below.
+            </p>
+          )}
+        </div>
+
+        {status !== "submitted" && (
+          <details className="mt-5 rounded-lg border border-(--card-border) p-4">
+            <summary className="cursor-pointer select-none text-[13px] font-medium text-(--text-body)">
+              Week membership — unassigned / current / submitted (no double counting)
+            </summary>
+            <div className="mt-3 space-y-2">
+              {weeks.map((w) => {
+                const mine = cycleBound.filter((r) => r.week_start === w);
+                const chip = assignmentChip(mine[0]?.assignment ?? null);
+                return (
+                  <div key={w} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                    <span className="text-[13px] tabular-nums text-(--text-body)">
+                      {shortRange(w, addDays(w, 6))}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <CommissionChip view={chip} />
+                      <ActionButton
+                        busy={busy}
+                        tone="danger"
+                        label="Release"
+                        onClick={() =>
+                          act(async () => {
+                            await unassignCommissionWeeksFn({ data: { cycleId: cycle.id, weekStarts: [w] } });
+                          }, `Week ${w} released to Unassigned.`)
+                        }
+                      />
+                    </span>
+                  </div>
+                );
+              })}
+              {ridingWeekStarts.map((w) => (
+                <div key={w} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                  <span className="text-[13px] tabular-nums text-(--text-muted)">
+                    {shortRange(w, addDays(w, 6))} · unassigned (rides the next cycle)
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <ActionButton
+                      busy={busy}
+                      label="Assign to this cycle"
+                      onClick={() =>
+                        act(async () => {
+                          await assignCommissionWeeksFn({ data: { cycleId: cycle.id, weekStarts: [w] } });
+                        }, `Week ${w} assigned to this cycle.`)
+                      }
+                    />
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        <CorrectionForm cycleId={cycle.id} cycleBound={cycleBound} weeks={weeks} busy={busy} setBusy={setBusy} onError={setError} onDone={(m) => { setMessage(m); void router.invalidate(); }} />
+
+        <AuditTrail adjustments={adjustments} />
+      </Panel>
+    </section>
+  );
+}
+
+/** §O/§20: the ONE way stored money moves after approval — reason required, audited. */
+function CorrectionForm({
+  cycleId,
+  cycleBound,
+  weeks,
+  busy,
+  setBusy,
+  onError,
+  onDone,
+}: {
+  cycleId: string;
+  cycleBound: CommissionWeeklyRow[];
+  weeks: string[];
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  onError: (m: string | null) => void;
+  onDone: (m: string) => void;
+}) {
+  const employees = [...new Map(cycleBound.map((r) => [r.user_id, { userId: r.user_id, name: r.rep_name }])).values()];
+  const [userId, setUserId] = useState<string>("");
+  const [weekStart, setWeekStart] = useState<string>("");
+  const [kind, setKind] = useState<"manual_adjustment" | "exclude_booking" | "restore_booking" | "hole_bonus">("manual_adjustment");
+  const [delta, setDelta] = useState<string>("");
+  const [appointmentId, setAppointmentId] = useState<string>("");
+  const [holeCount, setHoleCount] = useState<string>("1");
+  const [reason, setReason] = useState<string>("");
+  const employeeWeeks = [...new Set(cycleBound.filter((r) => !userId || r.user_id === userId).map((r) => r.week_start))]
+    .filter((w) => weeks.includes(w) || weeks.length === 0)
+    .sort();
+  const record = cycleBound.find((r) => r.user_id === userId && r.week_start === weekStart) ?? null;
+
+  const submit = async () => {
+    onError(null);
+    if (!userId || !weekStart) {
+      onError("Pick the employee and week to correct.");
+      return;
+    }
+    if (!reason.trim()) {
+      onError("A reason is REQUIRED for every correction (who/what/old/new/reason/when).");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await applyCommissionCorrectionFn({
+        data: {
+          cycleId,
+          userId,
+          weekStart,
+          kind,
+          deltaDollars: kind === "manual_adjustment" ? Number(delta) : undefined,
+          appointmentId: kind === "exclude_booking" || kind === "restore_booking" ? appointmentId : undefined,
+          holeCount: kind === "hole_bonus" ? Number(holeCount) || 1 : undefined,
+          reason: reason.trim(),
+        },
+      });
+      setReason("");
+      setDelta("");
+      onDone(`Correction applied: ${res.what} (${res.deltaDollars >= 0 ? "+" : ""}$${res.deltaDollars.toFixed(2)}) — audited.`);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <details className="mt-4 rounded-lg border border-(--card-border) p-4">
+      <summary className="cursor-pointer select-none text-[13px] font-medium text-(--text-body)">
+        Corrections — add adjustment · exclude/restore booking · missing hole bonus (reason REQUIRED, audited)
+      </summary>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="text-[13px] text-(--text-body)">
+          Employee
+          <select
+            value={userId}
+            onChange={(e) => {
+              setUserId(e.target.value);
+              setWeekStart("");
+              setAppointmentId("");
+            }}
+            className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--surface-3) px-3 py-2 text-[13px] text-(--text-primary)"
+          >
+            <option value="">— pick —</option>
+            {employees.map((e) => (
+              <option key={e.userId} value={e.userId}>
+                {e.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-[13px] text-(--text-body)">
+          Week
+          <select
+            value={weekStart}
+            onChange={(e) => {
+              setWeekStart(e.target.value);
+              setAppointmentId("");
+            }}
+            className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--surface-3) px-3 py-2 text-[13px] text-(--text-primary)"
+          >
+            <option value="">— pick —</option>
+            {employeeWeeks.map((w) => (
+              <option key={w} value={w}>
+                {shortRange(w, addDays(w, 6))}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-[13px] text-(--text-body)">
+          Correction
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value as typeof kind)}
+            className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--surface-3) px-3 py-2 text-[13px] text-(--text-primary)"
+          >
+            <option value="manual_adjustment">Manual adjustment (+/− dollars)</option>
+            <option value="exclude_booking">Exclude a counted booking (− its tier value)</option>
+            <option value="restore_booking">Restore a previously excluded booking</option>
+            <option value="hole_bonus">Add missing filled-hole bonus ($10 each)</option>
+          </select>
+        </label>
+        {kind === "manual_adjustment" && (
+          <label className="text-[13px] text-(--text-body)">
+            Dollars (use − for subtract)
+            <input
+              type="number"
+              step="0.01"
+              value={delta}
+              onChange={(e) => setDelta(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--surface-3) px-3 py-2 text-[13px] tabular-nums text-(--text-primary)"
+              placeholder="e.g. -25 or 130"
+            />
+          </label>
+        )}
+        {kind === "hole_bonus" && (
+          <label className="text-[13px] text-(--text-body)">
+            Filled holes to add ($10 each)
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={holeCount}
+              onChange={(e) => setHoleCount(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--surface-3) px-3 py-2 text-[13px] tabular-nums text-(--text-primary)"
+            />
+          </label>
+        )}
+        {(kind === "exclude_booking" || kind === "restore_booking") && (
+          <label className="text-[13px] text-(--text-body)">
+            {kind === "exclude_booking" ? "Counted booking to exclude" : "Previously excluded booking to restore"}
+            <select
+              value={appointmentId}
+              onChange={(e) => setAppointmentId(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--surface-3) px-3 py-2 text-[13px] text-(--text-primary)"
+            >
+              <option value="">— pick —</option>
+              {(record?.counted_bookings ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  #{c.acuity_appointment_id ?? c.id} {c.client_name ?? "(client unavailable)"} · win {c.win_date}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="text-[13px] text-(--text-body) sm:col-span-2">
+          Reason (REQUIRED — recorded with who/what/old/new/when)
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--surface-3) px-3 py-2 text-[13px] text-(--text-primary)"
+            placeholder="e.g. Deposit refunded after submission — excluding booking #4821 (owner directive 10/3)"
+          />
+        </label>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-[12px] text-(--text-caption)">
+          The auto-calculated fields (base, pool, holes, counted bookings) never change — corrections land as audited
+          manual adjustments.
+        </p>
+        <ActionButton busy={busy} label="Apply correction" onClick={submit} />
+      </div>
+    </details>
+  );
+}
+
+/** The cycle's full audit trail (state transitions, submissions, corrections, blocked rewrites). */
+function AuditTrail({ adjustments }: { adjustments: CommissionAdjustmentRow[] }) {
+  if (adjustments.length === 0) {
+    return (
+      <details className="mt-4 rounded-lg border border-(--card-border) p-4">
+        <summary className="cursor-pointer select-none text-[13px] font-medium text-(--text-body)">
+          Audit trail
+        </summary>
+        <p className="mt-3 text-[13px] text-(--text-caption)">
+          No audit rows yet for this cycle — transitions, submissions and corrections will appear here.
+        </p>
+      </details>
+    );
+  }
+  return (
+    <details className="mt-4 rounded-lg border border-(--card-border) p-4">
+      <summary className="cursor-pointer select-none text-[13px] font-medium text-(--text-body)">
+        Audit trail ({adjustments.length} {adjustments.length === 1 ? "entry" : "entries"})
+      </summary>
+      <div className="mt-3 overflow-x-auto">
+        <table className="data-table min-w-[720px]">
+          <thead>
+            <tr>
+              <th scope="col" className="text-left">When</th>
+              <th scope="col" className="text-left">Who</th>
+              <th scope="col" className="text-left">What</th>
+              <th scope="col" className="text-left">Old → New</th>
+              <th scope="col" className="text-left">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {adjustments.map((a) => (
+              <tr key={a.id}>
+                <td className="text-left text-(--text-caption) tabular-nums">
+                  {a.changed_at.slice(0, 16).replace("T", " ")}
+                </td>
+                <td className="text-left">{a.changed_by}</td>
+                <td className="text-left">
+                  <span className="chip chip-neutral">{a.field}</span>
+                </td>
+                <td className="text-left text-(--text-caption) tabular-nums">
+                  {a.old_value ?? "—"} → {a.new_value ?? "—"}
+                </td>
+                <td className="text-left text-(--text-body)">{a.reason}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
