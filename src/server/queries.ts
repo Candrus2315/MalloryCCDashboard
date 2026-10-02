@@ -41,7 +41,7 @@ import {
 } from "./metrics/compute";
 import { getStore } from "./store";
 import type { Store } from "./store/types";
-import { availabilityPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
+import { availabilityPageData, commissionPageData, commissionValidationPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
 import { WEEKLY_CC_SECTIONS, addMonthsKey, monthKeyLabel, monthKeyOf } from "./metrics/weekly";
@@ -1102,3 +1102,8 @@ export const getTeamData = createServerFn()
 export const getAvailabilityData = createServerFn().handler(async () => availabilityPageData());
 /** WEEKLY REPORT page — last completed week + MTD (page-data.ts weeklyPageData, PageDeps test seam). */
 export const getWeeklyData = createServerFn().handler(async () => weeklyPageData());
+
+/** COMMISSION CENTER page — stored cycles + weekly records + §3.5 estimate (page-data.ts, PageDeps test seam). */
+export const getCommissionData = createServerFn().handler(async () => commissionPageData());
+/** §26 VALIDATION page — fresh recompute vs stored records (READ-ONLY, page-data.ts). */
+export const getCommissionValidationData = createServerFn().handler(async () => commissionValidationPageData());

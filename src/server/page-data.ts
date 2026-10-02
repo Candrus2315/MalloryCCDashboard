@@ -1331,3 +1331,219 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     warnings,
   };
 }
+
+// ---------- COMMISSION CENTER + §26 VALIDATION (Phase B — presentation-only loaders) ----------
+//
+// These builders read STORED commission rows (Phase A schema) and run the pure
+// engine for the §3.5 estimated band and the §26 fresh recompute — NO new
+// calculation logic, no manual counts (spec §Q). The createServerFn wrappers
+// live in queries.ts; tests inject a MemoryStore through the PageDeps seam.
+
+import {
+  commissionEmployeeOf,
+  computeWeeklyCommissions,
+  tierHeldForWeek,
+  type WeeklyComputation,
+} from "./commission/derive";
+import type { CommissionEmployeeInput } from "./commission/engine";
+import { BACKFILL_CYCLE_ID, computeValidationWeeks, VALIDATION_WEEK_STARTS } from "./commission/backfill";
+import { estimatedWeekView, reconcileStoredVsComputed, rollupStoredCycle, unassignedRidingNextCycle, type EstimatedWeekView, type RosterEntry, type StoredCycleRollup, type StoredVsComputed } from "../components/commission-views";
+import type { CommissionCycleRow, CommissionWeeklyRow } from "./store/types";
+
+/** §3.5 band payload: the in-progress week's pure-engine estimate (or null on loader error). */
+export interface CommissionEstimatedWeek {
+  weekStart: string;
+  /** null = the in-progress computation is unavailable — the band renders "—" honestly. */
+  view: EstimatedWeekView | null;
+  error: string | null;
+}
+
+export interface CommissionPageData {
+  meta: PageMeta;
+  today: string;
+  warnings: string[];
+  /** The selected cycle (latest end_date; Phase B stores exactly one). */
+  cycle: CommissionCycleRow | null;
+  cycles: CommissionCycleRow[];
+  /** The cycle's effective records: cycle-bound rows + unassigned rows the RULING 4 default assembly folds in. */
+  records: CommissionWeeklyRow[];
+  /** Unassigned boundary weeks that ride the NEXT cycle (§3.4 assembly line). */
+  unassignedRiding: CommissionWeeklyRow[];
+  roster: RosterEntry[];
+  estimated: CommissionEstimatedWeek | null;
+}
+
+/**
+ * The Commission Center payload. Cycle assembly on the READ side follows
+ * RULING 4's default: cycle-bound records, plus unassigned records whose week
+ * lies inside the cycle AND whose Sunday close ended ≥7 days before the
+ * submission Monday — a read filter over stored rows, never a recomputation.
+ */
+export async function commissionPageData(deps?: PageDeps): Promise<CommissionPageData> {
+  const today = deps?.today ?? etToday();
+  const meta: PageMeta = deps?.store
+    ? { mode: "memory", dbReason: null, today, demoSeeded: false }
+    : await loadPageMeta();
+  const store = deps?.store ?? (await getStore());
+
+  const cycles = (await store.getCommissionCycles()).slice().sort(
+    (a, b) => (a.end_date < b.end_date ? -1 : a.end_date > b.end_date ? 1 : 0),
+  );
+  const cycle = cycles.length > 0 ? cycles[cycles.length - 1] : null;
+
+  const cycleBound = cycle ? await store.getCommissionWeeklyRecords({ cycleId: cycle.id }) : [];
+  const unassigned = await store.getCommissionWeeklyRecords({ assignment: "unassigned" });
+  // RULING 4 default assembly (read-side filter, no math): unassigned weeks
+  // inside the cycle range whose Sunday close ended ≥7 days before the
+  // submission Monday belong to this cycle.
+  const folded: CommissionWeeklyRow[] = [];
+  if (cycle) {
+    for (const r of unassigned) {
+      if (
+        r.week_start >= cycle.start_date &&
+        r.week_start <= cycle.end_date &&
+        addDays(r.week_end, 7) <= cycle.submission_date &&
+        !cycleBound.some((c) => c.user_id === r.user_id && c.week_start === r.week_start)
+      ) {
+        folded.push(r);
+      }
+    }
+  }
+  const records = [...cycleBound, ...folded];
+  const unassignedRiding = unassignedRidingNextCycle(
+    unassigned.filter((r) => !folded.includes(r)),
+    cycle,
+  );
+
+  const users = await store.getUsers();
+  const roster: RosterEntry[] = users.map((u) => ({
+    userId: u.id,
+    name: u.name,
+    employmentType: u.employment_type ?? null,
+    tier: u.commission_tier ?? null,
+    tierEffectiveDate: u.tier_effective_date ?? null,
+    commissionEligible: u.commission_eligible === true,
+  }));
+
+  // §3.5 estimated band — the SAME pure engine on the in-progress week
+  // (identical inputs to the close tick; no second engine, no client math).
+  let estimated: CommissionEstimatedWeek | null = null;
+  try {
+    const ws = weekStart(today);
+    const weekEnd = addDays(ws, 6);
+    const [wins, sessions, attributions] = await Promise.all([
+      store.getAppointmentsByWinBusinessDateBetween(ws, weekEnd),
+      store.getAppointmentsOverlapping(etDayStartUtc(ws), etDayEndUtc(weekEnd)),
+      store.getAttributions(),
+    ]);
+    const employees = users
+      .map(commissionEmployeeOf)
+      .filter((e): e is CommissionEmployeeInput => e !== null)
+      .map((e) => tierHeldForWeek(e, ws, weekEnd))
+      .filter((e): e is CommissionEmployeeInput => e !== null);
+    const computation = computeWeeklyCommissions({
+      weekStart: ws,
+      wins,
+      attributions,
+      sessionAppts: sessions,
+      employees,
+    });
+    estimated = { weekStart: ws, view: estimatedWeekView(computation), error: null };
+  } catch (e) {
+    estimated = {
+      weekStart: weekStart(today),
+      view: null,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  const warnings: string[] = [...syncStaleWarnings(await store.getConnections())];
+  if (!cycle) {
+    warnings.push(
+      "No commission cycle is stored yet — the historical backfill writes the first cycle (bun scripts/commission-backfill.ts --write after the dry-run is reviewed).",
+    );
+  } else if (records.length === 0) {
+    warnings.push(
+      `This cycle has no stored weekly records yet — numbers appear after the backfill write or the Sunday cutoff close (records are never typed manually).`,
+    );
+  }
+
+  return { meta, today, warnings, cycle, cycles, records, unassignedRiding, roster, estimated };
+}
+
+// ---------- §26 VALIDATION payload ----------
+
+export interface CommissionValidationWeek {
+  weekStart: string;
+  weekEnd: string;
+  /** Fresh READ-ONLY recompute by the same pure path as the live close job. */
+  computed: WeeklyComputation;
+  reconcile: StoredVsComputed;
+  matches: boolean;
+  /** Stored records for this week (empty in dry-run mode). */
+  stored: CommissionWeeklyRow[];
+}
+
+export interface CommissionValidationPageData {
+  meta: PageMeta;
+  today: string;
+  warnings: string[];
+  cycle: CommissionCycleRow | null;
+  /** The four validation weeks, oldest first (W1→W4 reading order). */
+  weeks: CommissionValidationWeek[];
+  /** Sum of the STORED records (empty in dry-run mode — honest). */
+  rollup: StoredCycleRollup;
+  storedCount: number;
+  dryRun: boolean;
+}
+
+/**
+ * The §26 acceptance-test payload: fresh recompute (computeValidationWeeks,
+ * READ-ONLY) + whatever is stored for the four validation weeks, reconciled
+ * field-by-field. Divergences are surfaced, never averaged away.
+ */
+export async function commissionValidationPageData(deps?: PageDeps): Promise<CommissionValidationPageData> {
+  const today = deps?.today ?? etToday();
+  const meta: PageMeta = deps?.store
+    ? { mode: "memory", dbReason: null, today, demoSeeded: false }
+    : await loadPageMeta();
+  const store = deps?.store ?? (await getStore());
+
+  const [cycle, computedWeeks, allRecords] = await Promise.all([
+    store.getCommissionCycle(BACKFILL_CYCLE_ID),
+    computeValidationWeeks(store),
+    store.getCommissionWeeklyRecords(),
+  ]);
+  const stored = allRecords.filter((r) => (VALIDATION_WEEK_STARTS as readonly string[]).includes(r.week_start));
+
+  const out: CommissionValidationWeek[] = [];
+  for (const cw of computedWeeks) {
+    const storedForWeek = stored.filter((r) => r.week_start === cw.weekStart);
+    const reconciled = reconcileStoredVsComputed(stored, cw);
+    out.push({
+      weekStart: cw.weekStart,
+      weekEnd: cw.weekEnd,
+      computed: cw,
+      reconcile: reconciled,
+      matches: reconciled.matches,
+      stored: storedForWeek,
+    });
+  }
+  const rollup = rollupStoredCycle(stored, [...VALIDATION_WEEK_STARTS]);
+  const warnings: string[] = [...syncStaleWarnings(await store.getConnections())];
+  if (stored.length === 0) {
+    warnings.push(
+      "No stored records for the validation weeks — the comparison below is against an empty store (dry-run state).",
+    );
+  }
+  return {
+    meta,
+    today,
+    warnings,
+    cycle,
+    weeks: out,
+    rollup,
+    storedCount: stored.length,
+    dryRun: stored.length === 0,
+  };
+}

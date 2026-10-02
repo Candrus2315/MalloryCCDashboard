@@ -63,10 +63,22 @@ export function formatPercent(ratio: number | null | undefined, digits = 2): str
   return `${rounded.toFixed(digits)}%`;
 }
 
-/** Counts render as plain integers (e.g. 80, 700, 0). */
+/**
+ * Counts render as plain integers (e.g. 80, 700, 0).
+ */
 export function formatInt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return EMPTY;
   return String(Math.round(n));
+}
+
+/**
+ * Money as USD with the currency sign and ALWAYS 2 decimals ("$240.00") —
+ * the commission tracker's contract (payroll keeps 2dp, interpretation
+ * note 8). Missing data renders the em dash, never $0.00.
+ */
+export function formatMoney(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return EMPTY;
+  return `$${(Math.round(n * 100) / 100).toFixed(2)}`;
 }
 
 /**

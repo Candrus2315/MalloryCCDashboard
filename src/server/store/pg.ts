@@ -601,6 +601,12 @@ const DDL: string[] = [
     UNIQUE (user_id, week_start)
   )`,
   `CREATE INDEX IF NOT EXISTS commission_weekly_week_idx ON commission_weekly (week_start)`,
+  // MIGRATION (Phase B, 10/2): deployments whose commission_weekly was created
+  // by an earlier Phase A iteration lack the narrowed RULING-3 audit column —
+  // CREATE TABLE IF NOT EXISTS skips existing tables, so reads crash with
+  // "column hole_audit does not exist". Same fill-only ALTER pattern as the
+  // users commission columns above.
+  `ALTER TABLE commission_weekly ADD COLUMN IF NOT EXISTS hole_audit jsonb NOT NULL DEFAULT '[]'::jsonb`,
   // COMMISSION CYCLE (spec §S): stored composition, preserved forever. Text
   // slug id so the historical backfill is deterministic.
   `CREATE TABLE IF NOT EXISTS commission_cycles (

@@ -13,6 +13,9 @@ const NAV = [
   { to: "/availability", label: "Availability" },
   { to: "/daily-report", label: "Daily Report" },
   { to: "/weekly", label: "Weekly" },
+  // COMMISSION CENTER (owner directive 10/1): payroll workspace — the Center +
+  // §26 Validation live in the section's own tab bar on /commissions*.
+  { to: "/commissions", label: "Commissions" },
   // PERFORMANCE MANAGEMENT (owner directive 9/30): manager-only PIP module.
   // The section's six pages (Active/Drafts/Completed/Cancelled/Templates/
   // History) live in the section's own tab bar on /performance*.
