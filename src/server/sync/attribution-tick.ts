@@ -195,7 +195,7 @@ export function toAttributionRows(
 export async function computeAndPersistAttributions(
   store: Store,
   settings: AppSettings,
-  options?: { now?: () => Date; force?: boolean },
+  options?: { now?: () => Date; force?: boolean; since?: string },
 ): Promise<AttributionComputationResult> {
   const today = etDateStrFromInstant((options?.now ?? (() => new Date()))().getTime());
 
@@ -219,9 +219,26 @@ export async function computeAndPersistAttributions(
   // creation ET date or the day before — at most 2 ET days back), so 2 days
   // is the real requirement; the legacy hour-based setting can only widen the
   // margin, never narrow it below 2.
-  const since = etDayStartUtc(addDays(today, -(30 + Math.max(2, Math.ceil(settings.attribution_window_hours / 24)))));
+  //
+  // `since` OVERRIDE (deliberate, caller-driven — e.g. the attr-reverdict
+  // runner widening the cohort to the pre-9/14 weeks so W1/W2 bookings regain
+  // their verdicts): replaces the DEFAULT 30-day appointment cohort start.
+  // The call/harvest look-back widens with it (cohort start − margin days) so
+  // every older appointment's attribution window still has call candidates.
+  // DEFAULT BEHAVIOR IS UNCHANGED when omitted: the same two date expressions
+  // below reduce to the previous constants. The degradation guard on the
+  // store's upsert is untouched and still applies to every write.
+  const marginDays = Math.max(2, Math.ceil(settings.attribution_window_hours / 24));
+  const defaultApptSinceIso = etDayStartUtc(addDays(today, -30));
+  const apptSinceIso = options?.since ?? defaultApptSinceIso;
+  const apptSinceMs = Date.parse(apptSinceIso);
+  if (!Number.isFinite(apptSinceMs)) {
+    throw new Error(`attribution since override: not a parseable instant (${String(options?.since)})`);
+  }
+  const apptSinceDate = etDateStrFromInstant(apptSinceMs);
+  const since = etDayStartUtc(addDays(apptSinceDate, -marginDays));
   const [storedAppts, storedCalls, storedContacts, allUsers, existing, harvestCalls] = await Promise.all([
-    store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(today, -30))),
+    store.getAppointmentsWithClientsSince(apptSinceIso),
     store.getAllCallsSince(since),
     store.getContacts(),
     store.getAllUsers(),

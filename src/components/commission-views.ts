@@ -158,13 +158,20 @@ export interface WeekCellView {
 export function weekCellView(record: CommissionWeeklyRow | null): WeekCellView | null {
   if (!record) return null;
   const holes = record.hole_bonus ?? 0;
+  const fills = formatInt(record.hole_audit?.length ?? 0);
   return {
     bookings: formatInt(record.qualifying_bookings),
     money: formatMoney(record.total),
+    // RULING 5 (owner 10/2): a capped week's cell explains why no hole money
+    // shows even when open-at-start slots were filled (audit rows retained).
     holesLine:
-      holes > 0
-        ? `+${formatMoney(holes)} holes (${formatInt(record.hole_audit?.length ?? 0)})`
-        : null,
+      record.hole_bonus_capped
+        ? fills !== "0"
+          ? `${fills} holes not paid (ruling 10/2)`
+          : null
+        : holes > 0
+          ? `+${formatMoney(holes)} holes (${fills})`
+          : null,
   };
 }
 

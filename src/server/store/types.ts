@@ -937,8 +937,16 @@ export interface CommissionWeeklyRow {
   cycle_id: string | null;
   assignment: CommissionAssignment;
   counted_bookings: CountedBookingSnapshot[];
-  /** RULING 3 per-bonus audit (one row per $10 filled hole). */
+  /** RULING 3 per-bonus audit (one row per $10 filled hole; bonus_cents zeroed when capped). */
   hole_audit: HoleAuditSnapshot[];
+  /**
+   * RULING 5 (owner directive 10/2): true when the week began with more than 8
+   * slots open — hole_bonus is $0 for every rep that week regardless of fills;
+   * hole_audit rows are retained (zeroed) so the drawer can still show what
+   * WAS filled. UI wording: "week had >8 open slots — hole bonus not paid
+   * (owner ruling 10/2)".
+   */
+  hole_bonus_capped: boolean;
 }
 
 /** Commission profile fields the Settings editor sets (store-level upsert). */

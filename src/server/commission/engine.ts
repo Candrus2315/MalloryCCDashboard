@@ -24,7 +24,7 @@
  */
 
 /** The current calculation version stamped on every weekly record. Bump on any rate/definition change. */
-export const COMMISSION_CALC_VERSION = 1;
+export const COMMISSION_CALC_VERSION = 2; // v2 = RULING 5 (owner 10/2): hole bonus capped to weeks with ≤8 open-at-start slots.
 
 /** §G: team bookings needed to unlock the pool. */
 export const POOL_THRESHOLD = 79;
@@ -32,6 +32,16 @@ export const POOL_THRESHOLD = 79;
 export const POOL_RATE_CENTS = 500;
 /** §H: dollars per qualifying filled hole ($10). */
 export const HOLE_BONUS_CENTS = 1000;
+/**
+ * RULING 5 (owner directive 10/2): hole bonuses are paid ONLY in weeks with
+ * AT MOST this many slots still open at week start. A week that began with
+ * more than HOLE_BONUS_MAX_OPEN_SLOTS open slots (a largely-empty week —
+ * e.g. the 9/21 validation week, 24 open at start) pays NO hole bonus to ANY
+ * rep, however many open-at-start slots were subsequently filled. The
+ * slot-level audit rows stay derived (zeroed) so the drawer can still show
+ * what was filled; the money is what the cap kills.
+ */
+export const HOLE_BONUS_MAX_OPEN_SLOTS = 8;
 
 export type EmploymentType = "full_time" | "part_time";
 export type CommissionTierNumber = 1 | 2 | 3 | 4 | 5;
