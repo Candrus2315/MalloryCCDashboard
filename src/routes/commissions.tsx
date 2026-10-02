@@ -31,7 +31,6 @@ import {
 import { CopyButton } from "~/components/CopyButton";
 import { formatInt, formatMoney } from "~/server/metrics/report-text";
 import { addDays, weekdayName } from "~/server/date-logic";
-import type { CommissionWeeklyRow } from "~/server/store/types";
 
 export const Route = createFileRoute("/commissions")({
   loader: () => getCommissionData(),
