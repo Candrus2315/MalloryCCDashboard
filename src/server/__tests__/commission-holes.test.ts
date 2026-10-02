@@ -12,6 +12,7 @@
  *  - ONLY rep-attributed paid-deposit Booking Wins fill a hole (RULING 2)
  */
 import { describe, expect, test } from "bun:test";
+import { addDays } from "../date-logic";
 import type { AppointmentRow, AttributionRow } from "../metrics/compute";
 import {
   computeWeeklyCommissions,
@@ -223,7 +224,7 @@ describe("RULING 1 — qualifying-win gating (rep-attributed paid wins only)", (
 });
 
 describe("computeWeeklyCommissions integration (§5 + §G + §H on the narrow holes)", () => {
-  test("zero-bookings employee still gets a $0 record; holes pay the filling rep only", () => {
+  test("a near-dark week (>8 open at start) ZEROES every hole bonus (RULING 5) but keeps the fills visible", () => {
     const win = appt({ date: "2026-09-09", time: "09:00", created: "2026-09-09" });
     const win2 = appt({ date: "2026-09-10", time: "08:00", created: "2026-09-10" });
     const allison = emp("rep-allison", "Allison", true, 5);
@@ -237,16 +238,20 @@ describe("computeWeeklyCommissions integration (§5 + §G + §H on the narrow ho
     });
     expect(computation.teamQualifyingBookings).toBe(2);
     expect(computation.poolUnlocked).toBe(false); // 2 < 79 → locked
+    expect(computation.openAtStart).toBe(69); // no pre-week occupants → > 8 → RULING 5 cap
+    expect(computation.holeBonusCapped).toBe(true);
     const carmineRow = computation.employees.find((e) => e.userId === "rep-carmine");
     const allisonRow = computation.employees.find((e) => e.userId === "rep-allison");
     expect(carmineRow?.qualifyingBookings).toBe(2);
     expect(carmineRow?.baseCents).toBe(1000); // FT T1 flat: 2 × $5
-    expect(carmineRow?.filledHoles).toBe(2); // two open-at-start slots filled in-week
-    expect(carmineRow?.holeCents).toBe(2000);
-    expect(carmineRow?.totalCents).toBe(3000);
+    expect(carmineRow?.filledHoles).toBe(2); // WHAT was filled stays visible (facts, not money)
+    expect(carmineRow?.holeCents).toBe(0); // RULING 5: >8 open at start → hole money $0 for EVERY rep
+    expect(carmineRow?.totalCents).toBe(1000); // base only — hole and pool contribute nothing
     expect(carmineRow?.poolCents).toBe(0);
     expect(allisonRow).toMatchObject({ qualifyingBookings: 0, totalCents: 0 }); // §5: present at $0
+    // Slot-level audit rows stay DERIVED but ZEROED so the drawer can still show what WAS filled.
     expect(computation.holeAudit.length).toBe(2);
+    for (const h of computation.holeAudit) expect(h.bonus_cents).toBe(0);
     expect(computation.totalSlots).toBe(69);
   });
   test("a win occupying an already-filled slot adds NO hole bonus (RULING 3 narrow)", () => {
@@ -264,6 +269,92 @@ describe("computeWeeklyCommissions integration (§5 + §G + §H on the narrow ho
     expect(computation.employees[0].qualifyingBookings).toBe(1); // counts as a booking
     expect(computation.employees[0].filledHoles).toBe(0); // but fills NO hole
     expect(computation.holeAudit).toEqual([]);
+  });
+});
+
+describe("RULING 5 — hole-bonus cap (owner directive 10/2: ≤8 open at start pays, >8 never does)", () => {
+  /** The week's full derived slot grid (Mon..Sun), day-ordered — 69 entries. */
+  function weekSlots(weekStart: string): { date: string; time: string }[] {
+    const out: { date: string; time: string }[] = [];
+    let d = weekStart;
+    for (let i = 0; i < 7; i++) {
+      for (const t of scheduledSlotTimesForDay(d)) out.push({ date: d, time: t });
+      d = addDays(d, 1);
+    }
+    return out;
+  }
+  /** Pre-week PENDING occupants: they block their slots at week start (conservative rule) and are never wins. */
+  function preWeekOccupants(slots: { date: string; time: string }[]): AppointmentRow[] {
+    return slots.map((s) => appt({ date: s.date, time: s.time, created: "2026-09-01", paid: false }));
+  }
+  test("exactly 8 open at start → hole bonus PAID ($10 + full audit)", () => {
+    const grid = weekSlots(WEEK);
+    expect(grid.length).toBe(69);
+    const occupants = preWeekOccupants(grid.slice(0, 61)); // 69 − 61 = 8 open
+    const freeSlot = grid[61]!; // Sunday 09:00
+    const win = appt({ date: freeSlot.date, time: freeSlot.time, created: freeSlot.date });
+    const computation = computeWeeklyCommissions({
+      weekStart: WEEK,
+      wins: [win],
+      attributions: [attr(win.id, "rep-carmine")],
+      sessionAppts: [...occupants, win],
+      employees: [emp("rep-carmine", "Carmine", true, 1)],
+    });
+    expect(computation.openAtStart).toBe(8); // ≤ 8 → pays
+    expect(computation.holeBonusCapped).toBe(false);
+    const carmineRow = computation.employees[0];
+    expect(carmineRow.filledHoles).toBe(1);
+    expect(carmineRow.holeCents).toBe(1000);
+    expect(carmineRow.totalCents).toBe(1500); // FT T1: 1 × $5 + $10 hole
+    expect(computation.holeAudit.length).toBe(1);
+    expect(computation.holeAudit[0]).toMatchObject({ slot_date: freeSlot.date, slot_time: freeSlot.time, bonus_cents: 1000 });
+  });
+  test("9 open at start → CAPPED: hole bonus $0, audit retained but zeroed", () => {
+    const grid = weekSlots(WEEK);
+    const occupants = preWeekOccupants(grid.slice(0, 60)); // 69 − 60 = 9 open
+    const freeSlot = grid[60]!; // Sunday 08:00
+    const win = appt({ date: freeSlot.date, time: freeSlot.time, created: freeSlot.date });
+    const computation = computeWeeklyCommissions({
+      weekStart: WEEK,
+      wins: [win],
+      attributions: [attr(win.id, "rep-carmine")],
+      sessionAppts: [...occupants, win],
+      employees: [emp("rep-carmine", "Carmine", true, 1)],
+    });
+    expect(computation.openAtStart).toBe(9); // > 8 → the owner's 10/2 ruling
+    expect(computation.holeBonusCapped).toBe(true);
+    const carmineRow = computation.employees[0];
+    expect(carmineRow.filledHoles).toBe(1); // the fill itself stays derived
+    expect(carmineRow.holeCents).toBe(0); // but the money is $0
+    expect(carmineRow.totalCents).toBe(500); // base only (FT T1: 1 × $5)
+    expect(computation.holeAudit.length).toBe(1); // drawer can still show what WAS filled
+    expect(computation.holeAudit[0]).toMatchObject({ slot_date: freeSlot.date, slot_time: freeSlot.time, bonus_cents: 0 });
+  });
+  test(">8 zeroes EVERY rep in the week (multi-rep week), base/pool untouched", () => {
+    const grid = weekSlots(WEEK);
+    const occupants = preWeekOccupants(grid.slice(0, 60)); // 9 open at start
+    const s1 = grid[60]!;
+    const s2 = grid[61]!;
+    const winA = appt({ date: s1.date, time: s1.time, created: s1.date });
+    const winB = appt({ date: s2.date, time: s2.time, created: s2.date });
+    const computation = computeWeeklyCommissions({
+      weekStart: WEEK,
+      wins: [winA, winB],
+      attributions: [attr(winA.id, "rep-carmine"), attr(winB.id, "rep-allison")],
+      sessionAppts: [...occupants, winA, winB],
+      employees: [emp("rep-carmine", "Carmine", true, 1), emp("rep-allison", "Allison", true, 5)],
+    });
+    expect(computation.holeBonusCapped).toBe(true);
+    const carmineRow = computation.employees.find((e) => e.userId === "rep-carmine");
+    const allisonRow = computation.employees.find((e) => e.userId === "rep-allison");
+    expect(carmineRow?.filledHoles).toBe(1);
+    expect(allisonRow?.filledHoles).toBe(1);
+    expect(carmineRow?.holeCents).toBe(0); // EVERY rep zeroed
+    expect(allisonRow?.holeCents).toBe(0);
+    expect(carmineRow?.baseCents).toBe(500); // base unaffected
+    expect(allisonRow?.baseCents).toBe(2000); // FT T5: 1 × $20 unaffected
+    expect(computation.holeAudit.length).toBe(2); // both fills visible at $0
+    for (const h of computation.holeAudit) expect(h.bonus_cents).toBe(0);
   });
 });
 

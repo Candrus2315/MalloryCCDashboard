@@ -596,6 +596,7 @@ const DDL: string[] = [
     assignment text NOT NULL DEFAULT 'unassigned',
     counted_bookings jsonb NOT NULL DEFAULT '[]'::jsonb,
     hole_audit jsonb NOT NULL DEFAULT '[]'::jsonb,
+    hole_bonus_capped boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (user_id, week_start)
@@ -607,6 +608,9 @@ const DDL: string[] = [
   // "column hole_audit does not exist". Same fill-only ALTER pattern as the
   // users commission columns above.
   `ALTER TABLE commission_weekly ADD COLUMN IF NOT EXISTS hole_audit jsonb NOT NULL DEFAULT '[]'::jsonb`,
+  // MIGRATION (RULING 5, 10/2): the owner's hole-bonus cap flag (week began
+  // with >8 open slots → hole_bonus 0 for every rep). Same fill-only ALTER.
+  `ALTER TABLE commission_weekly ADD COLUMN IF NOT EXISTS hole_bonus_capped boolean NOT NULL DEFAULT false`,
   // COMMISSION CYCLE (spec §S): stored composition, preserved forever. Text
   // slug id so the historical backfill is deterministic.
   `CREATE TABLE IF NOT EXISTS commission_cycles (
@@ -2562,12 +2566,12 @@ export class PgStore implements Store {
     await this.sql`
       INSERT INTO commission_weekly (user_id, rep_name, week_start, week_end, employment_type, tier,
         tier_effective_date_used, qualifying_bookings, base_commission, additional_commission, pool_bonus,
-        hole_bonus, manual_adjustment, total, calc_date, calc_version, status, cycle_id, assignment, counted_bookings, hole_audit)
+        hole_bonus, manual_adjustment, total, calc_date, calc_version, status, cycle_id, assignment, counted_bookings, hole_audit, hole_bonus_capped)
       VALUES (${row.user_id}::uuid, ${row.rep_name}, ${row.week_start}::date, ${row.week_end}::date,
         ${row.employment_type}, ${row.tier}, ${row.tier_effective_date_used}, ${row.qualifying_bookings},
         ${row.base_commission}, ${row.additional_commission}, ${row.pool_bonus}, ${row.hole_bonus},
         ${row.manual_adjustment}, ${row.total}, ${row.calc_date}::timestamptz, ${row.calc_version},
-        ${row.status}, ${row.cycle_id}, ${row.assignment}, ${this.sql.json(row.counted_bookings ?? [])}::jsonb, ${this.sql.json(row.hole_audit ?? [])}::jsonb)
+        ${row.status}, ${row.cycle_id}, ${row.assignment}, ${this.sql.json(row.counted_bookings ?? [])}::jsonb, ${this.sql.json(row.hole_audit ?? [])}::jsonb, ${row.hole_bonus_capped})
       ON CONFLICT (user_id, week_start) DO UPDATE SET
         rep_name = EXCLUDED.rep_name, week_end = EXCLUDED.week_end, employment_type = EXCLUDED.employment_type,
         tier = EXCLUDED.tier, tier_effective_date_used = EXCLUDED.tier_effective_date_used,
@@ -2576,7 +2580,8 @@ export class PgStore implements Store {
         hole_bonus = EXCLUDED.hole_bonus, manual_adjustment = EXCLUDED.manual_adjustment,
         total = EXCLUDED.total, calc_date = EXCLUDED.calc_date, calc_version = EXCLUDED.calc_version,
         status = EXCLUDED.status, cycle_id = EXCLUDED.cycle_id, assignment = EXCLUDED.assignment,
-        counted_bookings = EXCLUDED.counted_bookings, hole_audit = EXCLUDED.hole_audit, updated_at = now()
+        counted_bookings = EXCLUDED.counted_bookings, hole_audit = EXCLUDED.hole_audit,
+        hole_bonus_capped = EXCLUDED.hole_bonus_capped, updated_at = now()
     `;
   }
 
@@ -2604,10 +2609,11 @@ export class PgStore implements Store {
       assignment: String(r.assignment) as CommissionWeeklyRow["assignment"],
       counted_bookings: (r.counted_bookings ?? []) as CountedBookingSnapshot[],
       hole_audit: (r.hole_audit ?? []) as HoleAuditSnapshot[],
+      hole_bonus_capped: Boolean(r.hole_bonus_capped),
     };
   }
   private get commissionWeeklyCols() {
-    return this.sql`user_id::text AS user_id, rep_name, week_start::text::date::text AS week_start, week_end::text::date::text AS week_end, employment_type, tier, tier_effective_date_used::text::date::text AS tier_effective_date_used, qualifying_bookings, base_commission, additional_commission, pool_bonus, hole_bonus, manual_adjustment, total, calc_date, calc_version, status, cycle_id, assignment, counted_bookings, hole_audit`;
+    return this.sql`user_id::text AS user_id, rep_name, week_start::text::date::text AS week_start, week_end::text::date::text AS week_end, employment_type, tier, tier_effective_date_used::text::date::text AS tier_effective_date_used, qualifying_bookings, base_commission, additional_commission, pool_bonus, hole_bonus, manual_adjustment, total, calc_date, calc_version, status, cycle_id, assignment, counted_bookings, hole_audit, hole_bonus_capped`;
   }
 
   async getCommissionWeeklyRecords(filter?: { userId?: string; weekStart?: string; cycleId?: string; assignment?: CommissionAssignment }): Promise<CommissionWeeklyRow[]> {

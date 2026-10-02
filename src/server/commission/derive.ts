@@ -35,6 +35,7 @@ import { attributionStateOf, createdBusinessDateOf, filterApptsInWinBucketRange,
 import type { UserRow } from "../store/types";
 import {
   HOLE_BONUS_CENTS,
+  HOLE_BONUS_MAX_OPEN_SLOTS,
   holeBonusCents,
   poolBonusCents,
   rateCommission,
@@ -350,6 +351,14 @@ export interface WeeklyComputation {
   holeDays: DaySlotDetail[];
   totalSlots: number;
   openAtStart: number;
+  /**
+   * RULING 5 (owner directive 10/2): true when this week began with more than
+   * HOLE_BONUS_MAX_OPEN_SLOTS (8) slots open — hole_bonus is $0 for EVERY rep
+   * this week (holeAudit rows retained but bonus_cents zeroed so the drawer
+   * can still show what WAS filled). UI wording: "week had >8 open slots —
+   * hole bonus not paid (owner ruling 10/2)".
+   */
+  holeBonusCapped: boolean;
 }
 
 /**
@@ -367,13 +376,21 @@ export function computeWeeklyCommissions(input: WeeklyComputationInput): WeeklyC
   const teamQualifyingBookings = repWins.length; // rep-attributed only (RULING 2)
   const poolUnlocked = teamQualifyingBookings >= 79;
   const poolTotalCents = poolUnlocked ? teamQualifyingBookings * 500 : 0;
+  // RULING 5 (owner directive 10/2): hole bonuses pay ONLY in weeks with ≤ 8
+  // open-at-week-start slots. When the week began with more open slots than
+  // HOLE_BONUS_MAX_OPEN_SLOTS, hole money is $0 for EVERY rep — the slot-level
+  // audit rows stay derived but their bonus_cents zero out, so the weekly
+  // drawer still shows exactly which open-at-start slots got filled (at $0).
+  // The per-rep filledHoles COUNT is likewise retained (facts, not money).
+  const holeBonusCapped = holes.openAtStart > HOLE_BONUS_MAX_OPEN_SLOTS;
+  const holeAudit = holeBonusCapped ? holes.audit.map((h) => ({ ...h, bonus_cents: 0 })) : holes.audit;
   const employees = input.employees.map((emp) => {
     const myWins = repWins.filter((w) => w.userId === emp.userId);
     const bookings = myWins.length;
     const rate = rateCommission(emp.employmentType, emp.tier, bookings);
     const poolCents = poolBonusCents(teamQualifyingBookings, bookings);
     const myHoles = holes.byRep.get(emp.userId) ?? 0;
-    const holeCents = holeBonusCents(myHoles);
+    const holeCents = holeBonusCapped ? 0 : holeBonusCents(myHoles);
     return {
       userId: emp.userId,
       name: emp.name,
@@ -390,5 +407,5 @@ export function computeWeeklyCommissions(input: WeeklyComputationInput): WeeklyC
       breakdown: rate,
     };
   });
-  return { weekStart, weekEnd, teamQualifyingBookings, poolUnlocked, poolTotalCents, employees, repWins, holeAudit: holes.audit, holeDays: holes.days, totalSlots: holes.totalSlots, openAtStart: holes.openAtStart };
+  return { weekStart, weekEnd, teamQualifyingBookings, poolUnlocked, poolTotalCents, employees, repWins, holeAudit, holeDays: holes.days, totalSlots: holes.totalSlots, openAtStart: holes.openAtStart, holeBonusCapped };
 }

@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
 import type { AppointmentRow, AttributionRow } from "../metrics/compute";
 import { commissionCloseTick, buildWeeklyRecord, lastCompletedCommissionWeekStart } from "../commission/close";
+import { COMMISSION_CALC_VERSION } from "../commission/engine";
 import { computeValidationWeeks, rollupCycle, writeBackfillCycle, buildBackfillCycleRow, BACKFILL_CYCLE_ID } from "../commission/backfill";
 import { etDayStartUtc, etDayEndUtc } from "../date-logic";
 import type { CommissionCycleRow, CommissionWeeklyRow, UserRow } from "../store/types";
@@ -116,6 +117,7 @@ describe("store round-trips", () => {
       assignment: "unassigned",
       counted_bookings: [],
       hole_audit: [],
+      hole_bonus_capped: false,
     };
     await store.upsertCommissionWeeklyRecord(base);
     await store.upsertCommissionWeeklyRecord({ ...base, qualifying_bookings: 13 });
@@ -184,10 +186,11 @@ describe("commissionCloseTick — idempotent Sunday close", () => {
       assignment: "unassigned",
     });
     expect(carmineRow?.base_commission).toBe(10); // FT T1: 2 × $5
-    expect(carmineRow?.hole_bonus).toBe(20); // two open-at-start slots filled in-week
-    expect(carmineRow?.total).toBe(30);
+    expect(carmineRow?.hole_bonus).toBe(0); // RULING 5: the week began 69-open (> 8) → hole money $0
+    expect(carmineRow?.hole_bonus_capped).toBe(true);
+    expect(carmineRow?.total).toBe(10); // base only
     expect(carmineRow?.counted_bookings.length).toBe(2);
-    expect(carmineRow?.hole_audit.length).toBe(2);
+    expect(carmineRow?.hole_audit.length).toBe(2); // audit rows retained (zeroed) — what WAS filled stays visible
     const allisonRow = rows.find((r) => r.user_id === allison);
     expect(allisonRow).toMatchObject({ qualifying_bookings: 0, total: 0, hole_audit: [] });
     const second = await commissionCloseTick(store, { now, throughWeekStart: WEEK, epochWeekStart: WEEK });
@@ -249,7 +252,7 @@ describe("historical backfill — cycle assembly (RULING 4)", () => {
     const allisonRow = rollup.perEmployee.find((e) => e.name === "Allison Wittner");
     expect(allisonRow?.totalBookings).toBe(1);
     expect(allisonRow?.totalBaseCents).toBe(2000); // FT T5: 1 × $20
-    expect(rollup.teamTotalCents).toBe(3000); // $20 base + $10 hole (the Sep 2 slot was open at week start)
+    expect(rollup.teamTotalCents).toBe(2000); // $20 base + $0 hole (RULING 5: the synthetic week is 69-open at start → capped)
   });
   test("buildWeeklyRecord stamps calc version, tier snapshot and the counted records", async () => {
     const store = new MemoryStore();
@@ -261,13 +264,15 @@ describe("historical backfill — cycle assembly (RULING 4)", () => {
     if (!computed) throw new Error("no employee");
     const employee = { userId: allison, name: computed.name, employmentType: computed.employmentType, tier: computed.tier, tierEffectiveDate: computed.tierEffectiveDateUsed };
     const record = buildWeeklyRecord({ computation, employee, calcDateIso: "2026-10-02T00:00:00.000Z" });
-    expect(record.calc_version).toBe(1);
+    expect(record.calc_version).toBe(COMMISSION_CALC_VERSION); // RULING 5 bumped the calc to v2
+    expect(record.hole_bonus_capped).toBe(true); // synthetic week is 69-open at start (> 8)
     expect(record.tier).toBe(5);
     expect(record.tier_effective_date_used).toBe("2026-08-31");
     expect(record.counted_bookings).toEqual([
       { id: win.id, acuity_appointment_id: win.acuity_appointment_id ?? null, client_name: "Client", appointment_type: "Portrait Session", win_date: "2026-09-09", manual: false },
     ]);
-    // an in-week-created win occupying an open-at-start slot fills ONE hole with a full audit row
+    // an in-week-created win occupying an open-at-start slot fills ONE hole —
+    // the audit row is DERIVED but ZEROED (RULING 5: this week began >8 open)
     expect(record.hole_audit).toEqual([
       expect.objectContaining({
         appointmentId: win.id,
@@ -275,7 +280,7 @@ describe("historical backfill — cycle assembly (RULING 4)", () => {
         slot_time: "13:30",
         slot_block: "afternoon",
         win_date: "2026-09-09",
-        bonus_cents: 1000,
+        bonus_cents: 0,
         week_start: WEEK,
       }),
     ]);

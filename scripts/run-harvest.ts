@@ -51,9 +51,15 @@ for (const canon of ["DATABASE_URL", "HIGHLEVEL_API_KEY", "HIGHLEVEL_LOCATION_ID
 const RUN_MINUTES = Number.isFinite(Number(process.argv[2])) && process.argv[2] && !process.argv[2].startsWith("--") ? Number(process.argv[2]) : 80;
 const RECON_ONLY = process.argv.includes("--recon");
 
-// Operative window (owner requirement): previous week (Mon 2026-09-14) through
-// today (Sat 2026-09-26), all ET-aligned at 00:00 ET = 04:00 UTC (EDT).
-const WINDOW_START_ISO = "2026-09-14T04:00:00.000Z"; // prev-week Monday 00:00 ET
+// Operative window, all ET-aligned at 00:00 ET = 04:00 UTC (EDT).
+// 2026-08-22 floor (owner-commission fix, 10/2): the previous floor
+// (2026-09-14) meant zero harvested interaction evidence existed before 9/14,
+// so every pre-9/14 booking was permanently unattributed — per the owner's
+// ruling unattributed bookings pay no rep, which cratered the commission
+// validation weeks (Allison W1 35→6, W2 42→4). The window filters
+// conversations by dateAdded, so the floor must reach back past W1's
+// attribution floor (Mon 2026-08-31 week) with margin — 8/22 does.
+const WINDOW_START_ISO = "2026-08-22T04:00:00.000Z";
 const WTD_START_ISO = "2026-09-21T04:00:00.000Z"; // current-week Monday 00:00 ET
 const Y_START_ISO = "2026-09-25T04:00:00.000Z"; // yesterday 00:00 ET
 const Y_END_ISO = "2026-09-26T04:00:00.000Z"; // today 00:00 ET

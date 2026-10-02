@@ -92,6 +92,7 @@ export function buildWeeklyRecord(opts: {
     assignment: "unassigned",
     counted_bookings: counted,
     hole_audit: holeAudit,
+    hole_bonus_capped: computation.holeBonusCapped,
   };
 }
 

@@ -81,6 +81,10 @@ export function CommissionWeeklyDrawer(props: {
   const holeMoney = isTeam
     ? weekRecords.reduce((s, r) => s + (r.hole_bonus ?? 0), 0)
     : (record.hole_bonus ?? 0);
+  // RULING 5 (owner 10/2): the week began with >8 open slots → hole bonus not
+  // paid. The per-bonus audit rows are retained (zeroed) and still shown, so
+  // the drawer explains WHY the money is $0 while keeping what WAS filled.
+  const holeCapped = weekRecords.some((r) => !!r.hole_bonus_capped);
   const countedRows = isTeam ? weekRecords.flatMap((r) => countedBookingViews(r)) : countedBookingViews(record);
   const countedTotal = isTeam
     ? weekRecords.reduce((s, r) => s + (r.counted_bookings?.length ?? 0), 0)
@@ -186,7 +190,17 @@ export function CommissionWeeklyDrawer(props: {
 
       {/* filled holes + per-bonus audit (all seven RULING-3 fields) */}
       <DrawerSection heading="Filled holes">
-        <MoneyRow label={`${formatInt(holeRows.length)} holes × $10.00`} value={formatMoney(holeMoney)} />
+        {holeCapped && holeRows.length > 0 ? (
+          <>
+            <MoneyRow label={`${formatInt(holeRows.length)} holes filled — bonus not paid`} value={formatMoney(holeMoney)} />
+            <p className="status-banner mt-2">
+              Week had &gt;8 open slots at week start — hole bonus not paid (owner ruling 10/2). The fills below are
+              audit-only.
+            </p>
+          </>
+        ) : (
+          <MoneyRow label={`${formatInt(holeRows.length)} holes × $10.00`} value={formatMoney(holeMoney)} />
+        )}
         {holeRows.length === 0 && holeMoney === 0 ? (
           <p className="mt-1 text-[13px] text-(--text-caption)">
             No filled holes this week — $0.00 hole bonus. Slots already filled when the week began were never holes of
