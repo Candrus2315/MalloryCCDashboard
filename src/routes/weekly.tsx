@@ -33,7 +33,9 @@ export const Route = createFileRoute("/weekly")({
    HONESTY: no week selector exists (the loader is fixed to the last completed
    week) — the scope chip + caption state that; per-rep weekly goals are not
    part of this payload and render "—" (never invented goal math); Website
-   keeps its "—" (no synced source); the copied report text is byte-identical.
+   keeps its "—" (no synced source); the copied report text keeps every
+   existing line byte-identical — the only change is the Holes line, now
+   computed from the owner's 9/30 definition (was a blank placeholder).
 --------------------------------------------------------------------------- */
 
 /** Presentation sign helper (same convention as the payload's goalVsActual). */
@@ -518,8 +520,8 @@ function WeeklyPage() {
           </p>
           <div className="mt-4 space-y-4">
             {[
-              { label: cal.thisWeek.label, start: cal.thisWeek.start, end: cal.thisWeek.end, appointments: cal.thisWeek.appointments, capacity: cal.thisWeek.capacity },
-              { label: cal.nextWeek.label, start: cal.nextWeek.start, end: cal.nextWeek.end, appointments: cal.nextWeek.appointments, capacity: cal.nextWeek.capacity },
+              { label: cal.thisWeek.label, start: cal.thisWeek.start, end: cal.thisWeek.end, appointments: cal.thisWeek.appointments, capacity: cal.thisWeek.capacity, holes: cal.thisWeek.holes },
+              { label: cal.nextWeek.label, start: cal.nextWeek.start, end: cal.nextWeek.end, appointments: cal.nextWeek.appointments, capacity: cal.nextWeek.capacity, holes: cal.nextWeek.holes },
             ].map((row) => (
               <div key={row.label}>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -540,6 +542,80 @@ function WeeklyPage() {
                 </div>
                 <div className="mt-1.5">
                   <RatioBar ratio={row.capacity > 0 ? row.appointments / row.capacity : null} height="h-1" max="max-w-none" />
+                </div>
+                {/* OWNER HOLES (9/30) — the empty-slot complement of the fill
+                    above, computed by the SAME derivation the copied report
+                    uses; per-day breakdown expandable. "—" when not defined. */}
+                <div className="mt-1.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <p className="text-[13px] tabular-nums text-(--text-body)">
+                    Holes (empty slots):{" "}
+                    {row.holes == null ? (
+                      <span className="text-(--text-muted)">—</span>
+                    ) : (
+                      <span className="font-semibold text-(--text-primary)">{formatInt(row.holes.holes)}</span>
+                    )}
+                    <InfoTip
+                      label="How holes are computed"
+                      tip={
+                        <>
+                          Owner definition (9/30): empty booking slots = derived studio capacity (10 slots/day, 9 on
+                          Tuesday) − booked sessions per ET day, summed Mon–Sun. Booked sessions = Acuity appointments
+                          with cancelled excluded — the same population shape the commission engine's slot derivation
+                          uses. For the in-progress week this is booked-so-far (it shrinks as the week fills); for next
+                          week it is open slots. The copied CC Report carries the last COMPLETED week's holes.
+                        </>
+                      }
+                    />
+                  </p>
+                  {row.holes != null && (
+                    <details className="group/pd">
+                      <summary className="inline-flex cursor-pointer select-none items-center gap-1 text-xs text-(--text-caption) transition-colors hover:text-(--text-primary)">
+                        <svg
+                          width="10"
+                          height="10"
+                          viewBox="0 0 12 12"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          className="transition-transform group-open/pd:rotate-90"
+                          aria-hidden="true"
+                        >
+                          <path d="M4 2.5L8 6L4 9.5" />
+                        </svg>
+                        Per-day
+                      </summary>
+                      <table className="mt-2 w-full max-w-md text-xs">
+                        <thead>
+                          <tr className="border-b border-(--card-border) text-left text-(--text-caption)">
+                            <th scope="col" className="py-1 pr-2 font-medium" />
+                            {row.holes.days.map((d) => (
+                              <th scope="col" key={d.date} className="py-1 text-right font-medium tabular-nums">
+                                {weekdayName(d.date, false).slice(0, 3)}
+                                <span className="ml-1 font-normal text-(--text-muted)">{formatDateShort(d.date)}</span>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="tabular-nums text-(--text-body)">
+                          {[
+                            { label: "Capacity", pick: (d: { capacity: number }) => d.capacity },
+                            { label: "Booked", pick: (d: { booked: number }) => d.booked },
+                            { label: "Holes", pick: (d: { holes: number }) => d.holes },
+                          ].map((r) => (
+                            <tr key={r.label} className="border-b border-(--table-border-weak)">
+                              <th scope="row" className="py-1 pr-2 text-left font-medium text-(--text-caption)">{r.label}</th>
+                              {row.holes!.days.map((d) => (
+                                <td key={d.date} className={"py-1 text-right " + (r.label === "Holes" && d.holes > 0 ? "font-semibold text-(--text-primary)" : "")}>
+                                  {formatInt(r.pick(d))}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </details>
+                  )}
                 </div>
               </div>
             ))}
@@ -720,8 +796,9 @@ function WeeklyPage() {
               <>
                 The Monday leadership report, assembled from this page's figures plus your narrative below. Every section
                 is saved per week (the report week above) and audited. "Celebrate / Top Performer" prefills with the
-                computed top performer — edit freely. COPY REPORT puts the full text on your clipboard; placeholder lines
-                (Empty appointments, Holes, 1st Call Completed) stay blank until the owner defines them — no numbers are
+                computed top performer — edit freely. COPY REPORT puts the full text on your clipboard; the Holes line is
+                computed from the owner's definition (empty slots = derived capacity − booked sessions, 9/30), while
+                Empty appointments and 1st Call Completed stay blank until the owner defines them — no numbers are
                 invented for them.
               </>
             }

@@ -43,6 +43,14 @@ hl-clean.txt
 .verify.txt
 scratch-*.ts
 
+# --- Scratch probes stay local (backlog 91c47cdd): the scratch/ dir is
+# working debris — never commit it wholesale. Kept read-only artifacts are
+# force-added individually (git add -f), e.g. scratch/step5-allreps-probe.ts;
+# already-tracked scratch files stay tracked (gitignore never untracks).
+scratch/
+dist.bak/
+nohup.out
+
 # --- OS / generated code ---
 .DS_Store
 src/routeTree.gen.ts

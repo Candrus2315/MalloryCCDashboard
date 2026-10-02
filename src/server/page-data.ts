@@ -80,6 +80,7 @@ import {
   type WeeklyRepRow,
 } from "./metrics/weekly";
 import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
+import { deriveWeeklyHoles, type DayHoleDetail } from "./commission/derive";
 import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assigned-by-day";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
@@ -986,6 +987,14 @@ export interface WeeklyCalendarBucket {
   appointments: number;
   /** Slots the studio schedule config offers across the bucket's 7 days (derived, never hardcoded). */
   capacity: number;
+  /**
+   * OWNER HOLES (owner definition 2026-09-30): empty booking slots = derived
+   * capacity (10/day, 9 Tue — the commission engine's schedule) − booked
+   * sessions per ET day (cancelled excluded), with the per-day breakdown.
+   * Derived by the SAME deriveWeeklyHoles the copied report uses. Null →
+   * "—" (holes not defined for the bucket — never a fabricated number).
+   */
+  holes: { capacity: number; booked: number; holes: number; days: DayHoleDetail[] } | null;
 }
 
 /** The weekly report payload contract (route + tests consume this). */
@@ -1109,7 +1118,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // recent-completed-weeks strip (report week included — one fetch serves both).
   const seriesMon = addDays(lwMon, -7 * (FUNNEL_SERIES_WEEKS - 1));
 
-  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, channelLeadOpps] =
+  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, reportWeekSessions, channelLeadOpps] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -1137,6 +1146,12 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       store.getMonthlyGoal(monthKey),
       // CC Report narrative for THIS report week (Big-3 pattern at week grain).
       store.getWeeklyReportNotes(lwMon),
+      // OWNER HOLES (owner definition 2026-09-30) for the REPORT week: the
+      // week's SESSION appointments — the same overlapping-window superset the
+      // commission close job derives slot state from. Needed because
+      // futureAppts (fetched from thisMon onward) never covers the completed
+      // report week; the derivation excludes cancelled rows itself.
+      store.getAppointmentsOverlapping(etDayStartUtc(lwMon), etDayEndUtc(lwSun)),
       // ALLIANCE/AUCTION LEADS (owner-verified 2026-09-29): GHL opportunities
       // on the channels' pipelines; ET created-date bucketing slices the week.
       store.getOpportunitiesByPipelines([ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID]),
@@ -1263,6 +1278,20 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     }
   }
 
+  // ---- OWNER HOLES (owner definition 2026-09-30) ----
+  // Empty booking slots = derived capacity (10/day, 9 Tue) − booked sessions
+  // per ET day, summed Mon–Sun. ONE derivation (deriveWeeklyHoles) over the
+  // commission engine's slot helpers — no second engine. For a week whose
+  // derived capacity is 0 the holes are undefined → null ("—" in the UI,
+  // the legacy blank placeholder in the copied report — never invented).
+  const holesFor = (mon: string, sessions: AppointmentRow[]) => {
+    const w = deriveWeeklyHoles({ weekStart: mon, sessionAppts: sessions });
+    return w.capacity > 0 ? { capacity: w.capacity, booked: w.booked, holes: w.holes, days: w.days } : null;
+  };
+  const reportWeekHoles = holesFor(lwMon, reportWeekSessions);
+  const thisWeekHoles = holesFor(thisMon, futureAppts);
+  const nextWeekHoles = holesFor(nextMon, futureAppts);
+
   // ---- warnings (honest states, never invented data) ----
   const warnings: string[] = [...syncStaleWarnings(connections)];
   if (!teamGoal)
@@ -1279,6 +1308,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       end: addDays(thisMon, 6),
       appointments: thisWeekCount,
       capacity: weekCapacity(thisMon),
+      holes: thisWeekHoles,
     },
     nextWeek: {
       label: "Next week",
@@ -1286,6 +1316,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       end: nextSun,
       appointments: nextWeekCount,
       capacity: weekCapacity(nextMon),
+      holes: nextWeekHoles,
     },
     beyond,
     firstFullyOpenDay,
@@ -1307,6 +1338,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     },
     funnel,
     calendar,
+    // OWNER HOLES of the report week (9/30) — fills the "Holes" placeholder
+    // line in the copied CC Report (null keeps the legacy blank line).
+    holes: reportWeekHoles?.holes ?? null,
     notes: reportNotes,
     celebrateDefault,
   });

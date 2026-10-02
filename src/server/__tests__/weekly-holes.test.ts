@@ -20,7 +20,9 @@
 import { describe, expect, test } from "bun:test";
 import { deriveWeeklyHoles, isCancelledSession } from "../commission/derive";
 import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "../metrics/weekly-report-text";
-import type { AppointmentRow } from "../metrics/compute";
+import { weeklyPageData } from "../page-data";
+import { MemoryStore } from "../store/memory";
+import type { AppointmentRow, LeadRow } from "../metrics/compute";
 
 const EDT = "-04:00"; // September = EDT
 const H = (date: string, time: string) => new Date(`${date}T${time}:00.000${EDT}`).toISOString();
@@ -160,5 +162,102 @@ describe("COPY REPORT — Holes line (byte-identity of every existing line)", ()
     const i = lines.indexOf("Holes (empty slots): 20");
     expect(lines[i - 1]).toBe("Empty appointments:");
     expect(lines[i + 1]).toBe("1st Call Completed through Monday:");
+  });
+});
+
+// ---------- weeklyPageData wiring (MemoryStore + pinned clock) ----------
+// TODAY = Tue 2026-09-29: report week = 9/21–9/27 (the owner's reference),
+// this week = 9/28–10/4 (in progress), next week = 10/5–10/11.
+
+/** Seed the owner's reference shape: 49 booked across 9/21–9/27, Thursday 9/24 fully dark (a cancelled row must not count). */
+function referenceWeekSessions(): AppointmentRow[] {
+  const out: AppointmentRow[] = [];
+  const shape: [string, number][] = [
+    ["2026-09-21", 8],
+    ["2026-09-22", 7],
+    ["2026-09-23", 8],
+    ["2026-09-24", 0],
+    ["2026-09-25", 8],
+    ["2026-09-26", 9],
+    ["2026-09-27", 9],
+  ];
+  for (const [date, n] of shape) {
+    for (let i = 0; i < n; i++) out.push(sess(`${date}-s${i}`, date, `${String(8 + i).padStart(2, "0")}:00`));
+  }
+  out.push(sess("ref-thu-cancelled", "2026-09-24", "10:00", { cancelled: true })); // books no session
+  return out;
+}
+
+async function seedHolesStore(): Promise<MemoryStore> {
+  const store = new MemoryStore();
+  await store.saveSettings({ acuity: { calendars_included: [], types_included: [] } });
+  await store.upsertAppointments([
+    ...referenceWeekSessions(),
+    // this week (in progress): 2 booked Tuesday 9/29
+    sess("cur-1", "2026-09-29", "10:00"),
+    sess("cur-2", "2026-09-29", "11:00"),
+  ]);
+  return store;
+}
+
+describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
+  test("report week = the owner's 20 holes; this/next week holes carry the per-day breakdown", async () => {
+    const store = await seedHolesStore();
+    const data = await weeklyPageData({ store, today: "2026-09-29" });
+    // report week: 69 capacity, 49 booked, 20 holes (cancelled Thursday excluded)
+    const thisWeek = data.calendar.thisWeek.holes;
+    expect(thisWeek).not.toBeNull();
+    expect(thisWeek!.capacity).toBe(69); // this week 9/28–10/4
+    expect(thisWeek!.booked).toBe(2);
+    expect(thisWeek!.holes).toBe(67);
+    expect(thisWeek!.days).toHaveLength(7);
+    const nextWeek = data.calendar.nextWeek.holes;
+    expect(nextWeek).not.toBeNull();
+    expect(nextWeek!.booked).toBe(0); // no sessions seeded for 10/5–11
+    expect(nextWeek!.holes).toBe(69);
+  });
+
+  test("COPY REPORT carries the report week's holes: 'Holes (empty slots): 20'", async () => {
+    const store = await seedHolesStore();
+    const data = await weeklyPageData({ store, today: "2026-09-29" });
+    const lines = data.report.reportText.split("\n");
+    expect(lines).toContain("Holes (empty slots): 20");
+    const i = lines.indexOf("Holes (empty slots): 20");
+    expect(lines[i - 1]).toBe("Empty appointments:");
+    expect(lines[i + 1]).toBe("1st Call Completed through Monday:");
+  });
+
+  test("every other line of the copied report is untouched vs the legacy text (holes null)", async () => {
+    const store = await seedHolesStore();
+    const data = await weeklyPageData({ store, today: "2026-09-29" });
+    // Rebuild the same report with the holes figure stripped — the ONLY
+    // difference must be the Holes line back at its legacy blank placeholder.
+    const legacy = buildWeeklyCcReportText({
+      week: { start: data.week.start, end: data.week.end },
+      monthKey: data.month.key,
+      bookingsWeek: { total: data.bookings.total, goal: data.bookings.goal },
+      bookingsMonth: { total: data.mtd.total, goal: data.mtd.goal },
+      channels: data.channels,
+      channelLeads: data.channelLeads,
+      leads: data.leads,
+      conversion: { overall: data.conversion.overall, family: data.conversion.family, animalia: data.conversion.animalia },
+      funnel: data.funnel,
+      calendar: {
+        thisWeek: { appointments: data.calendar.thisWeek.appointments, capacity: data.calendar.thisWeek.capacity },
+        nextWeek: { appointments: data.calendar.nextWeek.appointments, capacity: data.calendar.nextWeek.capacity },
+        beyond: data.calendar.beyond,
+        firstFullyOpenDay: data.calendar.firstFullyOpenDay,
+      },
+      notes: data.report.notes,
+      celebrateDefault: data.report.celebrateDefault,
+      holes: null,
+    }).split("\n");
+    const actual = data.report.reportText.split("\n");
+    expect(legacy.length).toBe(actual.length);
+    legacy.forEach((l, i) => {
+      if (l === "Holes:") return; // the ONE intended change
+      expect(actual[i]).toBe(l);
+    });
+    expect(legacy.filter((l) => l === "Holes:")).toHaveLength(1);
   });
 });
