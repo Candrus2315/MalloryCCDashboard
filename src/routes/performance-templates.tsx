@@ -1,19 +1,26 @@
 /**
- * TEMPLATES SEGMENT (refinement spec §4, 9/30) — card list, NOT a database
- * form. Five seeded Mallory management structures (Booking / Conversion /
+ * TEMPLATES SEGMENT (management-redesign spec §3B, command-center pass 10/2)
+ * — compact 2-column template library, NOT a database form or giant stacked
+ * cards. Five seeded Mallory management structures (Booking / Conversion /
  * Call Activity / Attendance/Reliability / Custom) as cards; create/edit runs
  * in the editor route (/performance/templates/$id/edit, "new" = create).
  *
- * MICROCOPY (spec §5): "Starting points for new plans." visible; the no-AI
- * policy lives once in the shell header InfoTip. "changes are audited" stays
- * visible on the mutating controls.
+ * CARD ACTIONS (spec §3B): Use Template is the card's PRIMARY action (opens
+ * the guided wizard with the template preselected — the existing ?template=<id>
+ * deep link); Edit and Duplicate stay visible but restrained; Delete hides in
+ * the ⋯ More menu. No new capability is invented — same handlers as before.
+ *
+ * MICROCOPY (refinement spec §5): "Starting points for new plans." visible; the
+ * no-AI policy lives once in the shell header InfoTip. "changes are audited"
+ * stays visible on the mutating controls.
  *
  * HONESTY: templates carry NO weekly-minimum field (the manager enters it per
  * PIP in the wizard) — the card facts row shows only cadence + duration, and
- * omits segments with nothing to show rather than inventing values.
+ * omits segments with nothing to show rather than inventing values. The old
+ * "Goal & dates — Written" pseudo-table is condensed to one "Predefined" line.
  */
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   createPipTemplate,
   deletePipTemplate,
@@ -32,109 +39,129 @@ function TemplatesPage() {
   const data = Route.useLoaderData();
   const usage = new Map(data.usage);
   return (
-    <PerformanceShell path="/performance-templates">
+    <PerformanceShell
+      path="/performance-templates"
+      headerAction={
+        <Link to="/performance/templates/$id/edit" params={{ id: "new" }} className="btn-primary">
+          New template
+        </Link>
+      }
+      tabCounts={{ templates: data.templates.length }}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <p className="text-[13px] text-(--text-caption)">Starting points for new plans.</p>
           <InfoTip tip="Templates pre-fill a draft; applying one is always an explicit manager action." />
         </div>
-        <Link to="/performance/templates/new/edit" className="btn-primary">
-          New template
-        </Link>
+        <p className="text-[12px] text-(--text-caption)">
+          {data.templates.length} {data.templates.length === 1 ? "template" : "templates"} · changes are audited
+        </p>
       </div>
 
-      <p className="mt-2 text-[12px] text-(--text-caption)">
-        {data.templates.length} templates · changes are audited
-      </p>
-
-      <div className="mt-4 max-w-3xl space-y-4">
+      <div className="mt-4">
         {data.templates.length === 0 ? (
-          <EmptyState title="No templates" hint="Create the first starting point with New template." />
+          <EmptyState
+            title="No templates yet"
+            hint="A template pre-fills a draft — goal wording, duration, and check-in cadence — so a new PIP starts from a known structure."
+            action={
+              <Link to="/performance/templates/$id/edit" params={{ id: "new" }} className="btn-primary">
+                New template
+              </Link>
+            }
+          />
         ) : (
-          data.templates.map((t) => (
-            <TemplateCard key={t.id} t={t} inUse={usage.get(t.id) ?? 0} />
-          ))
+          <div className="grid gap-4 md:grid-cols-2">
+            {data.templates.map((t) => (
+              <TemplateCard key={t.id} t={t} inUse={usage.get(t.id) ?? 0} />
+            ))}
+          </div>
         )}
       </div>
     </PerformanceShell>
   );
 }
 
+/** The ⋯ More menu — restrained overflow actions (Delete lives here, per spec §3B). */
+function TemplateMoreMenu({ children }: { children: ReactNode }) {
+  return (
+    <details className="relative inline-block">
+      <summary
+        className="inline-flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-md text-[13px] text-(--text-muted) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden"
+        aria-label="More template actions"
+      >
+        <span aria-hidden="true">⋯</span>
+      </summary>
+      <div
+        className="absolute bottom-8 right-0 z-10 min-w-36 rounded-md border border-(--card-border) bg-(--card-bg) py-1 shadow-sm"
+        onClick={(e) => {
+          const d = e.currentTarget.closest("details");
+          if (d) d.open = false;
+        }}
+      >
+        {children}
+      </div>
+    </details>
+  );
+}
+
 function TemplateCard({ t, inUse }: { t: PipTemplateRow; inUse: number }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const facts: string[] = [];
-  if (t.default_checkin_cadence_days != null) facts.push(`Check-ins: every ${t.default_checkin_cadence_days} days`);
-  if (t.default_duration_weeks != null) facts.push(`Duration: ${t.default_duration_weeks} weeks`);
 
-  const structure: { label: string; value: string }[] = [
-    { label: "Goal & dates", value: t.default_goal_text ? "Written" : "—" },
-    { label: "Manager observations", value: "Entered per PIP" },
-    { label: "Action plan", value: t.default_action_plan.length > 0 ? `${t.default_action_plan.length} items` : "—" },
-    { label: "Personal development", value: t.default_personal.length > 0 ? `${t.default_personal.length} items` : "—" },
-    { label: "Professional development", value: t.default_professional.length > 0 ? `${t.default_professional.length} items` : "—" },
-  ];
+  const facts: string[] = [];
+  if (t.default_duration_weeks != null) facts.push(`${t.default_duration_weeks} weeks`);
+  if (t.default_checkin_cadence_days != null) facts.push(`Check-in every ${t.default_checkin_cadence_days} days`);
+
+  // "Predefined" condensed to one line — only what the template actually carries.
+  const predefined: string[] = [];
+  if (t.default_goal_text) predefined.push("Goal wording");
+  if (t.default_action_plan.length > 0) predefined.push(`Action plan (${t.default_action_plan.length})`);
+  if (t.default_personal.length > 0) predefined.push(`Personal dev (${t.default_personal.length})`);
+  if (t.default_professional.length > 0) predefined.push(`Professional dev (${t.default_professional.length})`);
+
+  const runMutate = (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    fn().then(() => router.invalidate()).finally(() => setBusy(false));
+  };
 
   return (
-    <div className="card p-5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-[15px] font-semibold text-(--text-primary)">{t.name}</p>
+    <article className="card flex flex-col p-4 sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="truncate text-[15px] font-semibold text-(--text-primary)" title={t.name}>
+            {t.name}
+          </h3>
           <span className="chip chip-neutral text-[11px]">v{t.version}</span>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          {t.category && <span className="chip chip-neutral text-[11px]">{t.category}</span>}
           {inUse > 0 && (
-            <span className="rounded-full bg-(--chip-current-bg) px-2 py-0.5 text-[11px] font-medium text-(--chip-current-fg)">
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-(--chip-current-bg) px-2 py-0.5 text-[11px] font-medium text-(--chip-current-fg)">
               Used by {inUse} {inUse === 1 ? "PIP" : "PIPs"}
-              <InfoTip className="ml-1 inline-flex align-middle" tip="Counts issued plans created from this template — completed and cancelled included. Issued PIPs keep the version they were issued with." />
+              <InfoTip
+                className="ml-0.5 inline-flex align-middle"
+                tip="Counts issued plans created from this template — completed and cancelled included. Issued PIPs keep the version they were issued with."
+              />
             </span>
           )}
         </div>
-        {t.category && <span className="chip chip-neutral text-[11px]">{t.category}</span>}
       </div>
 
       <p className="mt-2 line-clamp-3 text-[13px] leading-relaxed text-(--text-body)">
         {t.default_goal_text ?? "No goal wording yet — the manager writes it per PIP."}
       </p>
 
-      <div className="mt-3 divide-y divide-(--table-border-weak)">
-        {structure.map((s) => (
-          <div key={s.label} className="flex items-center justify-between py-1.5 text-[12px] first:border-0">
-            <span className="text-(--text-caption)">{s.label}</span>
-            <span className={s.value === "—" || s.value === "Entered per PIP" ? "text-(--text-muted)" : "text-(--text-body)"}>{s.value}</span>
-          </div>
-        ))}
-      </div>
+      <p className="mt-3 text-[12px] text-(--text-caption)">
+        <span className="text-(--text-muted)">Predefined:</span>{" "}
+        {predefined.length > 0 ? predefined.join(" · ") : <span className="text-(--text-faint)">—</span>}
+      </p>
+      {facts.length > 0 && <p className="mt-1 text-[12px] text-(--text-caption)">{facts.join(" · ")}</p>}
 
-      {facts.length > 0 && <p className="mt-3 text-[12px] text-(--text-caption)">{facts.join(" · ")}</p>}
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-(--table-border-weak) pt-3">
-        <p className="text-[12px] text-(--text-caption)">
-          Edited {new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric" }).format(Date.parse(t.updated_at))}
-          {t.created_by ? ` by ${t.created_by}` : ""}
-        </p>
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-(--table-border-weak) pt-3">
+        <Link to="/performance-new" search={{ template: t.id }} className="btn-primary">
+          Use Template
+        </Link>
         <div className="flex items-center gap-1.5">
-          <GhostButton
-            title="Duplicate this template"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              createPipTemplate({
-                data: {
-                  name: `${t.name} (copy)`,
-                  category: t.category,
-                  defaultGoalText: t.default_goal_text,
-                  defaultActionPlan: t.default_action_plan,
-                  defaultPersonal: t.default_personal,
-                  defaultProfessional: t.default_professional,
-                  defaultCheckinCadenceDays: t.default_checkin_cadence_days,
-                  defaultDurationWeeks: t.default_duration_weeks,
-                },
-              })
-                .then(() => router.invalidate())
-                .finally(() => setBusy(false));
-            }}
-          >
-            Duplicate
-          </GhostButton>
           <Link
             to="/performance/templates/$id/edit"
             params={{ id: t.id }}
@@ -142,22 +169,56 @@ function TemplateCard({ t, inUse }: { t: PipTemplateRow; inUse: number }) {
           >
             Edit
           </Link>
+          <GhostButton
+            title={`Duplicate "${t.name}"`}
+            disabled={busy}
+            onClick={() =>
+              runMutate(() =>
+                createPipTemplate({
+                  data: {
+                    name: `${t.name} (copy)`,
+                    category: t.category,
+                    defaultGoalText: t.default_goal_text,
+                    defaultActionPlan: t.default_action_plan,
+                    defaultPersonal: t.default_personal,
+                    defaultProfessional: t.default_professional,
+                    defaultCheckinCadenceDays: t.default_checkin_cadence_days,
+                    defaultDurationWeeks: t.default_duration_weeks,
+                  },
+                }),
+              )
+            }
+          >
+            Duplicate
+          </GhostButton>
           {inUse === 0 && (
-            <GhostButton
-              title={`Delete template "${t.name}"`}
-              disabled={busy}
-              onClick={() => {
-                setBusy(true);
-                deletePipTemplate({ data: { templateId: t.id } })
-                  .then(() => router.invalidate())
-                  .finally(() => setBusy(false));
-              }}
-            >
-              Delete
-            </GhostButton>
+            <TemplateMoreMenu>
+              <button
+                type="button"
+                disabled={busy}
+                title={`Delete template "${t.name}"`}
+                className="block w-full px-3 py-1.5 text-left text-[13px] text-(--text-body) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary) disabled:opacity-50"
+                onClick={() =>
+                  runMutate(() => deletePipTemplate({ data: { templateId: t.id } }))
+                }
+              >
+                Delete
+              </button>
+            </TemplateMoreMenu>
           )}
         </div>
       </div>
-    </div>
+
+      <p className="mt-2.5 text-[11px] text-(--text-caption)">
+        Edited{" "}
+        {new Intl.DateTimeFormat("en-US", {
+          timeZone: "America/New_York",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(Date.parse(t.updated_at))}
+        {t.created_by ? ` by ${t.created_by}` : ""}
+      </p>
+    </article>
   );
 }

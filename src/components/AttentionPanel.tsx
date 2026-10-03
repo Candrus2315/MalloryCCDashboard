@@ -15,11 +15,14 @@ export function AttentionPanel({
   notes,
   title = "Management Attention",
   subtitle = "Rule-based from current week metrics — no scores.",
+  /** All-clear line override — the Today/Team default copy stays untouched when omitted. */
+  allClear = "No attention items — no rep is behind pace or below team conversion.",
 }: {
   notes: AttentionNote[];
   title?: string;
   /** Methodology line — rendered behind the shared InfoTip, not as permanent copy. */
   subtitle?: string;
+  allClear?: string;
 }) {
   return (
     <section className="card card-dense">
@@ -30,9 +33,7 @@ export function AttentionPanel({
         </span>
       </div>
       {notes.length === 0 ? (
-        <p className="mt-3 text-[13px] text-(--text-body)">
-          No attention items — no rep is behind pace or below team conversion.
-        </p>
+        <p className="mt-3 text-[13px] text-(--text-body)">{allClear}</p>
       ) : (
         <ul className="mt-1">
           {notes.map((n, i) => (
