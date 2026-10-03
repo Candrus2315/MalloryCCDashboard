@@ -7,6 +7,9 @@ import { DayCardStrip, type DayCardData } from "~/components/DayCardStrip";
 import { InfoTip } from "~/components/InfoTip";
 import { cycleChip, dateWithWeekday, poolChip } from "~/components/commission-views";
 import { StatusChip } from "~/components/StatusChip";
+// Harmonization Wave 1: Today composes the SAME page primitives as Daily
+// Report / Weekly / Commission Center (Panel / Eyebrow / RatioBar).
+import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
 import {
   attentionNotes,
   availabilityStatusView,
@@ -200,6 +203,15 @@ function TodayPage() {
         ? "on"
         : "off";
 
+  // Lead-band presentation values (Wave 1, Daily Report §3 geometry): the mix
+  // bar widths are shares of TODAY'S total — the legend always prints the
+  // payload's raw counts, so no new metric is created. `leadBudgetOver` is the
+  // existing over-budget test (was BudgetTile's `over`).
+  const leadBudgetOver = m.leads.percentUsed != null && m.leads.percentUsed > 1;
+  const todayMixTotal = m.leads.today.total;
+  const animaliaPct = todayMixTotal > 0 ? Math.min(100, (m.leads.today.animalia / todayMixTotal) * 100) : 0;
+  const familyPct = todayMixTotal > 0 ? Math.min(100, (m.leads.today.family / todayMixTotal) * 100) : 0;
+
   // Spec §4 honesty banner: store/db clauses + provider-aware live/demo line +
   // stale warnings, one slim line. Provider-aware so "leads live, calls demo"
   // is visibly honest instead of a blanket "Demo data" claim.
@@ -301,81 +313,163 @@ function TodayPage() {
 
   return (
     <div className="space-y-5">
-      {/* 1 — header & context */}
-      <header>
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <h1 className="text-xl font-semibold tracking-tight text-(--text-primary)">Today</h1>
-          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
-            —
-          </span>
-          <span className="text-[15px] font-medium text-(--text-caption)">{formatDateHuman(m.date)}</span>
-          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
-            —
-          </span>
-          <span className="text-[15px] font-medium text-(--text-caption)">
-            Week of {formatDateHuman(m.weekStart)}
-          </span>
-          {/* live-state indicator (owner hard rule): Today is always the live week */}
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 text-xs font-semibold text-(--chip-positive-fg)">
-            <span className="h-1.5 w-1.5 rounded-full bg-(--dot-positive)" aria-hidden="true" />
-            Current Week
-          </span>
+      {/* 1 — compact header (Daily Report anatomy): title + live-state chip on
+          line 1; date · week · timezone demoted to a meta line. The cohort
+          definition stays behind the Leads section's InfoTip (unchanged copy). */}
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-[22px] font-semibold tracking-tight text-(--text-primary)">Today</h1>
+            {/* live-state indicator (owner hard rule): Today is always the live week */}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 text-xs font-semibold text-(--pos-text)">
+              <span className="h-1.5 w-1.5 rounded-full bg-(--dot-positive)" aria-hidden="true" />
+              Current Week
+            </span>
+          </div>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-(--text-muted)">
+            <span className="tabular-nums">
+              {formatDateHuman(m.date)} · week of {formatDateHuman(m.weekStart)}
+            </span>
+            <span aria-hidden="true">·</span>
+            <span>America/New_York</span>
+          </p>
         </div>
         {bannerMessages.length > 0 && (
-          <div className="status-banner mt-2" role="status">
+          <p className="status-banner" role="status">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
             <span className="min-w-0 truncate" title={bannerMessages.join(" · ")}>
               {bannerMessages.join(" · ")}
             </span>
-          </div>
+          </p>
         )}
       </header>
 
-      {/* 2 — primary performance KPI row (the 10-second answer).
-          REV 12: "Bookings" = PAID Bookings (Booking Wins) — the subtext keeps
-          pending (unpaid) bookings visible without letting them count. */}
+      {/* 2 — WEEKLY BOOKING PACE hero (the 10-second answer). The six booking
+          KPIs recomposed into the Daily-Report hero anatomy: the weekly goal is
+          the anchor (primary, left), today's activity supports (right). Every
+          number renders through the SAME expressions as before — presentation
+          only. REV 12 semantics kept: "Bookings" = PAID Bookings (Booking Wins)
+          — pending bookings stay visible and count toward nothing. */}
       <section aria-label="Bookings and pace">
-        <div className="card grid grid-cols-2 gap-y-6 p-0 sm:grid-cols-3 xl:grid-cols-6 xl:gap-y-0 xl:divide-x xl:divide-(--table-border-weak)">
-          <KpiHero
-            label="Bookings WTD"
-            value={m.bookings.wtd}
-            sub={pendingCount > 0 ? `${pendingCount} pending · of ${m.bookings.weeklyGoal} goal` : `of ${m.bookings.weeklyGoal} goal`}
-            pace={paceState ?? undefined}
-          />
-          <KpiHero label="Remaining" value={m.bookings.remaining} sub="bookings left" />
-          <KpiHero
-            label="Daily Pace Needed"
-            value={m.bookings.paceNeeded}
-            sub={m.paceWeekend ? "team is off — pace resumes Monday" : "to hit goal"}
-          />
-          <KpiHero
-            label="Goal Achievement"
-            value={pct(m.bookings.goalAchievement, 1)}
-            sub="of weekly goal"
-            pace={paceState ?? undefined}
-          />
-          <KpiHero label="Yesterday's Bookings" value={m.bookings.yesterday} />
-          <KpiHero
-            label="Bookings Today"
-            value={m.bookings.today}
-            sub={pendingCount > 0 ? `${pendingCount} pending payment${pendingCount === 1 ? "" : "s"} excluded` : "paid bookings"}
-          />
-        </div>
+        <Panel className="overflow-hidden">
+          <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)] lg:divide-x lg:divide-(--table-border-weak)">
+            {/* left / primary — the weekly goal is the visual anchor */}
+            <div className="p-5 sm:p-6">
+              <Eyebrow>Booking Performance</Eyebrow>
+              <p className="kpi-label mt-5 flex items-center gap-1.5">
+                {paceState && (
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${paceState === "on" ? "bg-(--dot-positive)" : "bg-(--dot-caution)"}`}
+                    title={paceState === "on" ? "On pace for the weekly goal" : "Behind weekly pace"}
+                    aria-hidden="true"
+                  />
+                )}
+                Bookings WTD
+              </p>
+              <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
+                <span className="text-6xl font-semibold leading-none tracking-tight text-(--text-primary)">
+                  {m.bookings.wtd}
+                </span>
+                <span className="text-3xl font-medium text-(--text-muted)">/ {m.bookings.weeklyGoal} goal</span>
+              </p>
+              {pendingCount > 0 && (
+                <p className="kpi-sub mt-1.5">
+                  {pendingCount} pending · of {m.bookings.weeklyGoal} goal
+                </p>
+              )}
+              <div className="mt-5">
+                <RatioBar ratio={m.bookings.goalAchievement} />
+              </div>
+              <div className="mt-4 flex flex-wrap gap-x-10 gap-y-4">
+                <div>
+                  <p className="kpi-label flex items-center gap-1.5">
+                    {paceState && (
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${paceState === "on" ? "bg-(--dot-positive)" : "bg-(--dot-caution)"}`}
+                        title={paceState === "on" ? "On pace for the weekly goal" : "Behind weekly pace"}
+                        aria-hidden="true"
+                      />
+                    )}
+                    Goal Achievement
+                  </p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                    {pct(m.bookings.goalAchievement, 1)}
+                  </p>
+                  <p className="kpi-sub mt-0.5">of weekly goal</p>
+                </div>
+                <div>
+                  <p className="kpi-label">Remaining</p>
+                  <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                    {m.bookings.remaining}
+                  </p>
+                  <p className="kpi-sub mt-0.5">bookings left</p>
+                </div>
+              </div>
+            </div>
+            {/* right / supporting — today's pace and activity, secondary to the goal */}
+            <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
+              <Eyebrow>Today's Pace</Eyebrow>
+              <dl className="mt-4 space-y-4">
+                <div>
+                  <dt className="text-[13px] font-medium text-(--text-body)">Daily Pace Needed</dt>
+                  <dd className="mt-0.5 flex flex-wrap items-baseline gap-2">
+                    <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                      {m.bookings.paceNeeded}
+                    </span>
+                    <span className="kpi-sub">{m.paceWeekend ? "team is off — pace resumes Monday" : "to hit goal"}</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[13px] font-medium text-(--text-body)">Yesterday's Bookings</dt>
+                  <dd className="mt-0.5">
+                    <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                      {m.bookings.yesterday}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[13px] font-medium text-(--text-body)">Bookings Today</dt>
+                  <dd className="mt-0.5 flex flex-wrap items-baseline gap-2">
+                    <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                      {m.bookings.today}
+                    </span>
+                    <span className="kpi-sub">
+                      {pendingCount > 0
+                        ? `${pendingCount} pending payment${pendingCount === 1 ? "" : "s"} excluded`
+                        : "paid bookings"}
+                    </span>
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </Panel>
         {pendingCount > 0 && <PendingPaymentsDrillDown rows={pendingPayments} />}
       </section>
 
-      {/* 3 — secondary operations row */}
+      {/* 3 — calls & conversions (secondary to the goal): one hairline-divided
+          strip, five labeled cells, no comparisons (none exist in the payload). */}
       <section aria-label="Calls and conversions">
-        <div className="card">
-          <p className="section-heading">Calls &amp; Conversions (today)</p>
-          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3 xl:grid-cols-5">
-            <KpiMid label="Total Calls" value={m.callsToday.total} />
-            <KpiMid label="Calls Over 2 Min" value={m.callsToday.overThreshold} sub="meaningful conversations" />
-            <KpiMid label="Avg Call Duration" value={mins(m.callsToday.avgDurationSeconds)} />
-            <KpiMid label="Conversation Conversion" value={pct(m.conversionsToday.conversation, 1)} />
-            <KpiMid label="Assigned Lead Conversion" value={pct(m.conversionsToday.assignedLead, 1)} />
+        <Panel className="overflow-hidden">
+          <p className="section-heading px-5 pt-5">Calls &amp; Conversions (today)</p>
+          <div className="mt-4 grid grid-cols-2 gap-y-5 pb-5 sm:grid-cols-3 xl:grid-cols-5 xl:gap-y-0 xl:divide-x xl:divide-(--table-border-weak)">
+            <div className="px-5 py-1">
+              <KpiMid label="Total Calls" value={m.callsToday.total} />
+            </div>
+            <div className="px-5 py-1">
+              <KpiMid label="Calls Over 2 Min" value={m.callsToday.overThreshold} sub="meaningful conversations" />
+            </div>
+            <div className="px-5 py-1">
+              <KpiMid label="Avg Call Duration" value={mins(m.callsToday.avgDurationSeconds)} />
+            </div>
+            <div className="px-5 py-1">
+              <KpiMid label="Conversation Conversion" value={pct(m.conversionsToday.conversation, 1)} />
+            </div>
+            <div className="px-5 py-1">
+              <KpiMid label="Assigned Lead Conversion" value={pct(m.conversionsToday.assignedLead, 1)} />
+            </div>
           </div>
-        </div>
+        </Panel>
       </section>
 
       {/* 4a — studio availability (own FULL-width band, global-layout-spec TODAY order:
@@ -389,34 +483,69 @@ function TodayPage() {
         </div>
       </section>
 
-      {/* 4b — leads worked today (compact FULL/STRIP-class block); the work-date
-              cohort definition lives behind the shared InfoTip */}
+      {/* 4b — leads worked today (Lead-Health composition, same anatomy as
+              Daily Report §3: weekly budget relationship primary, today's
+              work-date cohort mix supporting). The work-date cohort definition
+              lives behind the shared InfoTip. */}
       <section aria-label="Leads worked today">
-        <div className="card">
-          <p className="section-heading flex flex-wrap items-center gap-x-2 gap-y-1">
-            Leads — worked today
-            <InfoTip tip={`${data.cohortNote} (America/New_York)`} label="How today's lead counts are dated" />
-          </p>
-          <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
-            <KpiMid label="Family Leads Today" value={m.leads.today.family} />
-            <KpiMid label="Animalia Leads Today" value={m.leads.today.animalia} />
-            <div>
-              <p className="kpi-label">Total Leads Today</p>
-              <p className="kpi-value mt-2">{m.leads.today.total}</p>
+        <Panel className="overflow-hidden">
+          <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)] lg:divide-x lg:divide-(--table-border-weak)">
+            {/* left / primary — weekly leads against the budget */}
+            <div className="p-5 sm:p-6">
+              <p className="section-heading flex flex-wrap items-center gap-x-2 gap-y-1">
+                Leads — worked today
+                <InfoTip tip={`${data.cohortNote} (America/New_York)`} label="How today's lead counts are dated" />
+              </p>
+              <p className="kpi-label mt-5">Weekly Leads</p>
+              <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
+                <span className="text-5xl font-semibold leading-none tracking-tight text-(--text-primary)">
+                  {m.leads.weekly.total}
+                </span>
+                <span className="text-2xl font-medium text-(--text-muted)">/ {m.leads.weeklyBudget}</span>
+                <span className="text-sm text-(--text-muted)">budget</span>
+              </p>
+              <div className="mt-6">
+                <p className="kpi-label flex items-center gap-1.5">
+                  {leadBudgetOver && <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" />}
+                  % Lead Budget Used
+                </p>
+                <div className="mt-2 h-1.5 w-full max-w-xl overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
+                  <div
+                    className={"h-full rounded-full " + (leadBudgetOver ? "bg-(--dot-caution)" : "bg-(--bar-fill)")}
+                    style={{ width: `${Math.min(m.leads.percentUsed ?? 0, 1) * 100}%` }}
+                  />
+                </div>
+                <p className="kpi-sub mt-2 tabular-nums">
+                  {pct(m.leads.percentUsed, 1)} used ·{" "}
+                  {m.paceWeekend
+                    ? `${m.leads.remaining} remaining — team is off, pace resumes Monday`
+                    : `${m.leads.remaining} remaining · ${m.leads.dailyNeeded}/day needed`}
+                </p>
+              </div>
             </div>
-            <KpiMid label="Weekly Leads" value={m.leads.weekly.total} sub={`budget ${m.leads.weeklyBudget}`} />
-            <BudgetTile
-              label="% Lead Budget Used"
-              value={pct(m.leads.percentUsed, 1)}
-              sub={
-                m.paceWeekend
-                  ? `${m.leads.remaining} remaining — team is off, pace resumes Monday`
-                  : `${m.leads.remaining} remaining · ${m.leads.dailyNeeded}/day needed`
-              }
-              percentUsed={m.leads.percentUsed}
-            />
+            {/* right — today's work-date cohort: one mix bar, one legend */}
+            <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
+              <p className="kpi-label">Total Leads Today</p>
+              <p className="mt-2 text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
+                {m.leads.today.total}
+              </p>
+              <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
+                <div style={{ width: `${animaliaPct}%`, background: "var(--bar-fill)" }} />
+                <div style={{ width: `${familyPct}%`, background: "var(--text-muted)" }} />
+              </div>
+              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
+                <li className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--bar-fill)" }} aria-hidden="true" />
+                  <span className="tabular-nums">{m.leads.today.animalia}</span> Animalia Leads Today
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--text-muted)" }} aria-hidden="true" />
+                  <span className="tabular-nums">{m.leads.today.family}</span> Family Leads Today
+                </li>
+              </ul>
+            </div>
           </div>
-        </div>
+        </Panel>
       </section>
 
       {/* 4c — commission card (§21 dashboard card, Phase C): live estimate for the
@@ -750,36 +879,6 @@ function RepDetailPanel({
   );
 }
 
-/** Hero KPI cell (spec §3.1): label → 5xl number → subtext, pace dot beside the label. */
-function KpiHero({
-  label,
-  value,
-  sub,
-  pace,
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-  pace?: "on" | "off";
-}) {
-  return (
-    <div className="px-5 py-4">
-      <p className="kpi-label flex items-center gap-1.5">
-        {pace && (
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${pace === "on" ? "bg-(--dot-positive)" : "bg-(--dot-caution)"}`}
-            title={pace === "on" ? "On pace for the weekly goal" : "Behind weekly pace"}
-            aria-hidden="true"
-          />
-        )}
-        {label}
-      </p>
-      <p className="kpi-hero mt-2">{num(String(value))}</p>
-      {sub && <p className="kpi-sub mt-1.5">{sub}</p>}
-    </div>
-  );
-}
-
 /** Secondary KPI cell (spec §3.2): same stack at text-3xl. No comparisons. */
 function KpiMid({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
@@ -787,39 +886,6 @@ function KpiMid({ label, value, sub }: { label: string; value: string | number; 
       <p className="kpi-label">{label}</p>
       <p className="kpi-mid mt-2">{num(String(value))}</p>
       {sub && <p className="kpi-sub mt-1.5">{sub}</p>}
-    </div>
-  );
-}
-
-/** % Lead Budget Used tile with the 4px utilization meter + over-budget dot (spec §3.3). */
-function BudgetTile({
-  label,
-  value,
-  sub,
-  percentUsed,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  percentUsed: number | null;
-}) {
-  const over = percentUsed != null && percentUsed > 1;
-  return (
-    <div>
-      <p className="kpi-label flex items-center gap-1.5">
-        {over && <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" />}
-        {label}
-      </p>
-      <p className="kpi-mid mt-2">{num(value)}</p>
-      {percentUsed != null && (
-        <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
-          <div
-            className={`h-1 rounded-full ${over ? "bg-(--dot-caution)" : "bg-(--bar-fill)"}`}
-            style={{ width: `${Math.min(percentUsed, 1) * 100}%` }}
-          />
-        </div>
-      )}
-      <p className="kpi-sub mt-1.5">{sub}</p>
     </div>
   );
 }

@@ -1,12 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { WarningList } from "~/components/warnings";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { getDailyReportData, saveDailyPriorities } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
 import { formatInt, formatPercent, anchorDayPhrase, bookingsAnchorLabel } from "~/server/metrics/report-text";
 import { InfoTip } from "~/components/InfoTip";
 import { CopyButton } from "~/components/CopyButton";
+// Harmonization Wave 1: Panel/Eyebrow/RatioBar live ONCE in the shared
+// page-primitives module (same markup they replaced here).
+import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
 
 export const Route = createFileRoute("/daily-report")({
   loader: () => getDailyReportData(),
@@ -25,30 +28,6 @@ export const Route = createFileRoute("/daily-report")({
    Surfaces: LEVEL 2 panels on the LEVEL 1 canvas, hairline internal dividers,
    LEVEL 3 for inputs/hover — depth from tone + spacing, not borders.
 --------------------------------------------------------------------------- */
-
-/** LEVEL 2 content panel — the shared section surface for the management pages. */
-function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={"rounded-xl border border-(--card-border) bg-(--card-bg) " + className}>{children}</div>;
-}
-
-/** True eyebrow label (the only uppercase on the page). */
-function Eyebrow({ children }: { children: ReactNode }) {
-  return <p className="kpi-label">{children}</p>;
-}
-
-/**
- * Clean progress visualization under a ratio metric. Presentation-only
- * geometry: the SAME ratio the adjacent text shows, clamped to the track;
- * null renders an empty track (missing data stays missing — never plausible).
- */
-function RatioBar({ ratio, height = "h-1.5", max = "max-w-xl" }: { ratio: number | null; height?: string; max?: string }) {
-  const width = ratio == null || !Number.isFinite(ratio) ? 0 : Math.min(100, Math.max(0, ratio * 100));
-  return (
-    <div className={`${height} w-full ${max} overflow-hidden rounded-full bg-(--bar-track)`} aria-hidden="true">
-      <div className="h-full rounded-full bg-(--bar-fill)" style={{ width: `${width}%` }} />
-    </div>
-  );
-}
 
 function DailyReportPage() {
   const data = Route.useLoaderData();

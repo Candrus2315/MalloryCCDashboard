@@ -7,7 +7,10 @@ import { WarningList } from "~/components/warnings";
 import { InfoTip } from "~/components/InfoTip";
 import { CopyButton } from "~/components/CopyButton";
 import { TrendCard, type TrendTooltipView } from "~/components/trend-chart";
-import { useState, type ReactNode } from "react";
+// Harmonization Wave 1: Panel/Eyebrow/RatioBar live ONCE in the shared
+// page-primitives module (same markup they replaced here).
+import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
+import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/weekly")({
@@ -43,30 +46,6 @@ function signedDelta(actual: number, goal: number): string {
   const diff = actual - goal;
   const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
   return `${sign}${Math.abs(diff)}`;
-}
-
-/** LEVEL 2 content panel — the shared section surface for the management pages. */
-function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={"rounded-xl border border-(--card-border) bg-(--card-bg) " + className}>{children}</div>;
-}
-
-/** True eyebrow label (the only uppercase on the page). */
-function Eyebrow({ children }: { children: ReactNode }) {
-  return <p className="kpi-label">{children}</p>;
-}
-
-/**
- * Clean progress visualization under a ratio metric (Daily Report's geometry).
- * Presentation-only: the SAME ratio the adjacent text shows, clamped to the
- * track; null renders an empty track (missing data stays missing).
- */
-function RatioBar({ ratio, height = "h-1.5", max = "max-w-xl" }: { ratio: number | null; height?: string; max?: string }) {
-  const width = ratio == null || !Number.isFinite(ratio) ? 0 : Math.min(100, Math.max(0, ratio * 100));
-  return (
-    <div className={`${height} w-full ${max} overflow-hidden rounded-full bg-(--bar-track)`} aria-hidden="true">
-      <div className="h-full rounded-full bg-(--bar-fill)" style={{ width: `${width}%` }} />
-    </div>
-  );
 }
 
 /**

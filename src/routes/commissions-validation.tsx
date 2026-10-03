@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
+// Harmonization Wave 1: Panel/Eyebrow live ONCE in the shared page-primitives
+// module (same markup they replaced here).
+import { Eyebrow, Panel } from "~/components/page-panel";
 import { getCommissionValidationData } from "~/server/queries";
 import { WarningList } from "~/components/warnings";
 import { InfoTip } from "~/components/InfoTip";
@@ -29,14 +32,6 @@ export const Route = createFileRoute("/commissions-validation")({
    field-by-field against whatever is stored. Divergences render, never
    average away; the provenance banner states written vs dry-run.
 --------------------------------------------------------------------------- */
-
-function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={"rounded-xl border border-(--card-border) bg-(--card-bg) " + className}>{children}</div>;
-}
-
-function Eyebrow({ children }: { children: ReactNode }) {
-  return <p className="kpi-label">{children}</p>;
-}
 
 function CommissionsValidationPage() {
   const data = Route.useLoaderData();
