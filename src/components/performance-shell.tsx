@@ -33,10 +33,18 @@ export const PERFORMANCE_TABS = [
 export function PerformanceShell({
   path,
   children,
+  headerAction,
+  tabCounts,
 }: {
   path: string;
   children: ReactNode;
+  /** Segment-level primary action, rendered beside the page title (PIPs: "New PIP"). */
+  headerAction?: ReactNode;
+  /** Factual per-segment record counts from each page's own loader — badges stay absent when undefined. */
+  tabCounts?: { pips?: number; templates?: number; history?: number };
 }) {
+  const countFor = (to: string): number | undefined =>
+    to === "/performance" ? tabCounts?.pips : to === "/performance-templates" ? tabCounts?.templates : tabCounts?.history;
   return (
     <div>
       <div className="flex items-start justify-between gap-3">
@@ -46,12 +54,13 @@ export function PerformanceShell({
             <span className="text-(--text-primary)">Management workspace</span>
           </p>
         </div>
-        <span className="pt-1">
+        <div className="flex shrink-0 items-center gap-2.5 pt-0.5">
+          {headerAction}
           <InfoTip
             align="right"
             tip="Management only — visible to authorized managers, never ordinary CC users, never a leaderboard. The system stores and displays verified data; every decision, observation, and conclusion is entered by a manager."
           />
-        </span>
+        </div>
       </div>
       <p className="mt-1 flex items-center gap-2 text-xs text-(--text-caption)">
         <span aria-hidden="true" className="inline-block h-1 w-1 rounded-full bg-(--dot-muted)" />
@@ -64,6 +73,7 @@ export function PerformanceShell({
         <div className="flex items-center gap-1 overflow-x-auto py-2 whitespace-nowrap">
           {PERFORMANCE_TABS.map((t) => {
             const active = path === t.to;
+            const count = countFor(t.to);
             return (
               <Link
                 key={t.to}
@@ -77,6 +87,14 @@ export function PerformanceShell({
                 }
               >
                 {t.label}
+                {count != null && (
+                  <span
+                    className="ml-1.5 inline-flex items-center rounded-full bg-(--surface-3) px-1.5 text-[11px] font-medium leading-4 tabular-nums text-(--text-caption)"
+                    aria-label={`${count} records`}
+                  >
+                    {count}
+                  </span>
+                )}
               </Link>
             );
           })}
@@ -105,11 +123,17 @@ export function PipStatusChip({ status }: { status: PipStatus }) {
   return <StatusChip kind={kind} label={STATUS_LABEL[status]} />;
 }
 
-export function EmptyState({ title, hint }: { title: string; hint: string }) {
+/**
+ * Intentional empty state (management-redesign spec "EMPTY STATES"): compact,
+ * one title + one muted sentence, CTA only when a real action applies.
+ * Absence of data must not look unfinished — and must not fake capability.
+ */
+export function EmptyState({ title, hint, action }: { title: string; hint: string; action?: ReactNode }) {
   return (
     <div className="rounded-lg border border-(--card-border) bg-(--card-bg) px-5 py-8 text-center">
       <p className="text-[14px] font-medium">{title}</p>
       <p className="mt-1 text-[13px] text-(--text-muted)">{hint}</p>
+      {action && <div className="mt-4 flex justify-center">{action}</div>}
     </div>
   );
 }

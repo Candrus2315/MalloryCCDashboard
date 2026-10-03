@@ -166,7 +166,15 @@ function PipsPage() {
   const activeCount = counts.issued;
 
   return (
-    <PerformanceShell path="/performance">
+    <PerformanceShell
+      path="/performance"
+      headerAction={
+        <button type="button" className="btn-primary" onClick={() => navigate({ to: "/performance-new" })}>
+          New PIP
+        </button>
+      }
+      tabCounts={{ pips: all.length }}
+    >
       {/* demo-mode banner: in-memory store = not live data */}
       {data.mode === "memory" && (
         <div className="status-banner status-banner-warn" role="status">
@@ -179,9 +187,11 @@ function PipsPage() {
         </div>
       )}
 
-      {/* KPI strip — the owner's 4 metrics (spec §1); numbers stay charcoal, tones live in sub-lines */}
+      {/* Management status strip (spec §3A): the owner's four metrics + the
+          remaining lifecycle counts, one compact strip. Counts visible but not
+          enormous; each cell links to the filtered/sorted view it summarizes. */}
       <div className="card mt-1 overflow-hidden p-0">
-        <div className="grid grid-cols-2 md:grid-cols-4 md:divide-x divide-(--table-border-weak)">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6">
           <KpiCell
             to="/performance?status=issued"
             label="Active PIPs"
@@ -205,7 +215,7 @@ function PipsPage() {
                 <span className="text-xs text-(--text-muted)">None overdue</span>
               )
             }
-            mobileBorderTop
+            cellClass="border-l border-(--table-border-weak)"
           />
           <KpiCell
             to="/performance?status=issued&sort=days"
@@ -217,13 +227,28 @@ function PipsPage() {
                 <SubLine tone="risk" dot>{data.kpis.ending_soon} due within 3 days</SubLine>
               ) : null
             }
+            cellClass="border-(--table-border-weak) border-t sm:border-t-0 sm:border-l"
           />
           <KpiCell
             to="/performance?status=draft"
             label="Drafts"
             labelTip="Editable plans, private to managers; never visible to employees."
             value={data.kpis.drafts}
-            mobileBorderTop
+            cellClass="border-(--table-border-weak) border-t border-l sm:border-l-0 md:border-t-0 md:border-l"
+          />
+          <KpiCell
+            to="/performance?status=completed"
+            label="Completed"
+            labelTip="Plans closed as completed — the issued record is immutable."
+            value={counts.completed}
+            cellClass="border-(--table-border-weak) border-t sm:border-l md:border-t-0"
+          />
+          <KpiCell
+            to="/performance?status=cancelled"
+            label="Cancelled"
+            labelTip="Plans ended without completion — the reason is part of the permanent record."
+            value={counts.cancelled}
+            cellClass="border-(--table-border-weak) border-t border-l md:border-t-0"
           />
         </div>
       </div>
@@ -233,12 +258,14 @@ function PipsPage() {
         <AttentionPanel
           title="PIP attention"
           subtitle="Rule-based from PIP dates and stored check-ins — no scores."
+          allClear="Nothing needs attention — no overdue check-ins, no windows past their end date, and no check-in left unscheduled."
           notes={attentionNotes}
         />
       </div>
 
-      {/* Active PIPs — compact dense table (spec §2) */}
-      <div className="mt-8">
+      {/* Plans — the primary content (filter chips + management table); the
+          New PIP action lives in the page header, not above the table */}
+      <section className="mt-8" aria-label="Plans">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-1.5 text-[13px] text-(--text-caption)">
             {filter === "draft"
@@ -252,13 +279,6 @@ function PipsPage() {
                     : "Plans ended without completion."}
             <InfoTip tip={FILTER_TIP[filter]} />
           </p>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => navigate({ to: "/performance-new" })}
-          >
-            New PIP
-          </button>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="Status filter">
@@ -286,10 +306,21 @@ function PipsPage() {
               title={filter === "issued" ? "No active PIPs" : `No ${FILTER_LABEL[filter].toLowerCase()} PIPs`}
               hint={
                 filter === "issued"
-                  ? "Issued plans appear here until completed or cancelled."
+                  ? "There are currently no issued performance plans."
                   : filter === "draft"
                     ? "Start a draft from the New PIP button or from a template."
                     : "Nothing recorded under this status yet."
+              }
+              action={
+                filter === "issued" ? (
+                  <button type="button" className="btn-primary" onClick={() => navigate({ to: "/performance-new" })}>
+                    Create PIP
+                  </button>
+                ) : filter === "draft" ? (
+                  <Link to="/performance-templates" className="btn-secondary">
+                    Browse templates
+                  </Link>
+                ) : undefined
               }
             />
           ) : (
@@ -302,18 +333,7 @@ function PipsPage() {
             />
           )}
         </div>
-      </div>
-
-      {/* Quiet footer band */}
-      <div className="mt-8 flex flex-wrap items-center gap-4 text-[13px] text-(--text-caption)">
-        <span>{counts.draft} drafts</span>
-        <Link to="/performance-templates" className="underline-offset-2 hover:text-(--text-primary) hover:underline">
-          Templates
-        </Link>
-        <Link to="/performance-history" className="underline-offset-2 hover:text-(--text-primary) hover:underline">
-          History
-        </Link>
-      </div>
+      </section>
 
       {/* Manage drawer (DetailDrawer width=lg) */}
       {openPip && <ManageDrawer pip={openPip} onClose={() => setOpenPipId(null)} />}
@@ -336,21 +356,22 @@ function KpiCell({
   labelTip,
   value,
   sub,
-  mobileBorderTop,
+  cellClass = "",
 }: {
   to: string;
   label: string;
   labelTip: string;
   value: number;
   sub?: ReactNode;
-  mobileBorderTop?: boolean;
+  /** Per-cell divider borders — the strip uses explicit hairlines, not divide-x, so the 2/3/6-col wraps stay clean. */
+  cellClass?: string;
 }) {
   return (
     <Link
       to={to}
       className={
         "block px-5 py-4 transition-colors hover:bg-(--surface-hover) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) md:hover:bg-(--surface-hover) " +
-        (mobileBorderTop ? "border-t border-(--table-border-weak) md:border-t-0" : "")
+        cellClass
       }
     >
       <span className="kpi-label flex items-center gap-1.5">
