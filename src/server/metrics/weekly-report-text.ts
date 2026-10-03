@@ -15,8 +15,13 @@
  *    2026-09-29: the channels' pipelines) → real counts, ET created-date week.
  *  - "Website" has no synced lead source and is not a distinct Acuity booking
  *    type → its leads and bookings render "—", never a number.
- *  - Empty appointments / Holes / 1st Call Completed are not yet defined against
- *    our data → blank fields the owner fills until the owner defines them.
+ *  - Empty appointments / 1st Call Completed are not yet defined against our
+ *    data → blank fields the owner fills until the owner defines them.
+ *  - HOLES is owner-defined (2026-09-30): empty booking slots = derived
+ *    capacity (10/day, 9 Tue) − booked sessions per ET day, summed Mon–Sun —
+ *    computed via the commission engine's slot derivation (derive.ts,
+ *    deriveWeeklyHoles). A null value keeps the legacy blank "Holes:"
+ *    placeholder BYTE-IDENTICAL (never a fabricated number).
  *  - A missing monthly goal renders "—" (never September's goal in October).
  *
  * Pure module: no DB, no clock, no React — deterministic under tests.
@@ -59,6 +64,14 @@ export interface WeeklyCcReportInput {
     beyond: number;
     firstFullyOpenDay: string | null;
   };
+  /**
+   * OWNER HOLES of the REPORT week (owner definition 2026-09-30, computed by
+   * deriveWeeklyHoles). Null → the legacy blank "Holes:" placeholder is kept
+   * BYTE-IDENTICAL; a number fills the placeholder as
+   * "Holes (empty slots): N" — the holes line is the ONLY line this input can
+   * ever change.
+   */
+  holes: number | null;
   /** Stored narrative for the report week (section key → text; empty = unfilled). */
   notes: Record<string, string | null | undefined>;
   /** Computed Celebrate default ("Name — N paid bookings"); a stored note overrides it. */
@@ -117,8 +130,10 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   lines.push("");
   // Not-yet-defined placeholders — blank fields the owner fills until the
   // owner defines them against our data (never a fabricated number).
+  // HOLES IS now owner-defined (9/30) and computed: the placeholder fills as
+  // "Holes (empty slots): N"; null keeps the legacy blank line byte-identical.
   lines.push("Empty appointments:");
-  lines.push("Holes:");
+  lines.push(input.holes == null ? "Holes:" : `Holes (empty slots): ${formatInt(input.holes)}`);
   lines.push("1st Call Completed through Monday:");
   lines.push("");
   for (const section of WEEKLY_CC_SECTIONS) {

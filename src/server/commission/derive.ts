@@ -325,6 +325,83 @@ export function deriveFilledHolesForWeek(input: {
   return { byRep, audit, days, totalSlots, openAtStart };
 }
 
+// ---------------------------------------------------------------------------
+// OWNER HOLES (owner definition 2026-09-30) — the REPORTING hole count for a
+// Mon–Sun ET week: empty booking slots = derived capacity (10 slots/day, 9 on
+// Tuesday = 69/week) − booked sessions per ET day, summed Mon–Sun. Distinct
+// from RULING 3's bonus-bearing "filled hole" (a slot open at week start that a
+// rep-attributed win fills in-week — the commission money path), but derived
+// with the SAME slot helpers (scheduledSlotTimesForDay / sessionDateOf) so the
+// app has ONE studio-slot derivation, never a second engine. Booked sessions =
+// Acuity appointments on the ET session day with cancelled excluded (a
+// cancelled record books no session) — the same appointment superset shape the
+// RULING 3 occupancy derivation consumes (getAppointmentsOverlapping over the
+// week's ET days). An overbooked day clamps at zero for that day — holes are
+// EMPTY slots, never negative.
+// ---------------------------------------------------------------------------
+
+/** A booked session: an Acuity appointment record that is NOT cancelled (the same two-state check the calendar-fill population keys on). */
+export function isCancelledSession(a: AppointmentRow): boolean {
+  return a.cancelled === true || a.status === "cancelled";
+}
+
+/** One ET day of the owner's holes arithmetic (the per-day breakdown the Weekly page exposes). */
+export interface DayHoleDetail {
+  date: string;
+  /** Derived schedule capacity that day (10, or 9 on Tuesday). */
+  capacity: number;
+  /** Booked sessions that day (cancelled excluded). */
+  booked: number;
+  /** capacity − booked, clamped at zero (an overbooked day has no empty slots). */
+  holes: number;
+}
+
+export interface WeeklyHoleDerivation {
+  days: DayHoleDetail[];
+  capacity: number;
+  booked: number;
+  holes: number;
+}
+
+/**
+ * OWNER HOLES for one Mon–Sun ET week (owner definition 9/30). `sessionAppts`
+ * is the same overlapping-window superset the RULING 3 derivation consumes
+ * (all records touching the week's ET days — getAppointmentsOverlapping);
+ * cancelled records are excluded here (they book no session), every other
+ * in-week non-cancelled session counts as booked studio time on its ET session
+ * day, and capacity is the derived schedule (scheduledSlotTimesForDay).
+ * Deterministic and pure — same inputs → identical output.
+ */
+export function deriveWeeklyHoles(input: {
+  weekStart: string;
+  sessionAppts: AppointmentRow[];
+}): WeeklyHoleDerivation {
+  const weekEnd = addDays(input.weekStart, 6);
+  const bookedByDay = new Map<string, number>();
+  for (const a of input.sessionAppts) {
+    if (isCancelledSession(a)) continue; // a cancelled record books no session
+    const sd = sessionDateOf(a);
+    if (sd == null || sd < input.weekStart || sd > weekEnd) continue; // sessions outside the week's schedule are irrelevant
+    bookedByDay.set(sd, (bookedByDay.get(sd) ?? 0) + 1);
+  }
+  const days: DayHoleDetail[] = [];
+  let capacity = 0;
+  let booked = 0;
+  let holes = 0;
+  let cur = input.weekStart;
+  for (let i = 0; i < 7; i++) {
+    const cap = scheduledSlotTimesForDay(cur).length;
+    const b = bookedByDay.get(cur) ?? 0;
+    const h = Math.max(0, cap - b);
+    days.push({ date: cur, capacity: cap, booked: b, holes: h });
+    capacity += cap;
+    booked += b;
+    holes += h;
+    cur = addDays(cur, 1);
+  }
+  return { days, capacity, booked, holes };
+}
+
 export interface WeeklyComputationInput {
   weekStart: string; // Monday (ET)
   /** Win-bucket appointment superset for the week (store selector; filtered inside). */
