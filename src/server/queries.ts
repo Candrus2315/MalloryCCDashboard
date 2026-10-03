@@ -911,6 +911,17 @@ export interface FreshnessData {
   runningStartedAt: string | null;
   intervalSeconds: number;
   serverNow: string;
+  /**
+   * Harmonization Wave 1: nav count badges (shell, all pages). Factual record
+   * counts from the SAME stores the sections render — a zero or absent count
+   * hides its badge (a badge is never faked). Presentation support only.
+   */
+  navCounts?: {
+    /** Performance — active (issued) PIPs. */
+    activePips: number;
+    /** Commissions — cycles sitting in Ready for Review (manager attention). */
+    commissionsAwaitingReview: number;
+  };
 }
 
 /** Connection freshness for the shell's "Last synced Xm ago" indicator. */
@@ -919,6 +930,19 @@ export const getFreshnessData = createServerFn().handler(async (): Promise<Fresh
   const store = await getStore();
   const [connections, running, settings] = await Promise.all([store.getConnections(), store.getRunningSyncRun("highlevel"), store.getSettings()]);
   const hl = connections.find((c) => c.provider === "highlevel") ?? null;
+  // Nav count badges (Wave 1): active PIPs for the Performance pill, cycles in
+  // Ready for Review for the Commissions pill. Read-only + guarded — any store
+  // failure just hides the badges, it never blocks a page render.
+  let navCounts: FreshnessData["navCounts"];
+  try {
+    const [issuedPips, cycles] = await Promise.all([store.listPips("issued"), store.getCommissionCycles()]);
+    navCounts = {
+      activePips: issuedPips.length,
+      commissionsAwaitingReview: cycles.filter((c) => c.status === "ready_for_review").length,
+    };
+  } catch {
+    navCounts = undefined;
+  }
   return {
     highlevel: {
       status: hl?.status ?? "unknown",
@@ -931,6 +955,7 @@ export const getFreshnessData = createServerFn().handler(async (): Promise<Fresh
     runningStartedAt: running?.started_at ?? null,
     intervalSeconds: readSchedulerIntervalSeconds(settings.highlevel_sync_interval_seconds),
     serverNow: new Date().toISOString(),
+    navCounts,
   };
 });
 

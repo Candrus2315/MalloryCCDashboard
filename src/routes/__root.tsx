@@ -6,7 +6,16 @@ import appCss from "~/styles/app.css?url";
 import { useAppearance } from "~/components/appearance";
 import { getFreshnessData, refreshNow, type FreshnessData } from "~/server/queries";
 
-const NAV = [
+type NavBadgeKey = "activePips" | "commissionsAwaitingReview";
+interface NavItem {
+  to: string;
+  label: string;
+  /** Wave 1 count badge key (FreshnessData.navCounts) — absent = never badged. */
+  badgeKey?: NavBadgeKey;
+  badgeTitle?: string;
+}
+
+const NAV: NavItem[] = [
   { to: "/", label: "Today" },
   { to: "/reps", label: "Reps" },
   { to: "/team", label: "Team" },
@@ -15,14 +24,39 @@ const NAV = [
   { to: "/weekly", label: "Weekly" },
   // COMMISSION CENTER (owner directive 10/1): payroll workspace — the Center +
   // §26 Validation live in the section's own tab bar on /commissions*.
-  { to: "/commissions", label: "Commissions" },
+  {
+    to: "/commissions",
+    label: "Commissions",
+    // Wave 1 count badge: cycles sitting in Ready for Review (manager attention).
+    badgeKey: "commissionsAwaitingReview" as const,
+    badgeTitle: "Commission cycles in Ready for Review",
+  },
   // PERFORMANCE MANAGEMENT (owner directive 9/30): manager-only PIP module.
   // The section's six pages (Active/Drafts/Completed/Cancelled/Templates/
   // History) live in the section's own tab bar on /performance*.
-  { to: "/performance", label: "Performance" },
+  {
+    to: "/performance",
+    label: "Performance",
+    // Wave 1 count badge: active (issued) PIPs.
+    badgeKey: "activePips" as const,
+    badgeTitle: "Active (issued) PIPs",
+  },
   { to: "/settings", label: "Settings" },
   { to: "/audit", label: "Audit" },
 ];
+
+/** Factual nav count badge (Wave 1) — same pill language as the Performance/Settings SubNav counts; hidden when 0. */
+function NavCountBadge({ count, title }: { count: number; title: string }) {
+  return (
+    <span
+      className="ml-1.5 hidden inline-flex items-center rounded-full bg-(--surface-3) px-1.5 text-[11px] font-medium leading-4 tabular-nums text-(--text-caption) xl:inline-flex"
+      title={title}
+      aria-label={title}
+    >
+      {count}
+    </span>
+  );
+}
 
 export const Route = createRootRoute({
   loader: () => getFreshnessData(),
@@ -76,31 +110,51 @@ function AppShell({ children }: { children: ReactNode }) {
     setNavOpen(false);
   }, [path]);
 
+  // Wave 1 nav badges: a factual count shows only when it exists AND is > 0 —
+  // a badge is never faked, and an empty queue stays chrome-free.
+  const badgeCount = (item: NavItem): number | undefined => {
+    if (!item.badgeKey) return undefined;
+    const n = freshness.navCounts?.[item.badgeKey];
+    return n != null && n > 0 ? n : undefined;
+  };
+
   return (
     <div className="min-h-dvh bg-(--page-bg) text-(--text-primary)">
       {/* Mobile header height is 68px (safe-area pad + py-3 + 44px controls);
           in-page sticky elements compensate with top-[68px] md:top-14. */}
-      <header className="border-b border-(--card-border) bg-(--sticky-header-bg) sticky top-0 z-10 pt-[env(safe-area-inset-top)]">
+      <header className="border-b border-(--card-border) bg-(--sticky-header-bg) sticky top-0 z-10 pt-[env(safe-area-inset-top)] backdrop-blur-sm">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:gap-6 sm:px-6">
-          <div className="flex min-w-0 items-baseline gap-3">
+          {/* Command-center masthead (Wave 1): wordmark + hairline + uppercase
+              micro-label on sm+ — same branding text, refined hierarchy. */}
+          <div className="flex min-w-0 items-baseline gap-2.5">
             <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight">Mallory Portraits</span>
-            <span className="hidden whitespace-nowrap text-[13px] text-(--text-muted) sm:inline">CC Performance</span>
+            <span className="hidden h-3.5 w-px self-center bg-(--card-border) 2xl:block" aria-hidden="true" />
+            {/* Micro-label returns at 2xl+ — below that the masthead keeps the
+                old footprint so the 10-item nav + freshness cluster fit at
+                1280–1535 without wrapping. */}
+            <span className="hidden whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.16em] text-(--text-muted) 2xl:inline">
+              CC Performance
+            </span>
           </div>
           <div className="flex min-w-0 items-center gap-2 sm:gap-4">
-            {/* Full freshness label on md+; compact "12m" form on phones */}
-            <div className="hidden md:block">
+            {/* Full freshness label on md+; compact "12m" form on phones.
+                nowrap: the masthead row is width-tight at 1440 — the label
+                must never wrap into multiple lines. */}
+            <div className="hidden shrink-0 md:block">
               <FreshnessIndicator initial={freshness} />
             </div>
-            <div className="min-w-0 md:hidden">
+            <div className="min-w-0 shrink-0 md:hidden">
               <FreshnessIndicator initial={freshness} compact />
             </div>
             <nav className="hidden items-center gap-1 md:flex">
               {NAV.map((item) => {
                 const active = item.to === "/" ? path === "/" : path.startsWith(item.to);
+                const count = badgeCount(item);
                 return (
                   <Link
                     key={item.to}
                     to={item.to}
+                    aria-current={active ? "page" : undefined}
                     className={
                       "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors " +
                       (active
@@ -109,6 +163,7 @@ function AppShell({ children }: { children: ReactNode }) {
                     }
                   >
                     {item.label}
+                    {count != null && <NavCountBadge count={count} title={item.badgeTitle ?? item.label} />}
                   </Link>
                 );
               })}
@@ -128,7 +183,7 @@ function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">{children}</main>
-      <MobileNav open={navOpen} onClose={() => setNavOpen(false)} path={path} />
+      <MobileNav open={navOpen} onClose={() => setNavOpen(false)} path={path} badgeFor={badgeCount} />
     </div>
   );
 }
@@ -140,7 +195,18 @@ function AppShell({ children }: { children: ReactNode }) {
  * Backdrop click, Escape and any route change close it; body scroll locks
  * while open (same mechanics as DetailDrawer).
  */
-function MobileNav({ open, onClose, path }: { open: boolean; onClose: () => void; path: string }) {
+function MobileNav({
+  open,
+  onClose,
+  path,
+  badgeFor,
+}: {
+  open: boolean;
+  onClose: () => void;
+  path: string;
+  /** Wave 1: same factual badge counts as the desktop nav (hidden when 0). */
+  badgeFor: (item: NavItem) => number | undefined;
+}) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -165,7 +231,14 @@ function MobileNav({ open, onClose, path }: { open: boolean; onClose: () => void
         style={{ backgroundColor: "var(--card-bg)", paddingTop: "env(safe-area-inset-top)" }}
       >
         <div className="flex items-center justify-between border-b border-(--table-border-weak) px-4 py-2 pr-2">
-          <span className="text-[15px] font-semibold tracking-tight text-(--text-primary)">Menu</span>
+          {/* Wave 1: drawer header carries the same masthead hierarchy as the
+              desktop header — wordmark over uppercase micro-label. */}
+          <div className="min-w-0">
+            <span className="block text-[15px] font-semibold tracking-tight text-(--text-primary)">Mallory Portraits</span>
+            <span className="block text-[11px] font-medium uppercase tracking-[0.16em] text-(--text-muted)">
+              CC Performance
+            </span>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -180,6 +253,7 @@ function MobileNav({ open, onClose, path }: { open: boolean; onClose: () => void
         <div className="flex-1 overflow-y-auto py-2">
           {NAV.map((item) => {
             const active = item.to === "/" ? path === "/" : path.startsWith(item.to);
+            const count = badgeFor(item);
             return (
               <Link
                 key={item.to}
@@ -194,11 +268,21 @@ function MobileNav({ open, onClose, path }: { open: boolean; onClose: () => void
                 }
               >
                 {item.label}
-                {active && (
-                  <span aria-hidden="true" className="text-[13px] opacity-70">
-                    ●
-                  </span>
-                )}
+                <span className="flex items-center gap-2">
+                  {count != null && (
+                    <span
+                      className="inline-flex items-center rounded-full bg-(--surface-3) px-1.5 text-[11px] font-medium leading-4 tabular-nums text-(--text-caption)"
+                      aria-label={item.badgeTitle ?? item.label}
+                    >
+                      {count}
+                    </span>
+                  )}
+                  {active && (
+                    <span aria-hidden="true" className="text-[13px] opacity-70">
+                      ●
+                    </span>
+                  )}
+                </span>
               </Link>
             );
           })}
@@ -260,6 +344,7 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
         runningStartedAt: null,
         intervalSeconds: data.intervalSeconds,
         serverNow: res.serverNow,
+        navCounts: data.navCounts,
       });
       await router.invalidate();
     } finally {
@@ -271,7 +356,7 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
     <div className="flex min-w-0 items-center gap-2" title={data.highlevel.lastError ?? undefined}>
       <span className={"inline-block h-1.5 w-1.5 shrink-0 rounded-full " + dot} aria-hidden />
       <span
-        className={"text-[12px] text-(--text-muted) " + (compact ? "max-w-[76px] truncate" : "")}
+        className={"text-[12px] whitespace-nowrap text-(--text-muted) " + (compact ? "max-w-[76px] truncate" : "")}
         suppressHydrationWarning
       >
         {label}
