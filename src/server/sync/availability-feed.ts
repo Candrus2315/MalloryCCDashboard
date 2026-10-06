@@ -417,7 +417,9 @@ export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions)
     client.startRun();
     // 2 catalog calls — the type↔calendar binding must come from the API (§1.2)
     const calendars = await client.fetchCalendars();
+    callsMade += 1;
     const types = await client.fetchAppointmentTypes();
+    callsMade += 1;
     const { pairs, warnings: pairWarnings } = representativeTypePairs(calendars, types);
     warnings.push(...pairWarnings);
     if (pairs.length === 0) {
