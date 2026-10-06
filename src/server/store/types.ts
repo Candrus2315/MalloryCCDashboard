@@ -1009,6 +1009,87 @@ export interface CommissionAdjustmentRow extends CommissionAdjustmentInput {
   changed_at: string; // ISO
 }
 
+// ---- Availability feed cache (Acuity availability rebuild PR-1, 2026-10-06) ----
+// Blueprint: design/availability-rebuild-investigation.md §3. Additive-only new
+// tables; the appointments schema is untouched; live-only data (demo mode never
+// writes or reads these — the demo dataset keeps the existing engine output).
+
+/** One cached Acuity OPEN (bookable) slot for (calendar, ET date, ET time). */
+export interface AvailabilitySlotRow {
+  id: string;
+  calendar_id: string;
+  date_et: string; // YYYY-MM-DD (ET calendar date)
+  time_et: string; // HH:mm ET (the feed's stated time is the ET clock)
+  slots_available: number;
+  /** "acuity" — the only writer today (the schema leaves room for "derived"). */
+  source: string;
+  first_seen_at: string;
+  last_confirmed_at: string;
+  run_id: string; // availability_sync_runs.id
+}
+
+/** Full-month date-index cache per (calendar × representative appointment type). */
+export interface AvailabilityDatesRow {
+  calendar_id: string;
+  appointment_type_id: string;
+  month: string; // "YYYY-MM"
+  /** The dates within the month that still have bookable open slots ([] = none — the cached coverage horizon). */
+  dates_et: string[];
+  fetched_at: string;
+  run_id: string; // availability_sync_runs.id
+}
+
+/** One availability-feed sync run (detailed mirror of the generic sync_runs row). */
+export interface AvailabilitySyncRunRow {
+  id: string;
+  status: string; // running | success | error
+  scope: Record<string, unknown>; // {months:[], dates:[], calendars:[], trigger, syncRunId}
+  calls_made: number | null;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export type AvailabilityDiscrepancyKind =
+  | "acuity-open-but-booked" // the feed offers a slot our booked-truth occupies (the 10-24 16:30 divergence)
+  | "acuity-silent-but-open" // our booked-truth says free + grid slot, but the feed offers nothing
+  | "off-grid-acuity-time"; // the feed offers a time outside the canonical grid
+
+/** One detected feed-vs-truth mismatch (the owner's equation, executable). */
+export interface AvailabilityDiscrepancyRow {
+  id: string;
+  run_id: string;
+  calendar_id: string;
+  date_et: string;
+  time_et: string;
+  kind: AvailabilityDiscrepancyKind;
+  detail: Record<string, unknown>; // both sides: {acuity:'open'|'silent', booked:[ids], grid:'canonical', ...}
+  detected_at: string;
+  resolved_at: string | null; // cleared when a later run stops seeing it
+}
+
+export interface AvailabilitySlotInput {
+  calendar_id: string;
+  date_et: string;
+  time_et: string;
+  slots_available: number;
+}
+
+export interface AvailabilityDatesInput {
+  calendar_id: string;
+  appointment_type_id: string;
+  month: string;
+  dates_et: string[];
+}
+
+export interface AvailabilityDiscrepancyInput {
+  calendar_id: string;
+  date_et: string;
+  time_et: string;
+  kind: AvailabilityDiscrepancyKind;
+  detail: Record<string, unknown>;
+}
+
 export interface Store {
   mode: "postgres" | "memory";
   ensureSchema(): Promise<void>;
@@ -1424,4 +1505,42 @@ export interface Store {
   insertCommissionAdjustment(row: CommissionAdjustmentInput): Promise<CommissionAdjustmentRow>;
   /** Adjustments, newest first; any filter combination narrows the set. */
   getCommissionAdjustments(filter?: { cycleId?: string; userId?: string; targetId?: string }): Promise<CommissionAdjustmentRow[]>;
+
+  // ---- Availability feed cache (Acuity availability rebuild PR-1) ----
+  /**
+   * Full-month date-index cache: upsert per (calendar, appointmentType, month)
+   * with REPLACE-of-the-row semantics (the fresh answer IS the month's truth,
+   * including an EMPTY answer — that is the coverage horizon). Writer runs
+   * inside the availability-feed advisory lock in pg (one writer at a time).
+   */
+  putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string): Promise<void>;
+  /** Cached month rows for the given months (empty list → []). */
+  getAvailabilityDates(months: string[]): Promise<AvailabilityDatesRow[]>;
+  /**
+   * ONE (calendar, date) times-fetch result, REPLACE semantics for that
+   * (calendar, date): the fresh feed answer is the current truth, so rows the
+   * feed no longer offers are removed (a booked slot drops out of the feed —
+   * the discrepancy detector compares against the CURRENT answer and the
+   * mismatch history lives in availability_discrepancies, not in stale rows).
+   * Returns the number of rows now present for the (calendar, date).
+   */
+  putAvailabilitySlotsForDate(calendarId: string, dateEt: string, times: { time_et: string; slots_available: number }[], runId: string): Promise<number>;
+  /** Cached open-slot rows for the given ET dates (all calendars), date+time ascending. */
+  getAvailabilitySlotsForDates(dates: string[]): Promise<AvailabilitySlotRow[]>;
+  /** Open ONE detailed availability run (scope = months/dates/calendars/trigger; pairs with the generic sync_runs row). */
+  insertAvailabilitySyncRun(scope: Record<string, unknown>): Promise<string>;
+  finishAvailabilitySyncRun(id: string, status: string, callsMade: number, error: string | null): Promise<void>;
+  /** Detailed availability-run rows, newest first. */
+  getAvailabilitySyncRuns(limit: number): Promise<AvailabilitySyncRunRow[]>;
+  /**
+   * Apply ONE detector pass over the scanned (calendar, date) pairs (the pairs
+   * whose feed state was freshly re-fetched this run): insert each mismatch
+   * that has no UNRESOLVED row yet (dedupe on calendar+date+time+kind while
+   * unresolved), and RESOLVE (set resolved_at) every still-unresolved row of
+   * the scanned pairs that the current feed state no longer shows. Pairs not
+   * in `scanned` are untouched (we did not look — never a resolution).
+   */
+  applyAvailabilityDiscrepancies(runId: string, scanned: { calendar_id: string; date_et: string }[], current: AvailabilityDiscrepancyInput[]): Promise<{ inserted: number; resolved: number }>;
+  /** Discrepancy rows, newest detection first; unresolvedOnly narrows to the open list. */
+  getAvailabilityDiscrepancies(opts?: { unresolvedOnly?: boolean; limit?: number }): Promise<AvailabilityDiscrepancyRow[]>;
 }

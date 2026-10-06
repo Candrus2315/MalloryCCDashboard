@@ -55,6 +55,12 @@ import type {
   CountedBookingSnapshot,
   HoleAuditSnapshot,
   CommissionUpsertResult,
+  AvailabilityDatesInput,
+  AvailabilityDatesRow,
+  AvailabilityDiscrepancyInput,
+  AvailabilityDiscrepancyRow,
+  AvailabilitySlotRow,
+  AvailabilitySyncRunRow,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -653,7 +659,71 @@ const DDL: string[] = [
     changed_by text NOT NULL,
     changed_at timestamptz NOT NULL DEFAULT now()
   )`,
-  `CREATE INDEX IF NOT EXISTS commission_adjustments_cycle_idx ON commission_adjustments (cycle_id, changed_at DESC)`
+  `CREATE INDEX IF NOT EXISTS commission_adjustments_cycle_idx ON commission_adjustments (cycle_id, changed_at DESC)`,
+  // ---- AVAILABILITY FEED CACHE (availability rebuild PR-1, 2026-10-06) ----
+  // Blueprint: design/availability-rebuild-investigation.md §3 — four NEW
+  // tables, additive only; the appointments table schema is untouched.
+  // Live-only data: demo mode never writes or reads these tables.
+  // Cached Acuity OPEN (bookable) slot per (calendar, ET date, ET time).
+  // REPLACE-per-(calendar,date) via putAvailabilitySlotsForDate: the fresh
+  // feed answer is the current truth; first_seen_at is preserved on upsert.
+  `CREATE TABLE IF NOT EXISTS availability_slots (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    calendar_id text NOT NULL,
+    date_et date NOT NULL,
+    time_et text NOT NULL,
+    slots_available int NOT NULL DEFAULT 1,
+    source text NOT NULL DEFAULT 'acuity',
+    first_seen_at timestamptz NOT NULL DEFAULT now(),
+    last_confirmed_at timestamptz NOT NULL DEFAULT now(),
+    run_id uuid NOT NULL,
+    UNIQUE (calendar_id, date_et, time_et)
+  )`,
+  `CREATE INDEX IF NOT EXISTS availability_slots_date_idx ON availability_slots (date_et)`,
+  // Full-month date-index cache per (calendar × representative appointment
+  // type) — the cheap index that answers "does this month have any
+  // availability" and IS the coverage horizon when the month answers [].
+  `CREATE TABLE IF NOT EXISTS availability_dates (
+    calendar_id text NOT NULL,
+    appointment_type_id text NOT NULL,
+    month text NOT NULL,
+    dates_et date[] NOT NULL,
+    fetched_at timestamptz NOT NULL,
+    run_id uuid NOT NULL,
+    PRIMARY KEY (calendar_id, appointment_type_id, month)
+  )`,
+  `CREATE INDEX IF NOT EXISTS availability_dates_month_idx ON availability_dates (month)`,
+  // Detailed availability-run record (the generic sync_runs row for provider
+  // "acuity_availability" rides the existing machinery; this one carries the
+  // scope + pacing-audit the sync panel shows).
+  `CREATE TABLE IF NOT EXISTS availability_sync_runs (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    status text NOT NULL,
+    scope jsonb NOT NULL,
+    calls_made int,
+    started_at timestamptz,
+    finished_at timestamptz,
+    error text
+  )`,
+  // Detected feed-vs-truth mismatches. PARTIAL unique index: while a
+  // discrepancy is UNRESOLVED it is stored once per (calendar, date, time,
+  // kind); after resolution a later re-detection inserts a NEW row (history
+  // preserved). putAvailabilitySlotsForDate + applyAvailabilityDiscrepancies
+  // run inside the availability-feed advisory lock (see methods below).
+  `CREATE TABLE IF NOT EXISTS availability_discrepancies (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id uuid NOT NULL,
+    calendar_id text NOT NULL,
+    date_et date NOT NULL,
+    time_et text NOT NULL,
+    kind text NOT NULL,
+    detail jsonb NOT NULL,
+    detected_at timestamptz NOT NULL DEFAULT now(),
+    resolved_at timestamptz
+  )`,
+  `CREATE INDEX IF NOT EXISTS availability_discrepancies_key_idx ON availability_discrepancies (calendar_id, date_et, time_et)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS availability_discrepancies_open_unique_idx
+     ON availability_discrepancies (calendar_id, date_et, time_et, kind) WHERE resolved_at IS NULL`
 ];
 
 /**
@@ -1792,6 +1862,211 @@ export class PgStore implements Store {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`DELETE FROM blocked_times WHERE id = ${id}::uuid`;
+  }
+
+  // ---- AVAILABILITY FEED CACHE (availability rebuild PR-1, 2026-10-06) ----
+  // WRITER PROTECTION (the established pattern): every write below holds ONE
+  // advisory-locked transaction (lock 72240902 — the availability-feed writer;
+  // 72240901 is the attribution writer's), so the background tick, a manual
+  // refresh and a page-loader top-up can never interleave cache rewrites.
+
+  /**
+   * Full-month date-index cache upsert: the fresh answer IS the month's truth
+   * (including EMPTY — a [] month is the cached coverage horizon, not "no
+   * data"). Row-level REPLACE per (calendar, type, month).
+   */
+  async putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string): Promise<void> {
+    this.cache.bump();
+    await this.ensureSchema();
+    if (rows.length === 0) return;
+    // date[] as an explicit literal (dates are YYYY-MM-DD — no quoting hazards;
+    // an empty answer stores '{}' exactly as Acuity's [] deserves).
+    const pgDateArray = (dates: string[]) => `{${dates.join(",")}}`;
+    await this.sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(72240902)`;
+      for (const r of rows) {
+        await tx`
+          INSERT INTO availability_dates (calendar_id, appointment_type_id, month, dates_et, fetched_at, run_id)
+          VALUES (${r.calendar_id}, ${r.appointment_type_id}, ${r.month}, ${pgDateArray(r.dates_et)}::date[], now(), ${runId}::uuid)
+          ON CONFLICT (calendar_id, appointment_type_id, month)
+          DO UPDATE SET dates_et = EXCLUDED.dates_et, fetched_at = now(), run_id = EXCLUDED.run_id
+        `;
+      }
+    });
+  }
+
+  async getAvailabilityDates(months: string[]): Promise<AvailabilityDatesRow[]> {
+    if (months.length === 0) return [];
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT calendar_id, appointment_type_id, month, dates_et, fetched_at, run_id::text AS run_id
+      FROM availability_dates WHERE month = ANY(${months}::text[]) ORDER BY month, calendar_id, appointment_type_id`;
+    return rows.map((r) => ({
+      calendar_id: String(r.calendar_id),
+      appointment_type_id: String(r.appointment_type_id),
+      month: String(r.month),
+      dates_et: (r.dates_et as unknown[]).map((d) => normalizePgBusinessDate(d) ?? "").filter((d) => d !== ""),
+      fetched_at: new Date(r.fetched_at as string).toISOString(),
+      run_id: String(r.run_id),
+    }));
+  }
+
+  /**
+   * ONE (calendar, date) times-fetch answer, REPLACE semantics for that
+   * (calendar, date): rows the fresh feed no longer offers are DELETED (the
+   * mismatch history lives in availability_discrepancies, not in stale feed
+   * rows); fresh rows upsert with last_confirmed_at refreshed and
+   * first_seen_at preserved. Duplicate time rows in one answer are deduped
+   * (the highest slots_available wins — same slot, best remaining capacity).
+   */
+  async putAvailabilitySlotsForDate(calendarId: string, dateEt: string, times: { time_et: string; slots_available: number }[], runId: string): Promise<number> {
+    this.cache.bump();
+    await this.ensureSchema();
+    // dedupe by time (upsert key), best capacity wins
+    const byTime = new Map<string, number>();
+    for (const t of times) {
+      if (!t.time_et) continue;
+      const prev = byTime.get(t.time_et);
+      if (prev == null || t.slots_available > prev) byTime.set(t.time_et, t.slots_available);
+    }
+    const keep = [...byTime.entries()].map(([time_et, slots_available]) => ({ time_et, slots_available }));
+    await this.sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(72240902)`;
+      // remove stale feed rows NOT in the fresh answer (empty answer ⇒ all go)
+      if (keep.length > 0) {
+        await tx`
+          DELETE FROM availability_slots
+          WHERE calendar_id = ${calendarId} AND date_et = ${dateEt}::date
+            AND time_et <> ALL(${keep.map((k) => k.time_et)}::text[])`;
+      } else {
+        await tx`
+          DELETE FROM availability_slots WHERE calendar_id = ${calendarId} AND date_et = ${dateEt}::date`;
+      }
+      for (const k of keep) {
+        await tx`
+          INSERT INTO availability_slots (calendar_id, date_et, time_et, slots_available, source, run_id)
+          VALUES (${calendarId}, ${dateEt}::date, ${k.time_et}, ${k.slots_available}, 'acuity', ${runId}::uuid)
+          ON CONFLICT (calendar_id, date_et, time_et) DO UPDATE SET
+            slots_available = EXCLUDED.slots_available, last_confirmed_at = now(), run_id = EXCLUDED.run_id`;
+      }
+    });
+    return keep.length;
+  }
+
+  async getAvailabilitySlotsForDates(dates: string[]): Promise<AvailabilitySlotRow[]> {
+    if (dates.length === 0) return [];
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT id::text, calendar_id, date_et, time_et, slots_available, source, first_seen_at, last_confirmed_at, run_id::text AS run_id
+      FROM availability_slots WHERE date_et = ANY(${dates}::date[]) ORDER BY date_et, calendar_id, time_et`;
+    return rows.map((r) => ({
+      id: String(r.id),
+      calendar_id: String(r.calendar_id),
+      date_et: normalizePgBusinessDate(r.date_et) ?? "",
+      time_et: String(r.time_et),
+      slots_available: Number(r.slots_available),
+      source: String(r.source),
+      first_seen_at: new Date(r.first_seen_at as string).toISOString(),
+      last_confirmed_at: new Date(r.last_confirmed_at as string).toISOString(),
+      run_id: String(r.run_id),
+    }));
+  }
+
+  async insertAvailabilitySyncRun(scope: Record<string, unknown>): Promise<string> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      INSERT INTO availability_sync_runs (status, scope, started_at) VALUES ('running', ${JSON.stringify(scope)}::jsonb, now())
+      RETURNING id::text`;
+    return String(rows[0].id);
+  }
+
+  async finishAvailabilitySyncRun(id: string, status: string, callsMade: number, error: string | null): Promise<void> {
+    await this.ensureSchema();
+    await this.sql`
+      UPDATE availability_sync_runs SET status = ${status}, calls_made = ${callsMade}, finished_at = now(), error = ${error}
+      WHERE id = ${id}::uuid`;
+  }
+
+  async getAvailabilitySyncRuns(limit: number): Promise<AvailabilitySyncRunRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT id::text, status, scope, calls_made, started_at, finished_at, error
+      FROM availability_sync_runs ORDER BY started_at DESC, id DESC LIMIT ${Math.max(1, Math.min(500, limit))}`;
+    return rows.map((r) => ({
+      id: String(r.id),
+      status: String(r.status),
+      scope: (r.scope ?? {}) as Record<string, unknown>,
+      calls_made: r.calls_made == null ? null : Number(r.calls_made),
+      started_at: r.started_at == null ? "" : new Date(r.started_at as string).toISOString(),
+      finished_at: r.finished_at == null ? null : new Date(r.finished_at as string).toISOString(),
+      error: r.error == null ? null : String(r.error),
+    }));
+  }
+
+  /**
+   * Apply ONE detector pass (see applyAvailabilityDiscrepancies in types.ts
+   * for the contract). The partial unique index enforces the dedupe at the DB
+   * level; resolution touches ONLY the scanned pairs' still-unresolved rows.
+   */
+  async applyAvailabilityDiscrepancies(runId: string, scanned: { calendar_id: string; date_et: string }[], current: AvailabilityDiscrepancyInput[]): Promise<{ inserted: number; resolved: number }> {
+    this.cache.bump();
+    await this.ensureSchema();
+    // resolve ONLY unresolved rows of scanned pairs whose (time, kind) is no
+    // longer in the current mismatch set (a resolved-then-reseen row re-inserts
+    // as a NEW row — history preserved)
+    const pairFilter = scanned.map((p) => `${p.calendar_id}|${p.date_et}`);
+    const currentKeys = new Set(current.map((c) => `${c.calendar_id}|${c.date_et}|${c.time_et}|${c.kind}`));
+    let resolved = 0;
+    let inserted = 0;
+    await this.sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(72240902)`;
+      if (pairFilter.length > 0) {
+        const unresolved = await tx`
+          SELECT id::text, calendar_id, date_et, time_et, kind FROM availability_discrepancies
+          WHERE resolved_at IS NULL`;
+        for (const row of unresolved) {
+          const pair = `${String(row.calendar_id)}|${normalizePgBusinessDate(row.date_et) ?? ""}`;
+          if (!pairFilter.includes(pair)) continue;
+          const key = `${pair}|${String(row.time_et)}|${String(row.kind)}`;
+          if (!currentKeys.has(key)) {
+            await tx`UPDATE availability_discrepancies SET resolved_at = now() WHERE id = ${row.id}::uuid`;
+            resolved += 1;
+          }
+        }
+      }
+      for (const c of current) {
+        const ins = await tx`
+          INSERT INTO availability_discrepancies (run_id, calendar_id, date_et, time_et, kind, detail)
+          VALUES (${runId}::uuid, ${c.calendar_id}, ${c.date_et}::date, ${c.time_et}, ${c.kind}, ${JSON.stringify(c.detail)}::jsonb)
+          ON CONFLICT (calendar_id, date_et, time_et, kind) WHERE resolved_at IS NULL DO NOTHING
+          RETURNING id`;
+        inserted += ins.length;
+      }
+    });
+    return { inserted, resolved };
+  }
+
+  async getAvailabilityDiscrepancies(opts?: { unresolvedOnly?: boolean; limit?: number }): Promise<AvailabilityDiscrepancyRow[]> {
+    await this.ensureSchema();
+    const limit = Math.max(1, Math.min(500, opts?.limit ?? 200));
+    const rows = opts?.unresolvedOnly
+      ? await this.sql`
+          SELECT id::text, run_id::text AS run_id, calendar_id, date_et, time_et, kind, detail, detected_at, resolved_at
+          FROM availability_discrepancies WHERE resolved_at IS NULL ORDER BY detected_at DESC, id LIMIT ${limit}`
+      : await this.sql`
+          SELECT id::text, run_id::text AS run_id, calendar_id, date_et, time_et, kind, detail, detected_at, resolved_at
+          FROM availability_discrepancies ORDER BY detected_at DESC, id LIMIT ${limit}`;
+    return rows.map((r) => ({
+      id: String(r.id),
+      run_id: String(r.run_id),
+      calendar_id: String(r.calendar_id),
+      date_et: normalizePgBusinessDate(r.date_et) ?? "",
+      time_et: String(r.time_et),
+      kind: String(r.kind) as AvailabilityDiscrepancyRow["kind"],
+      detail: (r.detail ?? {}) as Record<string, unknown>,
+      detected_at: new Date(r.detected_at as string).toISOString(),
+      resolved_at: r.resolved_at == null ? null : new Date(r.resolved_at as string).toISOString(),
+    }));
   }
 
   async upsertDailyPriorities(row: DailyPrioritiesRow): Promise<void> {

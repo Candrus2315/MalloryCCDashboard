@@ -55,6 +55,12 @@ import type {
   CommissionCycleRow,
   CommissionProfileInput,
   CommissionWeeklyRow,
+  AvailabilityDatesInput,
+  AvailabilityDatesRow,
+  AvailabilityDiscrepancyInput,
+  AvailabilityDiscrepancyRow,
+  AvailabilitySlotRow,
+  AvailabilitySyncRunRow,
 } from "./types";
 import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -118,6 +124,14 @@ export class MemoryStore implements Store {
   private weeklyReportNotes = new Map<string, WeeklyReportNotesRow>();
   private connections = new Map<string, ConnectionRow>();
   private syncRuns: SyncRunRow[] = [];
+  // availability feed cache (availability rebuild PR-1) — live-only tables in
+  // pg; the memory store mirrors them so tests + the memory-mode dashboard have
+  // the same interface. Demo mode never WRITES these (no adapter resolves).
+  private availabilityDatesCache = new Map<string, AvailabilityDatesRow>(); // calendar|type|month
+  private availabilitySlotsCache = new Map<string, AvailabilitySlotRow>(); // calendar|date|time
+  private availabilityRuns: AvailabilitySyncRunRow[] = [];
+  private availabilityDiscrepancies = new Map<string, AvailabilityDiscrepancyRow>(); // id -> row
+  private unresolvedDiscrepancyKeys = new Map<string, string>(); // calendar|date|time|kind -> row id
   private watermarks = new Map<string, string>();
   private overrides: ManualOverrideRow[] = [];
   private dailyPriorities = new Map<string, DailyPrioritiesRow>();
@@ -782,6 +796,142 @@ export class MemoryStore implements Store {
         return;
       }
     }
+  }
+
+  // ---- Availability feed cache (availability rebuild PR-1) ----
+  // Mirror semantics of the PgStore methods (same contracts, memory shapes).
+
+  async putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string): Promise<void> {
+    for (const r of rows) {
+      const key = `${r.calendar_id}|${r.appointment_type_id}|${r.month}`;
+      this.availabilityDatesCache.set(key, {
+        calendar_id: r.calendar_id,
+        appointment_type_id: r.appointment_type_id,
+        month: r.month,
+        dates_et: [...r.dates_et],
+        fetched_at: new Date().toISOString(),
+        run_id: runId,
+      });
+    }
+  }
+  async getAvailabilityDates(months: string[]): Promise<AvailabilityDatesRow[]> {
+    const set = new Set(months);
+    return [...this.availabilityDatesCache.values()]
+      .filter((r) => set.has(r.month))
+      .sort((a, b) => a.month.localeCompare(b.month) || a.calendar_id.localeCompare(b.calendar_id) || a.appointment_type_id.localeCompare(b.appointment_type_id))
+      .map((r) => ({ ...r, dates_et: [...r.dates_et] }));
+  }
+  async putAvailabilitySlotsForDate(calendarId: string, dateEt: string, times: { time_et: string; slots_available: number }[], runId: string): Promise<number> {
+    // dedupe by time, best capacity wins (same as pg)
+    const byTime = new Map<string, number>();
+    for (const t of times) {
+      if (!t.time_et) continue;
+      const prev = byTime.get(t.time_et);
+      if (prev == null || t.slots_available > prev) byTime.set(t.time_et, t.slots_available);
+    }
+    // REPLACE for (calendar, date): drop rows not in the fresh answer
+    const keepTimes = new Set(byTime.keys());
+    for (const [key, row] of [...this.availabilitySlotsCache.entries()]) {
+      if (row.calendar_id === calendarId && row.date_et === dateEt && !keepTimes.has(row.time_et)) {
+        this.availabilitySlotsCache.delete(key);
+      }
+    }
+    const nowIso = new Date().toISOString();
+    for (const [time_et, slots_available] of byTime) {
+      const key = `${calendarId}|${dateEt}|${time_et}`;
+      const prev = this.availabilitySlotsCache.get(key);
+      this.availabilitySlotsCache.set(key, {
+        id: prev?.id ?? this.nextId("avail-slot"),
+        calendar_id: calendarId,
+        date_et: dateEt,
+        time_et,
+        slots_available,
+        source: "acuity",
+        // first_seen_at is write-once; last_confirmed_at refreshes every run
+        first_seen_at: prev?.first_seen_at ?? nowIso,
+        last_confirmed_at: nowIso,
+        run_id: runId,
+      });
+    }
+    return byTime.size;
+  }
+  async getAvailabilitySlotsForDates(dates: string[]): Promise<AvailabilitySlotRow[]> {
+    const set = new Set(dates);
+    return [...this.availabilitySlotsCache.values()]
+      .filter((r) => set.has(r.date_et))
+      .sort((a, b) => a.date_et.localeCompare(b.date_et) || a.calendar_id.localeCompare(b.calendar_id) || a.time_et.localeCompare(b.time_et))
+      .map((r) => ({ ...r }));
+  }
+  async insertAvailabilitySyncRun(scope: Record<string, unknown>): Promise<string> {
+    const id = this.nextId("avail-run");
+    this.availabilityRuns.push({
+      id,
+      status: "running",
+      scope: { ...scope },
+      calls_made: null,
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      error: null,
+    });
+    return id;
+  }
+  async finishAvailabilitySyncRun(id: string, status: string, callsMade: number, error: string | null): Promise<void> {
+    const run = this.availabilityRuns.find((r) => r.id === id);
+    if (run) {
+      run.status = status;
+      run.calls_made = callsMade;
+      run.error = error;
+      run.finished_at = new Date().toISOString();
+    }
+  }
+  async getAvailabilitySyncRuns(limit: number): Promise<AvailabilitySyncRunRow[]> {
+    return this.availabilityRuns.slice(-limit).reverse().map((r) => ({ ...r, scope: { ...r.scope } }));
+  }
+  async applyAvailabilityDiscrepancies(runId: string, scanned: { calendar_id: string; date_et: string }[], current: AvailabilityDiscrepancyInput[]): Promise<{ inserted: number; resolved: number }> {
+    const pairFilter = new Set(scanned.map((p) => `${p.calendar_id}|${p.date_et}`));
+    const currentKeys = new Set(current.map((c) => `${c.calendar_id}|${c.date_et}|${c.time_et}|${c.kind}`));
+    let resolved = 0;
+    let inserted = 0;
+    const nowIso = new Date().toISOString();
+    // resolve stale unresolved rows of scanned pairs
+    for (const [key, id] of this.unresolvedDiscrepancyKeys) {
+      const [calendar_id, date_et] = key.split("|");
+      if (!pairFilter.has(`${calendar_id}|${date_et}`)) continue;
+      if (!currentKeys.has(key)) {
+        const row = this.availabilityDiscrepancies.get(id);
+        if (row && row.resolved_at == null) {
+          row.resolved_at = nowIso;
+          this.unresolvedDiscrepancyKeys.delete(key);
+          resolved += 1;
+        }
+      }
+    }
+    // insert mismatches without an unresolved row (dedupe while unresolved)
+    for (const c of current) {
+      const key = `${c.calendar_id}|${c.date_et}|${c.time_et}|${c.kind}`;
+      if (this.unresolvedDiscrepancyKeys.has(key)) continue;
+      const row: AvailabilityDiscrepancyRow = {
+        id: this.nextId("avail-disc"),
+        run_id: runId,
+        calendar_id: c.calendar_id,
+        date_et: c.date_et,
+        time_et: c.time_et,
+        kind: c.kind,
+        detail: { ...c.detail },
+        detected_at: nowIso,
+        resolved_at: null,
+      };
+      this.availabilityDiscrepancies.set(row.id, row);
+      this.unresolvedDiscrepancyKeys.set(key, row.id);
+      inserted += 1;
+    }
+    return { inserted, resolved };
+  }
+  async getAvailabilityDiscrepancies(opts?: { unresolvedOnly?: boolean; limit?: number }): Promise<AvailabilityDiscrepancyRow[]> {
+    let rows = [...this.availabilityDiscrepancies.values()];
+    if (opts?.unresolvedOnly) rows = rows.filter((r) => r.resolved_at == null);
+    rows.sort((a, b) => (a.detected_at < b.detected_at ? 1 : a.detected_at > b.detected_at ? -1 : a.id.localeCompare(b.id)));
+    return rows.slice(0, Math.max(1, Math.min(500, opts?.limit ?? 200))).map((r) => ({ ...r, detail: { ...r.detail } }));
   }
 
   async upsertDailyPriorities(row: DailyPrioritiesRow): Promise<void> {
