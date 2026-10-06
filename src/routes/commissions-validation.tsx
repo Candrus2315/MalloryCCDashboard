@@ -81,6 +81,59 @@ function CommissionsValidationPage() {
           </div>
         </section>
 
+        {/* CANCELLATION FLAG LIST (owner report 10/6) — report-only: wins the
+            sync has since confirmed cancelled. Stored records are frozen;
+            corrections go through the audited manual path on the owner's
+            direction. Open-week rows simply apply at the Sunday close. */}
+        {data.cancelledWins.length > 0 && (
+          <section aria-label="Cancelled-after-payment wins">
+            <Panel className="p-5 sm:p-6">
+              <div className="flex flex-wrap items-center gap-2">
+                <Eyebrow>Cancelled-after-payment wins</Eyebrow>
+                <InfoTip
+                  label="Why these are flagged"
+                  tip="Acuity's list endpoint never returns cancelled appointments, so a deposit-paid booking cancelled afterwards used to stay counted forever. Each sync pass now confirms absent rows against the single-appointment GET and marks the cancellation. These rows were counted as Booking Wins and are now confirmed cancelled."
+                />
+              </div>
+              <p className="mt-2 text-[13px] text-(--text-body)">
+                {data.cancelledWins.length} Booking Win{data.cancelledWins.length === 1 ? "" : "s"} counted by the engine {""}have been confirmed cancelled in Acuity. Stored closed records are frozen — corrections go through the audited reason-required manual path only on your direction.
+              </p>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-(--card-border) text-left text-(--text-caption)">
+                      <th className="py-1.5 pr-3 font-medium">Deposit date</th>
+                      <th className="py-1.5 pr-3 font-medium">Client</th>
+                      <th className="py-1.5 pr-3 font-medium">Type</th>
+                      <th className="py-1.5 pr-3 font-medium">Session</th>
+                      <th className="py-1.5 pr-3 font-medium">Win week</th>
+                      <th className="py-1.5 pr-3 font-medium">Rep</th>
+                      <th className="py-1.5 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.cancelledWins.map((f) => (
+                      <tr key={f.appointmentId} className="border-b border-(--card-border)/60">
+                        <td className="py-1.5 pr-3 text-(--text-body)">{formatDateHumanFull(f.winDate)}</td>
+                        <td className="py-1.5 pr-3 text-(--text-body)">{f.clientName ?? "—"}</td>
+                        <td className="py-1.5 pr-3 text-(--text-caption)">{f.appointmentType ?? "—"}</td>
+                        <td className="py-1.5 pr-3 text-(--text-caption)">{formatDateHumanFull(f.sessionDate)}</td>
+                        <td className="py-1.5 pr-3 text-(--text-caption)">{shortRange(f.weekStart, f.weekEnd)}</td>
+                        <td className="py-1.5 pr-3 text-(--text-caption)">{f.repName ?? "unattributed"}</td>
+                        <td className="py-1.5">
+                          <span className={"text-xs " + (f.weekClosed ? "text-(--banner-fg)" : "text-(--text-muted)")}>
+                            {f.weekClosed ? "counted in stored data — owner-directed correction only" : "open week — applies at Sunday close"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Panel>
+          </section>
+        )}
+
         {/* §5.2 RECONCILIATION STRIP — recompute vs stored */}
         <section aria-label="Reconciliation">
           <Panel className="p-5 sm:p-6">

@@ -17,7 +17,7 @@ import { createSheetsAdapter, type SheetsLiveRunReport } from "./sheets-live";
 import { isLegacySheetsSourceId, sheetLeadKey } from "./sheets-mapping";
 import { migrateSheetsLeadKeys } from "./sheets-rekey";
 import { createHighLevelAdapter, type LiveHighLevelAdapter } from "./highlevel-live";
-import { resolveAcuityAdapterForSync, upsertAcuityAppointments, writeAcuityConnection, type AcuityLiveAdapter } from "./acuity-live";
+import { reconcileCancellations, resolveAcuityAdapterForSync, upsertAcuityAppointments, writeAcuityConnection, type AcuityLiveAdapter } from "./acuity-live";
 import type { GoogleSheetsAdapter } from "./adapters";
 
 async function runProvider(
@@ -298,13 +298,20 @@ export async function runDemoSync(options?: {
         // demo slots can never blend into live availability
         const purged = await store.deleteDemoAcuityRows();
         const count = await upsertAcuityAppointments(store, appts);
+        // CANCELLATION RECONCILIATION (owner report 10/6): rows absent from
+        // the list are probed against the single-appointment GET and marked
+        // cancelled — the list endpoint never returns cancelled rows.
+        const reconciliation = await reconcileCancellations(store, liveAcuity, appts);
         const report = liveAcuity.lastRun;
         const note = [
           report ? `window ${report.window.minDate} → ${report.window.maxDate}` : null,
           `${count} appointments`,
           purged.appointments + purged.blocked > 0 ? `demo rows purged: ${purged.appointments} appointments, ${purged.blocked} blocks` : null,
+          reconciliation.markedCancelled > 0 ? `cancellations confirmed: ${reconciliation.markedCancelled}` : null,
+          reconciliation.notFound > 0 ? `missing-from-list rows probed: ${reconciliation.probed}, not found: ${reconciliation.notFound}` : null,
           report?.truncated ? "TRUNCATED at cap" : null,
-          ...(report?.warnings ?? []).slice(0, 3),
+          ...(report?.warnings ?? []).slice(0, 2),
+          ...reconciliation.warnings.slice(0, 2),
         ]
           .filter(Boolean)
           .join(" · ")

@@ -477,6 +477,13 @@ export class MemoryStore implements Store {
         // PENDING PAYMENT DISMISSAL (owner request 9/30): owner-controlled
         // state — a re-sync never overwrites or clears the dismissal.
         pending_dismissed_at: existing?.pending_dismissed_at ?? null,
+        // CANCELLATION (owner report 10/6): write-once, mirror of the pg
+        // upsert's SET clause — a row confirmed cancelled is never
+        // un-cancelled by a later upsert; the confirmation stamp never moves.
+        cancelled: Boolean(existing?.cancelled) || Boolean(r.cancelled),
+        cancelled_at: existing?.cancelled_at ?? r.cancelled_at ?? null,
+        cancellation_source: existing?.cancellation_source ?? r.cancellation_source ?? null,
+        status: Boolean(existing?.cancelled) || Boolean(r.cancelled) ? "cancelled" : r.status,
         id: existing?.id ?? this.nextId("appt"),
       });
     }
@@ -571,6 +578,35 @@ export class MemoryStore implements Store {
     }
   }
 
+  async markAppointmentsCancelled(acuityIds: string[], cancelledAtIso: string, source: string): Promise<number> {
+    // Mirror of the pg store (owner report 10/6): monotone false→true flips
+    // only, stamps are keep-first, win evidence untouched, demo ids skipped.
+    // (No advisory lock here — single-process memory store; the pg side holds
+    // the writer lock.)
+    let flipped = 0;
+    for (const id of new Set(acuityIds.map((s) => String(s)))) {
+      if (id.startsWith("demo-")) continue;
+      const existing = this.appointments.get(id);
+      if (!existing || existing.cancelled) continue;
+      this.appointments.set(id, {
+        ...existing,
+        cancelled: true,
+        status: "cancelled",
+        cancelled_at: existing.cancelled_at ?? cancelledAtIso,
+        cancellation_source: existing.cancellation_source ?? source,
+      });
+      flipped += 1;
+    }
+    return flipped;
+  }
+  async getCancelledWinAppointments(): Promise<(AppointmentRow & { acuity_appointment_id: string | null })[]> {
+    // FLAG LIST (owner report 10/6): counted-as-win rows now confirmed
+    // cancelled — report-only surface, never a rewrite of stored records.
+    return [...this.appointments.values()]
+      .filter((a) => a.cancelled && a.booking_win_business_date != null)
+      .sort((a, b) => (a.booking_win_business_date ?? "").localeCompare(b.booking_win_business_date ?? ""))
+      .map((a) => ({ ...this.stripAppt(a), acuity_appointment_id: a.acuity_appointment_id, duration_minutes: a.duration_minutes ?? null, client_name: a.client_name ?? null }));
+  }
   async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
     // WRITER PROTECTION (owner directive 2026-09-27): the SAME degradation
     // guard as the PG store (one shared pure function — identical semantics;

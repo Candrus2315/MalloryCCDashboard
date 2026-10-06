@@ -170,6 +170,9 @@ const STORE_METHOD_FLAGS = {
   getCommissionCycles: 1,
   insertCommissionAdjustment: 1,
   getCommissionAdjustments: 1,
+  // acuity cancellation reconciliation (owner report 2026-10-06)
+  getCancelledWinAppointments: 1,
+  markAppointmentsCancelled: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

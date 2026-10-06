@@ -1125,6 +1125,9 @@ export interface Store {
       booking_win_business_date?: string | null;
       payment_business_date_source?: string | null;
       first_seen_paid_at?: string | null;
+      /** Cancellation evidence (write-once at the store): the confirmation instant + path. */
+      cancelled_at?: string | null;
+      cancellation_source?: string | null;
     })[],
   ): Promise<number>;
   /**
@@ -1168,6 +1171,20 @@ export interface Store {
    * Win everywhere (paid wins are never dismissible — callers guard).
    */
   dismissPendingPayment(appointmentId: string): Promise<void>;
+  /**
+   * CANCELLATION RECONCILIATION (owner report 2026-10-06): mark appointments
+   * whose cancellation was CONFIRMED via the Acuity single-appointment GET.
+   * Monotone (false→true only), write-once stamps (COALESCE/keep-first), win
+   * evidence untouched, demo ids skipped. Returns rows actually flipped.
+   */
+  markAppointmentsCancelled(acuityIds: string[], cancelledAtIso: string, source: string): Promise<number>;
+  /**
+   * FLAG LIST (owner report 2026-10-06): appointments counted as Booking Wins
+   * (persisted win bucket) that are NOW confirmed cancelled — the honest
+   * report-only surface for already-counted wins; stored closed records are
+   * never rewritten.
+   */
+  getCancelledWinAppointments(): Promise<(AppointmentRow & { acuity_appointment_id: string | null })[]>;
 
   // attributions
   /**

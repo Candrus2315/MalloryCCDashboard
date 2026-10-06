@@ -128,6 +128,16 @@ export interface AppointmentRow {
   status: string; // scheduled | cancelled | completed
   cancelled: boolean;
   /**
+   * CANCELLATION RECONCILIATION (owner report 2026-10-06): when the sync
+   * confirmed the cancellation via GET /appointments/{id} (Acuity's canceled
+   * flag) — the instant WE confirmed it, NOT a client cancellation time (the
+   * Acuity API carries none). null = not cancelled or not yet confirmed.
+   * Write-once: never cleared or moved by a later sync.
+   */
+  cancelled_at?: string | null;
+  /** How the cancellation was confirmed: "acuity-reconciliation" (single-GET probe) | "acuity-list" | "acuity-upsert" (demo seed). */
+  cancellation_source?: string | null;
+  /**
    * S7c AUTHORITATIVE CREATION TIME (owner directive 2026-09-28): the ET
    * business date the booking was MADE on (YYYY-MM-DD) — created_at converted
    * to America/New_York, or the dateCreated CALENDAR DATE for date-only rows

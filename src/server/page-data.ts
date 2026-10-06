@@ -1597,6 +1597,63 @@ export interface CommissionValidationWeek {
   stored: CommissionWeeklyRow[];
 }
 
+export interface CancelledWinFlag {
+  appointmentId: string;
+  acuityAppointmentId: string;
+  clientName: string | null;
+  appointmentType: string | null;
+  /** ET deposit date the win was counted on (booking_win_business_date). */
+  winDate: string;
+  /** ET session date of the (now cancelled) appointment. */
+  sessionDate: string;
+  /** Monday ET week the win was counted in. */
+  weekStart: string;
+  weekEnd: string;
+  /** True when stored commission records exist for that week — counted in stored data; corrections only via the audited reason-required manual path on the owner's direction. */
+  weekClosed: boolean;
+  /** Attributed rep at flag time (may be null — unattributed never paid). */
+  repName: string | null;
+  /** When the sync confirmed the cancellation (write-once stamp). */
+  confirmedAt: string | null;
+}
+
+/**
+ * CANCELLATION FLAG LIST (owner report 2026-10-06): the report-only surface
+ * for Booking Wins that the sync has since confirmed cancelled. Pure: given
+ * the cancelled win rows + the set of weeks that HAVE stored commission
+ * records, classifies each flag closed (counted in stored data — never
+ * rewritten; corrections via the audited manual path only on the owner's
+ * direction) vs open (the live week — the exclusion simply applies at the
+ * Sunday close). No number is rewritten here; the list exists so the owner
+ * can reconcile stored totals against current truth.
+ */
+export function buildCancelledWinFlags(
+  rows: (AppointmentRow & { acuity_appointment_id: string | null; client_name: string | null })[],
+  closedWeekStarts: ReadonlySet<string>,
+  repNameFor: (appointmentId: string) => string | null,
+): CancelledWinFlag[] {
+  return rows
+    .filter((a) => !!a.booking_win_business_date && !!a.acuity_appointment_id)
+    .map((a) => {
+      const winDate = a.booking_win_business_date as string;
+      const ws = weekStart(winDate);
+      return {
+        appointmentId: a.id,
+        acuityAppointmentId: a.acuity_appointment_id as string,
+        clientName: a.client_name ?? null,
+        appointmentType: a.appointment_type ?? null,
+        winDate,
+        sessionDate: etDateStrFromInstant(Date.parse(a.appointment_datetime)),
+        weekStart: ws,
+        weekEnd: etDateStrFromInstant(Date.parse(`${ws}T12:00:00-04:00`) + 6 * 86_400_000),
+        weekClosed: closedWeekStarts.has(ws),
+        repName: repNameFor(a.id),
+        confirmedAt: a.cancelled_at ?? null,
+      };
+    })
+    .sort((x, y) => (x.weekStart + x.winDate).localeCompare(y.weekStart + y.winDate));
+}
+
 export interface CommissionValidationPageData {
   meta: PageMeta;
   today: string;
@@ -1608,6 +1665,8 @@ export interface CommissionValidationPageData {
   rollup: StoredCycleRollup;
   storedCount: number;
   dryRun: boolean;
+  /** Wins the sync has confirmed cancelled since they were counted (report-only flag list). */
+  cancelledWins: CancelledWinFlag[];
 }
 
 /**
@@ -1622,11 +1681,16 @@ export async function commissionValidationPageData(deps?: PageDeps): Promise<Com
     : await loadPageMeta();
   const store = deps?.store ?? (await getStore());
 
-  const [cycle, computedWeeks, allRecords] = await Promise.all([
+  const [cycle, computedWeeks, allRecords, cancelledWinRows, attributions, users] = await Promise.all([
     store.getCommissionCycle(BACKFILL_CYCLE_ID),
     computeValidationWeeks(store),
     store.getCommissionWeeklyRecords(),
+    store.getCancelledWinAppointments(),
+    store.getAttributions(),
+    store.getUsers(),
   ]);
+  const repNameByAppt = new Map(attributions.filter((a) => a.rep_id).map((a) => [a.appointment_id, users.find((u) => u.id === a.rep_id)?.name ?? null]));
+  const cancelledWins = buildCancelledWinFlags(cancelledWinRows, new Set(allRecords.map((r) => r.week_start)), (apptId) => repNameByAppt.get(apptId) ?? null);
   const stored = allRecords.filter((r) => (VALIDATION_WEEK_STARTS as readonly string[]).includes(r.week_start));
 
   const out: CommissionValidationWeek[] = [];
@@ -1649,6 +1713,11 @@ export async function commissionValidationPageData(deps?: PageDeps): Promise<Com
       "No stored records for the validation weeks — the comparison below is against an empty store (dry-run state).",
     );
   }
+  if (cancelledWins.length > 0) {
+    warnings.push(
+      `${cancelledWins.length} Booking Win${cancelledWins.length === 1 ? "" : "s"} previously counted have been confirmed CANCELLED by the Acuity sync reconciliation — stored records are frozen; corrections go through the audited reason-required manual path only on the owner's direction. Open-week flags simply apply at the Sunday close.`,
+    );
+  }
   return {
     meta,
     today,
@@ -1658,5 +1727,6 @@ export async function commissionValidationPageData(deps?: PageDeps): Promise<Com
     rollup,
     storedCount: stored.length,
     dryRun: stored.length === 0,
+    cancelledWins,
   };
 }
