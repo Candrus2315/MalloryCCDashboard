@@ -218,7 +218,7 @@ describe("availability feed sync (fixture-routed fake fetch, MemoryStore)", () =
     // run rows: BOTH the detailed and the generic machinery row closed success
     const runs = await store.getAvailabilitySyncRuns(5);
     expect(runs[0].status).toBe("success");
-    expect(runs[0].calls_made).toBe(12);
+    expect(runs[0].calls_made).toBe(10); // catalog(2) + sweeps(6) + probes(2: main calendar's two open dates — Annex/Zoom months are [] so their dates never probe)
     const generic = await store.getSyncRuns(10);
     expect(generic.some((r) => r.provider === "acuity_availability" && r.status === "success")).toBe(true);
     // writer stamp written on the first successful run
