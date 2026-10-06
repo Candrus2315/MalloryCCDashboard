@@ -14,6 +14,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { getStore } from "./store";
+import { assertPipManager } from "./pip-rbac";
 import type { Store } from "./store/types";
 import type {
   PipActionItem,
@@ -304,6 +305,47 @@ export async function getPipDetailCore(store: Store, id: string): Promise<PipDet
   };
 }
 
+// ---------- PHASE 5 — print/PDF export (the frozen document) ----------
+
+/**
+ * The print/PDF export payload. The rendered document IS the frozen issue
+ * snapshot: `document` is the pip_evidence_snapshots row's `snapshot` — the
+ * full document as it stood at issue (pip row, employee, computed evidence,
+ * verbatim statements, template provenance) — served VERBATIM, never
+ * recomputed (a recompute would drift as live data changes; the printed
+ * document must not). Check-ins, acknowledgment state, and the terminal
+ * conclusion/cancellation are appended FACTS from the row/child tables — the
+ * same records the UI serves — rendered in their own sections. Drafts have
+ * nothing frozen yet: `document` is null and the print page renders the live
+ * draft content honestly labeled DRAFT.
+ */
+export interface PipPrintDoc {
+  pip: PipListItem;
+  /** The frozen v1 snapshot document verbatim — null for drafts. */
+  document: Record<string, unknown> | null;
+  checkins: PipCheckinRow[];
+  /** When the manager opened the print view (display timestamp — never stored). */
+  generated_at: string;
+}
+
+export async function getPipPrintDocCore(
+  store: Store,
+  id: string,
+  opts?: { nowIso?: string },
+): Promise<PipPrintDoc | null> {
+  const pip = await store.getPip(id);
+  if (!pip) return null;
+  const [withName] = await withRepNames(store, [pip]);
+  const snapshots = await store.getPipEvidenceSnapshots(id);
+  const doc = snapshots.find((s) => s.version === pip.current_version) ?? null;
+  return {
+    pip: withName,
+    document: doc ? doc.snapshot : null,
+    checkins: await store.getPipCheckins(id),
+    generated_at: opts?.nowIso ?? new Date().toISOString(),
+  };
+}
+
 /**
  * HISTORY SEGMENT (refinement spec §5): the full event ledger with SUBJECTS
  * RESOLVED TO NAMES — employee name + PIP title for PIP events, template name
@@ -503,7 +545,10 @@ export async function updatePipDraftCore(store: Store, input: UpdatePipDraftInpu
  * template provenance. Evidence computation happens BEFORE the store's
  * transactional flip; the store stamps captured_at/captured_by.
  */
-export async function issuePipCore(store: Store, input: { pipId: string; actor?: string }): Promise<PipRow> {
+export async function issuePipCore(
+  store: Store,
+  input: { pipId: string; actor?: string; today?: string },
+): Promise<PipRow> {
   const pip = await store.getPip(String(input.pipId));
   if (!pip) throw new Error(`PIP not found: ${input.pipId}`);
   const extras: Record<string, unknown> = {};
@@ -514,6 +559,7 @@ export async function issuePipCore(store: Store, input: { pipId: string; actor?:
       reviewEnd: pip.review_end_date,
       weeklyGoalMin: pip.weekly_goal_min,
       hardWeeklyMinimum: pip.hard_weekly_minimum,
+      ...(input.today != null ? { today: input.today } : {}),
     });
     extras.evidence = evidence;
     extras.statements = statementsFromEvidence(evidence);
@@ -635,7 +681,16 @@ export async function listPipTemplatesCore(store: Store): Promise<PipTemplateRow
   return store.listPipTemplates();
 }
 
-// ---------- TanStack Start wrappers (auto-gated by the start.ts middleware) ----------
+// ---------- TanStack Start wrappers ----------
+//
+// PHASE 5 RBAC HARDENING: EVERY server function below (reads AND mutations)
+// asserts the manager session SERVER-SIDE as its first step — `assertPipManager()`
+// (src/server/pip-rbac.ts) verifies the signed session cookie against the
+// manager passphrase before any store access, independent of the global gate
+// (src/start.ts). Reads of employee PIP data are manager-only, mutations are
+// manager-only, and no employee login exists anywhere in this app (owner
+// directive 9/30). The pip-rbac wiring test walks this file and fails if any
+// wrapper ever drops the assertion.
 
 /** Active roster reps for manager pickers (draft creation). */
 export async function listRosterRepsCore(store: Store): Promise<{ id: string; name: string }[]> {
@@ -644,34 +699,53 @@ export async function listRosterRepsCore(store: Store): Promise<{ id: string; na
 }
 
 export const getRosterReps = createServerFn().handler(async (): Promise<{ reps: { id: string; name: string }[] }> => {
+  await assertPipManager();
   const store = await getStore();
   return { reps: await listRosterRepsCore(store) };
 });
 
 export const getPerformanceList = createServerFn()
   .validator((input: unknown) => (input ?? {}) as { status?: string })
-  .handler(async (): Promise<PipLandingPayload> => performanceLandingCore(await getStore()));
+  .handler(async (): Promise<PipLandingPayload> => {
+    await assertPipManager();
+    return performanceLandingCore(await getStore());
+  });
 
 export const getPipDetail = createServerFn()
   .validator((input: unknown) => input as { pipId: string })
-  .handler(async ({ data }): Promise<PipDetail | null> => getPipDetailCore(await getStore(), String(data.pipId)));
+  .handler(async ({ data }): Promise<PipDetail | null> => {
+    await assertPipManager();
+    return getPipDetailCore(await getStore(), String(data.pipId));
+  });
 
-export const getPerformanceHistory = createServerFn().handler(async (): Promise<PipHistoryPayload> =>
-  getPerformanceHistoryCore(await getStore()),
-);
+/** PHASE 5: the print/PDF export payload — the frozen snapshot served verbatim (no recomputation). */
+export const getPipPrintDoc = createServerFn()
+  .validator((input: unknown) => input as { pipId: string })
+  .handler(async ({ data }): Promise<PipPrintDoc | null> => {
+    await assertPipManager();
+    return getPipPrintDocCore(await getStore(), String(data.pipId));
+  });
+
+export const getPerformanceHistory = createServerFn().handler(async (): Promise<PipHistoryPayload> => {
+  await assertPipManager();
+  return getPerformanceHistoryCore(await getStore());
+});
 
 /** Per-employee stitched PIP histories + weekly goal-met summaries (History segment "Employees" view). */
-export const getPipRepHistories = createServerFn().handler(async (): Promise<PipRepHistoriesPayload> =>
-  getPipRepHistoriesCore(await getStore()),
-);
+export const getPipRepHistories = createServerFn().handler(async (): Promise<PipRepHistoriesPayload> => {
+  await assertPipManager();
+  return getPipRepHistoriesCore(await getStore());
+});
 
 export const listPipTemplates = createServerFn().handler(async (): Promise<{ templates: PipTemplateRow[] }> => {
+  await assertPipManager();
   const store = await getStore();
   return { templates: await store.listPipTemplates() };
 });
 
 /** Factual "In use" counts per template (issued/completed/cancelled PIPs). */
 export const getPipTemplateUsage = createServerFn().handler(async (): Promise<{ usage: [string, number][] }> => {
+  await assertPipManager();
   const store = await getStore();
   return { usage: Array.from((await store.getPipTemplateUsage()).entries()) };
 });
@@ -679,6 +753,7 @@ export const getPipTemplateUsage = createServerFn().handler(async (): Promise<{ 
 /** Templates segment load (refinement spec §4): cards + in-use counts in one roundtrip. */
 export const listPipTemplatesWithUsage = createServerFn().handler(
   async (): Promise<{ templates: PipTemplateRow[]; usage: [string, number][] }> => {
+    await assertPipManager();
     const store = await getStore();
     const [templates, usage] = await Promise.all([store.listPipTemplates(), store.getPipTemplateUsage()]);
     return { templates, usage: Array.from(usage.entries()) };
@@ -694,6 +769,7 @@ export const listPipTemplatesWithUsage = createServerFn().handler(
 export const getPipEvidence = createServerFn()
   .validator((input: unknown) => input as { repId: string; reviewStart: string; reviewEnd: string; weeklyGoalMin: number | null; hardWeeklyMinimum?: boolean })
   .handler(async ({ data }): Promise<{ evidence: PipEvidence; statements: { key: string; text: string }[] }> => {
+    await assertPipManager();
     const store = await getStore();
     const evidence = await pipEvidenceCore(store, {
       repId: String(data.repId),
@@ -707,41 +783,71 @@ export const getPipEvidence = createServerFn()
 
 export const createPipDraft = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as CreatePipDraftInput)
-  .handler(async ({ data }) => createPipDraftCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return createPipDraftCore(await getStore(), data);
+  });
 
 export const updatePipDraft = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as UpdatePipDraftInput)
-  .handler(async ({ data }) => updatePipDraftCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return updatePipDraftCore(await getStore(), data);
+  });
 
 export const issuePip = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { pipId: string; actor?: string })
-  .handler(async ({ data }) => issuePipCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return issuePipCore(await getStore(), data);
+  });
 
 export const completePip = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { pipId: string; conclusionCategory: string; conclusionNotes: string; actor?: string })
-  .handler(async ({ data }) => completePipCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return completePipCore(await getStore(), data);
+  });
 
 export const cancelPip = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { pipId: string; reason: string; actor?: string })
-  .handler(async ({ data }) => cancelPipCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return cancelPipCore(await getStore(), data);
+  });
 
 /** PHASE 4: record the manager acknowledgment (audited; clears the derived ack-pending state). */
 export const recordPipAck = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { pipId: string; actor?: string })
-  .handler(async ({ data }) => recordPipAckCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return recordPipAckCore(await getStore(), data);
+  });
 
 export const addPipCheckin = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as AddCheckinInput)
-  .handler(async ({ data }) => addPipCheckinCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return addPipCheckinCore(await getStore(), data);
+  });
 
 export const createPipTemplate = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as PipTemplateInput)
-  .handler(async ({ data }) => createPipTemplateCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return createPipTemplateCore(await getStore(), data);
+  });
 
 export const updatePipTemplate = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as PipTemplateInput & { templateId: string })
-  .handler(async ({ data }) => updatePipTemplateCore(await getStore(), data));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return updatePipTemplateCore(await getStore(), data);
+  });
 
 export const deletePipTemplate = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { templateId: string })
-  .handler(async ({ data }) => deletePipTemplateCore(await getStore(), String(data.templateId)));
+  .handler(async ({ data }) => {
+    await assertPipManager();
+    return deletePipTemplateCore(await getStore(), String(data.templateId));
+  });

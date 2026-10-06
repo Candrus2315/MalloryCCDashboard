@@ -868,6 +868,24 @@ function ManageDrawer({ pip, onClose }: { pip: PipLandingItem; onClose: () => vo
     >
       {error && <p className="mb-3 rounded-md bg-(--surface-subtle) px-3 py-2 text-[12px]" style={{ color: "var(--neg-text)" }}>{error}</p>}
 
+      {/* PHASE 5 — print/PDF export: the browser-print document of this PIP.
+          Issued PIPs print their frozen v1 snapshot verbatim (no recomputation);
+          drafts print honestly labeled DRAFT. Opens in a new tab so the
+          drawer stays open. */}
+      <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-(--card-border) px-3 py-2">
+        <p className="text-[12px] text-(--text-muted)">
+          {isDraft ? "Print the draft (honestly labeled “draft — not issued”)." : "Print the issued document exactly as frozen (Save as PDF from the print dialog)."}
+        </p>
+        <a
+          href={`/performance-print/${pip.id}`}
+          target="_blank"
+          rel="noreferrer"
+          className="btn-secondary shrink-0"
+        >
+          Print / PDF
+        </a>
+      </div>
+
       {/* Record band: goal + observations as manager-note insets */}
       <div className="rounded-md bg-(--surface-inset) px-3 py-3">
         <p className="text-[12px] font-medium uppercase tracking-wide text-(--text-caption)">Goal</p>
