@@ -31,6 +31,8 @@
  * The /audit page reads the same logic via getAuditData in queries.ts.
  */
 import { etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etToday, formatDateHumanFull } from "./date-logic";
+import { withDbRetry } from "./store/pg-retry"; // dependency-free — safe for the client type graph; getStore stays LAZY below
+
 import { buildRosterEligibility, eligibleRepId } from "./roster";
 import type { AuditCallRow, RepMapping } from "./store/types";
 
@@ -134,7 +136,10 @@ export interface AuditQueryResult {
 }
 
 /** Orchestration shared by serve.ts (prod), the vite dev middleware, and the /audit page loader. */
-export async function handleAuditQuery(params: { rep?: string | null; date?: string | null }): Promise<AuditQueryResult> {
+export function handleAuditQuery(params: { rep?: string | null; date?: string | null }): Promise<AuditQueryResult> {
+  // POOL HARDENING: bounded retry on transient connection errors (read-only
+  // query — a retry can never double-apply anything).
+  return withDbRetry(async () => {
   // LAZY store import: this module is also pulled into the client bundle (the
   // /audit page shares the response types) — a static store import here drags
   // the pg driver into the browser graph and breaks `vite build`.
@@ -183,4 +188,5 @@ export async function handleAuditQuery(params: { rep?: string | null; date?: str
       rows: rows.map(auditRowView),
     },
   };
+  });
 }

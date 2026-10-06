@@ -40,6 +40,7 @@ import {
   resolveRepGoal,
 } from "./metrics/compute";
 import { getStore } from "./store";
+import { withDbRetry } from "./store/pg-retry";
 import type { Store } from "./store/types";
 import { availabilityPageData, commissionPageData, commissionValidationPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
@@ -72,10 +73,10 @@ async function loadPageMeta(): Promise<PageMeta> {
 }
 
 /** TODAY page — payload built in page-data.ts todayPageData (PageDeps test seam). */
-export const getTodayData = createServerFn().handler(async () => todayPageData());
+export const getTodayData = createServerFn().handler(() => withDbRetry(() => todayPageData()));
 
 /** SETTINGS page data — every editable surface loads its rows here. */
-export const getSettingsData = createServerFn().handler(async () => {
+export const getSettingsData = createServerFn().handler(() => withDbRetry(async () => {
   const store = await getStore();
   const today = etToday();
   const ws = weekStart(today);
@@ -224,7 +225,7 @@ export const getSettingsData = createServerFn().handler(async () => {
     blockedTimes: blockedWindow,
     staleWarnings: syncStaleWarnings(connections),
   };
-});
+}));
 
 /** integration_connections in a fully serializable shape (config → note string). */
 export function serializableConnections(connections: { provider: string; status: string; is_demo: boolean; last_sync_at: string | null; last_successful_sync_at: string | null; last_error: string | null; config: Record<string, unknown> }[]) {
@@ -925,7 +926,7 @@ export interface FreshnessData {
 }
 
 /** Connection freshness for the shell's "Last synced Xm ago" indicator. */
-export const getFreshnessData = createServerFn().handler(async (): Promise<FreshnessData> => {
+export const getFreshnessData = createServerFn().handler((): Promise<FreshnessData> => withDbRetry(async (): Promise<FreshnessData> => {
   const { readSchedulerIntervalSeconds } = await import("./sync/scheduler");
   const store = await getStore();
   const [connections, running, settings] = await Promise.all([store.getConnections(), store.getRunningSyncRun("highlevel"), store.getSettings()]);
@@ -957,7 +958,7 @@ export const getFreshnessData = createServerFn().handler(async (): Promise<Fresh
     serverNow: new Date().toISOString(),
     navCounts,
   };
-});
+}));
 
 /**
  * Shell REFRESH button — runs the same background tick (incremental HighLevel
@@ -991,7 +992,7 @@ export const saveSyncInterval = createServerFn({ method: "POST" })
   });
 
 /** DAILY REPORT page — payload built in page-data.ts dailyReportPageData (PageDeps test seam). */
-export const getDailyReportData = createServerFn().handler(async () => dailyReportPageData());
+export const getDailyReportData = createServerFn().handler(() => withDbRetry(() => dailyReportPageData()));
 
 /** Save the Big 3 priorities for TODAY's report date (America/New_York). */
 export const saveDailyPriorities = createServerFn({ method: "POST" })
@@ -1040,7 +1041,7 @@ export interface RepsSearchParams {
 
 export const getRepsData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as RepsSearchParams)
-  .handler(async ({ data }) => repsPageData(data));
+  .handler(({ data }) => withDbRetry(() => repsPageData(data)));
 
 /**
  * Plain (non-server-fn) payload builder for the Reps page — the loader
@@ -1122,17 +1123,17 @@ export interface RepStripRow {
 
 export const getTeamData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as TeamSearchParams)
-  .handler(async ({ data }) => teamPageData(data));
+  .handler(({ data }) => withDbRetry(() => teamPageData(data)));
 
 /** AVAILABILITY page — engine + Acuity connection + scope filters (playbook contract). */
-export const getAvailabilityData = createServerFn().handler(async () => availabilityPageData());
+export const getAvailabilityData = createServerFn().handler(() => withDbRetry(() => availabilityPageData()));
 /** WEEKLY REPORT page — last completed week + MTD (page-data.ts weeklyPageData, PageDeps test seam). */
-export const getWeeklyData = createServerFn().handler(async () => weeklyPageData());
+export const getWeeklyData = createServerFn().handler(() => withDbRetry(() => weeklyPageData()));
 
 /** COMMISSION CENTER page — stored cycles + weekly records + §3.5 estimate (page-data.ts, PageDeps test seam). */
-export const getCommissionData = createServerFn().handler(async () => commissionPageData());
+export const getCommissionData = createServerFn().handler(() => withDbRetry(() => commissionPageData()));
 /** §26 VALIDATION page — fresh recompute vs stored records (READ-ONLY, page-data.ts). */
-export const getCommissionValidationData = createServerFn().handler(async () => commissionValidationPageData());
+export const getCommissionValidationData = createServerFn().handler(() => withDbRetry(() => commissionValidationPageData()));
 
 // ==================== COMMISSION PHASE C — manager actions (§N/§O/§19/§S) ====================
 // Every action runs behind the global passphrase gate (the manager surface) and

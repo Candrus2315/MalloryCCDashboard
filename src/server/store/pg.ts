@@ -664,6 +664,65 @@ export function normalizePgBusinessDate(v: unknown): string | null {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null;
 }
 
+/**
+ * ---------------------------------------------------------------------------
+ * POOL PROFILES — the connection budget under the managed Postgres ceiling.
+ *
+ * Measured on the managed host (2026-10-06, SHOW): max_connections=105,
+ * reserved_connections=5, superuser_reserved_connections=12 → a regular role
+ * can hold 105 − 5 − 12 = **88 slots**; once those are gone new connections
+ * are rejected with SQLSTATE 53300 (the "pg_use_reserved_connections"
+ * rejection seen during the Oct 2026 transient-500 window).
+ *
+ * Connection math (worst case → headroom):
+ *   2 web servers (dev :3000 vite SSR + published serve.ts) × max 12 = 24
+ *   sync jobs (scheduler tick, SYNC NOW, ops scripts) share the process
+ *     store — 0 extra in web processes; a standalone job-profile process = 4
+ *   test batteries (bun test, parallel files, NODE_ENV=test) × max 4 ≈ ≤ 40
+ *     transiently
+ *   platform exporter + managed-host background workers ≈ 2–4 (not ours)
+ *   → steady-state ≈ 28, transient peak ≈ ≤ 68 of 88 — ≥ 20 slots of
+ *     headroom at all times. The old config (max 16, idle_timeout 240s, no
+ *     documented max_lifetime) warmed ~16 idle conns per pool generation
+ *     across both servers plus per-instance probe/CLI pools and crossed the
+ *     ceiling during the dual-restart + sync window.
+ *
+ * idle_timeout 60s (was 240s): a heavy page fills the pool with 15–30
+ * parallel queries; after the burst the pool sheds within a minute instead
+ * of holding up to max warm conns for 4 minutes per server. The 90s
+ * scheduler cadence re-warms the 1–2 conns a tick needs (TLS handshake is
+ * tens of ms; postgres.js already backs off internally on connect). For
+ * tests idle_timeout is 10s so parallel test files shed conns immediately
+ * after their battery.
+ * max_lifetime 1800s (30 min, was the library's implicit 30–60 min random):
+ * explicit cap — managed proxies/host balancers recycle long-lived conns.
+ * ---------------------------------------------------------------------------
+ */
+export type PoolProfile = "web" | "job" | "test";
+
+export interface PoolProfileOptions {
+  max: number;
+  idle_timeout: number;
+  max_lifetime: number;
+}
+
+export const POOL_PROFILES: Record<PoolProfile, PoolProfileOptions> = {
+  web: { max: 12, idle_timeout: 60, max_lifetime: 1800 },
+  job: { max: 4, idle_timeout: 60, max_lifetime: 1800 },
+  test: { max: 4, idle_timeout: 10, max_lifetime: 300 },
+};
+
+/**
+ * Resolve the pool options for a profile. `profile` absent → test profile
+ * under NODE_ENV=test (bun test), web otherwise — so every `new PgStore(url)`
+ * call site (tests construct directly, per-file) is automatically bounded
+ * without touching dozens of files.
+ */
+export function resolvePoolOptions(profile?: PoolProfile): { profile: PoolProfile } & PoolProfileOptions {
+  const p = profile ?? (process.env.NODE_ENV === "test" ? "test" : "web");
+  return { profile: p, ...POOL_PROFILES[p] };
+}
+
 export class PgStore implements Store {
   /** The pips column-list fragment (per-instance; see module-level comment). */
   private get pipCols() {
@@ -684,7 +743,7 @@ export class PgStore implements Store {
   /** PERF: short-TTL (20s) read cache — bumped by every write; see store/read-cache.ts. */
   private cache = new TtlReadCache();
 
-  constructor(databaseUrl: string) {
+  constructor(databaseUrl: string, options?: { profile?: PoolProfile }) {
     // Managed Postgres (Tiger Cloud) requires TLS. If the URL carries its own
     // sslmode param, let postgres.js honor it; otherwise default to ssl
     // "require" so managed hosts connect out of the box.
@@ -695,12 +754,28 @@ export class PgStore implements Store {
     } catch {
       // probePg validates the URL before constructing; ignore here
     }
+    // POOL HARDENING (2026-10-06): one profile-sized pool per process (see the
+    // POOL PROFILES math above — 2 servers × 12 stays under the managed 88-slot
+    // ceiling with headroom; tests/CLI jobs take the smaller profiles). Page
+    // loaders fire 15–30 parallel queries: 12 conns = 2–3 RTT-bound waves vs
+    // the old 16 — a ≤1-wave difference, and the ceiling no longer 500s pages.
+    const pool = resolvePoolOptions(options?.profile);
     this.sql = postgres(databaseUrl, {
-      max: 16, // PERF: page loaders issue 15-30 parallel queries; 5 connections serialized them into RTT-bound waves
-      idle_timeout: 240, // PERF: keep warm conns across the ~10-min sync cadence (server idle kills are >5 min)
+      max: pool.max,
+      idle_timeout: pool.idle_timeout,
+      max_lifetime: pool.max_lifetime,
       connect_timeout: 10,
       ...(needsSsl ? { ssl: "require" } : {}),
     });
+  }
+
+  /**
+   * Close the underlying pool — store/index.ts closes failed probe pools so an
+   * abandoned probe can never leak connections until process exit. Idempotent
+   * (postgres.js end() on a closed pool is a no-op).
+   */
+  async close(): Promise<void> {
+    await this.sql.end({ timeout: 5 });
   }
 
   async ensureSchema(): Promise<void> {
