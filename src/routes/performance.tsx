@@ -12,6 +12,7 @@ import {
 } from "~/server/pip-api";
 import type { PipDetail } from "~/server/pip-api";
 import type { PipEvidence } from "~/server/pip-evidence";
+import type { PipCheckinRow } from "~/server/store/types";
 import { EmptyState, Field, PerformanceShell, PipStatusChip, GhostButton, inputClass } from "~/components/performance-shell";
 import { AttentionPanel } from "~/components/AttentionPanel";
 import { DetailDrawer } from "~/components/DetailDrawer";
@@ -411,7 +412,7 @@ function PipRowsTable({
   return (
     <div className="card overflow-hidden p-0">
       <div className="overflow-x-auto">
-        <table className="data-table min-w-[860px] text-[13px]">
+        <table className="data-table min-w-[980px] text-[13px]">
           <thead>
             <tr>
               <th scope="col" className="w-6" aria-hidden="true" />
@@ -419,6 +420,7 @@ function PipRowsTable({
                 <SortBtn label="Employee" active={sortKey === "employee"} onClick={() => setSort("employee")} />
               </th>
               <th scope="col" className="text-left">This week</th>
+              <th scope="col" className="text-left">Review week</th>
               <th scope="col" className="text-left">
                 <SortBtn label="Window" active={sortKey === "window"} onClick={() => setSort("window")} />
               </th>
@@ -507,7 +509,17 @@ function PipRowChunk({
         </td>
         <td className="py-2.5">
           <div className="sticky-cell">
-            <p className="font-medium text-(--text-primary)">{pip.rep_name ?? (isDraft ? "Unassigned draft" : "—")}</p>
+            <p className="font-medium text-(--text-primary)">
+              {pip.rep_name ?? (isDraft ? "Unassigned draft" : "—")}
+              {pip.ack_awaiting && (
+                <span
+                  className="chip chip-neutral ml-2 align-middle text-[11px]"
+                  title="Issued but no acknowledgment recorded yet — the manager records it during the acknowledgment meeting."
+                >
+                  ack pending
+                </span>
+              )}
+            </p>
             <p className="mt-0.5 truncate text-[12px] text-(--text-caption)" title={pip.title}>
               {pip.title}
               {tpl && <span className="chip chip-neutral ml-2 align-middle text-[11px]">v{pip.template_version ?? tpl.version}</span>}
@@ -522,6 +534,26 @@ function PipRowChunk({
               <GoalProgress actual={pip.this_week_wins ?? 0} goal={pip.weekly_goal_min} size="sm" />
               <p className="mt-0.5 text-[12px] text-(--text-caption)">week in progress</p>
             </div>
+          )}
+        </td>
+        <td className="py-2.5">
+          {pip.review_week_index != null ? (
+            <>
+              <p className="tabular-nums">
+                Week {pip.review_week_index} of {pip.review_weeks_total}
+              </p>
+              {pip.weeks_missed != null && pip.weeks_missed > 0 ? (
+                <p className="mt-0.5 text-[12px]" style={{ color: "var(--chip-risk-fg)" }}>
+                  {pip.weeks_missed} week{pip.weeks_missed === 1 ? "" : "s"} missed
+                </p>
+              ) : pip.weeks_missed === 0 ? (
+                <p className="mt-0.5 text-[12px] text-(--text-caption)">none missed</p>
+              ) : null}
+            </>
+          ) : pip.review_start_date && pip.review_end_date ? (
+            <p className="text-[12px] text-(--text-muted)">outside window</p>
+          ) : (
+            <span className="text-(--text-faint)">—</span>
           )}
         </td>
         <td className="py-2.5 text-(--text-muted)">
@@ -570,12 +602,29 @@ function PipRowChunk({
           )}
         </td>
       </tr>
-      {expanded && <PipExpandedRow pip={pip} colSpan={7 + (showStatus ? 1 : 0)} />}
+      {expanded && <PipExpandedRow pip={pip} colSpan={8 + (showStatus ? 1 : 0)} />}
     </>
   );
 }
 
-/** Inline expansion (spec §2 two-tier): quick facts + weeks-met strip, evidence lazy-loaded on expand. */
+/** Dashboard-goal label for the weekly table: integers plain, fractions 1dp (team-share fallback). */
+function goalLabel(n: number): string {
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
+}
+
+const WEEK_STATE_LABEL: Record<string, string> = {
+  completed: "completed",
+  in_progress: "in progress",
+  future: "not started",
+};
+
+/**
+ * Inline expansion (spec §2 two-tier): the WEEKLY GOAL-MET TABLE — per-week
+ * minimum tracking through the ONE evidence engine (getPipEvidence, the same
+ * function issue freezes). Each week is evaluated individually against the
+ * PIP's weekly minimum; weeks are never averaged (owner rule). Right rail:
+ * review context — acknowledgment state, next check-in, the goal text.
+ */
 function PipExpandedRow({ pip, colSpan }: { pip: PipLandingItem; colSpan: number }) {
   const [evidence, setEvidence] = useState<PipEvidence | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -614,30 +663,56 @@ function PipExpandedRow({ pip, colSpan }: { pip: PipLandingItem; colSpan: number
             </p>
             {pip.review_start_date && pip.review_end_date ? (
               evidence ? (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {evidence.weekly.map((w) => (
-                    <span
-                      key={w.week_start}
-                      className="flex h-8 w-[76px] flex-col items-center justify-center rounded-md border border-(--table-border-weak) bg-(--card-bg) px-1 text-[11px] tabular-nums"
-                      title={`Week of ${w.week_start}: actual ${w.actual ?? "—"} · goal ${w.pip_goal ?? "—"}${w.met == null ? "" : w.met ? " · met" : " · not met"}`}
-                    >
-                      <span className="flex items-center gap-1">
-                        <span
-                          aria-hidden="true"
-                          className={
-                            "inline-block h-1.5 w-1.5 rounded-full " +
-                            (w.met === true ? "bg-(--dot-positive)" : w.met === false ? "bg-(--dot-caution)" : "bg-(--dot-muted)")
-                          }
-                        />
-                        {w.actual == null ? "—" : w.actual}/{w.pip_goal ?? "—"}
-                      </span>
-                      <span className="text-[10px] text-(--text-caption)">{etShort(w.week_start)}</span>
-                    </span>
-                  ))}
-                  <span className="self-center text-[11px] text-(--text-muted)">
+                <div className="mt-2">
+                  <div className="overflow-x-auto rounded-md border border-(--table-border-weak) bg-(--card-bg)">
+                    <table className="data-table min-w-[560px] text-[12px]" aria-label="Weekly goal-met table">
+                      <thead>
+                        <tr>
+                          <th scope="col" className="text-left">Week</th>
+                          <th scope="col" className="text-right">PIP minimum</th>
+                          <th scope="col" className="text-right">Dashboard goal</th>
+                          <th scope="col" className="text-right">Actual</th>
+                          <th scope="col" className="text-left">Met</th>
+                          <th scope="col" className="text-left">State</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {evidence.weekly.map((w) => (
+                          <tr key={w.week_start}>
+                            <td className="py-1.5 tabular-nums">
+                              {etShort(w.clamped_start)}
+                              {w.clamped_start !== w.clamped_end ? <>–{etShort(w.clamped_end)}</> : null}
+                            </td>
+                            <td className="py-1.5 text-right tabular-nums">{w.pip_goal ?? "—"}</td>
+                            <td
+                              className="py-1.5 text-right tabular-nums text-(--text-caption)"
+                              title={w.dashboard_goal_note ?? undefined}
+                            >
+                              {w.dashboard_goal == null ? "—" : goalLabel(w.dashboard_goal)}
+                            </td>
+                            <td className="py-1.5 text-right tabular-nums">{w.actual == null ? "—" : w.actual}</td>
+                            <td className="py-1.5">
+                              {w.met === true ? (
+                                <span className="chip chip-positive">met</span>
+                              ) : w.met === false ? (
+                                <span className="chip chip-risk">not met</span>
+                              ) : (
+                                <span className="text-(--text-faint)">—</span>
+                              )}
+                            </td>
+                            <td className="py-1.5 text-(--text-caption)">{WEEK_STATE_LABEL[w.state] ?? w.state}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-1.5 flex items-center gap-1 text-[11px] text-(--text-muted)">
                     {evidence.weeks_goal_met}/{evidence.weeks_completed} weeks met
-                    <InfoTip className="ml-1 inline-flex align-middle" tip="Each week is evaluated individually against the weekly minimum; weeks are never averaged." />
-                  </span>
+                    <InfoTip
+                      className="inline-flex align-middle"
+                      tip="Each week is evaluated individually against the weekly minimum; weeks are never averaged. The dashboard goal column is provenance (rep goal or team share) — the met evaluation uses the PIP's own minimum."
+                    />
+                  </p>
                 </div>
               ) : error ? (
                 <p className="mt-2 text-[12px]" style={{ color: "var(--neg-text)" }}>{error}</p>
@@ -649,19 +724,90 @@ function PipExpandedRow({ pip, colSpan }: { pip: PipLandingItem; colSpan: number
             )}
           </div>
           <div className="text-[12px] text-(--text-caption)">
-            {pip.next_checkin_date ? (
+            {pip.status === "issued" && (
               <p>
+                {pip.ack_awaiting ? (
+                  <>
+                    <span style={{ color: "var(--chip-risk-fg)" }}>Acknowledgment not yet recorded</span>
+                    {" "}— recorded by the manager during the acknowledgment meeting.
+                  </>
+                ) : pip.manager_acked_at ? (
+                  <>Acknowledgment recorded {etShort(pip.manager_acked_at.slice(0, 10))}{pip.manager_acked_by ? ` by ${pip.manager_acked_by}` : ""}.</>
+                ) : null}
+              </p>
+            )}
+            {pip.next_checkin_date ? (
+              <p className={pip.ack_awaiting ? "mt-1" : undefined}>
                 Next check-in {etShort(pip.next_checkin_date)}
                 {pip.checkin_overdue ? " — overdue" : ""}
               </p>
-            ) : (
-              <p>Next check-in not scheduled</p>
-            )}
+            ) : pip.status === "issued" ? (
+              <p className={pip.ack_awaiting ? "mt-1" : undefined}>Next check-in not scheduled</p>
+            ) : null}
             {pip.goal_text && <p className="mt-1 line-clamp-2 text-(--text-body)">{pip.goal_text}</p>}
           </div>
         </div>
       </td>
     </tr>
+  );
+}
+
+// ---------- check-in timeline (Phase 3: logged check-ins + pending node) ----------
+
+/**
+ * Vertical timeline of a PIP's check-ins: oldest → newest, each node showing
+ * the date, manager, and the recorded fields that exist (honest sparse
+ * rendering — nothing invented). The final PENDING node renders the next
+ * scheduled check-in with the SERVER-derived overdue state (pip.checkin_overdue
+ * — a scheduled date that has passed, America/New_York); no logged check-ins
+ * yet renders the muted empty line above the pending node.
+ */
+function CheckinTimeline({
+  checkins,
+  nextCheckinDate,
+  overdue,
+}: {
+  checkins: PipCheckinRow[];
+  nextCheckinDate: string | null;
+  overdue: boolean;
+}) {
+  const sorted = [...checkins].sort(
+    (a, b) => a.checkin_date.localeCompare(b.checkin_date) || a.created_at.localeCompare(b.created_at),
+  );
+  return (
+    <ol className="relative ml-1 border-l border-(--table-border-weak) pl-4">
+      {sorted.length === 0 && <p className="mb-2 text-[12px] text-(--text-muted)">No check-ins yet — the log starts at issue.</p>}
+      {sorted.map((c) => (
+        <li key={c.id} className="relative pb-4">
+          <span aria-hidden="true" className="absolute top-1.5 -left-[21px] h-2 w-2 rounded-full bg-(--dot-muted)" />
+          <p className="text-[12px] font-medium text-(--text-primary)">
+            {etShort(c.checkin_date)}
+            {c.manager_name ? ` · ${c.manager_name}` : ""}
+          </p>
+          {c.current_performance && <p className="mt-1 text-[13px] leading-relaxed text-(--text-body)">{c.current_performance}</p>}
+          {c.topics_discussed && <p className="mt-1 text-[12px] text-(--text-body)">Topics: {c.topics_discussed}</p>}
+          {c.coaching_provided && <p className="mt-1 text-[12px] text-(--text-body)">Coaching: {c.coaching_provided}</p>}
+          {c.employee_comments && <p className="mt-1 text-[12px] text-(--text-body)">Employee: {c.employee_comments}</p>}
+          {c.manager_notes && <p className="mt-1 text-[12px] text-(--text-muted)">{c.manager_notes}</p>}
+          {c.next_checkin_date && (
+            <p className="mt-1 text-[12px] text-(--text-caption)">Next check-in recorded: {etShort(c.next_checkin_date)}</p>
+          )}
+        </li>
+      ))}
+      <li className="relative pt-1">
+        <span
+          aria-hidden="true"
+          className={
+            "absolute top-2 -left-[21px] h-2 w-2 rounded-full " +
+            (overdue ? "bg-(--dot-caution)" : "border border-(--card-border) bg-(--card-bg)")
+          }
+        />
+        <p className="text-[12px] font-medium text-(--text-muted)">
+          {nextCheckinDate ? `Next check-in scheduled ${etShort(nextCheckinDate)}` : "Next check-in not scheduled"}
+          {overdue && <span className="chip chip-risk ml-2">overdue</span>}
+        </p>
+      </li>
+    </ol>
   );
 }
 
@@ -740,6 +886,18 @@ function ManageDrawer({ pip, onClose }: { pip: PipLandingItem; onClose: () => vo
           ? `Captured ${etDateTime(pip.issued_at)} at issue · verified from dashboard data · later dashboard changes never rewrite this record.`
           : "Draft — editable until issued."}
       </p>
+      {/* Phase 3: acknowledgment state — recorded by the manager (no employee
+          logins); the recording action itself arrives with the Phase 4 flow. */}
+      {pip.ack_awaiting ? (
+        <p className="mt-1 text-[12px]" style={{ color: "var(--chip-risk-fg)" }}>
+          Acknowledgment not yet recorded — the manager records it during the acknowledgment meeting.
+        </p>
+      ) : pip.manager_acked_at ? (
+        <p className="mt-1 text-[12px] text-(--text-muted)">
+          Acknowledgment recorded {etShort(pip.manager_acked_at.slice(0, 10))}
+          {pip.manager_acked_by ? ` by ${pip.manager_acked_by}` : ""}.
+        </p>
+      ) : null}
 
       {isDraft ? (
         <p className="mt-4 text-[13px] text-(--text-muted)">
@@ -747,21 +905,17 @@ function ManageDrawer({ pip, onClose }: { pip: PipLandingItem; onClose: () => vo
         </p>
       ) : (
         <>
-          {/* Check-ins rail + record form */}
+          {/* Check-in TIMELINE (Phase 3): logged check-ins on a vertical rail,
+              oldest → newest, then the pending next check-in with the
+              server-derived overdue detection (pip.checkin_overdue). */}
           <div className="mt-6">
-            <p className="section-heading">Check-ins ({detail?.checkins.length ?? 0})</p>
-            <div className="mt-2 space-y-2">
-              {(detail?.checkins ?? []).map((c) => (
-                <div key={c.id} className="rounded-md border border-(--card-border) px-3 py-2">
-                  <p className="text-[12px] font-medium">
-                    {c.checkin_date}
-                    {c.manager_name ? ` · ${c.manager_name}` : ""}
-                  </p>
-                  {c.current_performance && <p className="mt-1 text-[12px] text-(--text-body)">{c.current_performance}</p>}
-                  {c.manager_notes && <p className="mt-1 text-[12px] text-(--text-muted)">{c.manager_notes}</p>}
-                </div>
-              ))}
-              {(detail?.checkins.length ?? 0) === 0 && <p className="text-[12px] text-(--text-muted)">No check-ins yet.</p>}
+            <p className="section-heading">Check-in timeline ({detail?.checkins.length ?? 0})</p>
+            <div className="mt-2">
+              <CheckinTimeline
+                checkins={detail?.checkins ?? []}
+                nextCheckinDate={pip.next_checkin_date}
+                overdue={pip.checkin_overdue}
+              />
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2">
               <Field label="Check-in date">
