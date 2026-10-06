@@ -12,10 +12,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
-import { AcuityLiveAdapter, reconcileCancellations, upsertAcuityAppointments, type AcuityLiveRunReport } from "../sync/acuity-live";
+import { AcuityLiveAdapter, reconcileCancellations } from "../sync/acuity-live";
 import { appointmentIsPaid, filterApptsInWinBucketRange, isBookingWin } from "../metrics/compute";
 import { buildCancelledWinFlags } from "../page-data";
-import type { NormalizedAppointment } from "../sync/adapters";
 
 const CANCELED_RAW = {
   id: 9001,
@@ -61,6 +60,7 @@ const makeAdapter = (): AcuityLiveAdapter =>
 
 /** Store-shaped scheduled row (MemoryStore upsert input). */
 const scheduledRow = (acuityId: string, sessionIso: string, extra: Record<string, unknown> = {}) => ({
+  id: `test-${acuityId}`,
   acuity_appointment_id: acuityId,
   contact_id: null,
   calendar_id: "12345",

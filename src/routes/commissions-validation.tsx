@@ -134,7 +134,7 @@ function CommissionsValidationPage() {
           </section>
         )}
 
-        {        {/* §5.2 RECONCILIATION STRIP — recompute vs stored */}
+        {/* §5.2 RECONCILIATION STRIP — recompute vs stored */}
         <section aria-label="Reconciliation">
           <Panel className="p-5 sm:p-6">
             <div className="flex flex-wrap items-center gap-2">
