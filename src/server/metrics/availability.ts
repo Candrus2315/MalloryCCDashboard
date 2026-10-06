@@ -43,6 +43,15 @@ export interface DayAvailability {
   openSlotTimes: string[]; // "10:00 AM" style labels, ET
   utilization: number | null; // booked / totalCapacity; null when capacity 0
   blockedCount: number;
+  /**
+   * AVAILABILITY REBUILD PR-2 (additive): EVERY candidate slot the engine
+   * generated for the day, as the SAME labels openSlotTimes uses, in
+   * chronological order. The Day view's per-slot state machine classifies
+   * exactly these (booked + blockedCount + open === slotTimes.length — the
+   * invariant is per-block and therefore per-day). Consumers that only read
+   * the counts are untouched; nothing previously rendered changes.
+   */
+  slotTimes: string[];
 }
 
 /**
@@ -86,6 +95,41 @@ const slotLabel = (minutes: number): string =>
     new Date(Date.UTC(2000, 0, 1, Math.floor(minutes / 60), minutes % 60)),
   );
 
+/**
+ * "9:00 AM" → 540 — the EXACT inverse of the engine's slot label (PR-2: the
+ * Day view's per-slot state machine classifies the engine's slotTimes labels).
+ * Null on anything the formatter could not have produced (never guessed).
+ */
+export function slotLabelToMinutes(label: string): number | null {
+  const m = /^(\d{1,2}):(\d{2}) (AM|PM)$/.exec(label);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mins = Number(m[2]);
+  if (mins > 59) return null;
+  const hh = (h % 12) + (m[3] === "PM" ? 12 : 0);
+  return hh * 60 + mins;
+}
+
+/** Engine slot minutes → "09:00" (HH:mm ET — the availability feed's time_et shape). */
+export function slotMinutesToTime(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** "13:30" (feed time_et) → "1:30 PM" (the engine's slot label shape). Null when unparseable. */
+export function slotTimeToLabel(time: string): string | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(time);
+  if (!m) return null;
+  const minutes = Number(m[1]) * 60 + Number(m[2]);
+  if (Number(m[1]) > 23 || Number(m[2]) > 59) return null;
+  return slotLabel(minutes);
+}
+
+/** "9:00 AM" → "09:00" — label → feed shape (null when unparseable). */
+export function slotLabelToTime(label: string): string | null {
+  const minutes = slotLabelToMinutes(label);
+  return minutes == null ? null : slotMinutesToTime(minutes);
+}
+
 const overlaps = (s: number, e: number, intervals: Array<[number, number]>): boolean =>
   intervals.some(([bs, be]) => s < be && e > bs);
 
@@ -119,6 +163,7 @@ export function computeDayAvailability(input: {
     openSlotTimes: [],
     utilization: null,
     blockedCount: 0,
+    slotTimes: [],
   };
   const toMin = (hhmm: string) => {
     const [h, m] = hhmm.split(":").map(Number);
@@ -170,12 +215,14 @@ export function computeDayAvailability(input: {
   let booked = 0;
   let blockedCount = 0;
   const openSlotTimes: string[] = [];
+  const slotTimes: string[] = [];
   for (const { openMin, closeMin } of blocks) {
     // per-block run: within THIS block every slot lands in exactly one bucket
     // (booked / blocked / open), so the invariant holds per block; the day
     // total below is the sum over blocks.
     for (let t = openMin; t + input.durationMin <= closeMin; t += input.slotIntervalMin) {
       totalCapacity += 1;
+      slotTimes.push(slotLabel(t));
       // an appointment wins the slot when the SESSION itself overlaps it (it
       // is booked — the studio is using it). A slot overlapping only the
       // turnover BUFFER is removed from open as blockedCount, never booked.
@@ -204,6 +251,7 @@ export function computeDayAvailability(input: {
     openSlotTimes,
     utilization: totalCapacity > 0 ? booked / totalCapacity : null,
     blockedCount,
+    slotTimes,
   };
 }
 
