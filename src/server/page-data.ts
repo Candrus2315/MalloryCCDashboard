@@ -956,7 +956,7 @@ export async function availabilityPageData(deps?: PageDeps) {
       holesByDate: {} as Record<string, DayHoleDetail>,
       filters: { calendars: settings.acuity.calendars_included, types: settings.acuity.types_included },
       warnings: [...warnings, ...view.warnings],
-      view: view.payload,
+      view,
     };
   }
 
@@ -1079,7 +1079,7 @@ export interface AvailabilityViewRequest {
 }
 
 const AVAIL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const AVAIL_MONTH_RE = /^\d{4}-\d{2}$/;
+const AVAIL_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /**
  * Normalize the raw search into a view request — PURE. Invalid/absent fields

@@ -65,6 +65,7 @@ async function seedBase(store: MemoryStore) {
   // — identical to DEFAULT_SETTINGS.studio.hours, so storedRules stays empty
   // and the settings rules drive the engine (the fresh-store fallback path).
   const appts: SeedAppt[] = [];
+  const seed = {
     add(d: SeedAppt) {
       appts.push(d);
     },
@@ -205,7 +206,7 @@ describe("availabilityPageData view=month — coverage from PR-1 fixtures", () =
     // Oct 7: inside the horizon, after the sweep snapshot, not in the month row → feed-observed closed (REAL zero, not a bare placeholder)
     expect(byDate(view.days, "2026-10-07").acuity).toBe("feed");
     expect(byDate(view.days, "2026-10-07").openCount).toBe(0);
-    expect(byDate(view.days, "2026-10-07").feedOpenTimes).toEqual([]);
+    expect(byDate(view.days, "2026-10-07").feedOpenTimes).toBeNull(); // feed-closed: open is a REAL 0, no per-time feed answer exists
     // Oct 8: probed → Acuity-authoritative (feed ∖ booked)
     const d08 = byDate(view.days, "2026-10-08");
     expect(d08.acuity).toBe("feed");
@@ -264,7 +265,7 @@ describe("availabilityPageData view=month — coverage from PR-1 fixtures", () =
     const view = data.view as AvailabilityViewPayload;
     expect(view.coverage.noFeedData).toBe(true);
     expect(byDate(view.days, "2026-10-08").acuity).toBe("estimated");
-    expect(byDate(view.days, "2026-10-08").openCount).toBe(8); // 9 − 1 booked (demo continuity — never "—")
+    expect(byDate(view.days, "2026-10-08").openCount).toBe(7); // 9 − 1 booked − 1 turnover-buffer slot (demo continuity — engine output, never "—")
     expect(view.warnings.some((w) => w.startsWith("No Acuity availability data yet"))).toBe(true);
   });
 });

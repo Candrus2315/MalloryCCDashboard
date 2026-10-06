@@ -30,7 +30,7 @@ import {
 } from "./metrics/availability";
 import { materializeRecurringBlocks, type AppointmentRow, type AvailabilityRule } from "./metrics/compute";
 import { monthKeyOf } from "./metrics/weekly";
-import { coverageHorizonFromCache, deriveAvailabilityHoles, monthDates } from "./sync/availability-feed";
+import { addMonths, AVAILABILITY_SWEEP_MONTHS_AHEAD, coverageHorizonFromCache, deriveAvailabilityHoles, monthDates } from "./sync/availability-feed";
 import type { AppSettings, Store } from "./store/types";
 import type {
   AvailabilityAcuityState,
@@ -87,10 +87,20 @@ export async function buildAvailabilityView(ctx: {
   const durationMin = settings.studio.appointment_duration_min;
   const paddingMin = settings.studio.padding_min;
 
+  // The coverage horizon is a GLOBAL fact (the booking template's end), so the
+  // month index must include the feed's standing sweep window too — a visible
+  // month alone would understate it (an October view would never see the
+  // November row that ends the template at 11-01).
+  const cacheMonths = [
+    ...new Set([
+      ...dates.map(monthKeyOf),
+      ...Array.from({ length: AVAILABILITY_SWEEP_MONTHS_AHEAD + 1 }, (_, i) => addMonths(monthKeyOf(today), i)),
+    ]),
+  ];
   const [apptRows, blockedRows, cachedDates, cachedSlots] = await Promise.all([
     store.getAppointmentsOverlapping(etDayStartUtc(first), etDayEndUtc(last)),
     store.getBlockedTimesBetween(etDayStartUtc(first), etDayEndUtc(last)),
-    store.getAvailabilityDates([...new Set(dates.map(monthKeyOf))]),
+    store.getAvailabilityDates(cacheMonths),
     store.getAvailabilitySlotsForDates(dates),
   ]);
 
