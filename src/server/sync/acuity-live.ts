@@ -44,7 +44,7 @@
  *    paced ≥1.1s apart (injectable sleep for tests).
  */
 import { getSecret } from "../env";
-import { addDays, etDateStrFromInstant, etToday } from "../date-logic";
+import { addDays, etDateStrFromInstant, etDayStartUtc, etToday } from "../date-logic";
 import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics/attribution";
 import { deriveBookingPaymentFields } from "../payments";
 import type { Store } from "../store/types";
