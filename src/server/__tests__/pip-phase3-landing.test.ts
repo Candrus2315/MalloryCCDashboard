@@ -58,7 +58,6 @@ async function runLandingBattery(makeStore: () => Store): Promise<{ pipIds: stri
   const today = "2026-09-30"; // a Wednesday
   const w2 = "2026-09-28"; // Monday of today's week
   const w1 = "2026-09-21"; // the previous Monday
-  const w1End = "2026-09-27"; // Sunday
   const w2End = "2026-10-04";
 
   const apptSeqs: { n: number; winDate: string }[] = [];
