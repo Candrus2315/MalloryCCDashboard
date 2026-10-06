@@ -183,6 +183,16 @@ const DDL: string[] = [
   // Today page's Pending Payments list. Written ONLY by the dismiss endpoint;
   // the Acuity sync's upsert never touches it (owner-controlled state).
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS pending_dismissed_at timestamptz`,
+  // CANCELLATION RECONCILIATION (owner report 2026-10-06): Acuity's list
+  // endpoint never returns cancelled appointments, so the sync's upsert could
+  // never flip a locally-scheduled row to cancelled — a deposit-paid booking
+  // cancelled afterwards stayed a Booking Win forever. cancelled_at is WHEN
+  // THIS SYSTEM CONFIRMED the cancellation via GET /appointments/{id} (Acuity
+  // exposes no cancellation timestamp); cancellation_source is the
+  // confirmation path. Both write-once (COALESCE): a later sync never clears
+  // or moves them.
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS cancelled_at timestamptz`,
+  `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS cancellation_source text`,
   `CREATE INDEX IF NOT EXISTS appt_win_bdate_idx ON appointments (booking_win_business_date)`,
   `CREATE TABLE IF NOT EXISTS booking_attributions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1288,8 +1298,8 @@ export class PgStore implements Store {
     await this.ensureSchema();
     for (const r of rows) {
       await this.sql`
-        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email)
-        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.payment_state ?? null}, ${r.booking_win_business_date ?? null}, ${r.payment_business_date_source ?? null}, ${r.first_seen_paid_at ?? null}, ${r.raw ?? null}, ${r.status}, ${r.cancelled}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
+        INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source, client_name, client_phone, client_email)
+        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.payment_state ?? null}, ${r.booking_win_business_date ?? null}, ${r.payment_business_date_source ?? null}, ${r.first_seen_paid_at ?? null}, ${r.raw ?? null}, ${r.status}, ${r.cancelled}, ${r.cancelled_at ?? null}, ${r.cancellation_source ?? null}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
         ON CONFLICT (acuity_appointment_id) DO UPDATE SET
           contact_id = EXCLUDED.contact_id, calendar_id = EXCLUDED.calendar_id, calendar_name = EXCLUDED.calendar_name,
           appointment_type = EXCLUDED.appointment_type, appointment_datetime = EXCLUDED.appointment_datetime,
@@ -1309,7 +1319,13 @@ export class PgStore implements Store {
           -- NOT in this SET list on purpose — the owner's ✕ dismissal is
           -- owner-controlled state; the Acuity sync never overwrites or clears it.
           raw = EXCLUDED.raw,
-          status = EXCLUDED.status, cancelled = EXCLUDED.cancelled,
+          -- CANCELLATION (owner report 10/6): write-once — a row confirmed
+          -- cancelled (by the reconciliation or the provider payload) is never
+          -- un-cancelled by a later upsert, and cancelled_at/source never move.
+          cancelled = appointments.cancelled OR EXCLUDED.cancelled,
+          cancelled_at = COALESCE(appointments.cancelled_at, EXCLUDED.cancelled_at),
+          cancellation_source = COALESCE(appointments.cancellation_source, EXCLUDED.cancellation_source),
+          status = CASE WHEN (appointments.cancelled OR EXCLUDED.cancelled) THEN 'cancelled' ELSE EXCLUDED.status END,
           client_name = EXCLUDED.client_name, client_phone = EXCLUDED.client_phone, client_email = EXCLUDED.client_email, updated_at = now()
       `;
     }
@@ -1341,12 +1357,14 @@ export class PgStore implements Store {
       client_name: r.client_name == null ? null : String(r.client_name),
       status: String(r.status),
       cancelled: Boolean(r.cancelled),
+      cancelled_at: r.cancelled_at == null ? null : new Date(r.cancelled_at as string).toISOString(),
+      cancellation_source: r.cancellation_source == null ? null : String(r.cancellation_source),
     };
   }
   async getAppointmentsCreatedBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
     // S7c: created-based metrics bucket on the ET BUSINESS DATE column.
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE created_business_date >= ${start}::date AND created_business_date <= ${end}::date`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source FROM appointments WHERE created_business_date >= ${start}::date AND created_business_date <= ${end}::date`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]> {
@@ -1358,7 +1376,7 @@ export class PgStore implements Store {
     // the deposit was received, UNION not-yet-derived/legacy rows by created
     // date (the metrics layer applies the win filters + fallback rules; unpaid
     // rows returned here never count).
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw FROM appointments WHERE (booking_win_business_date >= ${start}::date AND booking_win_business_date <= ${end}::date) OR (booking_win_business_date IS NULL AND created_business_date >= ${start}::date AND created_business_date <= ${end}::date)`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source FROM appointments WHERE (booking_win_business_date >= ${start}::date AND booking_win_business_date <= ${end}::date) OR (booking_win_business_date IS NULL AND created_business_date >= ${start}::date AND created_business_date <= ${end}::date)`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
@@ -1370,7 +1388,7 @@ export class PgStore implements Store {
     // calendar name (scope matching), acuity id AND the client contact fields
     // (the attribution engine's phone/email tiers read them from this selector)
     // — the lean selectors used by the booking metrics keep their original columns.
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} AND appointment_datetime < ${endUtc}`;
     return rows.map((r) => ({
       ...this.apptRow(r as Record<string, unknown>),
       calendar_name: r.calendar_name ? String(r.calendar_name) : null,
@@ -1383,7 +1401,7 @@ export class PgStore implements Store {
   }
   async getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
   async getAppointmentsWithClientsSince(startUtc: string, opts?: { excludePendingDismissed?: boolean }): Promise<(AppointmentRow & {
@@ -1412,8 +1430,8 @@ export class PgStore implements Store {
     // Two explicit query forms — postgres.js treats every ${} as a bound
     // parameter, so the conditional filter must live in the template itself.
     const rows = opts?.excludePendingDismissed
-      ? await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, pending_dismissed_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE (appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}) AND pending_dismissed_at IS NULL`
-      : await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, pending_dismissed_at, raw, status, cancelled, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
+      ? await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, pending_dismissed_at, raw, status, cancelled, cancelled_at, cancellation_source, client_name, client_phone, client_email FROM appointments WHERE (appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}) AND pending_dismissed_at IS NULL`
+      : await this.sql`SELECT id, contact_id, calendar_id, calendar_name, acuity_appointment_id, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, pending_dismissed_at, raw, status, cancelled, cancelled_at, cancellation_source, client_name, client_phone, client_email FROM appointments WHERE appointment_datetime >= ${startUtc} OR created_at >= ${startUtc}`;
     return rows.map((r) => ({
       ...this.apptRow(r as Record<string, unknown>),
       acuity_appointment_id: r.acuity_appointment_id ? String(r.acuity_appointment_id) : null,
@@ -1433,6 +1451,56 @@ export class PgStore implements Store {
     // source of truth and the sync would re-create it; this only hides the
     // row from the pending list. Callers guard: paid wins are never dismissed.
     await this.sql`UPDATE appointments SET pending_dismissed_at = COALESCE(pending_dismissed_at, now()) WHERE id = ${appointmentId}::uuid`;
+  }
+  /**
+   * CANCELLATION RECONCILIATION (owner report 2026-10-06): mark appointments
+   * whose cancellation was CONFIRMED via the Acuity single-appointment GET.
+   * Monotone + write-once: only false→true flips, cancelled_at/source are
+   * COALESCE-kept (a re-run never moves the first confirmation), and the win
+   * evidence (booking_win_business_date etc.) is NEVER touched — already-
+   * counted wins stay in their stored records and surface on the flag list
+   * instead. WRITER PROTECTION: ONE advisory-locked transaction (the same
+   * lock the attribution writer holds) serializes concurrent reconciliation
+   * passes. Returns the number of rows actually flipped.
+   */
+  async markAppointmentsCancelled(acuityIds: string[], cancelledAtIso: string, source: string): Promise<number> {
+    if (acuityIds.length === 0) return 0;
+    this.cache.bump(); // write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    const ids = [...new Set(acuityIds.map((s) => String(s)))];
+    return await this.sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(72240901)`;
+      const rows = await tx`
+        UPDATE appointments SET cancelled = true, status = 'cancelled',
+          cancelled_at = COALESCE(cancelled_at, ${cancelledAtIso}::timestamptz),
+          cancellation_source = COALESCE(cancellation_source, ${source}),
+          updated_at = now()
+        WHERE acuity_appointment_id = ANY(${ids}::text[])
+          AND cancelled = false
+          AND acuity_appointment_id NOT LIKE 'demo-%'
+        RETURNING id`;
+      return rows.length;
+    });
+  }
+  /**
+   * FLAG LIST (owner report 2026-10-06): appointments that were counted as
+   * Booking Wins (a persisted win bucket) and are NOW confirmed cancelled —
+   * the honest report-only surface for already-counted wins. Stored closed
+   * records are never rewritten; corrections go through the audited
+   * reason-required manual path only on the owner's direction.
+   */
+  async getCancelledWinAppointments(): Promise<(AppointmentRow & { acuity_appointment_id: string | null })[]> {
+    return this.cache.wrap("getCancelledWinAppointments", () => this.getCancelledWinAppointmentsCached());
+  }
+  private async getCancelledWinAppointmentsCached(): Promise<(AppointmentRow & { acuity_appointment_id: string | null })[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source FROM appointments WHERE cancelled = true AND booking_win_business_date IS NOT NULL ORDER BY booking_win_business_date`;
+    return rows.map((r) => ({
+      ...this.apptRow(r as Record<string, unknown>),
+      acuity_appointment_id: r.acuity_appointment_id ? String(r.acuity_appointment_id) : null,
+      duration_minutes: r.duration_minutes == null ? null : Number(r.duration_minutes),
+      client_name: r.client_name == null ? null : String(r.client_name),
+    }));
   }
   async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache

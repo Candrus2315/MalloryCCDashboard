@@ -8,16 +8,31 @@
  * NEVER logged or serialized.
  *
  * Endpoints used (read-only):
- *   GET /appointments      — minDate/maxDate window (ET dates), chunked
- *                            pagination under the 500-response cap (S7)
- *   GET /appointment-types — catalog (smoke script + future Settings scope UI)
+ *   GET /appointments        — minDate/maxDate window (ET dates), chunked
+ *                              pagination under the 500-response cap (S7)
+ *   GET /appointments/{id}   — single appointment; THE cancellation probe
+ *                              (see below)
+ *   GET /appointment-types   — catalog (smoke script + future Settings scope UI)
+ *
+ * CANCELLATION BLIND SPOT (owner report 2026-10-06, verified against the live
+ * API): the list endpoint NEVER returns cancelled appointments — a full-year
+ * pull returned zero canceled rows. A locally-scheduled row that is cancelled
+ * in Acuity therefore simply goes absent from every later list, and the
+ * upsert (which only refreshes rows still present) left it scheduled forever
+ * — a deposit-paid booking cancelled afterwards stayed a Booking Win. The
+ * sync therefore RECONCILES: rows in-window absent from the list are probed
+ * one-by-one via GET /appointments/{id}, which DOES return cancelled
+ * appointments (canceled: true boolean, no cancellation timestamp — the
+ * confirmation stamp is ours). Confirmed rows are marked cancelled_at
+ * (write-once) with their raw payload retained.
  *
  * Semantics the sync guarantees:
  *  - Upsert by Acuity appointment id (store ON CONFLICT) — duplicate-safe; the
  *    same id fetched twice never creates two rows.
- *  - A CANCELLED appointment arrives with canceled:true and UPDATEs the
- *    existing row (cancelled=true) — it frees its slot and stays historical,
- *    never a duplicate.
+ *  - A cancellation is CONFIRMED via the single-appointment GET and marks the
+ *    existing row (cancelled=true, cancelled_at write-once) — it frees its
+ *    slot and stays historical, never a duplicate; a marked row is never
+ *    un-cancelled by a later sync.
  *  - A RESCHEDULED appointment keeps its id with a new datetime — the upsert
  *    moves the ONE row to the new time (old slot free, new slot occupied).
  *  - Blocked times: Acuity v1 exposes no bulk blocked-times listing (the
@@ -285,7 +300,7 @@ export class AcuityLiveAdapter {
   }
 
   /** GET with Basic auth + the ~1 req/sec pacing Acuity expects. */
-  private async getJson(path: string, params: Record<string, string>): Promise<unknown> {
+  private async getJson(path: string, params: Record<string, string>, opts?: { notFoundOk?: boolean }): Promise<unknown> {
     const gapMs = 1_100;
     const sinceLast = Date.now() - this.lastRequestAt;
     if (this.lastRequestAt > 0 && sinceLast < gapMs) await this.sleep(gapMs - sinceLast);
@@ -308,6 +323,7 @@ export class AcuityLiveAdapter {
     if (res.status === 429) {
       throw new Error("Acuity rate limited (429) — sync will retry on the next tick");
     }
+    if (res.status === 404 && opts?.notFoundOk) return null;
     if (!res.ok) {
       throw new Error(`Acuity API error ${res.status} on GET /${path}`);
     }
@@ -341,8 +357,9 @@ export class AcuityLiveAdapter {
    * calendar dates — Acuity interprets the date params in the account's
    * timezone, which is ET for this owner). Pulled in ≤90-day date chunks
    * (see ACUITY_CHUNK_DAYS) and merged by appointment id, so the response
-   * cap cannot silently truncate the window. Cancellations come back in the
-   * same lists with canceled:true so their stored rows UPDATE.
+   * cap cannot silently truncate the window. NOTE: cancelled appointments
+   * NEVER appear in these lists — absent rows are reconciled by
+   * reconcileCancellations via the single-appointment GET.
    */
   async fetchAppointments(): Promise<NormalizedAppointment[]> {
     const window = acuityWindow(etToday());
@@ -379,6 +396,20 @@ export class AcuityLiveAdapter {
       this.lastRun.warnings.push(`${missingDuration} appointments without duration — slot math uses the configured studio duration`);
     }
     return out;
+  }
+
+  /**
+   * GET ONE appointment by id — the cancellation reconciliation's truth call
+   * (the list endpoint never returns cancelled rows; this one does, with
+   * `canceled: true` and NO cancellation timestamp — the stamp is ours).
+   * Returns null for a 404 (row vanished upstream) — never a guess. Same
+   * parse path (parseAcuityAppointment) as the list, so the normalized shape
+   * is identical, raw payload retained.
+   */
+  async fetchAppointmentById(id: string): Promise<NormalizedAppointment | null> {
+    const body = await this.getJson(`appointments/${encodeURIComponent(id)}`, {}, { notFoundOk: true });
+    if (body == null || typeof body !== "object") return null;
+    return parseAcuityAppointment(body as Record<string, unknown>);
   }
 
   /** Appointment-type catalog (Settings scope UI + smoke script). */
@@ -420,6 +451,115 @@ export function createAcuityLiveAdapter(options?: { fetchImpl?: FetchImpl; sleep
 export function resolveAcuityAdapterForSync(): AcuityLiveAdapter | null {
   if (process.env.NODE_ENV === "test") return null;
   return createAcuityLiveAdapter();
+}
+
+// ---------- CANCELLATION RECONCILIATION (owner report 2026-10-06) ----------
+
+/**
+ * Probe budget for ONE reconciliation pass. Each probe is a paced (~1.1s)
+ * request; the first pass after this fix is the largest (every in-window row
+ * cancelled since the last list pull, historically unbounded); later passes
+ * probe only newly-absent rows (usually 0–2). Rows beyond the cap stay
+ * un-probed and reconcile on the next pass — bounded latency, no silent
+ * truncation (a warning is raised instead).
+ */
+export const ACUITY_CANCEL_PROBE_CAP = 300;
+
+export interface CancellationReconciliationReport {
+  /** In-window local scheduled rows absent from the list (probe candidates). */
+  candidates: number;
+  probed: number;
+  /** Candidates beyond the cap — left for the next pass, warned. */
+  capped: number;
+  /** Rows CONFIRMED cancelled (canceled:true) and marked in the store. */
+  markedCancelled: number;
+  /** Probed rows that came back live — upserted so their row reflects reality (e.g. rescheduled outside the window). */
+  refreshedMissing: number;
+  /** Probes that returned 404 — the row vanished upstream; left untouched, warned. */
+  notFound: number;
+  warnings: string[];
+}
+
+/**
+ * Reconcile cancellations after a list pull. THE fix for the owner's
+ * 2026-10-06 report: the Acuity list endpoint never returns cancelled
+ * appointments, so upsert-by-list alone can never learn a row was cancelled.
+ * Candidates = locally non-cancelled rows whose SESSION datetime sits inside
+ * the just-pulled window but whose acuity id is absent from the list. Each
+ * candidate is probed via GET /appointments/{id}: canceled:true → marked
+ * cancelled (write-once cancelled_at, source "acuity-reconciliation", raw
+ * payload + win evidence untouched); live response → the full row is
+ * upserted (reschedules refresh honestly); 404 → warned, left untouched.
+ * Idempotent: a re-run probes nothing already marked and never moves a stamp.
+ */
+export async function reconcileCancellations(
+  store: Store,
+  adapter: AcuityLiveAdapter,
+  fetched: NormalizedAppointment[],
+  options?: { now?: () => Date; maxProbes?: number },
+): Promise<CancellationReconciliationReport> {
+  const now = options?.now ?? (() => new Date());
+  const maxProbes = options?.maxProbes ?? ACUITY_CANCEL_PROBE_CAP;
+  const report: CancellationReconciliationReport = {
+    candidates: 0, probed: 0, capped: 0, markedCancelled: 0, refreshedMissing: 0, notFound: 0, warnings: [],
+  };
+  // The list is SESSION-date scoped to the pulled window — only rows whose
+  // session datetime sits inside that window can be expected in it. (Rows
+  // outside the window are legitimately absent; probing them would churn
+  // forever.)
+  const win = adapter.lastRun?.window ?? acuityWindow(etToday());
+  const startUtc = etDayStartUtc(win.minDate);
+  const endUtc = etDayStartUtc(addDays(win.maxDate, 1));
+  const listedIds = new Set(fetched.map((a) => a.acuity_appointment_id));
+  const local = (await store.getAppointmentsOverlapping(startUtc, endUtc)).filter(
+    (a) =>
+      !a.cancelled &&
+      a.status !== "cancelled" &&
+      !!a.acuity_appointment_id &&
+      !a.acuity_appointment_id.startsWith("demo-") &&
+      !listedIds.has(a.acuity_appointment_id),
+  );
+  report.candidates = local.length;
+  const toProbe = local.slice(0, maxProbes);
+  report.capped = local.length - toProbe.length;
+  if (report.capped > 0) {
+    report.warnings.push(
+      `${report.capped} in-window rows without list presence remain unprobed (cap ${maxProbes}) — they reconcile on the next pass`,
+    );
+  }
+  const confirmedIds: string[] = [];
+  const refreshBatch: NormalizedAppointment[] = [];
+  for (const row of toProbe) {
+    const id = row.acuity_appointment_id as string;
+    let parsed: NormalizedAppointment | null;
+    try {
+      parsed = await adapter.fetchAppointmentById(id);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      report.warnings.push(`cancellation probe for ${id} failed (${msg}) — retried on the next pass`);
+      continue;
+    }
+    report.probed += 1;
+    if (!parsed) {
+      report.notFound += 1;
+      continue;
+    }
+    if (parsed.cancelled) {
+      confirmedIds.push(parsed.acuity_appointment_id);
+    } else {
+      // Absent but live: the appointment still exists and is scheduled —
+      // refresh the stored row so it reflects reality (e.g. rescheduled
+      // outside the window). Never guesses: it is the provider's own row.
+      refreshBatch.push(parsed);
+    }
+  }
+  if (confirmedIds.length > 0) {
+    report.markedCancelled = await store.markAppointmentsCancelled(confirmedIds, now().toISOString(), "acuity-reconciliation");
+  }
+  if (refreshBatch.length > 0) {
+    report.refreshedMissing = await upsertAcuityAppointments(store, refreshBatch);
+  }
+  return report;
 }
 
 // ---------- shared store writes (sync runner + scheduler tick) ----------
@@ -480,6 +620,12 @@ export async function upsertAcuityAppointments(store: Store, appts: NormalizedAp
         raw: a.raw ?? null,
         status: a.status,
         cancelled: a.cancelled,
+        // Cancellation evidence stamps at the source when a row arrives
+        // already-cancelled (the store's upsert keeps the FIRST stamp
+        // write-once; the reconciliation path stamps via markAppointmentsCancelled
+        // with its own source label).
+        cancelled_at: a.cancelled ? nowIso : null,
+        cancellation_source: a.cancelled ? "acuity-upsert" : null,
         client_name: a.clientName,
         // Defensive re-normalization (idempotent): ANY adapter path — demo seed
         // included — lands identities in the same stored form the engine and
@@ -576,14 +722,20 @@ export async function availabilityTick(options?: {
     // demo slots never mix with live data (owner spec)
     await store.deleteDemoAcuityRows();
     const count = await upsertAcuityAppointments(store, appts);
+    // CANCELLATION RECONCILIATION (owner report 10/6): rows absent from the
+    // list are probed against the single-appointment GET and marked cancelled.
+    const reconciliation = await reconcileCancellations(store, adapter, appts, { now });
     await store.finishSyncRun(runId, "success", count, null);
     const report = adapter.lastRun;
     const note = report
       ? [
           `window ${report.window.minDate} → ${report.window.maxDate}`,
           `${count} appointments`,
+          reconciliation.markedCancelled > 0 ? `cancellations confirmed: ${reconciliation.markedCancelled}` : null,
+          reconciliation.notFound > 0 ? `missing-from-list rows probed: ${reconciliation.probed}, not found: ${reconciliation.notFound}` : null,
           report.truncated ? "TRUNCATED at cap" : null,
-          ...report.warnings.slice(0, 3),
+          ...report.warnings.slice(0, 2),
+          ...reconciliation.warnings.slice(0, 2),
         ]
           .filter(Boolean)
           .join(" · ")
