@@ -451,4 +451,225 @@
   .table-hover-row:hover {
     background: var(--surface-hover);
   }
+
+  /* ---------- PIP print/PDF export (Phase 5, owner directive 9/30) ----------
+     A print-optimized PIP document rendered by /performance-print/$pipId.
+     The paper is THEME-INDEPENDENT (explicit stone values — the SAME palette
+     as the light tokens, no new colors) so dark mode never inverts the
+     printed page: on screen it reads as a paper preview; in print it is the
+     page itself. The print route scopes @media print via body.pip-print-page. */
+  .pip-print-doc {
+    margin: 1.5rem auto 3rem;
+    max-width: 820px;
+    background: #ffffff;
+    color: #1c1917;
+    border: 1px solid #e7e5e4;
+    border-radius: 0.75rem;
+    padding: 2.5rem 3rem;
+    font-size: 13px;
+    line-height: 1.55;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  .pp-label {
+    @apply text-[11px] font-medium uppercase tracking-[0.08em];
+    color: #78716c;
+  }
+  .pp-sublabel {
+    font-size: 12px;
+    font-weight: 600;
+    color: #44403c;
+  }
+  .pp-prose {
+    white-space: pre-wrap;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #1c1917;
+  }
+  .pp-masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+    border-bottom: 2px solid #1c1917;
+    padding-bottom: 0.75rem;
+  }
+  .pp-wordmark {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: #1c1917;
+  }
+  .pp-microlabel {
+    display: block;
+    margin-top: 2px;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: #78716c;
+  }
+  .pp-brand-right {
+    text-align: right;
+  }
+  .pp-doctitle-kicker {
+    display: block;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: #78716c;
+  }
+  .pp-versionline {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: #44403c;
+  }
+  .pp-titleband {
+    margin-top: 1.25rem;
+  }
+  .pp-title {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+    color: #1c1917;
+  }
+  .pp-metagrid {
+    margin-top: 1rem;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem 1.5rem;
+  }
+  @media (max-width: 719px) {
+    .pp-metagrid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .pip-print-doc {
+      padding: 1.5rem;
+      margin: 1rem auto 2rem;
+    }
+  }
+  .pp-section {
+    margin-top: 1.5rem;
+    border-top: 1px solid #e7e5e4;
+    padding-top: 1rem;
+  }
+  .pp-draftnote {
+    margin-top: 1rem;
+    border: 1px solid rgba(253, 230, 138, 0.8);
+    background: #fffbeb;
+    color: #78350f;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .pp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  .pp-th {
+    border-bottom: 1px solid #1c1917;
+    padding: 4px 8px;
+    font-size: 10.5px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #57534e;
+  }
+  .pp-td {
+    border-bottom: 1px solid #e7e5e4;
+    padding: 6px 8px;
+    font-variant-numeric: tabular-nums;
+    color: #1c1917;
+  }
+  .pp-met,
+  .pp-notmet {
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .pp-met {
+    color: #047857;
+  }
+  .pp-notmet {
+    color: #b91c1c;
+  }
+  .pp-finenote {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #78716c;
+  }
+  .pp-warnbox {
+    margin-top: 8px;
+    border: 1px solid rgba(253, 230, 138, 0.8);
+    background: #fffbeb;
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .pp-statement {
+    border-left: 2px solid #d6d3d1;
+    padding: 2px 0 2px 10px;
+    font-size: 13px;
+    color: #1c1917;
+  }
+  .pp-checkin {
+    break-inside: avoid;
+    border-left: 2px solid #e7e5e4;
+    padding-left: 10px;
+  }
+  .pp-footer {
+    margin-top: 2rem;
+    border-top: 1px solid #e7e5e4;
+    padding-top: 10px;
+    font-size: 11px;
+    color: #78716c;
+  }
+}
+
+/* ---------- PRINT MEDIA (PIP document, Phase 5) ---------- */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  /* The print route adds body.pip-print-page; print hides the app shell
+     chrome and neutralizes the page column so the document fills the paper. */
+  body.pip-print-page {
+    background: #ffffff !important;
+  }
+  body.pip-print-page header:not(.pp-masthead),
+  body.pip-print-page .pip-print-toolbar {
+    display: none !important;
+  }
+  body.pip-print-page main {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+  }
+  .pip-print-doc {
+    margin: 0;
+    max-width: none;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+    font-size: 10.5pt;
+  }
+  .pip-print-doc a {
+    text-decoration: none;
+    color: inherit;
+  }
+  .pip-print-doc tr,
+  .pip-print-doc .pp-checkin,
+  .pip-print-doc .pp-statement,
+  .pip-print-doc .pp-footer {
+    break-inside: avoid;
+  }
+  .pip-print-doc .pp-section .pp-label {
+    break-after: avoid;
+  }
+  .pip-print-doc thead {
+    display: table-header-group; /* repeat the week-table header across pages */
+  }
 }
