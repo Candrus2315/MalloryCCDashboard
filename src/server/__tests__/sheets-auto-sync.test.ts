@@ -289,16 +289,14 @@ describe("schedulerTick × sheets + stale-run reaper", () => {
     expect(runs.find((r) => r.id === backfillId)!.status).toBe("running");
   });
 
-  // timeout: this end-to-end tick test (real timers + full scheduler) can exceed
-  // bun's 5s default when the whole suite runs in parallel — a load flake, not a
-  // product bug (passes in isolation in ~4.3s). 15s tolerates suite pressure.
-  test("the tick reaps zombies BEFORE the guards, so a wedged run cannot block syncing", { timeout: 15_000 }, async () => {
+  test("the tick reaps zombies BEFORE the guards, so a wedged run cannot block syncing", async () => {
     const store = new MemoryStore();
     await store.insertSyncRun("highlevel"); // wedged zombie (started "now")
     await store.setSyncWatermark("highlevel", new Date(Date.now() - 120_000).toISOString());
     const res = await schedulerTick({
       store,
       creds: null,
+      liveAdapters: { sheets: null }, // hermetic: sheets tick must not self-resolve the real secret
       trigger: "background",
       now: () => new Date(Date.now() + (STALE_RUN_REAP_MINUTES + 1) * 60_000),
     });
