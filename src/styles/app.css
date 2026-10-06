@@ -315,9 +315,11 @@
     background: var(--chip-neutral-bg);
     color: var(--chip-neutral-fg);
   }
-  /* Availability day card (reusable on the Availability page) */
+  /* Availability day card (reused on the Today + Availability pages). Width
+     follows the label (min-width floor only) — a fixed w-28 made the
+     "Tomorrow · Sat" prefix wrap inside the card. */
   .day-card {
-    @apply w-28 shrink-0 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1;
+    @apply w-auto min-w-28 shrink-0 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1;
   }
   .day-card:focus-visible {
     --tw-ring-color: var(--focus-ring);

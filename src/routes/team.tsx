@@ -54,6 +54,10 @@ import {
   repChips,
   type RepSortKey,
 } from "~/components/team-views";
+// Harmonization Wave 2: the page composes from the shared page primitives
+// (Panel / Eyebrow) — same building blocks as Daily/Weekly/Today. The goal
+// bar keeps its own markup so the hit tone (dot-positive) is preserved.
+import { Eyebrow, Panel } from "~/components/page-panel";
 
 export const Route = createFileRoute("/team")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -550,39 +554,38 @@ function TeamPage() {
 
   return (
     <div className="space-y-4">
-      {/* header — matches Today/Reps: title — subtitle, context line, honesty banner */}
-      <header>
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <h1 className="text-xl font-semibold tracking-tight text-(--text-primary)">Team</h1>
-          <span className="text-[15px] font-medium text-(--text-faint)" aria-hidden="true">
-            —
-          </span>
-          <span className="text-[15px] font-medium text-(--text-caption)">Team Performance</span>
+      {/* header — Today/Daily anatomy: title + live-state chip on line 1; the
+          range context is demoted to the meta line */}
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-[22px] font-semibold tracking-tight text-(--text-primary)">Team</h1>
+            {/* live-state indicator (owner hard rule): live vs historical is never ambiguous */}
+            {data.range.isCurrentWeek ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 text-xs font-semibold text-(--pos-text)">
+                <span className="h-1.5 w-1.5 rounded-full bg-(--dot-positive)" aria-hidden="true" />
+                Current Week
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-(--chip-risk-bg) bg-(--chip-risk-bg) px-2 py-0.5 text-xs font-semibold text-(--banner-fg)">
+                <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" />
+                Historical · {data.range.label}
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-(--text-muted)">
+            <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
+            <span>{rangeCaption}</span>
+          </p>
         </div>
-        <p className="mt-1 flex items-center gap-1.5 text-xs text-(--text-caption)">
-          <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
-          <span>{rangeCaption}</span>
-          {/* live-state indicator (owner hard rule): live vs historical is never ambiguous */}
-          {data.range.isCurrentWeek ? (
-            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-(--chip-positive-bg) bg-(--chip-positive-bg) px-2 py-0.5 font-semibold text-(--pos-text)">
-              <span className="h-1.5 w-1.5 rounded-full bg-(--dot-positive)" aria-hidden="true" />
-              Current Week
-            </span>
-          ) : (
-            <span className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-(--chip-risk-bg) bg-(--chip-risk-bg) px-2 py-0.5 font-semibold text-(--banner-fg)">
-              <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" />
-              Historical · {data.range.label}
-            </span>
-          )}
-        </p>
         {data.meta.mode === "memory" && (
-          <div className="status-banner mt-2" role="status">
+          <p className="status-banner" role="status">
             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
             <span className="min-w-0 truncate">
               Demo data (in-memory) — database not connected
               {data.meta.dbReason ? `: ${data.meta.dbReason}` : ""}.
             </span>
-          </div>
+          </p>
         )}
       </header>
 
@@ -632,126 +635,179 @@ function TeamPage() {
         )}
       </section>
 
-      {/* team performance summary + goal pacing — the above-the-fold story */}
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
-        <section className="card" aria-label="Team performance summary">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-            <p className="section-heading">Team Performance</p>
+      {/* TEAM PERFORMANCE — the hero (Daily/Today anatomy): bookings-vs-goal is
+          the anchor, goal achievement + pace support on the right, calls and
+          conversions run as the secondary hairline strip. Presentation only —
+          every figure below is the SAME payload expression the two cards this
+          composition replaces rendered. */}
+      <section aria-label="Team performance">
+        <Panel className="overflow-hidden">
+          <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)] lg:divide-x lg:divide-(--table-border-weak)">
+            {/* left / primary — the goal is the visual anchor */}
+            <div className="p-5 sm:p-6">
+              <Eyebrow>Team Performance</Eyebrow>
+              <p className="kpi-label mt-5 flex items-center gap-1.5">
+                Total Bookings
+                <InfoTip tip="Non-cancelled bookings, counted by created date (America/New_York)" label="About Total Bookings" />
+              </p>
+              <p className="mt-2 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 tabular-nums">
+                <span className="text-6xl font-semibold leading-none tracking-tight text-(--text-primary)">
+                  {formatInt(m.totalBookings)}
+                </span>
+                {ps.goalValue > 0 && (
+                  <span className="text-3xl font-medium text-(--text-muted)">/ {formatCount(ps.goalValue)} bookings</span>
+                )}
+              </p>
+              <p className="kpi-sub mt-1.5">bookings created in range</p>
+              <div className="mt-6">
+                {/* goal pacing bar — the pacing module's exact geometry + hit tone */}
+                {ps.barPct != null && (
+                  <div className="h-1.5 w-full max-w-xl overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
+                    <div
+                      className={"h-1.5 rounded-full " + (ps.hit ? "bg-(--dot-positive)" : "bg-(--bar-fill)")}
+                      style={{ width: `${ps.barPct}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+              {ps.achieved != null ? (
+                <p className="mt-4 text-[13px] leading-relaxed text-(--text-caption)">
+                  <span className={"font-semibold " + (ps.hit ? "text-(--pos-text)" : "text-(--text-primary)")}>{ps.achieved}</span>{" "}
+                  achieved
+                  <span className="mx-1.5 text-(--text-faint)">·</span>
+                  <span className="font-semibold text-(--text-primary)">{ps.remaining}</span> remaining
+                  <span className="mx-1.5 text-(--text-faint)">·</span>
+                  <span className="font-medium text-(--text-body)">{ps.paceClause}</span>
+                </p>
+              ) : (
+                <p className="mt-4 text-[13px] text-(--text-caption)">{ps.paceClause}</p>
+              )}
+              {ps.paceFootnote && <p className="kpi-sub mt-1.5">{ps.paceFootnote}</p>}
+
+              <hr className="my-5 border-(--table-border-weak)" />
+
+              {/* THREE-WAY ATTRIBUTION SPLIT (owner directive 2026-09-27, S5b) — the
+                  three states are separate numbers, never folded together: Total
+                  Bookings = Attributed + Ambiguous + Unattributed (a booking with
+                  no stored verdict yet shows as its own honest clause). */}
+              <p className="text-xs text-(--text-caption)" data-testid="booking-attribution-split">
+                {bookingSplitLine(data.bookingSplit)}
+                <span className="text-(--text-muted)"> · {formatInt(data.bookingSplit.total)} total bookings in range</span>
+              </p>
+            </div>
+
+            {/* right / supporting — achievement + remaining + pace, secondary to the anchor */}
+            <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
+              <Eyebrow>Goal Pacing</Eyebrow>
+              {m.goal.note && (
+                <p className="mt-1.5">
+                  <InfoTip tip={m.goal.note} label="Where this goal comes from" />
+                </p>
+              )}
+              <dl className="mt-4 space-y-4">
+                <div>
+                  <dt className="flex items-center gap-1.5 text-[13px] font-medium text-(--text-body)">
+                    Goal Achievement
+                    <InfoTip tip="Actual bookings ÷ the weekly goal for the range" label="About Goal Achievement" />
+                  </dt>
+                  <dd className="mt-0.5">
+                    <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                      {num(formatPercent(m.goalAchievement, 1))}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="flex items-center gap-1.5 text-[13px] font-medium text-(--text-body)">
+                    Bookings Remaining
+                    <InfoTip tip="Goal − actual, floored at 0" label="About Bookings Remaining" />
+                  </dt>
+                  <dd className="mt-0.5">
+                    <span
+                      className={
+                        "text-2xl font-semibold tracking-tight tabular-nums " +
+                        (m.remaining === 0 ? "text-(--pos-text)" : "text-(--text-primary)")
+                      }
+                    >
+                      {num(formatCount(m.remaining))}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[13px] font-medium text-(--text-body)">Daily Pace Needed</dt>
+                  <dd className="mt-0.5 flex items-baseline gap-2">
+                    <span
+                      className={
+                        "text-2xl font-semibold tracking-tight tabular-nums " +
+                        (m.paceNeeded > 0 ? "text-(--neg-text)" : "text-(--pos-text)")
+                      }
+                    >
+                      {formatInt(m.paceNeeded)}
+                    </span>
+                    <span className="kpi-sub">per working day</span>
+                  </dd>
+                </div>
+              </dl>
+            </div>
           </div>
+        </Panel>
+      </section>
 
-          {/* PRIMARY — bookings + goal pace (spec: not all KPIs equal) */}
-          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-6 md:grid-cols-4">
-            <Field size="hero" label="Total Bookings" value={formatInt(m.totalBookings)} info="Non-cancelled bookings, counted by created date (America/New_York)" />
-            <Field size="hero" label="Goal Achievement" value={num(formatPercent(m.goalAchievement, 1))} info="Actual bookings ÷ the weekly goal for the range" />
-            <Field
-              size="hero"
-              label="Bookings Remaining"
-              value={num(formatCount(m.remaining))}
-              info="Goal − actual, floored at 0"
-              tone={m.remaining === 0 ? "pos" : undefined}
-            />
-            <Field
-              size="hero"
-              label="Daily Pace Needed"
-              value={formatInt(m.paceNeeded)}
-              sub="per working day"
-              tone={m.paceNeeded > 0 ? "neg" : "pos"}
-            />
+      {/* CALLS & CONVERSIONS — the secondary hairline strip (Today's calls band
+          anatomy): six labeled cells, one per payload figure, nothing folded */}
+      <section aria-label="Calls and conversions">
+        <Panel className="overflow-hidden">
+          <p className="section-heading px-5 pt-5">Calls &amp; Conversions</p>
+          <div className="mt-4 grid grid-cols-2 gap-y-5 pb-5 sm:grid-cols-3 xl:grid-cols-6 xl:gap-y-0 xl:divide-x xl:divide-(--table-border-weak)">
+            <div className="px-5 py-1">
+              <Field label="Total Team Calls" value={formatInt(m.totalCalls)} />
+            </div>
+            <div className="px-5 py-1">
+              <Field
+                label="Calls Over 2 Minutes"
+                value={formatInt(m.callsOverThreshold)}
+                info={`Calls lasting more than ${data.thresholdSeconds}s — the meaningful-call threshold, set in Settings → Operational Rules.`}
+              />
+            </div>
+            <div className="px-5 py-1">
+              <Field
+                label="Bookings From Calls Over 2 Minutes"
+                value={formatInt(m.bookingsFromOverThreshold)}
+                info="Bookings attributed to calls over the 2-minute threshold"
+              />
+            </div>
+            <div className="px-5 py-1">
+              <Field
+                label="Team Conversation Conversion"
+                value={num(formatPercent(m.conversationConversion, 1))}
+                info={`Bookings ÷ calls over ${data.thresholdSeconds}s (the meaningful-call threshold)`}
+              />
+            </div>
+            <div className="px-5 py-1">
+              <Field
+                label="Assigned Lead Conversion"
+                value={num(formatPercent(m.assignedLeadConversion, 1))}
+                sub={m.assignedLeads > 0 ? `${formatInt(m.assignedLeads)} assigned leads` : undefined}
+              />
+            </div>
+            <div className="px-5 py-1">
+              <Field label="Average Call Duration" value={formatDuration(m.avgCallDurationSeconds)} />
+            </div>
           </div>
-
-          {/* THREE-WAY ATTRIBUTION SPLIT (owner directive 2026-09-27, S5b) — the
-              three states are separate numbers, never folded together: Total
-              Bookings = Attributed + Ambiguous + Unattributed (a booking with
-              no stored verdict yet shows as its own honest clause). */}
-          <p className="mt-3 text-xs text-(--text-caption)" data-testid="booking-attribution-split">
-            {bookingSplitLine(data.bookingSplit)}
-            <span className="text-(--text-muted)"> · {formatInt(data.bookingSplit.total)} total bookings in range</span>
-          </p>
-
-          <hr className="my-5 border-(--table-border-weak)" />
-
-          {/* SECONDARY — calls & conversions */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
-            <Field label="Total Team Calls" value={formatInt(m.totalCalls)} />
-            <Field
-              label="Calls Over 2 Minutes"
-              value={formatInt(m.callsOverThreshold)}
-              info={`Calls lasting more than ${data.thresholdSeconds}s — the meaningful-call threshold, set in Settings → Operational Rules.`}
-            />
-            <Field
-              label="Bookings From Calls Over 2 Minutes"
-              value={formatInt(m.bookingsFromOverThreshold)}
-              info="Bookings attributed to calls over the 2-minute threshold"
-            />
-            <Field
-              label="Team Conversation Conversion"
-              value={num(formatPercent(m.conversationConversion, 1))}
-              info={`Bookings ÷ calls over ${data.thresholdSeconds}s (the meaningful-call threshold)`}
-            />
-            <Field
-              label="Assigned Lead Conversion"
-              value={num(formatPercent(m.assignedLeadConversion, 1))}
-              sub={m.assignedLeads > 0 ? `${formatInt(m.assignedLeads)} assigned leads` : undefined}
-            />
-            <Field label="Average Call Duration" value={formatDuration(m.avgCallDurationSeconds)} />
-          </div>
-
           {/* inline notice — compact, never louder than the performance story (spec) */}
           {m.assignedLeads === 0 && (
-            <p className="mt-4 flex items-start gap-1.5 text-xs text-(--banner-fg)">
+            <p className="mb-5 ml-5 flex items-start gap-1.5 text-xs text-(--banner-fg)">
               <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
               Assigned Lead Conversion unavailable for this range because no assigned leads were worked.
             </p>
           )}
-        </section>
-
-        {/* GOAL PACING — one unit: number line, bar, sentence (spec §2) — sizes to its
-            own content height (equal-height abolition: items-start on the grid above) */}
-        <section className="card" aria-label="Goal pacing">
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <span className="inline-flex items-center gap-1.5">
-              <p className="section-heading">Goal Pacing</p>
-              {m.goal.note && <InfoTip tip={m.goal.note} label="Where this goal comes from" />}
-            </span>
-          </div>
-          <div className="mt-3">
-            <p className="kpi-hero">
-              {formatInt(ps.actual)}
-              {ps.goalValue > 0 && (
-                <span className="text-2xl font-medium text-(--text-muted)"> / {formatCount(ps.goalValue)} bookings</span>
-              )}
-            </p>
-            <p className="kpi-sub mt-1.5">bookings created in range</p>
-          </div>
-          {ps.barPct != null && (
-            <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
-              <div
-                className={"h-1.5 rounded-full " + (ps.hit ? "bg-(--dot-positive)" : "bg-(--bar-fill)")}
-                style={{ width: `${ps.barPct}%` }}
-              />
-            </div>
-          )}
-          {ps.achieved != null ? (
-            <p className="mt-4 text-[13px] leading-relaxed text-(--text-caption)">
-              <span className={"font-semibold " + (ps.hit ? "text-(--pos-text)" : "text-(--text-primary)")}>{ps.achieved}</span>{" "}
-              achieved
-              <span className="mx-1.5 text-(--text-faint)">·</span>
-              <span className="font-semibold text-(--text-primary)">{ps.remaining}</span> remaining
-              <span className="mx-1.5 text-(--text-faint)">·</span>
-              <span className="font-medium text-(--text-body)">{ps.paceClause}</span>
-            </p>
-          ) : (
-            <p className="mt-4 text-[13px] text-(--text-caption)">{ps.paceClause}</p>
-          )}
-          {ps.paceFootnote && <p className="kpi-sub mt-1.5">{ps.paceFootnote}</p>}
-        </section>
-      </div>
+        </Panel>
+      </section>
 
       {/* TRENDS — structured analytics grid, two labeled rows (spec §3) */}
       <section aria-label="Trends">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <span className="inline-flex items-center gap-1.5">
-            <p className="section-heading">Trends</p>
+            <Eyebrow>Trends</Eyebrow>
             <InfoTip tip={t.bucketNote} label="How trend buckets are chosen" />
           </span>
         </div>
@@ -775,7 +831,7 @@ function TeamPage() {
       {/* LEAD VOLUME & BUDGET PACING — answers "are we getting enough leads?" (spec §4) */}
       <section aria-label="Lead volume and budget pacing">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <p className="section-heading">Lead Volume &amp; Budget Pace</p>
+          <Eyebrow>Lead Volume &amp; Budget Pace</Eyebrow>
           {lp.verdict ? (
             <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[13px] font-medium text-(--text-body)">
               <span
@@ -804,7 +860,7 @@ function TeamPage() {
       <section aria-label="Team by rep">
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <span className="inline-flex items-center gap-1.5">
-            <p className="section-heading">By Rep</p>
+            <Eyebrow>By Rep</Eyebrow>
             <InfoTip
               tip={`Chips are rule-based from these columns — top bookings, conversion above team average (≥${TREND_MIN_DENOMINATOR} reps with a value), calls but no bookings, or no recorded activity; no grades. Assigned Lead Conversion per rep lives on each rep's page.`}
               label="How rep chips are assigned"
@@ -812,7 +868,7 @@ function TeamPage() {
           </span>
           <p className="text-xs text-(--text-muted)">Click a rep for their full detail on the Reps page</p>
         </div>
-        <div className="card mt-2 overflow-hidden p-0">
+        <Panel className="mt-3 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-[13px]">
               <thead>
@@ -914,15 +970,18 @@ function TeamPage() {
                 })}
                 {data.repRows.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="py-6 text-center text-(--text-muted)">
-                      No reps found — sync HighLevel users.
+                    <td colSpan={5} className="py-8 text-center">
+                      <p className="text-sm text-(--text-muted)">No reps found — sync HighLevel users.</p>
+                      <Link to="/settings" className="btn-secondary mt-3">
+                        Open Settings
+                      </Link>
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           </div>
-        </div>
+        </Panel>
       </section>
 
       {/* TEAM ATTENTION — rule-based, 3–5 notes, no fake AI (spec §6) */}

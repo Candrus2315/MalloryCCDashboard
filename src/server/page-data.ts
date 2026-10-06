@@ -881,6 +881,9 @@ export async function dailyReportPageData(deps?: PageDeps) {
 /** Public contract name for one day of the availability payload. */
 export type AvailabilityDay = DayAvailability;
 
+/** Public contract name for the wave-2 holes adjacency map (per displayed date). */
+export type { DayHoleDetail };
+
 /** Acuity freshness for the availability header (honest states only). */
 export interface AvailabilityConnection {
   connected: boolean;
@@ -919,6 +922,10 @@ export async function availabilityPageData(deps?: PageDeps) {
   const recurring = settings.studio.recurring_blocks ?? [];
 
   const dayDates = Array.from({ length: 7 }, (_, off) => addDays(today, off));
+  // Wave-2 holes adjacency input: the raw per-day overlap rows, kept before
+  // the availability engine scopes them (the holes derivation consumes the
+  // UNscoped superset — exactly what the Weekly report feeds deriveWeeklyHoles).
+  const apptRowsByDate = new Map<string, AppointmentRow[]>();
   // PERF: the 7 per-day engine runs and the Acuity connection read share one wave.
   const [days, connections]: [DayAvailability[], Awaited<ReturnType<Store["getConnections"]>>] = await Promise.all([
     Promise.all(
@@ -927,6 +934,7 @@ export async function availabilityPageData(deps?: PageDeps) {
         store.getAppointmentsOverlapping(etDayStartUtc(date), etDayEndUtc(date)),
         store.getBlockedTimesBetween(etDayStartUtc(date), etDayEndUtc(date)),
       ]);
+      apptRowsByDate.set(date, appointments);
       return computeDayAvailability({
         date,
         rules,
@@ -965,11 +973,33 @@ export async function availabilityPageData(deps?: PageDeps) {
     warnings.push("Acuity connection required — availability stays unavailable (no invented slots) until Acuity connects.");
   }
 
+  // ---- OWNER HOLES ADJACENCY (wave 2) ----
+  // Per-day holes for the 7 displayed dates, derived by the SAME
+  // deriveWeeklyHoles the Weekly report + copied CC Report use (#34) — one
+  // derivation, no second engine, no redefined arithmetic. The per-day
+  // overlap fetches above are exactly the superset the derivation consumes
+  // (getAppointmentsOverlapping per ET day); the union is deduped by row id
+  // (one appointment can touch two adjacent ET days) and each covered Mon–Sun
+  // week runs once. ONLY per-day details for the displayed dates are exposed:
+  // every displayed date's own overlap fetch is complete, so its per-day
+  // holes are real — a week whose coverage is partial never exposes its
+  // AGGREGATE here (that would fabricate against the Weekly page's number).
+  const weeksCovered = [...new Set(dayDates.map((d) => weekStart(d)))].sort();
+  const unionById = new Map<string, AppointmentRow>();
+  for (const rows of apptRowsByDate.values()) for (const a of rows) unionById.set(a.id, a);
+  const sessionAppts = [...unionById.values()];
+  const holesByDate: Record<string, DayHoleDetail> = {};
+  for (const mon of weeksCovered) {
+    const w = deriveWeeklyHoles({ weekStart: mon, sessionAppts });
+    for (const d of w.days) if (dayDates.includes(d.date)) holesByDate[d.date] = d;
+  }
+
   return {
     meta,
     today,
     connection,
     days,
+    holesByDate,
     filters: { calendars: settings.acuity.calendars_included, types: settings.acuity.types_included },
     warnings,
   };
