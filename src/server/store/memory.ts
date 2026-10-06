@@ -66,6 +66,7 @@ import {
   buildPipRow,
   pipAuditValue,
   pipDateString,
+  assertAckRequirements,
   pipEventToManualOverride,
   pipOptionalInt,
   pipOptionalText,
@@ -1087,6 +1088,32 @@ export class MemoryStore implements Store {
     return { ...row };
   }
 
+  /**
+   * PHASE 4 — the acknowledgment ACTION (who/when audited via pip_ack_recorded
+   * + the manual_overrides mirror). Stamps ONLY the two ack columns; the
+   * document, its frozen evidence snapshot, and the status stay untouched, and
+   * the existing ack_awaiting derivation clears as a pure consequence.
+   */
+  async recordPipAck(id: string, opts: { ackedBy: string }): Promise<PipRow> {
+    const row = this.pips.find((p) => p.id === id);
+    if (!row) throw new Error(`PIP not found: ${id}`);
+    assertAckRequirements(row);
+    row.manager_acked_at = new Date().toISOString();
+    row.manager_acked_by = opts.ackedBy || null;
+    row.updated_at = row.manager_acked_at;
+    this.recordPipEvent({
+      pip_id: row.id,
+      template_id: null,
+      event_type: "pip_ack_recorded",
+      actor: opts.ackedBy || null,
+      field: "manager_acked_at",
+      previous_value: null,
+      new_value: row.manager_acked_at,
+      details: null,
+    });
+    return { ...row };
+  }
+
   async addPipCheckin(row: Omit<PipCheckinRow, "id" | "created_at">): Promise<PipCheckinRow> {
     const pip = this.pips.find((p) => p.id === row.pip_id);
     if (!pip) throw new Error(`PIP not found: ${row.pip_id}`);
@@ -1226,7 +1253,10 @@ export class MemoryStore implements Store {
   async getPipTemplateUsage(): Promise<Map<string, number>> {
     const out = new Map<string, number>();
     for (const p of this.pips) {
-      if (!p.template_id || p.status === "draft") continue;
+      // ACTIVE plans only (Phase 4): draft + issued reference a live template;
+      // completed/cancelled are closed records whose snapshots already froze
+      // the template provenance.
+      if (!p.template_id || (p.status !== "draft" && p.status !== "issued")) continue;
       out.set(p.template_id, (out.get(p.template_id) ?? 0) + 1);
     }
     return out;

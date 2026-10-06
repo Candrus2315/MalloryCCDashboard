@@ -66,6 +66,7 @@ import {
   buildPipRow,
   pipAuditValue,
   pipDateString,
+  assertAckRequirements,
   pipEventToManualOverride,
   pipOptionalInt,
   pipOptionalText,
@@ -2235,6 +2236,39 @@ export class PgStore implements Store {
     });
   }
 
+  /**
+   * PHASE 4 — the acknowledgment ACTION (who/when audited via pip_ack_recorded
+   * + the manual_overrides mirror). Stamps ONLY the two ack columns in the
+   * guard transaction; the document, its frozen evidence snapshot, and the
+   * status stay untouched, and the existing ack_awaiting derivation clears as
+   * a pure consequence.
+   */
+  async recordPipAck(id: string, opts: { ackedBy: string }): Promise<PipRow> {
+    await this.ensureSchema();
+    this.cache.bump();
+    return this.sql.begin(async (sql) => {
+      const rows = await sql`SELECT ${this.pipCols} FROM pips WHERE id = ${id}::uuid FOR UPDATE`;
+      if (rows.length === 0) throw new Error(`PIP not found: ${id}`);
+      const row = this.pipRowFromDb(rows[0] as unknown as Record<string, unknown>);
+      assertAckRequirements(row);
+      const updated = await sql`UPDATE pips SET manager_acked_at = now(), manager_acked_by = ${opts.ackedBy || null},
+          updated_at = now()
+        WHERE id = ${id}::uuid AND status = 'issued' RETURNING ${this.pipCols}`;
+      if (updated.length === 0) throw new Error(`Acknowledgment can only be recorded on an ISSUED PIP — this PIP is "${row.status}"`);
+      await PgStore.recordPipEventTx(sql, {
+        pip_id: id,
+        template_id: null,
+        event_type: "pip_ack_recorded",
+        actor: opts.ackedBy || null,
+        field: "manager_acked_at",
+        previous_value: null,
+        new_value: new Date().toISOString(),
+        details: null,
+      });
+      return this.pipRowFromDb(updated[0] as unknown as Record<string, unknown>);
+    });
+  }
+
   async addPipCheckin(row: Omit<PipCheckinRow, "id" | "created_at">): Promise<PipCheckinRow> {
     await this.ensureSchema();
     this.cache.bump();
@@ -2498,8 +2532,11 @@ export class PgStore implements Store {
 
   async getPipTemplateUsage(): Promise<Map<string, number>> {
     await this.ensureSchema();
+    // ACTIVE plans only (Phase 4): draft + issued reference a live template;
+    // completed/cancelled are closed records whose snapshots already froze the
+    // template provenance.
     const rows = await this.sql`SELECT template_id::text AS tid, count(*)::int AS n
-      FROM pips WHERE template_id IS NOT NULL AND status <> 'draft'
+      FROM pips WHERE template_id IS NOT NULL AND status IN ('draft', 'issued')
       GROUP BY template_id`;
     const out = new Map<string, number>();
     for (const r of rows as unknown as Record<string, unknown>[]) {

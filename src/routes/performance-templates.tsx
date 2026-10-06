@@ -18,6 +18,13 @@
  * PIP in the wizard) — the card facts row shows only cadence + duration, and
  * omits segments with nothing to show rather than inventing values. The old
  * "Goal & dates — Written" pseudo-table is condensed to one "Predefined" line.
+ *
+ * PHASE 4 — TEMPLATES-IN-USE: the count is server-derived from LIVE PIP rows
+ * (draft + issued states) via store.getPipTemplateUsage — so every card shows
+ * whether/how many active PIPs reference the template ("In use by N active
+ * PIPs" vs "No active PIPs"). Closed plans stop counting (their frozen
+ * snapshots keep the provenance), which makes the count the honest
+ * "safe to revise or delete" signal. The Delete action stays gated on 0.
  */
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
@@ -135,12 +142,23 @@ function TemplateCard({ t, inUse }: { t: PipTemplateRow; inUse: number }) {
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           {t.category && <span className="chip chip-neutral text-[11px]">{t.category}</span>}
-          {inUse > 0 && (
+          {inUse > 0 ? (
             <span className="inline-flex items-center gap-0.5 rounded-full bg-(--chip-current-bg) px-2 py-0.5 text-[11px] font-medium text-(--chip-current-fg)">
-              Used by {inUse} {inUse === 1 ? "PIP" : "PIPs"}
+              In use by {inUse} active {inUse === 1 ? "PIP" : "PIPs"}
               <InfoTip
                 className="ml-0.5 inline-flex align-middle"
-                tip="Counts issued plans created from this template — completed and cancelled included. Issued PIPs keep the version they were issued with."
+                tip="Counts LIVE plans created from this template — drafts and issued plans in force. Completed and cancelled plans are closed records and stop counting, so this is the honest 'still referenced' signal. Issued PIPs keep the version they were issued with."
+              />
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full border border-(--card-border) px-2 py-0.5 text-[11px] text-(--text-muted)"
+              title="No draft or issued PIP references this template."
+            >
+              No active PIPs
+              <InfoTip
+                className="ml-0.5 inline-flex align-middle"
+                tip="No draft or issued PIP references this template — it is safe to revise or delete without orphaning a live plan. Closed plans (completed/cancelled) keep their frozen snapshots either way."
               />
             </span>
           )}

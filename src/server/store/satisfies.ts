@@ -147,6 +147,7 @@ const STORE_METHOD_FLAGS = {
   issuePip: 1,
   completePip: 1,
   cancelPip: 1,
+  recordPipAck: 1,
   addPipCheckin: 1,
   getPipCheckins: 1,
   getPipEvidenceSnapshots: 1,

@@ -13,16 +13,27 @@
  * PIP TITLE (template name for template events) resolved server-side — raw
  * IDs never render as a subject/employee anywhere. An event whose PIP row is
  * gone still names what it can: "Deleted record" is never shown as a raw ID.
+ *
+ * PHASE 4 — EMPLOYEES VIEW: a per-employee performance-history view next to
+ * the activity log. It stitches each employee's PIP records across every
+ * lifecycle state (active, completed, cancelled, drafts) with the weekly
+ * goal-met records ALREADY served by pipEvidenceCore (the ONE evidence
+ * engine — getPipRepHistories; hard per-week minimums, never averaged). Same
+ * data sources only; no client-side recomputation. The default view stays the
+ * activity log.
  */
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { getPerformanceHistory } from "~/server/pip-api";
-import type { PipEventView } from "~/server/pip-api";
-import { EmptyState, PerformanceShell, inputClass } from "~/components/performance-shell";
+import { getPerformanceHistory, getPipRepHistories } from "~/server/pip-api";
+import type { PipEventView, PipRepHistoriesPayload } from "~/server/pip-api";
+import { EmptyState, PerformanceShell, PipStatusChip, inputClass } from "~/components/performance-shell";
 import { InfoTip } from "~/components/InfoTip";
 
 export const Route = createFileRoute("/performance-history")({
-  loader: () => getPerformanceHistory(),
+  loader: async () => {
+    const [history, repHistories] = await Promise.all([getPerformanceHistory(), getPipRepHistories()]);
+    return { history, repHistories };
+  },
   component: HistoryPage,
 });
 
@@ -33,6 +44,7 @@ const EVENT_LABELS: Record<string, string> = {
   pip_issued: "Issued (snapshot v1 frozen)",
   pip_completed: "Completed",
   pip_cancelled: "Cancelled",
+  pip_ack_recorded: "Acknowledgment recorded",
   pip_checkin_added: "Check-in added",
   pip_template_created: "Template created",
   pip_template_updated: "Template updated",
@@ -55,6 +67,8 @@ function eventSentence(e: PipEventView, subject: string): string {
       return `completed ${subj}`;
     case "pip_cancelled":
       return `cancelled ${subj}`;
+    case "pip_ack_recorded":
+      return `recorded the acknowledgment on ${subj}`;
     case "pip_checkin_added":
       return `recorded a check-in on ${subj}`;
     case "pip_template_created":
@@ -79,9 +93,13 @@ function etDateKey(iso: string): string | null {
 }
 
 function HistoryPage() {
-  const data = Route.useLoaderData();
-  const pipSubjects = useMemo(() => new Map(data.pipSubjects), [data.pipSubjects]);
-  const templateNames = useMemo(() => new Map(data.templateNames), [data.templateNames]);
+  const { history, repHistories } = Route.useLoaderData();
+  const pipSubjects = useMemo(() => new Map(history.pipSubjects), [history.pipSubjects]);
+  const templateNames = useMemo(() => new Map(history.templateNames), [history.templateNames]);
+
+  // Phase 4: "log" = the full activity ledger (the default, unchanged);
+  // "employees" = the per-employee stitched performance-history view.
+  const [view, setView] = useState<"log" | "employees">("log");
 
   const subjectOf = (e: PipEventView): string => {
     if (e.template_id) return templateNames.get(e.template_id) ?? "Deleted template";
@@ -103,10 +121,10 @@ function HistoryPage() {
 
   const allEvents = useMemo(
     () =>
-      [...data.events].sort(
+      [...history.events].sort(
         (a, b) => b.created_at.localeCompare(a.created_at) || (a.id < b.id ? 1 : -1),
       ),
-    [data.events],
+    [history.events],
   );
 
   const actionOptions = useMemo(() => {
@@ -117,7 +135,7 @@ function HistoryPage() {
     const set = new Set(allEvents.map((e) => subjectOf(e)));
     return [...set].sort((a, b) => a.localeCompare(b));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allEvents, data.pipSubjects, data.templateNames]);
+  }, [allEvents, history.pipSubjects, history.templateNames]);
   const actorOptions = useMemo(() => {
     const set = new Set(allEvents.map((e) => e.actor ?? "—"));
     return [...set].sort((a, b) => a.localeCompare(b));
@@ -138,7 +156,7 @@ function HistoryPage() {
         return true;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allEvents, action, subject, actor, from, to, data.pipSubjects, data.templateNames],
+    [allEvents, action, subject, actor, from, to, history.pipSubjects, history.templateNames],
   );
 
   // Group by ET day for the human log ("Oct 1" header, entries beneath).
@@ -166,17 +184,46 @@ function HistoryPage() {
   };
 
   return (
-    <PerformanceShell path="/performance-history" tabCounts={{ history: data.events.length }}>
+    <PerformanceShell path="/performance-history" tabCounts={{ history: history.events.length }}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <p className="text-[13px] text-(--text-caption)">Every action, with actor and before/after.</p>
+          <p className="text-[13px] text-(--text-caption)">
+            {view === "log" ? "Every action, with actor and before/after." : "Each employee's plans, across every status — with the weekly goal-met record."}
+          </p>
           <InfoTip tip="History is never deleted. Technical audit detail stays available inside each row." />
         </div>
-        <p className="text-[12px] text-(--text-caption)">
-          Showing {filtered.length} of {data.events.length} {data.events.length === 1 ? "event" : "events"}
-        </p>
+        {view === "log" && (
+          <p className="text-[12px] text-(--text-caption)">
+            Showing {filtered.length} of {history.events.length} {history.events.length === 1 ? "event" : "events"}
+          </p>
+        )}
       </div>
 
+      {/* View toggle — the activity log stays the default; the per-employee
+          performance history joins it (Phase 4). */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5" role="group" aria-label="History view">
+        {(["log", "employees"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            aria-pressed={view === v}
+            className={
+              "rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors " +
+              (view === v
+                ? "border-transparent bg-(--accent-solid) text-(--accent-solid-fg)"
+                : "border-(--card-border) bg-(--card-bg) text-(--text-caption) hover:border-(--input-border) hover:text-(--text-primary)")
+            }
+            onClick={() => setView(v)}
+          >
+            {v === "log" ? "Activity log" : "By employee"}
+          </button>
+        ))}
+      </div>
+
+      {view === "employees" ? (
+        <RepHistoryView reps={repHistories.reps} />
+      ) : (
+        <>
       {/* Filters — client-side views over the one read; nothing is removed from the record */}
       <div className="mt-3 flex flex-wrap items-end gap-2" role="group" aria-label="History filters">
         <FilterSelect label="Action" value={action} onChange={setAction} options={actionOptions.map((a) => ({ value: a, label: EVENT_LABELS[a] ?? a }))} />
@@ -198,7 +245,7 @@ function HistoryPage() {
       </div>
 
       <div className="mt-4">
-        {data.events.length === 0 ? (
+        {history.events.length === 0 ? (
           <EmptyState title="No history yet" hint="Actions appear here automatically as they happen." />
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -227,7 +274,149 @@ function HistoryPage() {
           </div>
         )}
       </div>
+        </>
+      )}
     </PerformanceShell>
+  );
+}
+
+/**
+ * PHASE 4 — per-employee performance history: an employee picker, then their
+ * stitched PIP record (active + completed + cancelled + drafts, newest first)
+ * with the weekly goal-met summary from pipEvidenceCore — the ONE evidence
+ * engine (server-derived in getPipRepHistories; hard per-week minimums, never
+ * averaged). "—" wherever a summary is not evaluable; nothing invented.
+ */
+function RepHistoryView({ reps }: { reps: PipRepHistoriesPayload["reps"] }) {
+  const [repId, setRepId] = useState<string>("");
+  const selected = reps.find((r) => r.rep_id === repId) ?? reps[0] ?? null;
+
+  if (reps.length === 0) {
+    return (
+      <div className="mt-4">
+        <EmptyState
+          title="No employee PIP history yet"
+          hint="Once a PIP is assigned to an employee, their stitched history — every plan across every status, with the weekly goal-met record — appears here."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4">
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Employee picker">
+        {reps.map((r) => (
+          <button
+            key={r.rep_id}
+            type="button"
+            aria-pressed={selected?.rep_id === r.rep_id}
+            className={
+              "rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors " +
+              (selected?.rep_id === r.rep_id
+                ? "border-transparent bg-(--accent-solid) text-(--accent-solid-fg)"
+                : "border-(--card-border) bg-(--card-bg) text-(--text-caption) hover:border-(--input-border) hover:text-(--text-primary)")
+            }
+            onClick={() => setRepId(r.rep_id)}
+          >
+            {r.rep_name ?? "Unassigned"} <span className="tabular-nums">{r.pips.length}</span>
+          </button>
+        ))}
+      </div>
+
+      {selected && (
+        <div className="card mt-4 overflow-hidden p-0">
+          <div className="overflow-x-auto">
+            <table className="data-table min-w-[720px] text-[13px]" aria-label={`PIP history for ${selected.rep_name ?? "employee"}`}>
+              <thead>
+                <tr>
+                  <th scope="col" className="text-left">Plan</th>
+                  <th scope="col" className="text-left">Status</th>
+                  <th scope="col" className="text-left">Window</th>
+                  <th scope="col" className="text-left">Weeks met</th>
+                  <th scope="col" className="text-left">Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selected.pips.map((p) => (
+                  <tr key={p.id}>
+                    <td className="py-2.5">
+                      <p className="font-medium text-(--text-primary)">{p.title}</p>
+                      {p.issued_at && (
+                        <p className="mt-0.5 text-[12px] text-(--text-caption)">
+                          issued {etShort(p.issued_at.slice(0, 10))}
+                        </p>
+                      )}
+                    </td>
+                    <td className="py-2.5">
+                      <PipStatusChip status={p.status} />
+                    </td>
+                    <td className="py-2.5 text-(--text-muted)">
+                      {p.pip_start_date || p.pip_end_date ? (
+                        <span className="tabular-nums">
+                          {p.pip_start_date ? etShort(p.pip_start_date) : "—"} – {p.pip_end_date ? etShort(p.pip_end_date) : "—"}
+                        </span>
+                      ) : (
+                        <span className="text-(--text-faint)">—</span>
+                      )}
+                    </td>
+                    <td className="py-2.5">
+                      {p.weeks_met != null && p.weeks_completed != null ? (
+                        <>
+                          <p className="tabular-nums">
+                            {p.weeks_met}/{p.weeks_completed}
+                          </p>
+                          <p className="mt-0.5 text-[12px] text-(--text-caption)">
+                            {p.weeks_missed != null && p.weeks_missed > 0 ? (
+                              <span style={{ color: "var(--chip-risk-fg)" }}>
+                                {p.weeks_missed} week{p.weeks_missed === 1 ? "" : "s"} missed
+                              </span>
+                            ) : (
+                              "none missed"
+                            )}
+                          </p>
+                        </>
+                      ) : (
+                        <span className="text-(--text-faint)" title="No review window or weekly minimum set — nothing to evaluate.">
+                          —
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5">
+                      {p.status === "completed" ? (
+                        <p className="text-(--text-body)">{p.conclusion_category ?? "Completed"}</p>
+                      ) : p.status === "cancelled" ? (
+                        <p className="text-(--text-caption)">
+                          Cancelled{p.cancellation_reason ? ` — ${p.cancellation_reason}` : ""}
+                        </p>
+                      ) : p.status === "issued" ? (
+                        <p className="text-(--text-caption)">Active — in review</p>
+                      ) : (
+                        <p className="text-(--text-caption)">Draft — not yet issued</p>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="border-t border-(--table-border-weak) px-4 py-2.5 text-[11px] text-(--text-muted)">
+            Weeks met counts each review week individually against the plan's weekly minimum — weeks are never averaged
+            <InfoTip
+              className="ml-1 inline-flex align-middle"
+              tip="Derived by the same evidence engine the weekly goal-met table uses (server-side; hard per-week rule). Plans without a review window or weekly minimum show — honestly."
+            />
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Human ET date for stored YYYY-MM-DD or ISO stamps ("Sep 30") — shared with the log view. */
+function etShort(dateStr: string): string {
+  const src = dateStr.length > 10 ? dateStr : `${dateStr}T12:00:00Z`;
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(
+    new Date(Date.parse(src)),
   );
 }
 
