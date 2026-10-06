@@ -193,6 +193,22 @@ export function assertCancelRequirements(row: PipRow, reason: unknown): string {
   return pipRequiredText(reason, "cancellation_reason", 20000);
 }
 
+/**
+ * PHASE 4 — the acknowledgment ACTION: the manager records that the employee
+ * acknowledged the issued plan (no employee logins — owner directive 9/30).
+ * Issued PIPs only: drafts have nothing to acknowledge yet; terminal states
+ * are frozen; a recorded acknowledgment is never re-stamped (the UI hides the
+ * action via the EXISTING ack_awaiting derivation, and a direct call throws).
+ */
+export function assertAckRequirements(row: PipRow): void {
+  if (row.status !== "issued") {
+    throw new Error(`Acknowledgment can only be recorded on an ISSUED PIP — this PIP is "${row.status}"`);
+  }
+  if (row.manager_acked_at != null) {
+    throw new Error("Acknowledgment was already recorded for this PIP");
+  }
+}
+
 /** Check-ins are append-only and only exist while the review is LIVE (issued). */
 export function assertCheckinAllowed(row: PipRow): void {
   if (row.status !== "issued") {

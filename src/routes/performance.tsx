@@ -8,6 +8,7 @@ import {
   getPipDetail,
   getPipEvidence,
   listPipTemplates,
+  recordPipAck,
   type PipLandingItem,
 } from "~/server/pip-api";
 import type { PipDetail } from "~/server/pip-api";
@@ -886,12 +887,28 @@ function ManageDrawer({ pip, onClose }: { pip: PipLandingItem; onClose: () => vo
           ? `Captured ${etDateTime(pip.issued_at)} at issue · verified from dashboard data · later dashboard changes never rewrite this record.`
           : "Draft — editable until issued."}
       </p>
-      {/* Phase 3: acknowledgment state — recorded by the manager (no employee
-          logins); the recording action itself arrives with the Phase 4 flow. */}
+      {/* Phase 4: acknowledgment state + ACTION — the manager records the
+          acknowledgment (no employee logins); recording is an audited mutation
+          that stamps manager_acked_at/by, so the EXISTING ack_awaiting
+          derivation clears the "ack pending" chip and the rank-4 attention
+          line with no second derivation path. */}
       {pip.ack_awaiting ? (
-        <p className="mt-1 text-[12px]" style={{ color: "var(--chip-risk-fg)" }}>
-          Acknowledgment not yet recorded — the manager records it during the acknowledgment meeting.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-(--card-border) px-3 py-2.5">
+          <p className="text-[12px]" style={{ color: "var(--chip-risk-fg)" }}>
+            Acknowledgment not yet recorded — the manager records it during the acknowledgment meeting.
+          </p>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="text-[12px] text-(--text-muted)">changes are audited</span>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busy}
+              onClick={() => run(() => recordPipAck({ data: { pipId: pip.id } }))}
+            >
+              Record acknowledgment
+            </button>
+          </div>
+        </div>
       ) : pip.manager_acked_at ? (
         <p className="mt-1 text-[12px] text-(--text-muted)">
           Acknowledgment recorded {etShort(pip.manager_acked_at.slice(0, 10))}

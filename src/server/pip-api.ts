@@ -108,14 +108,20 @@ export interface PipLandingPayload {
 }
 
 /**
- * PHASE 3 — completed review weeks whose actual fell below the PIP's weekly
- * minimum, derived by pipEvidenceCore (the ONE evidence engine — its per-week
- * `met` flags ARE the hard-minimum evaluation; nothing is recomputed or
- * averaged here). Null ONLY when not evaluable (no rep / review window /
- * minimum, or structurally unusable dates): the attention ladder and the
- * workspace render an honest "—" rather than a silent 0.
+ * PHASE 4 — per-PIP evidence summary for history/landing surfaces: weeks_met /
+ * weeks_completed / weeks_missed, derived ONLY through pipEvidenceCore (the
+ * ONE evidence engine — its per-week `met` flags are the hard-minimum
+ * evaluation; nothing is recomputed or averaged here). Null ONLY when not
+ * evaluable (no rep / review window / minimum, or structurally unusable
+ * dates): callers render an honest "—" rather than a silent 0.
  */
-async function pipWeeksMissed(store: Store, pip: PipRow, today: string): Promise<number | null> {
+export interface PipEvidenceSummary {
+  weeks_met: number;
+  weeks_completed: number;
+  weeks_missed: number;
+}
+
+async function pipEvidenceSummary(store: Store, pip: PipRow, today: string): Promise<PipEvidenceSummary | null> {
   if (!pip.rep_id || !pip.review_start_date || !pip.review_end_date || pip.weekly_goal_min == null) return null;
   try {
     const evidence = await pipEvidenceCore(store, {
@@ -126,10 +132,22 @@ async function pipWeeksMissed(store: Store, pip: PipRow, today: string): Promise
       hardWeeklyMinimum: pip.hard_weekly_minimum,
       today,
     });
-    return evidence.weekly.filter((w) => w.met === false).length;
+    return {
+      weeks_met: evidence.weeks_goal_met,
+      weeks_completed: evidence.weeks_completed,
+      weeks_missed: evidence.weekly.filter((w) => w.met === false).length,
+    };
   } catch {
     return null; // structurally unusable inputs degrade honestly — never a fake 0
   }
+}
+
+/**
+ * Landing derivation: completed review weeks below the weekly minimum. Same
+ * evidence-engine path as the per-rep history summary — one engine, two views.
+ */
+async function pipWeeksMissed(store: Store, pip: PipRow, today: string): Promise<number | null> {
+  return (await pipEvidenceSummary(store, pip, today))?.weeks_missed ?? null;
 }
 
 /**
@@ -322,6 +340,73 @@ export async function getPerformanceHistoryCore(store: Store): Promise<PipHistor
   };
 }
 
+// ---------- per-rep performance history (Phase 4) ----------
+
+/**
+ * One PIP in an employee's stitched history: the row itself + the weekly
+ * goal-met summary from pipEvidenceCore (the ONE evidence engine — the SAME
+ * records the workspace's weekly table renders; hard per-week minimums,
+ * never averaged). Null summary = not evaluable (no review window / minimum)
+ * or a live-data read failure — honest "—", never a fake 0.
+ */
+export interface PipRepHistoryItem extends PipListItem {
+  weeks_met: number | null;
+  weeks_completed: number | null;
+  weeks_missed: number | null;
+}
+
+/** One employee's full PIP history: completed + cancelled + active (+ drafts), newest first. */
+export interface PipRepHistory {
+  rep_id: string;
+  rep_name: string | null;
+  pips: PipRepHistoryItem[];
+}
+
+export interface PipRepHistoriesPayload {
+  /** One entry per employee who has at least one assigned PIP; rep name ascending. */
+  reps: PipRepHistory[];
+}
+
+/**
+ * PER-REP PERFORMANCE HISTORY (Phase 4): stitches each employee's PIP records
+ * across every lifecycle state with their weekly goal-met summaries. Same data
+ * sources only — the pips table for the records, pipEvidenceCore for the
+ * weekly numbers (the exact function the issue snapshot freezes and the
+ * workspace table renders). No second engine, no new inputs, no scoring.
+ */
+export async function getPipRepHistoriesCore(store: Store, opts?: { today?: string }): Promise<PipRepHistoriesPayload> {
+  const today = opts?.today ?? etToday();
+  const pips = await withRepNames(store, await store.listPips(null));
+  const summaries = new Map<string, PipEvidenceSummary | null>();
+  await Promise.all(
+    pips.map(async (p) => {
+      if (!p.rep_id) return; // unassigned drafts have no employee history
+      summaries.set(p.id, await pipEvidenceSummary(store, p, today));
+    }),
+  );
+  const byRep = new Map<string, PipRepHistoryItem[]>();
+  for (const p of pips) {
+    if (!p.rep_id) continue;
+    const s = summaries.get(p.id) ?? null;
+    const item: PipRepHistoryItem = {
+      ...p,
+      weeks_met: s?.weeks_met ?? null,
+      weeks_completed: s?.weeks_completed ?? null,
+      weeks_missed: s?.weeks_missed ?? null,
+    };
+    const list = byRep.get(p.rep_id);
+    if (list) list.push(item);
+    else byRep.set(p.rep_id, [item]);
+  }
+  const reps: PipRepHistory[] = [...byRep.entries()].map(([rep_id, items]) => ({
+    rep_id,
+    rep_name: items[0]?.rep_name ?? null,
+    pips: [...items].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+  }));
+  reps.sort((a, b) => (a.rep_name ?? "").localeCompare(b.rep_name ?? ""));
+  return { reps };
+}
+
 // ---------- writes (manager actions; guards live in the stores) ----------
 
 export interface CreatePipDraftInput {
@@ -468,6 +553,17 @@ export async function cancelPipCore(store: Store, input: { pipId: string; reason
   return store.cancelPip(String(input.pipId), { cancelledBy: input.actor || "christopher", reason: String(input.reason ?? "") });
 }
 
+/**
+ * PHASE 4 — record the manager acknowledgment (no employee logins — the
+ * manager records it during the acknowledgment meeting, owner directive
+ * 9/30). Audited who/when via the store's pip_ack_recorded event + mirror;
+ * the EXISTING ack_awaiting derivation clears as a pure consequence (stamped
+ * column) — no second derivation path exists or is added.
+ */
+export async function recordPipAckCore(store: Store, input: { pipId: string; actor?: string }): Promise<PipRow> {
+  return store.recordPipAck(String(input.pipId), { ackedBy: input.actor || "christopher" });
+}
+
 export interface AddCheckinInput {
   pipId: string;
   checkinDate: string;
@@ -564,6 +660,11 @@ export const getPerformanceHistory = createServerFn().handler(async (): Promise<
   getPerformanceHistoryCore(await getStore()),
 );
 
+/** Per-employee stitched PIP histories + weekly goal-met summaries (History segment "Employees" view). */
+export const getPipRepHistories = createServerFn().handler(async (): Promise<PipRepHistoriesPayload> =>
+  getPipRepHistoriesCore(await getStore()),
+);
+
 export const listPipTemplates = createServerFn().handler(async (): Promise<{ templates: PipTemplateRow[] }> => {
   const store = await getStore();
   return { templates: await store.listPipTemplates() };
@@ -623,6 +724,11 @@ export const completePip = createServerFn({ method: "POST" })
 export const cancelPip = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { pipId: string; reason: string; actor?: string })
   .handler(async ({ data }) => cancelPipCore(await getStore(), data));
+
+/** PHASE 4: record the manager acknowledgment (audited; clears the derived ack-pending state). */
+export const recordPipAck = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { pipId: string; actor?: string })
+  .handler(async ({ data }) => recordPipAckCore(await getStore(), data));
 
 export const addPipCheckin = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as AddCheckinInput)

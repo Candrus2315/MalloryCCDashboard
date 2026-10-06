@@ -831,6 +831,7 @@ export type PipEventType =
   | "pip_issued"
   | "pip_completed"
   | "pip_cancelled"
+  | "pip_ack_recorded"
   | "pip_checkin_added"
   | "pip_template_created"
   | "pip_template_updated"
@@ -1340,6 +1341,15 @@ export interface Store {
   completePip(id: string, opts: { conclusionCategory: string; conclusionNotes: string; actor: string }): Promise<PipRow>;
   /** issued → cancelled. Requires a cancellation reason. Audit: pip_cancelled. */
   cancelPip(id: string, opts: { cancelledBy: string; reason: string }): Promise<PipRow>;
+  /**
+   * PHASE 4 — record the manager acknowledgment on an ISSUED PIP (stamps
+   * manager_acked_at/manager_acked_by, who+when audited). No employee logins:
+   * the manager records it (owner directive 9/30). This is the ACTION behind
+   * the existing ack_awaiting derivation — the derivation itself is untouched
+   * and clears the moment this lands. Guard: issued only; a recorded
+   * acknowledgment is never re-stamped. Audit: pip_ack_recorded.
+   */
+  recordPipAck(id: string, opts: { ackedBy: string }): Promise<PipRow>;
   /** Log a check-in (ISSUED pips only — drafts have no review period yet; terminal states are frozen). Audit: pip_checkin_added. */
   addPipCheckin(row: Omit<PipCheckinRow, "id" | "created_at">): Promise<PipCheckinRow>;
   /** Check-ins of one PIP, oldest first (append-only history). */
@@ -1351,7 +1361,7 @@ export interface Store {
   deletePipTemplate(id: string): Promise<void>;
   getPipTemplate(id: string): Promise<PipTemplateRow | null>;
   listPipTemplates(): Promise<PipTemplateRow[]>;
-  /** Non-draft PIPs per template id (the factual "In use" counts — issued/completed/cancelled hold a template in use). */
+  /** ACTIVE PIPs per template id (draft + issued) — the Phase-4 "in use" counts that tell managers a template is still referenced by a live plan. */
   getPipTemplateUsage(): Promise<Map<string, number>>;
   /** Append a typed module event (also mirrored compactly into manual_overrides by callers' store methods). */
   insertPipEvent(row: Omit<PipEventRow, "id" | "created_at">): Promise<void>;

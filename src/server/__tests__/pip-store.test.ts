@@ -109,6 +109,15 @@ async function runLifecycleBattery(makeStore: () => Store, cleanup?: (pipIds: st
     await expect(store.issuePip(draft.id, { issuedBy: "christopher" })).rejects.toThrow(/draft/i);
     expect((await store.getPipEvidenceSnapshots(draft.id)).length).toBe(1);
 
+    // ---- PHASE 4: acknowledgment action (store contract) ----
+    await expect(store.recordPipAck(bare.id, { ackedBy: "christopher" })).rejects.toThrow(/issued/i);
+    const acked = await store.recordPipAck(draft.id, { ackedBy: "christopher" });
+    expect(acked.manager_acked_at).not.toBeNull();
+    expect(acked.manager_acked_by).toBe("christopher");
+    expect(acked.status).toBe("issued"); // stamps ONLY the ack columns
+    await expect(store.recordPipAck(draft.id, { ackedBy: "christopher" })).rejects.toThrow(/already/i);
+    expect((await store.getPipEvents({ pipId: draft.id })).map((e) => e.event_type)).toContain("pip_ack_recorded");
+
     // ---- check-ins: issued only ----
     await expect(
       store.addPipCheckin({ pip_id: bare.id, checkin_date: "2026-10-06", current_performance: "too early" }),
@@ -203,6 +212,14 @@ async function runLifecycleBattery(makeStore: () => Store, cleanup?: (pipIds: st
     expect(tplUpdated.name).toBe("Booking goal plan v2");
     expect((await store.listPipTemplates()).find((t) => t.id === tpl.id)?.name).toBe("Booking goal plan v2");
     await expect(store.createPipTemplate({ name: "" })).rejects.toThrow(/name/i);
+    // PHASE 4: in-use counts cover LIVE plans (draft + issued) only.
+    const tplDraft = await store.createPip({ rep_id: rep.id, title: "From template", goal_text: "g", template_id: tpl.id, pip_start_date: "2026-10-05", pip_end_date: "2026-11-06" });
+    pipIds.push(tplDraft.id);
+    expect((await store.getPipTemplateUsage()).get(tpl.id)).toBe(1);
+    await store.issuePip(tplDraft.id, { issuedBy: "christopher" });
+    expect((await store.getPipTemplateUsage()).get(tpl.id)).toBe(1); // issued still counts
+    await store.cancelPip(tplDraft.id, { cancelledBy: "christopher", reason: "closed" });
+    expect((await store.getPipTemplateUsage()).get(tpl.id)).toBeUndefined(); // closed plans stop counting
     await store.deletePipTemplate(tpl.id);
     expect(await store.getPipTemplate(tpl.id)).toBeNull();
     const tplEvents = await store.getPipEvents({});
