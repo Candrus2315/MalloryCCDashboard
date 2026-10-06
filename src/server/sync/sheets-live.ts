@@ -258,8 +258,18 @@ export class LiveSheetsAdapter implements GoogleSheetsAdapter {
   }
 }
 
-/** Live adapter when the secret exists, else null (demo fallback upstream). */
+/**
+ * Live adapter when the secret exists, else null (demo fallback upstream).
+ * Under the test runner this ALWAYS returns null — tests must inject a stub
+ * adapter and must NEVER hit live Google Sheets (the owner's real service
+ * account sits in this machine's environment, so an unguarded env lookup
+ * would let an unpinned `bun test` tick fire live Sheets API calls). Mirrors
+ * resolveAcuityAdapterForSync in acuity-live.ts. Production (serve.ts) is
+ * unaffected: it self-resolves at boot under a non-test NODE_ENV and threads
+ * the built adapter into startScheduler explicitly.
+ */
 export function createSheetsAdapter(cfg: AppSettings["sheets"]): LiveSheetsAdapter | null {
+  if (process.env.NODE_ENV === "test") return null;
   if (!getSecret("GOOGLE_SERVICE_ACCOUNT_JSON")) return null;
   return new LiveSheetsAdapter(cfg);
 }

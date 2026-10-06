@@ -249,6 +249,7 @@ describe("attributionTick", () => {
       now,
       trigger: "manual",
       acuityAdapter: null,
+      liveAdapters: { sheets: null }, // hermetic: sheets tick must not self-resolve the real secret
     });
     expect(res.outcome).toBe("skipped"); // no credentials
     expect(res.attribution?.outcome).toBe("synced"); // but attribution ran

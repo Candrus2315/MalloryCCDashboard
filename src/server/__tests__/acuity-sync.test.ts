@@ -320,14 +320,13 @@ describe("availabilityTick", () => {
 // ---------- composed scheduler tick ----------
 
 describe("schedulerTick composition", () => {
-  // timeout: full-tick test with real timers — can exceed bun's 5s default when
-  // the whole suite runs in parallel (load flake; passes in isolation). 15s tolerates it.
-  test("availability refresh rides the same tick; its failure never fails the HighLevel outcome", { timeout: 15_000 }, async () => {
+  test("availability refresh rides the same tick; its failure never fails the HighLevel outcome", async () => {
     const store = new MemoryStore();
     const res = await schedulerTick({
       store,
       creds: null, // HighLevel: demo mode
       acuityAdapter: stubAcuity(new Error("network down")),
+      liveAdapters: { sheets: null }, // hermetic: sheets tick must not self-resolve the real secret
       trigger: "manual",
     });
     expect(res.outcome).toBe("skipped"); // highlevel
@@ -342,6 +341,7 @@ describe("schedulerTick composition", () => {
       store,
       creds: null,
       acuityAdapter: stubAcuity([liveAppt("live-5", "2026-09-28T14:00:00.000Z")]),
+      liveAdapters: { sheets: null }, // hermetic: sheets tick must not self-resolve the real secret
       trigger: "manual",
     });
     expect(res.availability?.outcome).toBe("synced");

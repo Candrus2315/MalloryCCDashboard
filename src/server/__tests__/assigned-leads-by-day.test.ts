@@ -2,8 +2,7 @@
  * ASSIGNED LEADS BY DAY (Reps page, owner directive 2026-10-01) — seeded
  * battery on BOTH stores (MemoryStore always; PgStore with TEST_DATABASE_URL,
  * rows cleaned up in finally — the pip-evidence playbook), plus a READ-ONLY
- * live anchor test that reproduces the owner's hand-built table
- * (/home/team/shared/assigned-leads-2026-09-21-to-27-by-day.csv) from real
+ * live anchor test that reproduces the owner's hand-built table from real
  * production data, week 2026-09-21..27:
  *   Allison Wittner animalia 159 / family 111; Carmine Morgano 74/119;
  *   Jennifer Stitt 47/28; Laura Rivera 28/15; Amy Clark 1/0; Lexa Brandis 1/0;
@@ -352,10 +351,11 @@ describe("assigned-leads-by-day battery — MemoryStore (owner table, week 2026-
     expect(lines).toContain("Amy Clark,2026-09-21 Mon,Animalia,1");
     expect(lines).toContain("Lexa Brandis,2026-09-23 Wed,Animalia,1");
     expect(lines).toContain("Mallory Portraits Accounts,2026-09-24 Thu,Animalia,2");
-    // same row COUNT as the owner's file (schema-identical; row order is
-    // deterministic rep → day → genre rather than the hand-file's grouping)
-    const owner = (await Bun.file("/home/team/shared/assigned-leads-2026-09-21-to-27-by-day.csv").text()).trimEnd().split("\n");
-    expect(lines.length).toBe(owner.length);
+    // same row COUNT as the checked-in fixture — a force-added snapshot of the
+    // owner's shared file (schema-identical; row order is deterministic
+    // rep → day → genre rather than the hand-file's grouping)
+    const fixture = (await Bun.file(new URL("./fixtures/assigned-leads-2026-09-21-to-27-by-day.csv", import.meta.url).pathname).text()).trimEnd().split("\n");
+    expect(lines.length).toBe(fixture.length);
   });
 });
 
