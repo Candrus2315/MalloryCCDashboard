@@ -12,6 +12,7 @@ import {
   pipDaysUntil,
   pipEndingSoon,
   pipKpiCounts,
+  pipReviewWeekIndex,
   pipWindowOverdue,
   sortPipsByDaysLeft,
 } from "../pip-landing";
@@ -106,8 +107,8 @@ describe("pipCheckinState", () => {
   });
 });
 
-describe("attention priority ladder (spec §1 lines)", () => {
-  test("overdue check-in outranks past-end, which outranks ending-soon, which outranks unscheduled", () => {
+describe("attention priority ladder (spec §1 lines + Phase 3 signals)", () => {
+  test("overdue check-in outranks missed minimum > past-end > awaiting-ack > ending-soon > unscheduled", () => {
     const base = { id: "p1", status: "issued" as const };
     const overdue = pipAttentionSeed(
       base,
@@ -116,29 +117,89 @@ describe("attention priority ladder (spec §1 lines)", () => {
       pipCheckinState({ pip_start_date: "2026-09-01", pip_end_date: "2026-10-01", checkin_cadence_days: 7 }, [checkin({ next_checkin_date: "2026-09-29" })], TODAY),
     );
     expect(overdue!.rank).toBe(1);
+    expect(overdue!.code).toBe("checkin_overdue");
     expect(overdue!.text).toBe("Check-in overdue — Dana, due 2026-09-29");
 
+    const missed = pipAttentionSeed(
+      base,
+      "Dana",
+      30,
+      { next_checkin_date: "2026-10-29", count: 1, upcoming_number: 2, expected_total: 6, overdue: false, unscheduled: false },
+      { awaiting_ack: false, weeks_missed: 2 },
+    );
+    expect(missed!.rank).toBe(2);
+    expect(missed!.code).toBe("minimum_missed");
+    expect(missed!.text).toBe("Weekly minimum missed in 2 completed weeks — Dana");
+
+    const missedOne = pipAttentionSeed(
+      base,
+      "Dana",
+      30,
+      { next_checkin_date: "2026-10-29", count: 1, upcoming_number: 2, expected_total: 6, overdue: false, unscheduled: false },
+      { awaiting_ack: false, weeks_missed: 1 },
+    );
+    expect(missedOne!.text).toBe("Weekly minimum missed in 1 completed week — Dana");
+
     const pastEnd = pipAttentionSeed(base, "Dana", -2, { next_checkin_date: "2026-10-29", count: 1, upcoming_number: 2, expected_total: 6, overdue: false, unscheduled: false });
-    expect(pastEnd!.rank).toBe(2);
+    expect(pastEnd!.rank).toBe(3);
+    expect(pastEnd!.code).toBe("past_end");
     expect(pastEnd!.text).toBe("Past end date, not yet closed — Dana");
 
+    const awaitingAck = pipAttentionSeed(
+      base,
+      "Dana",
+      30,
+      { next_checkin_date: "2026-10-29", count: 1, upcoming_number: 2, expected_total: 6, overdue: false, unscheduled: false },
+      { awaiting_ack: true, weeks_missed: 0 },
+    );
+    expect(awaitingAck!.rank).toBe(4);
+    expect(awaitingAck!.code).toBe("awaiting_ack");
+    expect(awaitingAck!.text).toBe("Acknowledgment not yet recorded — Dana");
+
     const ending = pipAttentionSeed(base, "Dana", 2, { next_checkin_date: "2026-10-29", count: 1, upcoming_number: 2, expected_total: 6, overdue: false, unscheduled: false });
-    expect(ending!.rank).toBe(3);
+    expect(ending!.rank).toBe(5);
+    expect(ending!.code).toBe("ending_soon");
     expect(ending!.text).toBe("PIP window ends in 2 days — Dana");
 
     const oneDay = pipAttentionSeed(base, "Dana", 1, { next_checkin_date: "2026-10-29", count: 1, upcoming_number: 2, expected_total: 6, overdue: false, unscheduled: false });
     expect(oneDay!.text).toBe("PIP window ends in 1 day — Dana");
 
     const unscheduled = pipAttentionSeed(base, "Dana", 30, { next_checkin_date: null, count: 0, upcoming_number: 1, expected_total: 6, overdue: false, unscheduled: true });
-    expect(unscheduled!.rank).toBe(4);
+    expect(unscheduled!.rank).toBe(6);
+    expect(unscheduled!.code).toBe("unscheduled");
     expect(unscheduled!.text).toBe("Next check-in not scheduled — Dana");
 
     // on-schedule → null
     const calm = pipAttentionSeed(base, "Dana", 30, { next_checkin_date: "2026-10-29", count: 1, upcoming_number: 2, expected_total: 6, overdue: false, unscheduled: false });
     expect(calm).toBeNull();
 
-    // drafts never raise attention
-    expect(pipAttentionSeed({ id: "p2", status: "draft" }, "Dana", -5, { next_checkin_date: null, count: 0, upcoming_number: 1, expected_total: null, overdue: false, unscheduled: true })).toBeNull();
+    // drafts never raise attention (even when Phase-3 signals would be true)
+    expect(
+      pipAttentionSeed(
+        { id: "p2", status: "draft" },
+        "Dana",
+        -5,
+        { next_checkin_date: null, count: 0, upcoming_number: 1, expected_total: null, overdue: false, unscheduled: true },
+        { awaiting_ack: true, weeks_missed: 3 },
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("pipReviewWeekIndex (Phase 3 workspace)", () => {
+  test("1-based index within the SAME mondaysInRange list the evidence engine uses", () => {
+    // Review window Mon Oct 5 → Fri Nov 6: Mondays Oct 5/12/19/26 + Nov 2 = 5 weeks.
+    expect(pipReviewWeekIndex("2026-10-05", "2026-11-06", "2026-10-07")).toEqual({ index: 1, total: 5 });
+    expect(pipReviewWeekIndex("2026-10-05", "2026-11-06", "2026-10-19")).toEqual({ index: 3, total: 5 });
+    expect(pipReviewWeekIndex("2026-10-05", "2026-11-06", "2026-11-06")).toEqual({ index: 5, total: 5 });
+  });
+  test("today's week outside the window → null (never a guessed index)", () => {
+    expect(pipReviewWeekIndex("2026-10-05", "2026-11-06", "2026-09-30")).toBeNull();
+    expect(pipReviewWeekIndex("2026-10-05", "2026-11-06", "2026-11-09")).toBeNull();
+  });
+  test("inverted/invalid dates → null", () => {
+    expect(pipReviewWeekIndex("2026-11-06", "2026-10-05", "2026-10-07")).toBeNull();
+    expect(pipReviewWeekIndex("bad", "2026-10-05", "2026-10-07")).toBeNull();
   });
 });
 

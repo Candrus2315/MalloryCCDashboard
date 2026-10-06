@@ -37,6 +37,7 @@ import {
   pipDaysUntil,
   pipEndingSoon,
   pipKpiCounts,
+  pipReviewWeekIndex,
   pipWindowOverdue,
   type PipAttentionSeed,
   type PipKpiCounts,
@@ -80,6 +81,20 @@ export interface PipLandingItem extends PipListItem {
   checkin_unscheduled: boolean;
   /** Paid wins THIS WEEK for the rep (in-progress week) — null when the PIP has no rep. */
   this_week_wins: number | null;
+  // ---- PHASE 3 workspace fields (all server-derived, never client-approximated) ----
+  /** 1-based index of today's Mon–Sun week inside the review window (null when outside / no window). */
+  review_week_index: number | null;
+  /** Mondays the review window covers — the SAME list the weekly goal-met table renders. */
+  review_weeks_total: number | null;
+  /**
+   * Completed review weeks whose actual fell below the PIP's weekly minimum,
+   * through pipEvidenceCore (the ONE evidence engine; hard per-week rule,
+   * never averaged). Null ONLY when not evaluable (no rep / review window /
+   * minimum) — 0 means evaluated with no missed week, never "unknown".
+   */
+  weeks_missed: number | null;
+  /** True while the ISSUED PIP has no acknowledgment recorded (manager_acked_at null). */
+  ack_awaiting: boolean;
   attention: PipAttentionSeed | null;
 }
 
@@ -93,12 +108,41 @@ export interface PipLandingPayload {
 }
 
 /**
+ * PHASE 3 — completed review weeks whose actual fell below the PIP's weekly
+ * minimum, derived by pipEvidenceCore (the ONE evidence engine — its per-week
+ * `met` flags ARE the hard-minimum evaluation; nothing is recomputed or
+ * averaged here). Null ONLY when not evaluable (no rep / review window /
+ * minimum, or structurally unusable dates): the attention ladder and the
+ * workspace render an honest "—" rather than a silent 0.
+ */
+async function pipWeeksMissed(store: Store, pip: PipRow, today: string): Promise<number | null> {
+  if (!pip.rep_id || !pip.review_start_date || !pip.review_end_date || pip.weekly_goal_min == null) return null;
+  try {
+    const evidence = await pipEvidenceCore(store, {
+      repId: pip.rep_id,
+      reviewStart: pip.review_start_date,
+      reviewEnd: pip.review_end_date,
+      weeklyGoalMin: pip.weekly_goal_min,
+      hardWeeklyMinimum: pip.hard_weekly_minimum,
+      today,
+    });
+    return evidence.weekly.filter((w) => w.met === false).length;
+  } catch {
+    return null; // structurally unusable inputs degrade honestly — never a fake 0
+  }
+}
+
+/**
  * All PIPs + the landing derivations, in one server read. The current-week
  * win count per rep comes through the EXACT chain the pages use (win-bucket
  * selector → scope → eligibility → bookingsByRep) — no second calculation.
+ * Phase 3: the attention-queue's "weekly minimums missed" and "awaiting
+ * acknowledgment" signals are derived HERE (server data layer) — the missed
+ * count through pipEvidenceCore per issued PIP, the acknowledgment state from
+ * the row's own ack columns.
  */
-export async function performanceLandingCore(store: Store): Promise<PipLandingPayload> {
-  const today = etToday();
+export async function performanceLandingCore(store: Store, opts?: { today?: string }): Promise<PipLandingPayload> {
+  const today = opts?.today ?? etToday();
   const [pips, settings, allUsers, connections] = await Promise.all([
     listPipsCore(store, null),
     store.getSettings(),
@@ -107,9 +151,11 @@ export async function performanceLandingCore(store: Store): Promise<PipLandingPa
   ]);
   const issued = pips.filter((p) => p.status === "issued");
   const checkinsByPip = new Map<string, PipCheckinRow[]>();
+  const weeksMissedByPip = new Map<string, number | null>();
   await Promise.all(
     issued.map(async (p) => {
       checkinsByPip.set(p.id, await store.getPipCheckins(p.id));
+      weeksMissedByPip.set(p.id, await pipWeeksMissed(store, p, today));
     }),
   );
 
@@ -130,6 +176,12 @@ export async function performanceLandingCore(store: Store): Promise<PipLandingPa
   const landing: PipLandingItem[] = pips.map((p) => {
     const daysLeft = pipDaysUntil(p.pip_end_date, today);
     const cs = pipCheckinState(p, checkinsByPip.get(p.id) ?? [], today);
+    const weeksMissed = weeksMissedByPip.get(p.id) ?? null;
+    const weekIdx =
+      p.review_start_date && p.review_end_date
+        ? pipReviewWeekIndex(p.review_start_date, p.review_end_date, today)
+        : null;
+    const ackAwaiting = p.status === "issued" && p.manager_acked_at == null;
     return {
       ...p,
       days_left: daysLeft,
@@ -141,7 +193,14 @@ export async function performanceLandingCore(store: Store): Promise<PipLandingPa
       checkin_overdue: p.status === "issued" && cs.overdue,
       checkin_unscheduled: p.status === "issued" && cs.unscheduled,
       this_week_wins: p.rep_id ? (winsByRep.get(p.rep_id) ?? 0) : null,
-      attention: pipAttentionSeed(p, p.rep_name, daysLeft, cs),
+      review_week_index: weekIdx?.index ?? null,
+      review_weeks_total: weekIdx?.total ?? null,
+      weeks_missed: weeksMissed,
+      ack_awaiting: ackAwaiting,
+      attention: pipAttentionSeed(p, p.rep_name, daysLeft, cs, {
+        awaiting_ack: ackAwaiting,
+        weeks_missed: weeksMissed ?? 0,
+      }),
     };
   });
 

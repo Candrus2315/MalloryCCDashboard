@@ -1,15 +1,28 @@
 /**
- * PIP LANDING VIEW-MODEL (refinement spec §1–§2, 9/30) — pure, rule-based
- * derivations from STORED PIP dates + check-ins for the command-center
- * landing. NO scoring, NO labels, NO lifecycle logic, NO store access: every
- * input is a row the manager already sees; every output is calendar date math
- * (America/New_York, date-only) or a count. The owner's KPI strip, the
- * attention panel, and the dense active-PIP rows all render from these.
+ * PIP LANDING VIEW-MODEL (refinement spec §1–§2; Phase 3 additions per the
+ * management-redesign spec "Known gap" note) — pure, rule-based derivations
+ * from STORED PIP dates + check-ins + acknowledgment fields for the
+ * command-center landing and the Active-PIPs workspace. NO scoring, NO labels,
+ * NO lifecycle logic, NO store access: every input is a row the manager
+ * already sees; every output is calendar date math (America/New_York,
+ * date-only) or a count. The owner's KPI strip, the attention panel, and the
+ * dense active-PIP rows all render from these.
  *
  * "Ending soon" = window ends in ≤3 ET calendar days, INCLUDING any PIP
  * already past its end date but not yet closed (spec §1 KPI InfoTip — fixed
  * threshold, never varies). Days-left is signed: negative = past end date.
+ *
+ * PHASE 3 attention ladder — two new server-side signals join the existing
+ * calendar/check-in rules (computed in pip-api.ts through the ONE evidence
+ * engine, never approximated client-side):
+ *  - minimum_missed: completed review weeks whose actual fell below the PIP's
+ *    weekly minimum (the evidence engine's per-week `met` flags — hard
+ *    per-week comparison, never averaged);
+ *  - awaiting_ack: issued but no acknowledgment recorded yet
+ *    (manager_acked_at null — the manager records acknowledgment; no employee
+ *    logins, owner directive 9/30).
  */
+import { mondaysInRange, weekStart } from "./date-logic";
 import type { PipCheckinRow, PipRow, PipStatus } from "./store/types";
 
 /** Signed whole days from `today` to `dateStr` (negative = dateStr is past). */
@@ -76,14 +89,46 @@ export function pipCheckinState(
   };
 }
 
-/** One attention seed (employee-facing name resolved by the caller). */
+/** Stable attention codes — the UI groups/colors by these, never by parsing text. */
+export type PipAttentionCode =
+  | "checkin_overdue"
+  | "minimum_missed"
+  | "past_end"
+  | "awaiting_ack"
+  | "ending_soon"
+  | "unscheduled";
+
+/**
+ * One attention seed (employee-facing name resolved by the caller). One line
+ * per PIP — the highest-priority rule that fired (the priority ladder below).
+ */
 export interface PipAttentionSeed {
   pip_id: string;
   employee: string;
   text: string;
-  /** Presentation priority within one PIP: overdue check-in > past end > ending soon > unscheduled. */
+  code: PipAttentionCode;
+  /**
+   * Presentation priority within one PIP:
+   * overdue check-in (1) > weekly minimum missed (2) > past end (3) >
+   * awaiting acknowledgment (4) > ending soon (5) > unscheduled (6).
+   */
   rank: number;
 }
+
+/**
+ * The Phase-3 signals pip-api computes SERVER-SIDE (through the ONE evidence
+ * engine) and hands to the ladder. Defaults keep the 4-arg call shape valid
+ * for every existing caller/test: no new signal fires unless the server layer
+ * derived one.
+ */
+export interface PipAttentionExtras {
+  /** Issued but no acknowledgment recorded yet (manager_acked_at null). */
+  awaiting_ack: boolean;
+  /** Completed review weeks whose actual fell below the weekly minimum. */
+  weeks_missed: number;
+}
+
+const NO_EXTRAS: PipAttentionExtras = { awaiting_ack: false, weeks_missed: 0 };
 
 /** The single highest-priority attention line for one PIP, or null when on schedule. */
 export function pipAttentionSeed(
@@ -91,6 +136,7 @@ export function pipAttentionSeed(
   employeeName: string | null,
   daysLeft: number | null,
   checkins: PipCheckinState,
+  extras: PipAttentionExtras = NO_EXTRAS,
 ): PipAttentionSeed | null {
   if (pip.status !== "issued") return null;
   const name = employeeName ?? "Unassigned";
@@ -100,23 +146,68 @@ export function pipAttentionSeed(
       pip_id: pip.id,
       employee: name,
       text: `Check-in overdue — ${name}, due ${checkins.next_checkin_date}`,
+      code: "checkin_overdue",
       rank: 1,
     };
   }
-  // 2 — past end date, not yet closed
-  if (pipWindowOverdue(daysLeft)) {
-    return { pip_id: pip.id, employee: name, text: `Past end date, not yet closed — ${name}`, rank: 2 };
+  // 2 — weekly minimum missed (server-side evidence-engine derivation; hard
+  // per-week rule — one completed week below the minimum is enough to surface)
+  if (extras.weeks_missed > 0) {
+    const n = extras.weeks_missed;
+    const unit = n === 1 ? "1 completed week" : `${n} completed weeks`;
+    return {
+      pip_id: pip.id,
+      employee: name,
+      text: `Weekly minimum missed in ${unit} — ${name}`,
+      code: "minimum_missed",
+      rank: 2,
+    };
   }
-  // 3 — window ends within 3 days (future end date only; past-end is rank 2)
+  // 3 — past end date, not yet closed
+  if (pipWindowOverdue(daysLeft)) {
+    return { pip_id: pip.id, employee: name, text: `Past end date, not yet closed — ${name}`, code: "past_end", rank: 3 };
+  }
+  // 4 — issued but no acknowledgment recorded (manager records it)
+  if (extras.awaiting_ack) {
+    return {
+      pip_id: pip.id,
+      employee: name,
+      text: `Acknowledgment not yet recorded — ${name}`,
+      code: "awaiting_ack",
+      rank: 4,
+    };
+  }
+  // 5 — window ends within 3 days (future end date only; past-end is rank 3)
   if (daysLeft != null && daysLeft >= 0 && daysLeft <= 3) {
     const unit = daysLeft === 1 ? "1 day" : `${daysLeft} days`;
-    return { pip_id: pip.id, employee: name, text: `PIP window ends in ${unit} — ${name}`, rank: 3 };
+    return { pip_id: pip.id, employee: name, text: `PIP window ends in ${unit} — ${name}`, code: "ending_soon", rank: 5 };
   }
-  // 4 — issued but no next check-in recorded
+  // 6 — issued but no next check-in recorded
   if (checkins.unscheduled) {
-    return { pip_id: pip.id, employee: name, text: `Next check-in not scheduled — ${name}`, rank: 4 };
+    return { pip_id: pip.id, employee: name, text: `Next check-in not scheduled — ${name}`, code: "unscheduled", rank: 6 };
   }
   return null;
+}
+
+/**
+ * PHASE 3 — "which week" derivation for the Active-PIPs workspace: the 1-based
+ * index of TODAY's Mon–Sun week within the review window's week list (the SAME
+ * mondaysInRange list the evidence engine's weekly rows use, so the workspace
+ * label and the weekly goal-met table always agree). Null when today's week is
+ * outside the window (window not started / already ended) — honest, never a
+ * guessed index.
+ */
+export function pipReviewWeekIndex(
+  reviewStart: string,
+  reviewEnd: string,
+  today: string,
+): { index: number; total: number } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(reviewStart) || !/^\d{4}-\d{2}-\d{2}$/.test(reviewEnd) || reviewEnd < reviewStart) {
+    return null;
+  }
+  const weeks = mondaysInRange(reviewStart, reviewEnd);
+  const idx = weeks.indexOf(weekStart(today));
+  return idx === -1 ? null : { index: idx + 1, total: weeks.length };
 }
 
 /** The owner's four KPI counts (spec §1), derived from the landing rows. */
