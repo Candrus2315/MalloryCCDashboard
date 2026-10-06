@@ -23,6 +23,7 @@ import {
 } from "~/components/settings-views";
 import { bookingSplitLine } from "~/components/team-views";
 import { InfoTip } from "~/components/InfoTip";
+import { Eyebrow, Panel } from "~/components/page-panel";
 import { formatInt } from "~/server/metrics/report-text";
 import {
   addBlockedTime,
@@ -95,11 +96,17 @@ function SettingsPage() {
   };
 
   return (
-    <div className="space-y-10">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-0.5 text-sm text-(--text-muted)">Manage goals, rules, integrations, sync health, and manual corrections — every change persists and is audited.</p>
-      </div>
+    <div className="space-y-4">
+      {/* header — wave-2 anatomy: title on line 1, the scope line as meta beneath */}
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-semibold tracking-tight text-(--text-primary)">Settings</h1>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] text-(--text-muted)">
+            <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
+            <span>Manage goals, rules, integrations, sync health, and manual corrections — every change persists and is audited.</span>
+          </p>
+        </div>
+      </header>
 
       {/* 0 — Appearance (P5, DECISION ④: STANDALONE block — own anchor, NOT in
           SETTINGS_SECTIONS, so the 02–09 IA numbering and settings-views pins
@@ -117,58 +124,70 @@ function SettingsPage() {
       <SecuritySection data={data} />
 
       {/* 2 — Goals (spec §2: weekly grid + rep goals + rep start dates) */}
-      <section id="goals" className="scroll-mt-28 space-y-8 border-t border-(--card-border) pt-8">
-        <SectionHeader id="goals" />
-        <div className="space-y-3">
-          <h3 className="section-heading">Weekly Booking Goal &amp; Lead Budget</h3>
-          <p className="text-[13px] text-(--text-caption)">Edit any week — past weeks keep history, future weeks are the plan. Changes are audited.</p>
-          <div className="overflow-x-auto">
-            <table className="data-table min-w-[720px]">
-              <thead>
-                <tr>
-                  <th className="sticky left-0 z-[1] bg-(--card-bg) text-left">Week</th>
-                  <th className="text-right">Booking goal</th>
-                  <th className="text-right">Lead budget</th>
-                  <th className="text-left"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.editorWeeks.map((w) => (
-                  <WeekGoalRow key={w.weekStart} week={w} busy={busy} onSave={(goal, budget) => run(`Goal saved for week of ${w.weekStart}`, () => saveWeekGoal({ data: { weekStart: w.weekStart, bookingGoal: goal, leadBudget: budget } }))} />
-                ))}
-              </tbody>
-            </table>
+      <section id="goals" className="scroll-mt-28">
+        <Panel className="p-5 sm:p-6">
+          <SectionHeader id="goals" />
+          <div className="mt-5 space-y-6">
+            <div className="space-y-3">
+              <h3 className="section-heading">Weekly Booking Goal &amp; Lead Budget</h3>
+              <p className="text-[13px] text-(--text-caption)">Edit any week — past weeks keep history, future weeks are the plan. Changes are audited.</p>
+              <div className="overflow-x-auto">
+                <table className="data-table min-w-[720px]">
+                  <thead>
+                    <tr>
+                      <th className="sticky left-0 z-[1] bg-(--card-bg) text-left">Week</th>
+                      <th className="text-right">Booking goal</th>
+                      <th className="text-right">Lead budget</th>
+                      <th className="text-left"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.editorWeeks.map((w) => (
+                      <WeekGoalRow key={w.weekStart} week={w} busy={busy} onSave={(goal, budget) => run(`Goal saved for week of ${w.weekStart}`, () => saveWeekGoal({ data: { weekStart: w.weekStart, bookingGoal: goal, leadBudget: budget } }))} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <MonthlyGoalsSection data={data} busy={busy} onSave={(goals) => run("Monthly booking goals saved", () => saveMonthlyGoals({ data: { goals } }))} />
+            <RepGoalsSection data={data} busy={busy} onSave={(weekStart, goals) => run(`Rep goals saved for ${weekStart}`, () => saveRepGoals({ data: { weekStart, goals } }))} />
+            {/* Rep config sits beside rep goals (start date drives "Not Yet Active") */}
+            <RepStartDatesSection data={data} busy={busy} onSave={(entries) => run("Rep start dates saved", () => saveRepStartDates({ data: { entries } }))} />
           </div>
-        </div>
-        <MonthlyGoalsSection data={data} busy={busy} onSave={(goals) => run("Monthly booking goals saved", () => saveMonthlyGoals({ data: { goals } }))} />
-        <RepGoalsSection data={data} busy={busy} onSave={(weekStart, goals) => run(`Rep goals saved for ${weekStart}`, () => saveRepGoals({ data: { weekStart, goals } }))} />
-        {/* Rep config sits beside rep goals (start date drives "Not Yet Active") */}
-        <RepStartDatesSection data={data} busy={busy} onSave={(entries) => run("Rep start dates saved", () => saveRepStartDates({ data: { entries } }))} />
+        </Panel>
       </section>
 
       {/* 3 — Operational Rules (spec §3: compact, feel important) */}
-      <section id="rules" className="scroll-mt-28 space-y-4 border-t border-(--card-border) pt-8">
-        <SectionHeader id="rules" />
-        <CoreOpsCard data={data} busy={busy} onSave={(thresholdSeconds, windowHours) => run("Operational settings saved", () => saveSettings({ data: { thresholdSeconds, windowHours } }))} />
+      <section id="rules" className="scroll-mt-28">
+        <Panel className="p-5 sm:p-6">
+          <SectionHeader id="rules" />
+          <div className="mt-4">
+            <CoreOpsCard data={data} busy={busy} onSave={(thresholdSeconds, windowHours) => run("Operational settings saved", () => saveSettings({ data: { thresholdSeconds, windowHours } }))} />
+          </div>
+        </Panel>
       </section>
 
       {/* 4 — Acuity scope + availability rules (spec §4, one major section) */}
-      <section id="acuity" className="scroll-mt-28 space-y-6 border-t border-(--card-border) pt-8">
-        <SectionHeader id="acuity" />
-        <div className="space-y-3">
-          <h3 className="section-heading">Acuity Reporting Scope</h3>
-          <AcuityScopeCard data={data} busy={busy} onSave={(calendars, types) => run("Acuity scope saved", () => saveAcuityScope({ data: { calendars, types } }))} />
-        </div>
-        <div className="space-y-3">
-          <h3 className="section-heading">Studio Hours &amp; Slot Rules</h3>
-          <StudioRulesCard data={data} busy={busy} onSave={(payload) => run("Studio rules saved", () => saveStudioRules({ data: payload }))} />
-        </div>
-        <Collapsible label="Recurring Blocks" hint={`${data.settings.studio.recurring_blocks.length} configured — weekly pattern`}>
-          <RecurringBlocksCard data={data} busy={busy} onSave={(blocks) => run("Recurring blocks saved", () => saveRecurringBlocks({ data: { blocks } }))} />
-        </Collapsible>
-        <Collapsible label="One-off Blocks" hint={`${data.blockedTimes.length} in the next 30 days`}>
-          <BlockedTimesCard data={data} busy={busy} onAdd={(payload) => run("Blocked time added", () => addBlockedTime({ data: payload }))} onRemove={(id, label) => run("Blocked time removed", () => removeBlockedTime({ data: { id, label } }))} />
-        </Collapsible>
+      <section id="acuity" className="scroll-mt-28">
+        <Panel className="p-5 sm:p-6">
+          <SectionHeader id="acuity" />
+          <div className="mt-5 space-y-6">
+            <div className="space-y-3">
+              <h3 className="section-heading">Acuity Reporting Scope</h3>
+              <AcuityScopeCard data={data} busy={busy} onSave={(calendars, types) => run("Acuity scope saved", () => saveAcuityScope({ data: { calendars, types } }))} />
+            </div>
+            <div className="space-y-3">
+              <h3 className="section-heading">Studio Hours &amp; Slot Rules</h3>
+              <StudioRulesCard data={data} busy={busy} onSave={(payload) => run("Studio rules saved", () => saveStudioRules({ data: payload }))} />
+            </div>
+            <Collapsible label="Recurring Blocks" hint={`${data.settings.studio.recurring_blocks.length} configured — weekly pattern`}>
+              <RecurringBlocksCard data={data} busy={busy} onSave={(blocks) => run("Recurring blocks saved", () => saveRecurringBlocks({ data: { blocks } }))} />
+            </Collapsible>
+            <Collapsible label="One-off Blocks" hint={`${data.blockedTimes.length} in the next 30 days`}>
+              <BlockedTimesCard data={data} busy={busy} onAdd={(payload) => run("Blocked time added", () => addBlockedTime({ data: payload }))} onRemove={(id, label) => run("Blocked time removed", () => removeBlockedTime({ data: { id, label } }))} />
+            </Collapsible>
+          </div>
+        </Panel>
       </section>
 
       {/* 5 — Google Sheets mapping (spec: "Advanced Mapping" collapsible) */}
@@ -201,23 +220,27 @@ function SettingsPage() {
       </details>
 
       {/* 6 — Sync Center (spec: operations panel, default expanded) */}
-      <section id="sync" className="scroll-mt-28 space-y-4 border-t border-(--card-border) pt-8">
-        <SectionHeader id="sync" />
-        <SyncCenter data={data} onSync={async () => {
-          const res = await syncNow();
-          await router.invalidate();
-          return `Sync complete (${res.mode}): ${res.providers.map((p) => `${p.provider} ${p.count}`).join(", ")}`;
-        }} />
+      <section id="sync" className="scroll-mt-28">
+        <Panel className="p-5 sm:p-6">
+          <SectionHeader id="sync" />
+          <div className="mt-4">
+            <SyncCenter data={data} onSync={async () => {
+              const res = await syncNow();
+              await router.invalidate();
+              return `Sync complete (${res.mode}): ${res.providers.map((p) => `${p.provider} ${p.count}`).join(", ")}`;
+            }} />
+          </div>
+        </Panel>
       </section>
 
       {/* 7 — Manual overrides & roster (spec §7; roster mapping = ownership correction) */}
-      <section id="overrides" className="scroll-mt-28 space-y-8 border-t border-(--card-border) pt-8">
-        <div className="space-y-2">
+      <section id="overrides" className="scroll-mt-28">
+        <Panel className="p-5 sm:p-6">
           <SectionHeader id="overrides" />
-          <p className="text-[13px] text-(--text-caption)">Corrections Christopher makes by hand — every one is written to the audit trail below with previous value, new value, who and when.</p>
-        </div>
-        {/* (a) Roster mapping — eligibility correction, folded in as the first subsection */}
-        <RosterMappingSection data={data} busy={busy} onSave={(mappings) => run("Roster mappings saved", () => saveRepMappings({ data: { mappings } }))} />
+          <p className="mt-3 text-[13px] text-(--text-caption)">Corrections Christopher makes by hand — every one is written to the audit trail below with previous value, new value, who and when.</p>
+          <div className="mt-5 space-y-6">
+            {/* (a) Roster mapping — eligibility correction, folded in as the first subsection */}
+            <RosterMappingSection data={data} busy={busy} onSave={(mappings) => run("Roster mappings saved", () => saveRepMappings({ data: { mappings } }))} />
         {/* (b) Manual-assignment queue — THREE-WAY ATTRIBUTION SPLIT (owner
             directive 2026-09-27, S5b): the split line shows the three mutually
             exclusive states over the in-scope bookings; Ambiguous is its OWN
@@ -225,7 +248,7 @@ function SettingsPage() {
             unassign) behaves exactly as before. */}
         <div className="space-y-3">
           <h3 className="section-heading">Unattributed Bookings</h3>
-          <div className="card space-y-2">
+          <div className="card card-nest space-y-2">
             <p className="kpi-label" data-testid="booking-attribution-split">
               {bookingSplitLine(data.attributionSplit)}
               <span className="text-(--text-muted)"> · {formatInt(data.attributionSplit.total)} in-scope bookings</span>
@@ -289,6 +312,8 @@ function SettingsPage() {
             <LeadCountCard data={data} busy={busy} onSave={(date, sheet, count, reason) => run("Lead count corrected", () => setLeadCount({ data: { date, sheet, count, reason } }))} />
           </div>
         </div>
+          </div>
+        </Panel>
       </section>
 
       {/* 8 — Audit trail (spec §8: history tool, collapsible, bottom of page) */}
@@ -376,7 +401,8 @@ function SubNav() {
   );
 }
 
-/** Numbered section header — kicker + title + one-line description, from the IA constant. */
+/** Numbered panel header — IA number + eyebrow title + one-line description,
+ * from the IA constant. Lives INSIDE its section's Panel (wave-3 anatomy). */
 function SectionHeader({ id }: { id: string }) {
   const meta = sectionMeta(id);
   return (
@@ -385,7 +411,7 @@ function SectionHeader({ id }: { id: string }) {
         {sectionNumber(id)}
       </span>
       <div>
-        <h2 className="text-[15px] font-semibold tracking-tight text-(--text-primary)">{meta.title}</h2>
+        <h2 className="kpi-label">{meta.title}</h2>
         <p className="mt-0.5 text-[13px] text-(--text-caption)">{meta.description}</p>
       </div>
     </div>
@@ -420,38 +446,40 @@ function SecuritySection({ data }: { data: SettingsData }) {
   const conns = data.connections.map((c) => connectionStatusView(c, nowMs));
   const demo = data.meta.mode === "memory";
   return (
-    <section id="security" className="scroll-mt-28 space-y-3">
-      <SectionHeader id="security" />
-      <div className="card card-dense space-y-3">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <StatusChip kind={pass.tone} label={pass.label} />
-          {conns.map((c) => (
-            <span key={c.provider} className="flex items-center gap-2 text-[13px]">
-              <span className="font-medium text-(--text-body)">{providerLabel(c.provider)}</span>
-              <StatusChip kind={c.tone} label={c.label} />
-              {c.lastSync && <span className="text-xs text-(--text-muted)">{c.lastSync}</span>}
-              {c.error && (
-                <span className="max-w-[220px] truncate text-xs text-(--neg-text)" title={c.error}>
-                  {c.error}
-                </span>
-              )}
-            </span>
-          ))}
-          {conns.length === 0 && <span className="text-[13px] text-(--text-muted)">No connections recorded yet — press SYNC NOW.</span>}
+    <section id="security" className="scroll-mt-28">
+      <Panel className="p-4 sm:p-5">
+        <SectionHeader id="security" />
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <StatusChip kind={pass.tone} label={pass.label} />
+            {conns.map((c) => (
+              <span key={c.provider} className="flex items-center gap-2 text-[13px]">
+                <span className="font-medium text-(--text-body)">{providerLabel(c.provider)}</span>
+                <StatusChip kind={c.tone} label={c.label} />
+                {c.lastSync && <span className="text-xs text-(--text-muted)">{c.lastSync}</span>}
+                {c.error && (
+                  <span className="max-w-[220px] truncate text-xs text-(--neg-text)" title={c.error}>
+                    {c.error}
+                  </span>
+                )}
+              </span>
+            ))}
+            {conns.length === 0 && <span className="text-[13px] text-(--text-muted)">No connections recorded yet — press SYNC NOW.</span>}
+          </div>
+          {pass.detail && (
+            <p className="status-banner">
+              <span className="font-medium">{PASSPHRASE_WARNING_LEAD}</span> {PASSPHRASE_WARNING_REST}
+            </p>
+          )}
+          {demo && (
+            <p className="status-banner">
+              <span className="font-medium">Running on in-memory demo data</span>
+              {data.meta.dbReason ? ` — ${data.meta.dbReason}` : ""}. Edits persist for this server session only.
+            </p>
+          )}
+          <WarningList items={data.staleWarnings} />
         </div>
-        {pass.detail && (
-          <p className="status-banner">
-            <span className="font-medium">{PASSPHRASE_WARNING_LEAD}</span> {PASSPHRASE_WARNING_REST}
-          </p>
-        )}
-        {demo && (
-          <p className="status-banner">
-            <span className="font-medium">Running on in-memory demo data</span>
-            {data.meta.dbReason ? ` — ${data.meta.dbReason}` : ""}. Edits persist for this server session only.
-          </p>
-        )}
-        <WarningList items={data.staleWarnings} />
-      </div>
+      </Panel>
     </section>
   );
 }
@@ -517,7 +545,7 @@ function MonthlyGoalsSection({ data, busy, onSave }: {
           Changes are audited.
         </p>
       </div>
-      <div className="card space-y-1 p-0">
+      <div className="card card-nest space-y-1 p-0">
         {data.monthlyGoals.map((g) => (
           <div key={g.month} className="flex items-center justify-between gap-4 border-b border-(--table-border-weak) px-5 py-2.5 last:border-0">
             <span className="text-[13px] font-medium text-(--text-body)">
@@ -585,7 +613,7 @@ function RepGoalsSection({ data, busy, onSave }: {
           ))}
         </select>
       </div>
-      <div className="card space-y-1 p-0">
+      <div className="card card-nest space-y-1 p-0">
         {data.users.length === 0 && <p className="p-5 text-sm text-(--text-muted)">No reps found — sync HighLevel first.</p>}
         {data.users.map((u) => {
           const val = draft[u.id] ?? "";
@@ -644,7 +672,7 @@ function RepStartDatesSection({ data, busy, onSave }: {
           start date. Clear a date to monitor the rep from whenever their records begin.
         </p>
       </div>
-      <div className="card space-y-1 p-0">
+      <div className="card card-nest space-y-1 p-0">
         {data.users.map((u) => (
           <div key={u.id} className="flex items-center justify-between gap-4 border-b border-(--table-border-weak) px-5 py-2.5 last:border-0">
             <span className="text-[13px] font-medium text-(--text-body)">{u.name}</span>
@@ -681,7 +709,7 @@ function CoreOpsCard({ data, busy, onSave }: {
   const [threshold, setThreshold] = useState(String(data.settings.meaningful_call_threshold_seconds));
   const [windowHours, setWindowHours] = useState(String(data.settings.attribution_window_hours));
   return (
-    <div className="card card-dense space-y-4">
+    <div className="card card-nest card-dense space-y-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <NumberField label="Meaningful Call Threshold (seconds)" value={threshold} onChange={setThreshold} />
         <NumberField label="Booking Attribution Window (hours)" value={windowHours} onChange={setWindowHours} />
@@ -727,7 +755,7 @@ function AcuityScopeCard({ data, busy, onSave }: {
   ];
   const toggle = (list: string[], v: string, set: (l: string[]) => void) => set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   return (
-    <div className="card card-dense space-y-4">
+    <div className="card card-nest card-dense space-y-4">
       <p className="text-xs text-(--text-muted)">
         Only selected calendars and types count toward CC reporting (demo catalog until Acuity connects).{" "}
         <span className="font-medium text-(--banner-fg)">Empty selection = everything counts.</span>
@@ -832,7 +860,7 @@ function StudioRulesCard({ data, busy, onSave }: {
   const [days, setDays] = useState<StudioBlockVM[][]>(() => studioHoursToTwoBlockDays(data.settings.studio.hours));
   const activeCount = days.flat().filter((b) => b.active).length;
   return (
-    <div className="card card-dense space-y-4">
+    <div className="card card-nest card-dense space-y-4">
       <div className="grid grid-cols-3 gap-2">
         <NumberField label="Duration (min)" value={duration} onChange={setDuration} />
         <NumberField label="Slot interval (min)" value={interval} onChange={setIntervalMin} />
@@ -1018,7 +1046,7 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
     .map((f) => `${f.label.replace(" (optional)", "")} ${defaultColumns[f.key] ?? "—"}`)
     .join(" · ");
   return (
-    <div className="card card-dense space-y-3">
+    <div className="card card-nest card-dense space-y-3">
       <div>
         <p className="section-title">{sheet === "family" ? "Family sheet" : "Animalia sheet"}</p>
         <p className="mt-1 truncate text-xs text-(--text-muted)">Sheet ID {sheetId}</p>
@@ -1227,7 +1255,7 @@ function RosterMappingSection({ data, busy, onSave }: {
         records are never rewritten: the original HL user id, message ids and timestamps stay untouched, and removing
         a mapping returns the calls to Non Roster.
       </p>
-      <div className="card space-y-1 p-0">
+      <div className="card card-nest space-y-1 p-0">
         {data.nonRosterUsers.length === 0 && (
           <p className="p-5 text-sm text-(--text-muted)">No non-roster HighLevel users seen in calls yet.</p>
         )}
@@ -1457,7 +1485,7 @@ function LeadWorkDateCard({ data, busy, onSave }: {
   const [reason, setReason] = useState("");
   const lead = data.recentLeads.find((l) => l.id === selected);
   return (
-    <div className="card card-dense space-y-3">
+    <div className="card card-nest card-dense space-y-3">
       <p className="section-title">Correct a lead&apos;s work date</p>
       <select className="w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={selected} onChange={(e) => setSelected(e.target.value)}>
         <option value="">Choose a lead (recent cohorts)…</option>
@@ -1489,7 +1517,7 @@ function LeadCountCard({ data, busy, onSave }: {
   const key = (d: string, s: string) => `${d}:${s}`;
   const currentWeekRows = data.observedCounts.filter((r) => r.observed > 0 || r.adjustedDelta != null);
   return (
-    <div className="card card-dense space-y-3">
+    <div className="card card-nest card-dense space-y-3">
       <p className="section-title">Correct a day&apos;s lead count</p>
       {currentWeekRows.length === 0 && <p className="text-[13px] text-(--text-muted)">No leads observed this week yet.</p>}
       <div className="space-y-1">
@@ -1555,20 +1583,22 @@ function AppearanceSection() {
   const { pref, setPref } = useAppearance();
   return (
     <div id="appearance" className="scroll-mt-28">
-      <p className="kpi-label">Appearance</p>
-      <div className="mt-2">
-        <Segmented
-          ariaLabel="Appearance"
-          value={pref}
-          onChange={setPref}
-          options={[
-            { value: "system", label: "System" },
-            { value: "light", label: "Light" },
-            { value: "dark", label: "Dark" },
-          ]}
-        />
-      </div>
-      <p className="mt-1.5 text-xs text-(--text-muted)">System / Uses your device appearance automatically.</p>
+      <Panel className="p-4 sm:p-5">
+        <Eyebrow>Appearance</Eyebrow>
+        <div className="mt-3">
+          <Segmented
+            ariaLabel="Appearance"
+            value={pref}
+            onChange={setPref}
+            options={[
+              { value: "system", label: "System" },
+              { value: "light", label: "Light" },
+              { value: "dark", label: "Dark" },
+            ]}
+          />
+        </div>
+        <p className="mt-1.5 text-xs text-(--text-muted)">System / Uses your device appearance automatically.</p>
+      </Panel>
     </div>
   );
 }

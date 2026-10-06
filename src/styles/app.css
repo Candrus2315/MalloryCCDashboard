@@ -386,6 +386,13 @@
   .card-dense {
     @apply p-4;
   }
+  /* Nested inset card — a block sitting ON a Panel (level 2), one hierarchy
+     level down (level 3 / inset). Wave-3 Settings anatomy; reuses the existing
+     --surface-inset token, no new colors. Declared AFTER .card so its
+     background wins the cascade (equal specificity, later wins). */
+  .card-nest {
+    background: var(--surface-inset);
+  }
   .accent-text {
     color: var(--pos-text);
   }
