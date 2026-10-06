@@ -382,18 +382,8 @@ export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions)
   if (!client) return { outcome: "skipped", reason: "no-credentials" }; // demo mode never calls
 
   const trigger = options?.trigger ?? "background";
-  const today = etToday();
-
-  // WRITER-VERSION GUARD: an outdated build must never rewrite the feed cache
-  // with old semantics (the attribution-writer pattern, one definition each).
-  const storedVersionRaw = await store.getSyncCheckpoint(AVAILABILITY_FEED_WRITER_VERSION_KEY);
-  const storedVersion = storedVersionRaw != null ? Number(storedVersionRaw) : null;
-  if (storedVersion != null && Number.isFinite(storedVersion) && storedVersion > AVAILABILITY_FEED_WRITER_VERSION) {
-    return {
-      outcome: "error",
-      error: `writer-version guard: stored availability-feed writer v${storedVersion} is newer than this writer v${AVAILABILITY_FEED_WRITER_VERSION} — refusing (deploy the current build)`,
-    };
-  }
+  // the run's "today" respects the INJECTED clock (tests pin it; prod = etToday)
+  const today = etDateStrFromInstant(now().getTime());
 
   const months =
     options?.months ??
@@ -414,6 +404,16 @@ export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions)
   let datesProbed = 0;
   let slotsCached = 0;
   try {
+    // WRITER-VERSION GUARD: an outdated build must never rewrite the feed cache
+    // with old semantics (the attribution-writer pattern). The refusal is
+    // recorded on BOTH run rows — visible in the Sync Center, never silent.
+    const storedVersionRaw = await store.getSyncCheckpoint(AVAILABILITY_FEED_WRITER_VERSION_KEY);
+    const storedVersion = storedVersionRaw != null ? Number(storedVersionRaw) : null;
+    if (storedVersion != null && Number.isFinite(storedVersion) && storedVersion > AVAILABILITY_FEED_WRITER_VERSION) {
+      throw new Error(
+        `writer-version guard: stored availability-feed writer v${storedVersion} is newer than this writer v${AVAILABILITY_FEED_WRITER_VERSION} — refusing (deploy the current build)`,
+      );
+    }
     client.startRun();
     // 2 catalog calls — the type↔calendar binding must come from the API (§1.2)
     const calendars = await client.fetchCalendars();

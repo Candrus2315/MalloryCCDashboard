@@ -173,6 +173,16 @@ const STORE_METHOD_FLAGS = {
   // acuity cancellation reconciliation (owner report 2026-10-06)
   getCancelledWinAppointments: 1,
   markAppointmentsCancelled: 1,
+  // availability feed cache (Acuity availability rebuild PR-1, 2026-10-06)
+  putAvailabilityDates: 1,
+  getAvailabilityDates: 1,
+  putAvailabilitySlotsForDate: 1,
+  getAvailabilitySlotsForDates: 1,
+  insertAvailabilitySyncRun: 1,
+  finishAvailabilitySyncRun: 1,
+  getAvailabilitySyncRuns: 1,
+  applyAvailabilityDiscrepancies: 1,
+  getAvailabilityDiscrepancies: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */
