@@ -209,6 +209,17 @@ function AvailabilityPage() {
     return [...msgs, ...data.warnings];
   }, [data.meta, data.warnings]);
 
+  // header connection chip classes — declared BEFORE the fail-closed guard,
+  // which renders the same chip in its unavailable panel (TDZ: a const used
+  // in a return above its declaration throws ReferenceError at runtime).
+  const chipCls =
+    conn.tone === "positive"
+      ? "border-(--chip-positive-bg) bg-(--chip-positive-bg) text-(--pos-text)"
+      : conn.tone === "attention"
+        ? "border-(--chip-risk-bg) bg-(--chip-risk-bg) text-(--banner-fg)"
+        : "border-(--chip-neutral-bg) bg-(--chip-neutral-bg) text-(--chip-neutral-fg)";
+  const chipDot = conn.tone === "positive" ? "bg-(--dot-positive)" : conn.tone === "attention" ? "bg-(--dot-caution)" : "bg-(--dot-muted)";
+
   // FAIL-CLOSED GUARD (2026-10-07 outage): a payload without a view (loader
   // error, legacy shape, any future fail-closed variant) must render the
   // honest unavailable panel — never crash SSR/hydration into a blank page.
@@ -256,14 +267,6 @@ function AvailabilityPage() {
       </div>
     );
   }
-
-  const chipCls =
-    conn.tone === "positive"
-      ? "border-(--chip-positive-bg) bg-(--chip-positive-bg) text-(--pos-text)"
-      : conn.tone === "attention"
-        ? "border-(--chip-risk-bg) bg-(--chip-risk-bg) text-(--banner-fg)"
-        : "border-(--chip-neutral-bg) bg-(--chip-neutral-bg) text-(--chip-neutral-fg)";
-  const chipDot = conn.tone === "positive" ? "bg-(--dot-positive)" : conn.tone === "attention" ? "bg-(--dot-caution)" : "bg-(--dot-muted)";
 
   const dayByDate = new Map(view.days.map((d) => [d.date, d]));
   const summary = view.summary;
