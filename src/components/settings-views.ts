@@ -256,3 +256,17 @@ export function queueReasonBreakdown(rows: { reason: string | null; reason_code?
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
+
+// ---------- 7 — Roster Mapping panel visibility (owner directive) ----------
+/**
+ * Roster Mapping panel rows for the CURRENT view state. Owner directive
+ * ("erase everyone not on my roster"): by default the panel lists only
+ * non-roster HighLevel users WITH calls in the last 30-day window — zero-call
+ * rows (test/app/marketing accounts) stay behind a show-all toggle. This is a
+ * CLIENT-DEFAULT filter only: the server payload always sends every inactive
+ * user, and a zero-call user stays mappable once revealed (select untouched).
+ * Client-local state, never persisted.
+ */
+export function rosterPanelVisibleRows<T extends { callCount: number }>(rows: T[], showAll: boolean): T[] {
+  return showAll ? rows : rows.filter((u) => u.callCount > 0);
+}

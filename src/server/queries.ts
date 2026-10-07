@@ -51,6 +51,7 @@ import { WEEKLY_CC_SECTIONS, addMonthsKey, monthKeyLabel, monthKeyOf } from "./m
 import {
   applyAttributionEligibility,
   applyRosterEligibility,
+  buildNonRosterPanel,
   buildRosterEligibility,
 } from "./roster";
 import { buildCallOwnershipBuckets } from "~/components/reps-views";
@@ -170,6 +171,10 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
 
   // Roster Mapping panel: non-roster HighLevel users seen in the last 30 days
   // of calls, with call counts (calls carry the RAW HL user id — immutable).
+  // Built by the pure buildNonRosterPanel (roster.ts) — the payload STILL
+  // carries every inactive user; zero-call rows are hidden by the PANEL's
+  // client-local default only (owner directive, "erase everyone not on my
+  // roster"), labeled by zeroCallCount.
   const activeIds = new Set(users.map((u) => u.id));
   const callsByExternalId = new Map<string, number>();
   for (const c of callsWindow) {
@@ -177,15 +182,12 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     if (!ext) continue;
     callsByExternalId.set(ext, (callsByExternalId.get(ext) ?? 0) + 1);
   }
-  const nonRosterUsers = allUsers
-    .filter((u) => !u.is_active && !activeIds.has(u.id))
-    .map((u) => ({
-      externalId: u.external_id,
-      name: u.name,
-      callCount: callsByExternalId.get(u.external_id) ?? 0,
-      mappedTo: (settings.rep_mappings ?? []).find((m) => m.external_user_id === u.external_id)?.rep_id ?? null,
-    }))
-    .sort((a, b) => b.callCount - a.callCount || a.name.localeCompare(b.name));
+  const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel(
+    allUsers,
+    activeIds,
+    callsByExternalId,
+    settings.rep_mappings ?? [],
+  );
 
   const { isPassphraseConfigured } = await import("./auth");
   return {
@@ -212,6 +214,7 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     repGoalsByWeek,
     repMappings: settings.rep_mappings ?? [],
     nonRosterUsers,
+    zeroCallCount,
     connections: serializableConnections(connections),
     syncRuns: runs,
     overrides,

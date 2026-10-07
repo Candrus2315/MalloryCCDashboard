@@ -17,6 +17,7 @@ import {
   providerLabel,
   queueReasonBreakdown,
   queueRowState,
+  rosterPanelVisibleRows,
   sectionMeta,
   sectionNumber,
   unassignable,
@@ -1228,6 +1229,13 @@ function RosterMappingSection({ data, busy, onSave }: {
   busy: boolean;
   onSave: (mappings: { external_user_id: string; rep_id: string }[]) => void;
 }) {
+  // OWNER DIRECTIVE ("erase everyone not on my roster"): by default the panel
+  // lists only non-roster users with calls in the last 30 days — zero-call rows
+  // (test/app/marketing accounts) are noise. Client-local show-all toggle
+  // (useState, never persisted); the server payload still sends ALL inactive
+  // users, so a zero-call user stays mappable once revealed.
+  const [showAll, setShowAll] = useState(false);
+  const visibleRows = rosterPanelVisibleRows(data.nonRosterUsers, showAll);
   // draft rep choice per non-roster HL user (prefilled with any existing mapping)
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(data.nonRosterUsers.filter((u) => u.mappedTo).map((u) => [u.externalId, u.mappedTo!])),
@@ -1255,11 +1263,33 @@ function RosterMappingSection({ data, busy, onSave }: {
         records are never rewritten: the original HL user id, message ids and timestamps stay untouched, and removing
         a mapping returns the calls to Non Roster.
       </p>
+      {data.nonRosterUsers.length > 0 && (
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-xs text-(--text-muted)">
+            {showAll
+              ? `Showing all ${data.nonRosterUsers.length} non-roster users`
+              : `Showing ${visibleRows.length} of ${data.nonRosterUsers.length} — users with calls in the last 30 days only`}
+          </p>
+          <button
+            type="button"
+            aria-pressed={showAll}
+            className="text-xs text-(--text-muted) underline underline-offset-2 hover:text-(--text-body)"
+            onClick={() => setShowAll((v) => !v)}
+          >
+            {showAll ? `Hide ${data.zeroCallCount} zero-call users` : `Show all (${data.zeroCallCount})`}
+          </button>
+        </div>
+      )}
       <div className="card card-nest space-y-1 p-0">
         {data.nonRosterUsers.length === 0 && (
           <p className="p-5 text-sm text-(--text-muted)">No non-roster HighLevel users seen in calls yet.</p>
         )}
-        {data.nonRosterUsers.map((u) => {
+        {data.nonRosterUsers.length > 0 && visibleRows.length === 0 && (
+          <p className="p-5 text-sm text-(--text-muted)">
+            All {data.nonRosterUsers.length} non-roster users had no calls in the last 30 days.
+          </p>
+        )}
+        {visibleRows.map((u) => {
           const val = draft[u.externalId] ?? "";
           return (
             <div key={u.externalId} className="flex flex-wrap items-center justify-between gap-4 border-b border-(--table-border-weak) px-5 py-2.5 last:border-0">
