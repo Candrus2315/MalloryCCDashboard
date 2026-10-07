@@ -85,6 +85,20 @@ function eventSentence(e: PipEventView, subject: string): string {
 const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
 const timeFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
 
+/**
+ * Subject label for an event row: "Employee — PIP title". PIP titles are saved
+ * as "{employee} — {template}", so a naive join doubles the name ("Jennifer
+ * Stitt — Jennifer Stitt — Booking Performance"); when the title already opens
+ * with the employee's name, the title speaks for itself.
+ */
+export function historySubjectLabel(employee: string | null | undefined, title: string | null | undefined): string {
+  const name = employee ?? "";
+  const titleStr = title ?? "";
+  if (name && titleStr && (titleStr.startsWith(`${name} — `) || titleStr === name)) return titleStr;
+  const parts = [name || "Unassigned", titleStr].filter(Boolean);
+  return parts.length === 0 ? "—" : parts.join(" — ");
+}
+
 /** ET date (YYYY-MM-DD) of a stored ISO stamp, or null when unparseable. */
 function etDateKey(iso: string): string | null {
   const t = Date.parse(iso);
@@ -105,7 +119,7 @@ function HistoryPage() {
     if (e.template_id) return templateNames.get(e.template_id) ?? "Deleted template";
     if (e.pip_id) {
       const s = pipSubjects.get(e.pip_id);
-      if (s && (s.employee || s.title)) return [s.employee ?? "Unassigned", s.title].filter(Boolean).join(" — ");
+      if (s && (s.employee || s.title)) return historySubjectLabel(s.employee, s.title);
       return "Deleted record";
     }
     return "—";

@@ -122,7 +122,9 @@ export function passphraseStatus(configured: boolean): {
 const PROVIDER_LABELS: Record<string, string> = {
   highlevel: "HighLevel",
   acuity: "Acuity",
+  acuity_availability: "Acuity Availability",
   google_sheets: "Google Sheets",
+  attribution: "Attribution",
 };
 
 export function providerLabel(provider: string): string {

@@ -28,6 +28,7 @@ import {
   dateWithWeekday,
   gridRows,
   poolChip,
+  cyclePoolChipView,
   rollupStoredCycle,
   shortRange,
 } from "~/components/commission-views";
@@ -185,12 +186,7 @@ function CommissionsPage() {
                       </div>
                       <p className="kpi-sub mt-1">rep-attributed qualifying wins</p>
                       <div className="mt-1.5">
-                        <CommissionChip
-                          view={poolChip(
-                            data.records.length > 0 ? rollup.teamBookings >= 79 : null,
-                            data.records.length > 0 ? rollup.teamBookings : null,
-                          )}
-                        />
+                        <CommissionChip view={cyclePoolChipView(data.records.length > 0, rollup.teamPool)} />
                       </div>
                     </div>
                     <dl className="mt-4 space-y-3 border-t border-(--table-border-weak) pt-4">
@@ -813,7 +809,7 @@ function CorrectionForm({
       });
       setReason("");
       setDelta("");
-      onDone(`Correction applied: ${res.what} (${res.deltaDollars >= 0 ? "+" : ""}$${res.deltaDollars.toFixed(2)}) — audited.`);
+      onDone(`Correction applied: ${res.what} (${res.deltaDollars >= 0 ? "+" : "−"}${formatMoney(Math.abs(res.deltaDollars))}) — audited.`);
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     } finally {
