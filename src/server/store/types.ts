@@ -507,6 +507,48 @@ export function isSheetMappingModeValue(v: unknown): v is SheetMappingMode {
   return v === "row_per_day_count" || v === "row_per_lead";
 }
 
+/**
+ * Merge a `sheets` settings patch over the current group — the ONE merge used
+ * by BOTH stores' saveSettings (memory + pg), so their semantics cannot drift.
+ *
+ * MODE-PERSISTENCE HARDENING (owner directive 2026-10-07, after the 10/3
+ * silent flip): the pre-hardening merge (`{ ...current.sheets, ...patch.sheets }`)
+ * replaced a whole sheet config whenever a patch carried one, so a partial or
+ * default-application write that omitted `mode` silently dropped the owner's
+ * saved mode — and normalizeSheetConfig then re-derived `row_per_day_count`
+ * from the count column on read. Now:
+ *  - a patch that does not carry a VALID mode preserves the saved mode
+ *    (defaults apply only when unset — never over an explicitly saved value);
+ *  - every mode the merge DOES change is returned so the store can audit it
+ *    via insertManualOverride (entity_type "sheet_mapping", field "mode",
+ *    old → new, actor label) — visible on the Audit page.
+ */
+export function mergeSheetsSettings(
+  current: AppSettings["sheets"],
+  patch: Partial<AppSettings["sheets"]> | undefined,
+): {
+  sheets: AppSettings["sheets"];
+  modeChanges: { sheet: keyof AppSettings["sheets"]; from: SheetMappingMode; to: SheetMappingMode }[];
+} {
+  const sheets = { ...current };
+  const modeChanges: { sheet: keyof AppSettings["sheets"]; from: SheetMappingMode; to: SheetMappingMode }[] = [];
+  if (patch) {
+    for (const key of ["family", "animalia"] as const) {
+      const p = patch[key];
+      if (!p) continue;
+      // Normalize the saved config first so a legacy stored shape (mode
+      // missing on very old rows) still yields a valid mode to preserve.
+      const saved = normalizeSheetConfig(sheets[key] ?? {}, DEFAULT_SHEET_IDS[key]);
+      // Preserve the saved mode unless the patch explicitly carries a valid
+      // one (runtime-validated — the server-fn validator does not check it).
+      const mode = isSheetMappingModeValue(p.mode) ? p.mode : saved.mode;
+      sheets[key] = { ...saved, ...p, mode };
+      if (mode !== saved.mode) modeChanges.push({ sheet: key, from: saved.mode, to: mode });
+    }
+  }
+  return { sheets, modeChanges };
+}
+
 function normalizeSheetConfig(raw: unknown, fallbackId: string): SheetConfig {
   const r = (raw ?? {}) as Partial<SheetConfig> & { columns?: Record<string, unknown> };
   const rawColumns: Record<string, string> = {};
@@ -1127,7 +1169,13 @@ export interface Store {
 
   // settings
   getSettings(): Promise<AppSettings>;
-  saveSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
+  /**
+   * Merge-apply a settings patch. `actor` (default "system") labels the
+   * sheet-mode audit row written when this write CHANGES a sheet mapping mode
+   * (owner directive: mode changes are explicit + audited, never silent).
+   * Owner-driven Settings saves pass "christopher".
+   */
+  saveSettings(patch: Partial<AppSettings>, actor?: string): Promise<AppSettings>;
 
   // goals
   upsertTeamGoal(row: TeamGoalRow): Promise<void>;

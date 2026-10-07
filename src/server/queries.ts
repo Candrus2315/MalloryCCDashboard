@@ -570,7 +570,10 @@ export const saveSheetMapping = createServerFn({ method: "POST" })
     const settings = await store.getSettings();
     const columns: Record<string, string> = { ...settings.sheets[sheet].columns, ...data.columns };
     const mode = isSheetMappingMode(data.mode) ? data.mode : settings.sheets[sheet].mode;
-    await store.saveSettings({ sheets: { ...settings.sheets, [sheet]: { ...settings.sheets[sheet], columns, mode } } });
+    // Owner-driven Settings save → the audit row (if the mode changes) is
+    // labeled "christopher", consistent with saveWeekGoal/saveRepMappings.
+    // The store writes the audit row itself when the merge changes a mode.
+    await store.saveSettings({ sheets: { ...settings.sheets, [sheet]: { ...settings.sheets[sheet], columns, mode } } }, "christopher");
     return { ok: true, columns, mode };
   });
 
