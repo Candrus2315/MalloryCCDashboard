@@ -343,3 +343,194 @@ describe("queue + conversion helpers", () => {
     expect(call).toBeTruthy();
   });
 });
+
+describe("evidence-fetch-floor guard (W1 artifact fix, root-caused 10/7)", () => {
+  // A Wednesday, 11:00 ET. Default cohort start = Sep 7 (today − 30 ET days);
+  // default call fetch floor = Sep 5 (cohort start − 2d margin).
+  const OCT_NOW = new Date("2026-10-07T15:00:00Z");
+  const octNow = () => OCT_NOW;
+  const WIDE_SINCE = "2026-08-22T04:00:00.000Z"; // the attr-reverdict floor
+
+  /**
+   * The exact W1 shape: a qualifying booking created Aug 31 (ET) whose call
+   * evidence sits on Aug 31 — BELOW the default tick's Sep 5 fetch floor —
+   * while a FUTURE session date (Oct 10) keeps it in the cohort via
+   * session-date re-entry. Stored rows keep their verdicts.
+   */
+  async function seedBelowFloorBooking(store: MemoryStore): Promise<{ rep: string; apptId: string }> {
+    await store.upsertUsers([
+      { id: "", provider: "highlevel", external_id: "usr_rep", name: "Alex Morgan", email: "alex@mallory.test", is_active: true, call_start_date: null },
+    ]);
+    const rep = (await store.getAllUsers()).find((u) => u.external_id === "usr_rep")!.id;
+    await store.upsertContacts([
+      { id: "", provider: "highlevel", external_id: "cnt_w1", name: "Jkeya Lynch", phone: "+19175550142", email: "jkeya@example.test", assigned_rep_id: rep },
+    ]);
+    const contact = (await store.getContacts()).find((c) => c.external_id === "cnt_w1")!.id;
+    await store.upsertCalls([
+      {
+        provider: "highlevel",
+        external_call_id: "call_w1",
+        rep_id: rep,
+        provider_rep_external_id: "usr_rep",
+        contact_id: contact,
+        started_at: "2026-08-31T13:00:00.000Z", // Aug 31 ET — in the booking's window, below the default fetch floor
+        duration_seconds: 300,
+        over_two_minutes: true,
+        direction: "outbound",
+        call_status: "completed",
+      },
+    ]);
+    await store.upsertAppointments([
+      {
+        id: "",
+        contact_id: contact,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Consult",
+        appointment_datetime: "2026-10-10T15:00:00.000Z", // FUTURE session — the cohort re-entry
+        created_at: "2026-08-31T14:00:00.000Z", // created Aug 31 ET — 37 days before OCT_NOW
+        duration_minutes: 60,
+        status: "scheduled",
+        cancelled: false,
+        acuity_appointment_id: "acuity_w1",
+        client_name: "Jkeya Lynch",
+        client_phone: "19175550142",
+        client_email: "jkeya@example.test",
+      },
+    ]);
+    const apptId = (await store.getAppointmentsWithClientsSince("2000-01-01")).find(
+      (a) => a.acuity_appointment_id === "acuity_w1",
+    )!.id;
+    return { rep, apptId };
+  }
+
+  test("session-date cohort re-entry + evidence below the fetch floor → verdict PRESERVED, never re-derived", async () => {
+    resetAttributionThrottle();
+    const store = new MemoryStore();
+    const { rep, apptId } = await seedBelowFloorBooking(store);
+    const settings = await getSettings(store);
+
+    // The re-verdict runner's widened cohort: evidence fetched from Aug 20 → attributed.
+    const wide = await computeAndPersistAttributions(store, settings, { now: octNow, since: WIDE_SINCE });
+    expect(wide.outcome).toBe("synced");
+    expect(wide.attributed).toBe(1);
+    expect(wide.evidenceBelowFetchFloor).toBe(0); // the wide floor covers the Aug-31 window
+    const stored = (await store.getAttributions()).find((r) => r.appointment_id === apptId)!;
+    expect(stored.rep_id).toBe(rep);
+
+    // The DEFAULT tick: fetch floor Sep 5, the Aug-31 call is NOT fetched.
+    // The stored verdict must survive — never re-derived against an evidence
+    // set that cannot contain its window's calls (the 10/7 W1 wipe).
+    const tick = await attributionTick({ store, settings, now: octNow, trigger: "manual" });
+    expect(tick.outcome).toBe("synced");
+    expect(tick.evidenceBelowFetchFloor).toBe(1);
+    expect(tick.belowFetchFloorUnverdicted).toBe(0);
+    expect(tick.attributed).toBe(0); // the engine's own (blind) derivation saw no evidence — and was NOT persisted
+    const after = (await store.getAttributions()).find((r) => r.appointment_id === apptId)!;
+    expect(after.rep_id).toBe(rep); // PRESERVED
+    expect(after.call_id).toBe(stored.call_id);
+    expect(after.method).toBe(stored.method);
+    expect(after.note).toBe(stored.note);
+    expect(after.reason_code).toBe(stored.reason_code);
+
+    // A widened-since run still re-derives normally — the guard is not a
+    // permanent freeze, and the attr-reverdict remedy keeps working.
+    const restore = await computeAndPersistAttributions(store, settings, { now: octNow, since: WIDE_SINCE });
+    expect(restore.attributed).toBe(1);
+    expect(restore.evidenceBelowFetchFloor).toBe(0);
+  });
+
+  test("a booking fully inside the fetched window is still re-derived (the guard never freezes it)", async () => {
+    resetAttributionThrottle();
+    const store = new MemoryStore();
+    await store.upsertUsers([
+      { id: "", provider: "highlevel", external_id: "usr_rep", name: "Alex Morgan", email: "alex@mallory.test", is_active: true, call_start_date: null },
+    ]);
+    const rep = (await store.getAllUsers()).find((u) => u.external_id === "usr_rep")!.id;
+    await store.upsertContacts([
+      { id: "", provider: "highlevel", external_id: "cnt_oct", name: "Fresh Booking", phone: "+19175550142", email: "fresh@example.test", assigned_rep_id: rep },
+    ]);
+    const contact = (await store.getContacts()).find((c) => c.external_id === "cnt_oct")!.id;
+    await store.upsertCalls([
+      {
+        provider: "highlevel",
+        external_call_id: "call_oct",
+        rep_id: rep,
+        provider_rep_external_id: "usr_rep",
+        contact_id: contact,
+        started_at: "2026-10-06T16:00:00.000Z", // Oct 6 ET — inside the booking's window AND the fetch floor
+        duration_seconds: 300,
+        over_two_minutes: true,
+        direction: "outbound",
+        call_status: "completed",
+      },
+    ]);
+    await store.upsertAppointments([
+      {
+        id: "",
+        contact_id: contact,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Consult",
+        appointment_datetime: "2026-10-08T15:00:00.000Z",
+        created_at: "2026-10-06T18:00:00.000Z", // created Oct 6 ET — window 10-05..10-06, fully covered
+        duration_minutes: 60,
+        status: "scheduled",
+        cancelled: false,
+        acuity_appointment_id: "acuity_oct",
+        client_name: "Fresh Booking",
+        client_phone: "19175550142",
+        client_email: "fresh@example.test",
+      },
+    ]);
+    const apptId = (await store.getAppointmentsWithClientsSince("2000-01-01")).find(
+      (a) => a.acuity_appointment_id === "acuity_oct",
+    )!.id;
+    const settings = await getSettings(store);
+
+    const first = await attributionTick({ store, settings, now: octNow, trigger: "manual" });
+    expect(first.outcome).toBe("synced");
+    expect(first.attributed).toBe(1);
+    expect(first.evidenceBelowFetchFloor).toBe(0);
+    expect((await store.getAttributions()).find((r) => r.appointment_id === apptId)!.rep_id).toBe(rep);
+
+    // The call leaves the booking's DATE window (but stays inside the fetch
+    // window) → the engine re-derives as today: unattributed. The guard
+    // changed nothing for covered bookings.
+    const callRow = (await store.getAllCallsSince("2000-01-01")).find((c) => c.external_call_id === "call_oct")!;
+    await store.upsertCalls([{ ...callRow, provider: "highlevel", started_at: "2026-09-20T16:00:00.000Z" }]);
+    const second = await attributionTick({ store, settings, now: octNow, trigger: "manual" });
+    expect(second.outcome).toBe("synced");
+    expect(second.attributed).toBe(0);
+    expect(second.evidenceBelowFetchFloor).toBe(0);
+    const after = (await store.getAttributions()).find((r) => r.appointment_id === apptId)!;
+    expect(after.rep_id).toBeNull(); // RE-DERIVED, not preserved
+    expect(after.reason_code).toContain("no-window-interaction");
+  });
+
+  test("the skip is observable (count on the tick result, log line, honest first-verdict branch)", async () => {
+    resetAttributionThrottle();
+    const store = new MemoryStore();
+    const { rep, apptId } = await seedBelowFloorBooking(store);
+    const settings = await getSettings(store);
+
+    // No stored verdict yet: a below-floor booking with NOTHING to preserve
+    // derives honestly against the fetched evidence (empty for its window)
+    // and is counted as belowFetchFloorUnverdicted — an unattributed verdict
+    // that reflects the fetch floor, not missing source data.
+    const tick = await attributionTick({ store, settings, now: octNow, trigger: "manual" });
+    expect(tick.outcome).toBe("synced");
+    expect(tick.evidenceBelowFetchFloor).toBe(0); // nothing to preserve
+    expect(tick.belowFetchFloorUnverdicted).toBe(1);
+    expect(tick.attributed).toBe(0);
+    expect(tick.unattributed).toBe(1);
+    const row = (await store.getAttributions()).find((r) => r.appointment_id === apptId)!;
+    expect(row.method).toBe("none");
+    expect(row.rep_id).toBeNull();
+    expect(row.reason_code).toContain("no-window-interaction");
+    void rep;
+    // the run itself is a recorded success row (observability in the Sync Center)
+    const runs = await store.getSyncRuns(5);
+    expect(runs.some((r) => r.provider === "attribution" && r.status === "success")).toBe(true);
+  });
+});
