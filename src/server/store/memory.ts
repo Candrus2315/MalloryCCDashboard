@@ -56,7 +56,10 @@ import type {
   CommissionProfileInput,
   CommissionWeeklyRow,
   AvailabilityDatesInput,
+  AvailabilityCalendarRow,
+  AvailabilityCatalogInput,
   AvailabilityDatesRow,
+  AvailabilityTypeRow,
   AvailabilityDiscrepancyInput,
   AvailabilityDiscrepancyRow,
   AvailabilitySlotRow,
@@ -132,6 +135,9 @@ export class MemoryStore implements Store {
   private availabilityRuns: AvailabilitySyncRunRow[] = [];
   private availabilityDiscrepancies = new Map<string, AvailabilityDiscrepancyRow>(); // id -> row
   private unresolvedDiscrepancyKeys = new Map<string, string>(); // calendar|date|time|kind -> row id
+  // availability catalog cache (PR-3) — REPLACE-all twins of the pg tables
+  private availabilityCatalogCalendars = new Map<string, AvailabilityCalendarRow>(); // calendar_id -> row
+  private availabilityCatalogTypes = new Map<string, AvailabilityTypeRow>(); // type_id -> row
   private watermarks = new Map<string, string>();
   private overrides: ManualOverrideRow[] = [];
   private dailyPriorities = new Map<string, DailyPrioritiesRow>();
@@ -862,6 +868,42 @@ export class MemoryStore implements Store {
       .sort((a, b) => a.date_et.localeCompare(b.date_et) || a.calendar_id.localeCompare(b.calendar_id) || a.time_et.localeCompare(b.time_et))
       .map((r) => ({ ...r }));
   }
+  async putAvailabilityCatalog(catalog: AvailabilityCatalogInput, runId: string, fetchedAt?: string): Promise<void> {
+    // REPLACE-all (same semantics as pg): the fresh catalog is the truth
+    this.availabilityCatalogCalendars.clear();
+    this.availabilityCatalogTypes.clear();
+    const stamp = fetchedAt ?? new Date().toISOString();
+    for (const c of catalog.calendars) {
+      if (!c.calendar_id) continue;
+      this.availabilityCatalogCalendars.set(c.calendar_id, {
+        calendar_id: c.calendar_id,
+        name: c.name,
+        fetched_at: stamp,
+        run_id: runId,
+      });
+    }
+    for (const t of catalog.types) {
+      if (!t.appointment_type_id) continue;
+      this.availabilityCatalogTypes.set(t.appointment_type_id, {
+        appointment_type_id: t.appointment_type_id,
+        name: t.name,
+        calendar_ids: [...t.calendar_ids],
+        duration_minutes: t.duration_minutes,
+        fetched_at: stamp,
+        run_id: runId,
+      });
+    }
+  }
+
+  async getAvailabilityCatalog(): Promise<{ calendars: AvailabilityCalendarRow[]; types: AvailabilityTypeRow[] }> {
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+    const calendars = [...this.availabilityCatalogCalendars.values()].sort(byName).map((r) => ({ ...r }));
+    const types = [...this.availabilityCatalogTypes.values()]
+      .sort(byName)
+      .map((r) => ({ ...r, calendar_ids: [...r.calendar_ids] }));
+    return { calendars, types };
+  }
+
   async insertAvailabilitySyncRun(scope: Record<string, unknown>): Promise<string> {
     const id = this.nextId("avail-run");
     this.availabilityRuns.push({

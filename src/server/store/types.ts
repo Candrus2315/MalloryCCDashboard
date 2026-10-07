@@ -1090,6 +1090,37 @@ export interface AvailabilityDiscrepancyInput {
   detail: Record<string, unknown>;
 }
 
+// ---- Availability catalog cache (availability rebuild PR-3, 2026-10-07) ----
+// The /calendars + /appointment-types answers cached at each feed run so the
+// page-level filters can enumerate REAL options (the type↔calendar binding
+// comes from the API's calendarIDs — never guessed, §1.2: a mismatched pair
+// answers 400 invalid_calendar). REPLACE-all per run: the fresh catalog is
+// the truth; no history is kept (the runs table audits when it was fetched).
+
+/** One cached Acuity calendar (/calendars). */
+export interface AvailabilityCalendarRow {
+  calendar_id: string;
+  name: string;
+  fetched_at: string;
+  run_id: string;
+}
+
+/** One cached Acuity appointment type (/appointment-types) with its calendar binding. */
+export interface AvailabilityTypeRow {
+  appointment_type_id: string;
+  name: string;
+  /** The calendar ids this type is hard-bound to (the API's calendarIDs). */
+  calendar_ids: string[];
+  duration_minutes: number | null;
+  fetched_at: string;
+  run_id: string;
+}
+
+export interface AvailabilityCatalogInput {
+  calendars: Array<{ calendar_id: string; name: string }>;
+  types: Array<{ appointment_type_id: string; name: string; calendar_ids: string[]; duration_minutes: number | null }>;
+}
+
 export interface Store {
   mode: "postgres" | "memory";
   ensureSchema(): Promise<void>;
@@ -1546,4 +1577,12 @@ export interface Store {
   applyAvailabilityDiscrepancies(runId: string, scanned: { calendar_id: string; date_et: string }[], current: AvailabilityDiscrepancyInput[]): Promise<{ inserted: number; resolved: number }>;
   /** Discrepancy rows, newest detection first; unresolvedOnly narrows to the open list. */
   getAvailabilityDiscrepancies(opts?: { unresolvedOnly?: boolean; limit?: number }): Promise<AvailabilityDiscrepancyRow[]>;
+  /**
+   * Cache the /calendars + /appointment-types catalog (REPLACE-all — the fresh
+   * answer is the truth). Written by every availability-feed run's catalog
+   * step; read by the availability page's filter options (PR-3 §3).
+   */
+  putAvailabilityCatalog(catalog: AvailabilityCatalogInput, runId: string, fetchedAt?: string): Promise<void>;
+  /** The cached catalog; empty arrays when no feed run has populated it yet. */
+  getAvailabilityCatalog(): Promise<{ calendars: AvailabilityCalendarRow[]; types: AvailabilityTypeRow[] }>;
 }

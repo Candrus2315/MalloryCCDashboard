@@ -7,7 +7,10 @@ import postgres from "postgres";
 import {
   type AppointmentRow,
   type AttributionRow,
+  type AvailabilityCalendarRow,
+  type AvailabilityCatalogInput,
   type AvailabilityRule,
+  type AvailabilityTypeRow,
   type BlockedTimeRow,
   type CallRow,
   type LeadRow,
@@ -2068,6 +2071,62 @@ export class PgStore implements Store {
       detected_at: new Date(r.detected_at as string).toISOString(),
       resolved_at: r.resolved_at == null ? null : new Date(r.resolved_at as string).toISOString(),
     }));
+  }
+
+  /**
+   * Cache the /calendars + /appointment-types catalog (REPLACE-all: the fresh
+   * answer is the truth). Same availability-feed advisory lock as the other
+   * feed writers — catalog + dates + slots + discrepancies move together.
+   */
+  async putAvailabilityCatalog(catalog: AvailabilityCatalogInput, runId: string, fetchedAt?: string): Promise<void> {
+    this.cache.bump();
+    await this.ensureSchema();
+    const stamp = fetchedAt ?? new Date().toISOString();
+    await this.sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(72240902)`;
+      await tx`DELETE FROM availability_calendars`;
+      await tx`DELETE FROM availability_appointment_types`;
+      for (const c of catalog.calendars) {
+        if (!c.calendar_id) continue;
+        await tx`
+          INSERT INTO availability_calendars (calendar_id, name, fetched_at, run_id)
+          VALUES (${c.calendar_id}, ${c.name}, ${stamp}::timestamptz, ${runId}::uuid)
+          ON CONFLICT (calendar_id) DO UPDATE SET name = EXCLUDED.name, fetched_at = EXCLUDED.fetched_at, run_id = EXCLUDED.run_id`;
+      }
+      for (const t of catalog.types) {
+        if (!t.appointment_type_id) continue;
+        await tx`
+          INSERT INTO availability_appointment_types (appointment_type_id, name, calendar_ids, duration_minutes, fetched_at, run_id)
+          VALUES (${t.appointment_type_id}, ${t.name}, ${JSON.stringify(t.calendar_ids)}::jsonb, ${t.duration_minutes}, ${stamp}::timestamptz, ${runId}::uuid)
+          ON CONFLICT (appointment_type_id) DO UPDATE SET
+            name = EXCLUDED.name, calendar_ids = EXCLUDED.calendar_ids, duration_minutes = EXCLUDED.duration_minutes,
+            fetched_at = EXCLUDED.fetched_at, run_id = EXCLUDED.run_id`;
+      }
+    });
+  }
+
+  async getAvailabilityCatalog(): Promise<{ calendars: AvailabilityCalendarRow[]; types: AvailabilityTypeRow[] }> {
+    await this.ensureSchema();
+    const [cals, types] = await Promise.all([
+      this.sql`SELECT calendar_id, name, fetched_at, run_id::text AS run_id FROM availability_calendars ORDER BY name, calendar_id`,
+      this.sql`SELECT appointment_type_id, name, calendar_ids, duration_minutes, fetched_at, run_id::text AS run_id FROM availability_appointment_types ORDER BY name, appointment_type_id`,
+    ]);
+    return {
+      calendars: cals.map((r) => ({
+        calendar_id: String(r.calendar_id),
+        name: String(r.name),
+        fetched_at: new Date(r.fetched_at as string).toISOString(),
+        run_id: String(r.run_id),
+      })),
+      types: types.map((r) => ({
+        appointment_type_id: String(r.appointment_type_id),
+        name: String(r.name),
+        calendar_ids: Array.isArray(r.calendar_ids) ? (r.calendar_ids as unknown[]).map(String) : [],
+        duration_minutes: r.duration_minutes == null ? null : Number(r.duration_minutes),
+        fetched_at: new Date(r.fetched_at as string).toISOString(),
+        run_id: String(r.run_id),
+      })),
+    };
   }
 
   async upsertDailyPriorities(row: DailyPrioritiesRow): Promise<void> {

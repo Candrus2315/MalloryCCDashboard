@@ -183,6 +183,9 @@ const STORE_METHOD_FLAGS = {
   getAvailabilitySyncRuns: 1,
   applyAvailabilityDiscrepancies: 1,
   getAvailabilityDiscrepancies: 1,
+  // availability catalog cache (availability rebuild PR-3, 2026-10-07)
+  putAvailabilityCatalog: 1,
+  getAvailabilityCatalog: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

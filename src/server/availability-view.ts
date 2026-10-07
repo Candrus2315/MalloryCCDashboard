@@ -30,10 +30,25 @@ import {
 } from "./metrics/availability";
 import { materializeRecurringBlocks, type AppointmentRow, type AvailabilityRule } from "./metrics/compute";
 import { monthKeyOf } from "./metrics/weekly";
-import { addMonths, AVAILABILITY_SWEEP_MONTHS_AHEAD, coverageHorizonFromCache, deriveAvailabilityHoles, monthDates } from "./sync/availability-feed";
-import type { AppSettings, Store } from "./store/types";
+import {
+  addMonths,
+  AVAILABILITY_SWEEP_MONTHS_AHEAD,
+  coverageHorizonFromCache,
+  deriveAvailabilityHoles,
+  monthDates,
+} from "./sync/availability-feed";
+import type {
+  AvailabilityCalendarRow,
+  AvailabilityDiscrepancyRow,
+  AvailabilitySyncRunRow,
+  AvailabilityTypeRow,
+  AppSettings,
+  Store,
+} from "./store/types";
 import type {
   AvailabilityAcuityState,
+  AvailabilityConnection,
+  AvailabilityPageFilters,
   AvailabilityRangeDay,
   AvailabilityRangeSummary,
   AvailabilitySlotAppointment,
@@ -44,7 +59,7 @@ import type {
 } from "./page-data";
 
 /** The view payload's heading label (pure). */
-function availabilityViewLabel(request: AvailabilityViewRequest): string {
+export function availabilityViewLabel(request: AvailabilityViewRequest): string {
   if (request.kind === "month") {
     const [y, m] = request.month.split("-").map(Number);
     return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(
@@ -124,15 +139,18 @@ export async function buildAvailabilityView(ctx: {
     const prev = sweepDateByMonth.get(r.month);
     if (!prev || r.fetched_at > prev) sweepDateByMonth.set(r.month, r.fetched_at);
   }
-  // Feed slots scoped by Settings calendars: id match, or name match via the
-  // calendar names the range's own appointments carry. A calendar with no
-  // appointment rows cannot be name-matched and is conservatively EXCLUDED
-  // when a name-typed scope is set (never silently counted in).
+  // Feed slots scoped by the EFFECTIVE scope (Settings scope ∩ the page-level
+  // filter — PR-3 §3): id match, or name match via the calendar names the
+  // range's own appointments carry. A calendar with no appointment rows cannot
+  // be name-matched and is conservatively EXCLUDED when a name-typed scope is
+  // set (never silently counted in).
+  const pageFilters: AvailabilityPageFilters = request.filters;
+  const scope = mergeAvailabilityPageScope(settings.acuity, pageFilters);
   const calNameById = new Map<string, string>();
   for (const a of apptRows) {
     if (a.calendar_id && a.calendar_name && !calNameById.has(a.calendar_id)) calNameById.set(a.calendar_id, a.calendar_name);
   }
-  const calScope = settings.acuity.calendars_included ?? [];
+  const calScope = scope.calendars_included ?? [];
   const feedCalInScope = (calendarId: string): boolean => {
     if (calScope.length === 0) return true;
     const name = calNameById.get(calendarId);
@@ -166,7 +184,7 @@ export async function buildAvailabilityView(ctx: {
       slotIntervalMin,
       durationMin,
       paddingMin,
-      scope: settings.acuity,
+      scope,
     });
 
     // ---- display-level interval build (mirrors the engine's apptReal/apptBuffer/blockBusy) ----
@@ -187,7 +205,7 @@ export async function buildAvailabilityView(ctx: {
         cancelledRows.push({ start, end, a });
         continue;
       }
-      if (!appointmentInScope(a, settings.acuity)) continue;
+      if (!appointmentInScope(a, scope)) continue;
       real.push({ start, end, a });
     }
     const buffer: Iv[] = paddingMin > 0 ? real.map((iv) => ({ start: iv.start - padMs, end: iv.end + padMs, a: iv.a })) : [];
@@ -327,6 +345,17 @@ export async function buildAvailabilityView(ctx: {
           blockedSlotTimes.push(time);
           reason = "Unexplained — not offered by Acuity (candidate block)";
         }
+      } else if (acuity === "feed" && !inDatesEt) {
+        // OWNER-FLAGGED POLISH (PR-3 §5): a feed-observed CLOSED day — the
+        // month sweep saw this date absent from the offered index. Empty grid
+        // slots render CLOSED so the chips agree with the day's real 0 open
+        // (they used to read OPEN with the "Not offered by the Acuity booking
+        // template" reason while the day row said 0). A phone booking on such
+        // a day still renders BOOKED (the booked branch hits first); the day's
+        // hole count stays the LOCKED capacity − booked rule (feed-closed day
+        // = all grid slots holes — the owner ruling PR-2 verified).
+        status = "closed";
+        reason = dayEstimateReason;
       } else {
         status = "open";
         reason = cancelledHere.length > 0 ? "Cancelled — the slot is free again" : dayEstimateReason;
@@ -336,7 +365,7 @@ export async function buildAvailabilityView(ctx: {
         label,
         status,
         isHole: false, // filled below from the ONE hole derivation
-        estimated: !feedAuthoritative,
+        estimated: status === "closed" ? false : !feedAuthoritative, // a feed-observed CLOSED slot is not an estimate
         reason,
         unexplained,
         blocked,
@@ -485,7 +514,10 @@ export async function buildAvailabilityView(ctx: {
     dates,
     days,
     summary,
-    slots: request.kind === "day" ? slotsByDate.get(request.date) ?? [] : null,
+    slots:
+      request.kind === "day"
+        ? filterDaySlotsByStatuses(slotsByDate.get(request.date) ?? [], request.filters.statuses)
+        : null,
     offGridAppointments: request.kind === "day" ? offGridByDate.get(request.date) ?? [] : [],
     coverage: {
       horizonDate: horizon.lastOfferedDate,
@@ -499,10 +531,203 @@ export async function buildAvailabilityView(ctx: {
   };
 }
 
-/** The ET dates a view request displays (month → its calendar dates; days → the window; day → itself). PURE. */
+/**
+ * The ET dates a view request displays (month → its calendar dates; days → the window; day → itself). PURE.
+ */
 export function availabilityViewDates(request: AvailabilityViewRequest): string[] {
   if (request.kind === "month") return monthDates(request.month);
   if (request.kind === "days") return dateRange(request.from, request.to);
   return [request.date];
+}
+
+/** The rolling 14-day window label for a given ET today (the Day view's push range). */
+export function fourteenDayWindowLabel(today: string): string {
+  return availabilityViewLabel({ kind: "days", month: "", from: today, to: addDays(today, 13), date: "", filters: { calendars: [], types: [], statuses: [] } });
+}
+
+// ---------- PR-3 §3 helpers: page scope merge + status filter ----------
+
+/**
+ * The page-level calendar/type filter merged INTO the Settings scope (the
+ * established machinery: `appointmentInScope` + the engine's `scope` input).
+ * Page filter EMPTY = everything in scope (the Settings selection alone).
+ * Both non-empty = intersection (the page can only NARROW what Settings
+ * includes — it can never widen past Settings). Settings stores type NAMES
+ * (the machinery compares `appointment_type`), so the page filter carries
+ * names too; calendar values match id or name like the machinery does.
+ */
+export function mergeAvailabilityPageScope(
+  settingsScope: AppSettings["acuity"],
+  pageFilters: AvailabilityPageFilters,
+): AppSettings["acuity"] {
+  const narrow = (settingsList: string[] | undefined, page: string[]): string[] => {
+    const s = settingsList ?? [];
+    if (page.length === 0) return [...s];
+    if (s.length === 0) return [...page];
+    return s.filter((x) => page.includes(x));
+  };
+  return {
+    ...settingsScope,
+    calendars_included: narrow(settingsScope.calendars_included, pageFilters.calendars),
+    types_included: narrow(settingsScope.types_included, pageFilters.types),
+  };
+}
+
+/**
+ * Day-view slot-list filter for the status toggles (Booked / Open / Holes /
+ * Cancelled / Blocked). Day COUNTS are untouched — this narrows only which
+ * slot rows render. Empty = everything. Tokens:
+ *   booked    → status booked OR booked-pending (the pending placeholder)
+ *   open      → status open (hole membership is a separate toggle)
+ *   holes     → the ONE derivation flags the slot (OPEN · HOLE)
+ *   cancelled → the slot carries struck-through cancelled rows
+ *   blocked   → dashboard/recurring blocks, turnover buffer, or the honest
+ *               gray "unexplained — candidate block"
+ */
+export function filterDaySlotsByStatuses(slots: AvailabilitySlotView[], statuses: string[]): AvailabilitySlotView[] {
+  if (statuses.length === 0) return slots;
+  const set = new Set(statuses);
+  return slots.filter((s) => {
+    if (set.has("booked") && (s.status === "booked" || s.status === "booked-pending")) return true;
+    if (set.has("open") && s.status === "open") return true;
+    if (set.has("holes") && s.isHole) return true;
+    if (set.has("cancelled") && (s.cancelledAppointments.length > 0 || s.status === "cancelled")) return true;
+    if (set.has("blocked") && s.status === "blocked") return true;
+    return false;
+  });
+}
+
+// ---------- PR-3 §3: filter option enumeration (from the CACHED catalog) ----------
+
+/** The availability page's filter options, enumerated from the cached Acuity catalog. */
+export interface AvailabilityFilterOptions {
+  calendars: Array<{ id: string; name: string }>;
+  /** ALL cached types with their REAL calendar bindings (the UI narrows by selected calendar). */
+  types: Array<{ id: string; name: string; calendarIds: string[] }>;
+  /** Valid (calendarId, typeId) pairs straight from the API's calendarIDs — never guessed. */
+  validPairs: Array<{ calendarId: string; typeId: string }>;
+  /** The catalog fetch stamp; null = nothing cached yet (options render honestly empty). */
+  fetchedAt: string | null;
+}
+
+/**
+ * Enumerate filter options from the cached /calendars + /appointment-types
+ * rows. The binding comes ONLY from the API's calendarIDs (§1.2: a type×
+ * calendar pair that doesn't match answers 400 invalid_calendar — offering a
+ * guessed pair would hand the user a guaranteed error). Annex/Zoom still
+ * enumerate even with zero appointments ever: the filter lists what Acuity
+ * HAS, not what bookings exist.
+ */
+export function availabilityFilterOptions(catalog: {
+  calendars: AvailabilityCalendarRow[];
+  types: AvailabilityTypeRow[];
+}): AvailabilityFilterOptions {
+  const fetchedAt =
+    [...catalog.calendars.map((c) => c.fetched_at), ...catalog.types.map((t) => t.fetched_at)].sort().at(-1) ?? null;
+  return {
+    calendars: catalog.calendars
+      .filter((c) => c.calendar_id !== "")
+      .map((c) => ({ id: c.calendar_id, name: c.name }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    types: catalog.types
+      .filter((t) => t.appointment_type_id !== "")
+      .map((t) => ({ id: t.appointment_type_id, name: t.name, calendarIds: [...t.calendar_ids].sort() }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    validPairs: catalog.types.flatMap((t) =>
+      [...t.calendar_ids].sort().map((calendarId) => ({ calendarId, typeId: t.appointment_type_id })),
+    ),
+    fetchedAt,
+  };
+}
+
+// ---------- PR-3 §4: the sync-panel payload ----------
+
+/** The availability page's sync panel: both sync rows, the horizon, the discrepancy list. */
+export interface AvailabilitySyncPanel {
+  connected: boolean;
+  mode: "live" | "demo" | "disconnected";
+  /** The appointment-sync row (integration_connections acuity) — last successful sync. */
+  appointmentLastSyncAt: string | null;
+  appointmentStale: boolean;
+  /** The availability-feed detailed run rows, newest first (the feed's own audit). */
+  feedRuns: Array<{
+    status: string;
+    trigger: string | null;
+    startedAt: string;
+    finishedAt: string | null;
+    callsMade: number | null;
+    error: string | null;
+  }>;
+  /** Last SUCCESSFUL availability-feed run finish (null = the feed never succeeded). */
+  feedLastSuccessAt: string | null;
+  /** "Acuity booking template ends {date}" — null when nothing is cached. */
+  coverageHorizonDate: string | null;
+  noFeedData: boolean;
+  discrepancies: {
+    /** UNRESOLVED count (resolved rows drop off via the existing resolved_at machinery). */
+    count: number;
+    rows: Array<{
+      calendarId: string;
+      dateEt: string;
+      timeEt: string;
+      kind: string;
+      /** The feed's side: "open" | "silent". */
+      acuitySide: string;
+      /** The booked side: the non-cancelled appointments occupying the slot. */
+      bookedCount: number;
+      booked: Array<{ client: string | null; type: string | null; createdAt: string | null }>;
+      grid: string;
+      detectedAt: string;
+    }>;
+  };
+}
+
+/** Compose the sync-panel payload from the connection + feed runs + unresolved discrepancies. */
+export function composeAvailabilitySync(input: {
+  connection: AvailabilityConnection;
+  feedRuns: AvailabilitySyncRunRow[];
+  discrepancies: AvailabilityDiscrepancyRow[];
+  coverageHorizonDate: string | null;
+  noFeedData: boolean;
+}): AvailabilitySyncPanel {
+  const runs = input.feedRuns.slice(0, 10).map((r) => ({
+    status: r.status,
+    trigger: typeof r.scope?.trigger === "string" ? (r.scope.trigger as string) : null,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
+    callsMade: r.calls_made,
+    error: r.error,
+  }));
+  const lastSuccess = input.feedRuns.find((r) => r.status === "success")?.finished_at ?? null;
+  const rows = input.discrepancies.map((d) => {
+    const detail = d.detail ?? {};
+    const bookedList = Array.isArray(detail.booked) ? (detail.booked as Array<Record<string, unknown>>) : [];
+    return {
+      calendarId: d.calendar_id,
+      dateEt: d.date_et,
+      timeEt: d.time_et,
+      kind: d.kind,
+      acuitySide: typeof detail.acuity === "string" ? detail.acuity : "unknown",
+      bookedCount: bookedList.length,
+      booked: bookedList.map((b) => ({
+        client: typeof b.client_name === "string" ? b.client_name : null,
+        type: typeof b.appointment_type === "string" ? b.appointment_type : null,
+        createdAt: typeof b.created_at === "string" ? b.created_at : null,
+      })),
+      grid: typeof detail.grid === "string" ? detail.grid : "canonical",
+      detectedAt: d.detected_at,
+    };
+  });
+  return {
+    connected: input.connection.connected,
+    mode: input.connection.mode,
+    appointmentLastSyncAt: input.connection.lastSyncAt,
+    appointmentStale: input.connection.stale,
+    feedRuns: runs,
+    feedLastSuccessAt: lastSuccess,
+    coverageHorizonDate: input.coverageHorizonDate,
+    noFeedData: input.noFeedData,
+    discrepancies: { count: input.discrepancies.length, rows },
+  };
 }
 

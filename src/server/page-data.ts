@@ -83,6 +83,14 @@ import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
 import { deriveWeeklyHoles, type DayHoleDetail } from "./commission/derive";
 import { kickAvailabilityTopUp } from "./sync/availability-feed";
 import { buildAvailabilityView } from "./availability-view";
+import {
+  availabilityFilterOptions,
+  composeAvailabilitySync,
+  fourteenDayWindowLabel,
+  type AvailabilityFilterOptions,
+  type AvailabilitySyncPanel,
+} from "./availability-view";
+import { deriveDatesToPush, pushRangeLabel, type AvailabilityPushRow } from "./availability-push";
 import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assigned-by-day";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
@@ -935,9 +943,15 @@ export async function availabilityPageData(deps?: PageDeps) {
   // contract tests don't, so the legacy path below stays byte-identical).
   const viewRequest = normalizeAvailabilityView(deps?.view, today);
   if (viewRequest) {
-    const [view, connections] = await Promise.all([
+    // PR-3 §3/§4: the filter options come from the CACHED catalog (written by
+    // every feed run), the sync panel from the feed's run rows + the
+    // unresolved discrepancy list — all cache reads, no API calls.
+    const [view, connections, catalog, feedRuns, discrepancies] = await Promise.all([
       buildAvailabilityView({ store, today, settings, rules, recurring, request: viewRequest }),
       store.getConnections(),
+      store.getAvailabilityCatalog(),
+      store.getAvailabilitySyncRuns(10),
+      store.getAvailabilityDiscrepancies({ unresolvedOnly: true, limit: 200 }),
     ]);
     const { connection, warnings } = availabilityConnectionState(connections);
     // PR-1's designed page-loader top-up: read the cache NOW, kick ONE bounded
@@ -948,6 +962,22 @@ export async function availabilityPageData(deps?: PageDeps) {
     if (view.dates.some((d) => d >= today)) {
       kickAvailabilityTopUp({ dates: view.dates }, { store });
     }
+    const pageView: AvailabilityPageView = {
+      ...view,
+      filterOptions: availabilityFilterOptions(catalog),
+      sync: composeAvailabilitySync({
+        connection,
+        feedRuns,
+        discrepancies,
+        coverageHorizonDate: view.coverage.horizonDate,
+        noFeedData: view.coverage.noFeedData,
+      }),
+      datesToPush: deriveDatesToPush(view.days, today),
+      pushRangeLabel: pushRangeLabel(
+        { kind: viewRequest.kind, label: view.label },
+        fourteenDayWindowLabel(today),
+      ),
+    };
     return {
       meta,
       today,
@@ -956,7 +986,7 @@ export async function availabilityPageData(deps?: PageDeps) {
       holesByDate: {} as Record<string, DayHoleDetail>,
       filters: { calendars: settings.acuity.calendars_included, types: settings.acuity.types_included },
       warnings: [...warnings, ...view.warnings],
-      view,
+      view: pageView,
     };
   }
 
@@ -1060,12 +1090,33 @@ export interface AvailabilityViewRawSearch {
   from?: string;
   to?: string;
   date?: string;
+  /** PR-3 §3 page-level filters (comma-separated): calendar IDs, appointment-type NAMES, status tokens. */
+  cal?: string;
+  type?: string;
+  st?: string;
 }
 
 export type AvailabilityViewKind = "month" | "days" | "day";
 
 /** The 14-Day view's rolling window length. */
 export const AVAILABILITY_DAYS_VIEW_WINDOW = 14;
+
+/**
+ * PR-3 §3 — the availability page's own filters. They NARROW the Settings
+ * scope server-side (through the existing appointmentInScope machinery —
+ * page-level can never widen past Settings); empty = everything in scope.
+ * Status toggles filter the Day view's slot LIST only (counts stay whole-day).
+ */
+export interface AvailabilityPageFilters {
+  /** Calendar IDs (the machinery matches id or name). */
+  calendars: string[];
+  /** Appointment type NAMES (the machinery compares appointment_type). */
+  types: string[];
+  /** Slot-list tokens: booked | open | holes | cancelled | blocked. */
+  statuses: string[];
+}
+
+export const AVAILABILITY_STATUS_TOKENS = ["booked", "open", "holes", "cancelled", "blocked"] as const;
 
 export interface AvailabilityViewRequest {
   kind: AvailabilityViewKind;
@@ -1076,6 +1127,8 @@ export interface AvailabilityViewRequest {
   to: string;
   /** kind=day → the single date. */
   date: string;
+  /** The page-level filters (empty = everything in scope). */
+  filters: AvailabilityPageFilters;
 }
 
 const AVAIL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -1084,6 +1137,10 @@ const AVAIL_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 /**
  * Normalize the raw search into a view request — PURE. Invalid/absent fields
  * fall back to honest defaults (month of today / today), never an error page.
+ * Filter lists are comma-separated; unknown status tokens are dropped (a
+ * typo'd token must not silently empty the slot list — dropping it narrows
+ * less, which is the honest direction); calendar/type values pass through
+ * as-is (an unmatched value honestly yields an empty in-scope set).
  * `null` = no view requested (the legacy 7-day payload contract keeps running
  * for anything that does not opt in).
  */
@@ -1091,19 +1148,29 @@ export function normalizeAvailabilityView(
   raw: AvailabilityViewRawSearch | undefined,
   today: string,
 ): AvailabilityViewRequest | null {
-  if (!raw || (raw.view == null && raw.month == null && raw.from == null && raw.to == null && raw.date == null)) {
+  if (
+    !raw ||
+    (raw.view == null && raw.month == null && raw.from == null && raw.to == null && raw.date == null && raw.cal == null && raw.type == null && raw.st == null)
+  ) {
     return null;
   }
+  const csv = (v: string | undefined): string[] =>
+    (v ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s !== "");
+  const validStatuses = csv(raw.st).filter((s) => (AVAILABILITY_STATUS_TOKENS as readonly string[]).includes(s));
+  const filters: AvailabilityPageFilters = { calendars: csv(raw.cal), types: csv(raw.type), statuses: validStatuses };
   const validDate = (v: string | undefined) => (v && AVAIL_DATE_RE.test(v) ? v : null);
   const validMonth = (v: string | undefined) => (v && AVAIL_MONTH_RE.test(v) ? v : null);
   if (raw.view === "day") {
-    return { kind: "day", month: "", from: "", to: "", date: validDate(raw.date) ?? today };
+    return { kind: "day", month: "", from: "", to: "", date: validDate(raw.date) ?? today, filters };
   }
   if (raw.view === "days") {
     const from = validDate(raw.from) ?? today;
-    return { kind: "days", month: "", from, to: addDays(from, AVAILABILITY_DAYS_VIEW_WINDOW - 1), date: "" };
+    return { kind: "days", month: "", from, to: addDays(from, AVAILABILITY_DAYS_VIEW_WINDOW - 1), date: "", filters };
   }
-  return { kind: "month", month: validMonth(raw.month) ?? monthKeyOf(today), from: "", to: "", date: "" };
+  return { kind: "month", month: validMonth(raw.month) ?? monthKeyOf(today), from: "", to: "", date: "", filters };
 }
 
 /** The ET dates a view request displays (month → its calendar dates; days → the window; day → itself). PURE. */
@@ -1149,8 +1216,12 @@ export interface AvailabilityRangeSummary {
   openKnown: boolean;
 }
 
-/** Per-slot availability state (Day view). CANCELLED renders struck-through on the slot's row. */
-export type AvailabilitySlotStatus = "booked" | "booked-pending" | "open" | "blocked" | "cancelled";
+/**
+ * Per-slot availability state (Day view). CANCELLED renders struck-through on
+ * the slot's row; CLOSED = a feed-observed closed day's empty slots (PR-3 §5
+ * polish — chips agree with the day's real 0 open).
+ */
+export type AvailabilitySlotStatus = "booked" | "booked-pending" | "open" | "blocked" | "cancelled" | "closed";
 
 export interface AvailabilitySlotAppointment {
   id: string;
@@ -1222,6 +1293,22 @@ export interface AvailabilityViewPayload {
   /** Range-level honesty lines (the page banner appends them). */
   warnings: string[];
 }
+
+/**
+ * The availability page's FULL view payload (PR-3): the range view plus the
+ * Dates-to-Push rows, the filter options and the sync panel — everything the
+ * rebuilt route renders, all from cache reads + the ONE engine.
+ */
+export type AvailabilityPageView = AvailabilityViewPayload & {
+  /** §7 Dates to Push — priority-sorted (holes → openings → utilization → date). */
+  datesToPush: AvailabilityPushRow[];
+  /** Which range the push list covers ("visible month October 2026" / "the 14-day window …"). */
+  pushRangeLabel: string;
+  /** §11 filter options from the CACHED /calendars + /appointment-types catalog. */
+  filterOptions: AvailabilityFilterOptions;
+  /** §1 sync visibility: both sync rows, coverage horizon, discrepancy list. */
+  sync: AvailabilitySyncPanel;
+};
 
 /** Acuity connection state + the stale/disconnected honesty lines (mirrors the legacy path exactly). */
 function availabilityConnectionState(connections: Awaited<ReturnType<Store["getConnections"]>>): {

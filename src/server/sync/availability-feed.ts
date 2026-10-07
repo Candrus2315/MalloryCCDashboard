@@ -420,6 +420,21 @@ export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions)
     callsMade += 1;
     const types = await client.fetchAppointmentTypes();
     callsMade += 1;
+    // PR-3 §3: cache the catalog for the page-level filter options (the
+    // binding is the API's calendarIDs — the filter never guesses a pair).
+    await store.putAvailabilityCatalog(
+      {
+        calendars: calendars.map((c) => ({ calendar_id: c.id, name: c.name })),
+        types: types.map((t) => ({
+          appointment_type_id: t.id,
+          name: t.name,
+          calendar_ids: [...t.calendarIDs],
+          duration_minutes: t.duration,
+        })),
+      },
+      detailedRunId,
+      now().toISOString(),
+    );
     const { pairs, warnings: pairWarnings } = representativeTypePairs(calendars, types);
     warnings.push(...pairWarnings);
     if (pairs.length === 0) {
