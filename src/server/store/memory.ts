@@ -932,6 +932,19 @@ export class MemoryStore implements Store {
     });
     return id;
   }
+  async reapStaleAvailabilitySyncRuns(cutoffMs: number, error: string): Promise<number> {
+    let reaped = 0;
+    for (const r of this.availabilityRuns) {
+      if (r.status !== "running") continue;
+      const startedMs = r.started_at ? Date.parse(r.started_at) : NaN;
+      if (!Number.isFinite(startedMs) || startedMs >= cutoffMs) continue;
+      r.status = "error";
+      r.finished_at = new Date().toISOString();
+      r.error = error;
+      reaped += 1;
+    }
+    return reaped;
+  }
   async finishAvailabilitySyncRun(id: string, status: string, callsMade: number, error: string | null): Promise<void> {
     const run = this.availabilityRuns.find((r) => r.id === id);
     if (run) {

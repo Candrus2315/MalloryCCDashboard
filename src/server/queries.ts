@@ -43,7 +43,7 @@ import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
 import type { Store } from "./store/types";
 import { availabilityPageData, type AvailabilityViewRawSearch, commissionPageData, commissionValidationPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
-import { availabilityViewArgsFrom } from "./availability-wiring";
+import { resolveAvailabilityViewArgs } from "./availability-wiring";
 import { getRequest } from "@tanstack/react-start/server";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
@@ -1144,10 +1144,25 @@ function currentRequestUrl(): string | null {
   }
 }
 
-/** AVAILABILITY page — engine + Acuity connection + scope filters (playbook contract). */
-export const getAvailabilityData = createServerFn()
+/**
+ * AVAILABILITY page — engine + Acuity connection + scope filters (playbook contract).
+ *
+ * METHOD = POST (2026-10-07 triage, live-instrumented): TanStack Start 1.158
+ * drops a GET serverfn's payload in BOTH transports — the SSR in-process chain
+ * AND the client-navigation RPC (the handler then sees data={} with the request
+ * context either holding the PAGE request during SSR, or the _serverFn endpoint
+ * request during client nav — never a recoverable search). The POST transport
+ * delivers the payload in both (the refreshAvailabilityFeed POST demonstrably
+ * runs server-side from the browser). The page-URL fallback in
+ * availabilityViewArgsFrom stays as belt-and-suspenders for any transport that
+ * drops a POST body too (SSR page loads carry the search in their URL).
+ */
+export const getAvailabilityData = createServerFn({ method: "POST" })
   .validator((input?: AvailabilityViewRawSearch) => input ?? {})
-  .handler(({ data }) => withDbRetry(() => availabilityPageData({ view: availabilityViewArgsFrom(data, currentRequestUrl()) })));
+  .handler(({ data }) => {
+    const { args, argsLost } = resolveAvailabilityViewArgs(data, currentRequestUrl());
+    return withDbRetry(() => availabilityPageData({ view: args, viewArgsLost: argsLost }));
+  });
 
 /**
  * PR-3 §4 MANUAL REFRESH (the sync panel's Refresh control): re-probe the

@@ -122,6 +122,12 @@ export interface PageDeps {
    * tests); the route always passes one (default view = month of today).
    */
   view?: AvailabilityViewRawSearch;
+  /**
+   * 2026-10-07 triage: the handler recovered args lost in transit to the
+   * route's own default (view=month). The payload names it in a warning —
+   * the owner is never shown a silently substituted view.
+   */
+  viewArgsLost?: boolean;
 }
 
 export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
@@ -955,6 +961,9 @@ export async function availabilityPageData(deps?: PageDeps) {
       store.getAvailabilityDiscrepancies({ unresolvedOnly: true, limit: 200 }),
     ]);
     const { connection, warnings } = availabilityConnectionState(connections);
+    if (deps?.viewArgsLost) {
+      warnings.push("Availability view args were lost in transit — the default month view (today) is shown.");
+    }
     // PR-1's designed page-loader top-up: read the cache NOW, kick ONE bounded
     // background run for what the visible range is missing — never awaited
     // (SSR stays fast; the next load or tick sees fresh cache), and a no-op

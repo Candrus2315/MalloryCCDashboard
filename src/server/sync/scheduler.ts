@@ -52,7 +52,10 @@ let lastCommissionCloseAt = 0;
  * store→scheduler import cycle). Re-exported here for existing callers/tests.
  */
 export { STALE_RUN_REAP_MINUTES } from "../store/types";
-const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity", "attribution"]);
+// "acuity_availability" rides the machinery too (2026-10-07: a hung feed run
+// blocked every background tick for its 12h window — the provider was missing
+// from this set so the reaper never closed its rows).
+const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity", "attribution", "acuity_availability"]);
 
 /**
  * Mark every "running" sync_runs row of a bounded provider that is older than
@@ -81,6 +84,14 @@ export async function reapStaleSyncRuns(store: Store, now?: () => Date): Promise
       `stale: this ${run.provider} run exceeded ${STALE_RUN_REAP_MINUTES} minutes without finishing — marked failed by the scheduler's stale-run reaper (the process hung or died; the next tick retries)`,
     );
     reaped++;
+  }
+  // The availability feed's DETAILED rows (availability_sync_runs) carry the
+  // sync-panel audit; a hung process leaves them "running" forever unless
+  // reaped here too (the generic row alone does not close them).
+  try {
+    reaped += await store.reapStaleAvailabilitySyncRuns(nowFn().getTime() - STALE_RUN_REAP_MINUTES * 60_000, "stale: this availability-feed run exceeded the reap window without finishing — marked failed by the scheduler's stale-run reaper (the process hung or died; the next tick retries)");
+  } catch {
+    // best-effort — the generic-row pass above already unblocked the tick guard
   }
   return reaped;
 }

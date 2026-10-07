@@ -180,6 +180,7 @@ const STORE_METHOD_FLAGS = {
   getAvailabilitySlotsForDates: 1,
   insertAvailabilitySyncRun: 1,
   finishAvailabilitySyncRun: 1,
+  reapStaleAvailabilitySyncRuns: 1,
   getAvailabilitySyncRuns: 1,
   applyAvailabilityDiscrepancies: 1,
   getAvailabilityDiscrepancies: 1,

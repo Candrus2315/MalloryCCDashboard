@@ -1622,6 +1622,8 @@ export interface Store {
   /** Open ONE detailed availability run (scope = months/dates/calendars/trigger; pairs with the generic sync_runs row). */
   insertAvailabilitySyncRun(scope: Record<string, unknown>): Promise<string>;
   finishAvailabilitySyncRun(id: string, status: string, callsMade: number, error: string | null): Promise<void>;
+  /** Mark every 'running' detailed availability run started before cutoffMs as failed (reaper semantics). */
+  reapStaleAvailabilitySyncRuns(cutoffMs: number, error: string): Promise<number>;
   /** Detailed availability-run rows, newest first. */
   getAvailabilitySyncRuns(limit: number): Promise<AvailabilitySyncRunRow[]>;
   /**

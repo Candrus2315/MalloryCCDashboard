@@ -22,7 +22,7 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
 import { availabilityPageData } from "../page-data";
-import { availabilityViewArgsFrom } from "../availability-wiring";
+import { availabilityViewArgsFrom, resolveAvailabilityViewArgs } from "../availability-wiring";
 
 const TODAY = "2026-10-06"; // Tuesday — the day the PR-1 probes ran
 
@@ -108,5 +108,32 @@ describe("availability wiring — serverfn args → builder view request (loader
   test("direct data always wins over the URL fallback (client navigation with explicit filters)", () => {
     const data = { view: "month", month: "2026-12", cal: "12107308" };
     expect(availabilityViewArgsFrom(data, "http://localhost:3000/availability?view=month&month=2026-10")).toBe(data);
+  });
+});
+
+
+describe("resolveAvailabilityViewArgs — 2026-10-07 args-lost recovery", () => {
+  test("data present → passed through, argsLost=false", () => {
+    const r = resolveAvailabilityViewArgs({ view: "day", date: "2026-10-08" }, null);
+    expect(r.argsLost).toBe(false);
+    expect(r.args).toEqual({ view: "day", date: "2026-10-08" });
+  });
+  test("data empty + availability page URL (SSR) → parsed from the URL, argsLost=false", () => {
+    const r = resolveAvailabilityViewArgs({}, "https://x/availability?view=month&month=2026-11");
+    expect(r.argsLost).toBe(false);
+    expect(r.args.view).toBe("month");
+  });
+  test("data empty + no page URL → route default (month), argsLost=true", () => {
+    const r = resolveAvailabilityViewArgs({}, null);
+    expect(r.argsLost).toBe(true);
+    expect(r.args.view).toBe("month");
+  });
+  test("data empty + _serverFn request URL (client-nav RPC) → route default, argsLost=true", () => {
+    const r = resolveAvailabilityViewArgs(
+      {},
+      "https://x/_serverFn/eyJmaWxlIjoiL3NyYy9zZXJ2ZXIvcXVlcmllcy50cyJ9",
+    );
+    expect(r.argsLost).toBe(true);
+    expect(r.args.view).toBe("month");
   });
 });

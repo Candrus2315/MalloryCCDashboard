@@ -50,6 +50,7 @@
  */
 import { addDays, etDateStrFromInstant, etDayStartUtc, etToday } from "../date-logic";
 import { etTimeOfInstant, scheduledSlotTimesForDay } from "../commission/derive";
+import { STALE_RUN_REAP_MINUTES } from "../store/types";
 import type { AppointmentRow } from "../metrics/compute";
 import {
   AcuityAvailabilityClient,
@@ -604,8 +605,18 @@ export async function availabilityFeedTick(options?: {
   const running = await store.getRunningSyncRun(AVAILABILITY_FEED_PROVIDER);
   if (running) {
     const startedMs = Date.parse(running.started_at);
-    const stale = !Number.isFinite(startedMs) || now().getTime() - startedMs > 12 * 3_600_000;
+    const stale = !Number.isFinite(startedMs) || now().getTime() - startedMs > STALE_RUN_REAP_MINUTES * 60_000;
     if (!stale) return { outcome: "skipped", reason: "sync-in-progress" };
+    // A hung run must never hold the running guard beyond the reaper window
+    // (2026-10-07: two hung runs blocked every background tick for hours).
+    // Resolve the generic row honestly, reap any stale detailed rows, proceed.
+    const msg = `stale: this ${AVAILABILITY_FEED_PROVIDER} run exceeded ${STALE_RUN_REAP_MINUTES} minutes without finishing — marked failed by the availability tick's stale-run guard (the process hung or died; retried now)`;
+    try {
+      await store.finishSyncRun(running.id, "error", running.records_upserted ?? 0, msg);
+      await store.reapStaleAvailabilitySyncRuns(now().getTime() - STALE_RUN_REAP_MINUTES * 60_000, msg);
+    } catch {
+      // best-effort — the scheduler's reaper pass closes anything left
+    }
   }
   if (trigger === "background" && !options?.skipThrottle) {
     if (now().getTime() - lastBackgroundRunAt < AVAILABILITY_FEED_MIN_INTERVAL_MS) {

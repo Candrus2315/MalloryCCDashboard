@@ -2020,6 +2020,13 @@ export class PgStore implements Store {
     return String(rows[0].id);
   }
 
+  async reapStaleAvailabilitySyncRuns(cutoffMs: number, error: string): Promise<number> {
+    const rows = await this.sql`
+      UPDATE availability_sync_runs SET status = 'error', finished_at = now(), error = ${error}
+      WHERE status = 'running' AND started_at < to_timestamp(${cutoffMs} / 1000.0)
+      RETURNING id`;
+    return rows.length;
+  }
   async finishAvailabilitySyncRun(id: string, status: string, callsMade: number, error: string | null): Promise<void> {
     await this.ensureSchema();
     await this.sql`

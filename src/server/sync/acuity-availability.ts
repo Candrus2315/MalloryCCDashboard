@@ -184,6 +184,10 @@ export class AcuityAvailabilityClient {
     const url = `https://acuityscheduling.com/api/v1/${path}${qs ? `?${qs}` : ""}`;
     const res = await this.fetchImpl(url, {
       method: "GET",
+      // Bounded (2026-10-07: two runs hung forever on a wedged connection —
+      // no timeout meant the run never finished and blocked the tick guard).
+      // 20s ≫ a healthy paced call (~1.1s); the abort covers the body read too.
+      signal: AbortSignal.timeout(20_000),
       headers: {
         Authorization: this.authHeader(),
         Accept: "application/json",
