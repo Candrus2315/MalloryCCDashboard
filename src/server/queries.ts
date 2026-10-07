@@ -43,6 +43,8 @@ import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
 import type { Store } from "./store/types";
 import { availabilityPageData, type AvailabilityViewRawSearch, commissionPageData, commissionValidationPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
+import { availabilityViewArgsFrom } from "./availability-wiring";
+import { getRequest } from "@tanstack/react-start/server";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
 import { WEEKLY_CC_SECTIONS, addMonthsKey, monthKeyLabel, monthKeyOf } from "./metrics/weekly";
@@ -1128,10 +1130,24 @@ export const getTeamData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as TeamSearchParams)
   .handler(({ data }) => withDbRetry(() => teamPageData(data)));
 
+/**
+ * The current request's URL (server-only, h3 event storage) — null outside a
+ * request context (tests/demo), never throws. During an SSR page load the
+ * availability handler's start context holds the PAGE request, whose URL query
+ * is the raw search the route's validateSearch saw; see availability-wiring.ts.
+ */
+function currentRequestUrl(): string | null {
+  try {
+    return getRequest().url;
+  } catch {
+    return null;
+  }
+}
+
 /** AVAILABILITY page — engine + Acuity connection + scope filters (playbook contract). */
 export const getAvailabilityData = createServerFn()
   .validator((input?: AvailabilityViewRawSearch) => input ?? {})
-  .handler(({ data }) => withDbRetry(() => availabilityPageData({ view: data })));
+  .handler(({ data }) => withDbRetry(() => availabilityPageData({ view: availabilityViewArgsFrom(data, currentRequestUrl()) })));
 
 /**
  * PR-3 §4 MANUAL REFRESH (the sync panel's Refresh control): re-probe the
