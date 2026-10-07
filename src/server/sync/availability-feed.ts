@@ -445,6 +445,7 @@ export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions)
       await store.putAvailabilityDates(
         [{ calendar_id: s.calendarId, appointment_type_id: s.appointmentTypeId, month: s.month, dates_et: datesEt }],
         detailedRunId,
+        now().toISOString(), // stamp the sweep's own probe instant (sweep-age logic keys off it)
       );
       monthsFetched += 1;
       sweepsDone.push({ month: s.month, calendarId: s.calendarId, dates: datesEt });

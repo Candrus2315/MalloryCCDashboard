@@ -801,7 +801,7 @@ export class MemoryStore implements Store {
   // ---- Availability feed cache (availability rebuild PR-1) ----
   // Mirror semantics of the PgStore methods (same contracts, memory shapes).
 
-  async putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string): Promise<void> {
+  async putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string, fetchedAt?: string): Promise<void> {
     for (const r of rows) {
       const key = `${r.calendar_id}|${r.appointment_type_id}|${r.month}`;
       this.availabilityDatesCache.set(key, {
@@ -809,7 +809,7 @@ export class MemoryStore implements Store {
         appointment_type_id: r.appointment_type_id,
         month: r.month,
         dates_et: [...r.dates_et],
-        fetched_at: new Date().toISOString(),
+        fetched_at: fetchedAt ?? new Date().toISOString(),
         run_id: runId,
       });
     }

@@ -1875,21 +1875,22 @@ export class PgStore implements Store {
    * (including EMPTY — a [] month is the cached coverage horizon, not "no
    * data"). Row-level REPLACE per (calendar, type, month).
    */
-  async putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string): Promise<void> {
+  async putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string, fetchedAt?: string): Promise<void> {
     this.cache.bump();
     await this.ensureSchema();
     if (rows.length === 0) return;
     // date[] as an explicit literal (dates are YYYY-MM-DD — no quoting hazards;
     // an empty answer stores '{}' exactly as Acuity's [] deserves).
     const pgDateArray = (dates: string[]) => `{${dates.join(",")}}`;
+    const stamp = fetchedAt ?? new Date().toISOString();
     await this.sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(72240902)`;
       for (const r of rows) {
         await tx`
           INSERT INTO availability_dates (calendar_id, appointment_type_id, month, dates_et, fetched_at, run_id)
-          VALUES (${r.calendar_id}, ${r.appointment_type_id}, ${r.month}, ${pgDateArray(r.dates_et)}::date[], now(), ${runId}::uuid)
+          VALUES (${r.calendar_id}, ${r.appointment_type_id}, ${r.month}, ${pgDateArray(r.dates_et)}::date[], ${stamp}::timestamptz, ${runId}::uuid)
           ON CONFLICT (calendar_id, appointment_type_id, month)
-          DO UPDATE SET dates_et = EXCLUDED.dates_et, fetched_at = now(), run_id = EXCLUDED.run_id
+          DO UPDATE SET dates_et = EXCLUDED.dates_et, fetched_at = ${stamp}::timestamptz, run_id = EXCLUDED.run_id
         `;
       }
     });

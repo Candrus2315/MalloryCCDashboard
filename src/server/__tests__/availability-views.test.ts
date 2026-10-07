@@ -19,7 +19,7 @@ import {
 } from "../page-data";
 import { slotLabelToMinutes, slotLabelToTime, slotTimeToLabel } from "../metrics/availability";
 import { deriveAvailabilityHoles } from "../sync/availability-feed";
-import { addDays } from "../date-logic";
+import { addDays, etDayStartUtc } from "../date-logic";
 
 // ---- PR-1 fixtures (raw probe snapshots) ----
 import octDates from "./fixtures/availability-feed/dates-2026-10-cal1335091.json";
@@ -45,10 +45,13 @@ function timesToHhmm(times: Array<{ time: string }>): string[] {
   return times.map((t) => t.time.slice(11, 16)).sort();
 }
 
-/** ET wall time on an ET date → UTC instant (EDT, UTC−4 in October 2026). */
+/** ET wall time on an ET date → UTC instant. DST-correct: anchored on the
+ * date's REAL ET midnight (etDayStartUtc — two-pass offset), never a hardcoded
+ * offset (EDT UTC−4 in October, EST UTC−5 from Nov 1 — the November seeds land
+ * an hour off with a fixed +4). */
 function etUtc(date: string, hhmm: string): string {
   const [h, m] = hhmm.split(":").map(Number);
-  return `${date}T${String(h + 4).padStart(2, "0")}:${String(m).padStart(2, "0")}:00.000Z`;
+  return new Date(new Date(etDayStartUtc(date)).getTime() + (h * 60 + m) * 60_000).toISOString();
 }
 
 interface SeedAppt {
@@ -102,6 +105,7 @@ async function seedFeed(store: MemoryStore) {
   await store.putAvailabilityDates(
     [dateRow("2026-10", octDates as Array<{ date: string }>), dateRow("2026-11", novDates as Array<{ date: string }>), dateRow("2026-12", decDates as Array<{ date: string }>), dateRow("2027-01", janDates as Array<{ date: string }>)],
     RUN,
+    SWEEP_AT, // the probe instant, PINNED — the sweep-age classification (feed-observed closed vs not-yet-observed) keys off fetched_at, and the wall clock here is not Oct 6 anymore
   );
   // per-date times probes (only 10-08 + 10-13 were probed)
   await store.putAvailabilitySlotsForDate(CAL, "2026-10-08", timesToHhmm(timesOct08 as Array<{ time: string }>).map((time_et) => ({ time_et, slots_available: 1 })), RUN);
@@ -207,6 +211,10 @@ describe("availabilityPageData view=month — coverage from PR-1 fixtures", () =
     expect(byDate(view.days, "2026-10-07").acuity).toBe("feed");
     expect(byDate(view.days, "2026-10-07").openCount).toBe(0);
     expect(byDate(view.days, "2026-10-07").feedOpenTimes).toBeNull(); // feed-closed: open is a REAL 0, no per-time feed answer exists
+    // OWNER RULING 2026-10-06: holes = empty slots = capacity − booked — a
+    // feed-closed (fully-unbookable) day counts ALL its grid slots as holes
+    // (9 in the demo grid; 10 on a real non-Tue schedule), never 0.
+    expect(byDate(view.days, "2026-10-07").holes).toBe(9);
     // Oct 8: probed → Acuity-authoritative (feed ∖ booked)
     const d08 = byDate(view.days, "2026-10-08");
     expect(d08.acuity).toBe("feed");
