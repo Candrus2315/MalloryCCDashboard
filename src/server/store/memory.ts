@@ -65,7 +65,7 @@ import type {
   AvailabilitySlotRow,
   AvailabilitySyncRunRow,
 } from "./types";
-import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -190,9 +190,10 @@ export class MemoryStore implements Store {
     return normalizeAppSettings(this.settings);
   }
   async saveSettings(patch: Partial<AppSettings>, actor = "system"): Promise<AppSettings> {
-    // HARDENED sheets merge (mergeSheetsSettings): a patch without a valid
-    // sheet `mode` can no longer silently drop the saved one.
-    const { sheets, modeChanges } = mergeSheetsSettings(this.settings.sheets, patch.sheets);
+    // HARDENED sheets merge (mergeSheetsSettings): mode changes are honored
+    // ONLY from owner-labeled writes — a system/unlabeled or default-
+    // application write can never silently flip a saved mode.
+    const { sheets, modeChanges } = mergeSheetsSettings(this.settings.sheets, patch.sheets, actor === SETTINGS_OWNER_ACTOR);
     this.settings = {
       ...this.settings,
       ...patch,

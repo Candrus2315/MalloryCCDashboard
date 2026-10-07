@@ -65,7 +65,7 @@ import type {
   AvailabilitySlotRow,
   AvailabilitySyncRunRow,
 } from "./types";
-import { DEFAULT_SETTINGS, isPipStatus, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_SETTINGS, isPipStatus, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -887,9 +887,10 @@ export class PgStore implements Store {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     const current = await this.getSettings();
-    // HARDENED sheets merge (mergeSheetsSettings): a patch without a valid
-    // sheet `mode` can no longer silently drop the saved one.
-    const { sheets, modeChanges } = mergeSheetsSettings(current.sheets, patch.sheets);
+    // HARDENED sheets merge (mergeSheetsSettings): mode changes are honored
+    // ONLY from owner-labeled writes — a system/unlabeled or default-
+    // application write can never silently flip a saved mode.
+    const { sheets, modeChanges } = mergeSheetsSettings(current.sheets, patch.sheets, actor === SETTINGS_OWNER_ACTOR);
     const next: AppSettings = {
       ...current,
       ...patch,

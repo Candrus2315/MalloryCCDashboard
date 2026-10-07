@@ -55,7 +55,7 @@ import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
 import type { AuditOkBody } from "./audit-api";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
-import { normalizeRepMappings, type AppSettings, type RepMapping } from "./store/types";
+import { normalizeRepMappings, SETTINGS_OWNER_ACTOR, type AppSettings, type RepMapping } from "./store/types";
 import { applyCommissionCorrection, assignCommissionWeeks, submitCommissionCycle, transitionCommissionCycle, unassignCommissionWeeks, type CommissionCycleStatus, type CorrectionKind } from "./commission/lifecycle";
 
 export interface PageMeta {
@@ -570,10 +570,10 @@ export const saveSheetMapping = createServerFn({ method: "POST" })
     const settings = await store.getSettings();
     const columns: Record<string, string> = { ...settings.sheets[sheet].columns, ...data.columns };
     const mode = isSheetMappingMode(data.mode) ? data.mode : settings.sheets[sheet].mode;
-    // Owner-driven Settings save → the audit row (if the mode changes) is
-    // labeled "christopher", consistent with saveWeekGoal/saveRepMappings.
-    // The store writes the audit row itself when the merge changes a mode.
-    await store.saveSettings({ sheets: { ...settings.sheets, [sheet]: { ...settings.sheets[sheet], columns, mode } } }, "christopher");
+    // Owner-driven Settings save → the write is owner-labeled, so a mode the
+    // owner picks is honored; the store audits any mode change (old → new,
+    // this actor) — consistent with saveWeekGoal/saveRepMappings.
+    await store.saveSettings({ sheets: { ...settings.sheets, [sheet]: { ...settings.sheets[sheet], columns, mode } } }, SETTINGS_OWNER_ACTOR);
     return { ok: true, columns, mode };
   });
 
