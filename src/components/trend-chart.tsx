@@ -99,12 +99,15 @@ export function TrendCard({ title, points, unit, refLine, note, info, wide, meta
 
   const x = (i: number) => (points.length <= 1 ? M.l + PW / 2 : M.l + (i / (points.length - 1)) * PW);
 
-  const maxVal = Math.max(
-    1,
-    ...values.filter((v): v is number => v != null),
-    refLine?.value ?? 0,
-  );
-  const yMax = maxVal * 1.08;
+  // QA 2026-10-08: the ≥1 floor is a COUNT-unit convention (a count chart never
+  // scales below 1). Applied to pct/duration it destroyed pct charts: funnel
+  // values are decimals (0.07–0.09) so the domain collapsed to [0,1.08] — a
+  // flat line hugging the baseline and nonsense axis ticks (0%/54%/108%).
+  // pct/duration now scale to their true max; count keeps the floor.
+  const finite = values.filter((v): v is number => v != null);
+  const scaleFloor = unit === "count" ? 1 : 0;
+  const maxVal = finite.length > 0 ? Math.max(scaleFloor, ...finite, refLine?.value ?? 0) : scaleFloor;
+  const yMax = maxVal > 0 ? maxVal * 1.08 : 1;
   const y = (v: number) => M.t + PH - (v / yMax) * PH;
 
   // contiguous non-null runs → polyline segments (nulls break the line)

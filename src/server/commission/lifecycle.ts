@@ -489,8 +489,12 @@ export async function applyCommissionCorrection(
 
 /**
  * The next commission submission date for a dashboard card: the stored cycle
- * with the earliest submission_date still in the future, else the newest
- * cycle's submission date (past-due shown honestly). Null = no cycle stored.
+ * with the earliest submission_date still in the future, else the newest cycle
+ * whose deadline has passed WITHOUT being submitted (past-due shown honestly).
+ * QA 2026-10-08: a `submitted` (terminal) cycle is no longer returned as
+ * "next" — an already-submitted cycle's deadline is not upcoming or overdue,
+ * and showing it under "Next Commission Submission" was misleading. Null =
+ * no upcoming/unsubmitted cycle stored (the honest empty state).
  */
 export function nextCommissionSubmission(
   cycles: CommissionCycleRow[],
@@ -500,9 +504,12 @@ export function nextCommissionSubmission(
   const sorted = [...cycles].sort((a, b) => (a.submission_date < b.submission_date ? -1 : 1));
   const upcoming = sorted.find((c) => c.submission_date >= today);
   if (upcoming) return upcoming;
-  // All stored deadlines are past: the newest cycle (latest start_date — the
-  // one currently being worked) is the honest "next" — its deadline is overdue.
-  return [...cycles].sort((a, b) => (a.start_date < b.start_date ? 1 : -1))[0];
+  // All stored deadlines are past: the newest UNsubmitted cycle (latest
+  // start_date — the one currently being worked) is the honest "next" — its
+  // deadline is overdue. Submitted cycles are done and never shown as next.
+  const unsubmitted = cycles.filter((c) => c.status !== "submitted");
+  if (unsubmitted.length === 0) return null;
+  return [...unsubmitted].sort((a, b) => (a.start_date < b.start_date ? 1 : -1))[0];
 }
 
 /** Convenience: the Monday..Sunday span of a week (labels only). */

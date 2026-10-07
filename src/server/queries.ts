@@ -921,6 +921,13 @@ export interface FreshnessData {
   intervalSeconds: number;
   serverNow: string;
   /**
+   * QA 2026-10-08: the shell "Last synced" label is the data-freshness FLOOR —
+   * the OLDEST last-success across all real (non-demo) providers. It previously
+   * keyed on HighLevel only, understating staleness (Sheets older than the
+   * displayed "1h 5m"). Null when no provider has ever succeeded.
+   */
+  oldestSuccessAt: string | null;
+  /**
    * Harmonization Wave 1: nav count badges (shell, all pages). Factual record
    * counts from the SAME stores the sections render — a zero or absent count
    * hides its badge (a badge is never faked). Presentation support only.
@@ -931,6 +938,18 @@ export interface FreshnessData {
     /** Commissions — cycles sitting in Ready for Review (manager attention). */
     commissionsAwaitingReview: number;
   };
+}
+
+/** Pure: the oldest last-successful-sync timestamp across non-demo providers. */
+export function oldestSyncSuccessAt(
+  connections: Array<{ provider: string; is_demo: boolean; last_successful_sync_at: string | null }>,
+): string | null {
+  let oldest: string | null = null;
+  for (const c of connections) {
+    if (c.is_demo || !c.last_successful_sync_at) continue;
+    if (oldest == null || c.last_successful_sync_at < oldest) oldest = c.last_successful_sync_at;
+  }
+  return oldest;
 }
 
 /** Connection freshness for the shell's "Last synced Xm ago" indicator. */
@@ -960,6 +979,7 @@ export const getFreshnessData = createServerFn().handler((): Promise<FreshnessDa
       lastSuccessAt: hl?.last_successful_sync_at ?? null,
       lastError: hl?.last_error ?? null,
     },
+    oldestSuccessAt: oldestSyncSuccessAt(connections),
     running: !!running,
     runningStartedAt: running?.started_at ?? null,
     intervalSeconds: readSchedulerIntervalSeconds(settings.highlevel_sync_interval_seconds),
@@ -982,6 +1002,7 @@ export const refreshNow = createServerFn({ method: "POST" }).handler(async () =>
     tick,
     lastSyncAt: hl?.last_sync_at ?? null,
     lastSuccessAt: hl?.last_successful_sync_at ?? null,
+    oldestSuccessAt: oldestSyncSuccessAt(connections),
     lastError: hl?.last_error ?? null,
     running: !!running,
     serverNow: new Date().toISOString(),

@@ -690,7 +690,7 @@ function WeeklyPage() {
               </div>
               <p className="kpi-sub mt-2 tabular-nums">
                 {mtd.goal != null ? `${signedDelta(mtd.total, mtd.goal)} vs goal · ` : ""}
-                {data.month.start} – {data.month.end}
+                {formatDateHuman(data.month.start)} – {formatDateHuman(data.month.end)}
               </p>
             </div>
             <div className="border-t border-(--table-border-weak) p-5 sm:border-t-0">
