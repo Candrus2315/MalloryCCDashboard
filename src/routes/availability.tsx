@@ -145,7 +145,7 @@ function AvailabilityPage() {
   const data = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const view = data.view as AvailabilityPageView;
+  const view = data.view as AvailabilityPageView | undefined;
   const conn = connectionView(data.connection, null);
   const suppressed = conn.unavailable;
 
@@ -153,12 +153,13 @@ function AvailabilityPage() {
     void navigate({ search: (prev) => ({ ...prev, ...patch }) });
 
   const selectedDay = useMemo(() => {
-    if (view.kind !== "day") return null;
+    if (!view || view.kind !== "day") return null;
     return view.days.find((d) => d.date === view.date) ?? null;
   }, [view]);
 
   // month navigation (pure string math over the view's month key)
   const monthNav = (dir: 1 | -1) => {
+    if (!view) return;
     const [y, m] = view.month.split("-").map(Number);
     const zero = y * 12 + (m - 1) + dir;
     const nm = `${String(Math.floor(zero / 12)).padStart(4, "0")}-${String((zero % 12) + 1).padStart(2, "0")}`;
@@ -170,7 +171,7 @@ function AvailabilityPage() {
   const doRefresh = async () => {
     setRefresh({ state: "busy" });
     try {
-      const res = await refreshAvailabilityFeed({ data: { dates: view.dates } });
+      const res = await refreshAvailabilityFeed({ data: { dates: view?.dates ?? [] } });
       const line =
         res.outcome === "synced"
           ? `Refreshed — ${res.callsMade ?? 0} Acuity calls, ${res.datesProbed ?? 0} dates probed.`
@@ -189,7 +190,9 @@ function AvailabilityPage() {
   const activeCal = (search.cal ?? "").split(",").filter(Boolean);
   const activeType = (search.type ?? "").split(",").filter(Boolean);
   const activeSt = (search.st ?? "").split(",").filter(Boolean);
-  const typeOptions = activeCal.length === 1 ? view.filterOptions.types.filter((t) => t.calendarIds.includes(activeCal[0])) : view.filterOptions.types;
+  const typeOptions = activeCal.length === 1
+    ? (view?.filterOptions.types ?? []).filter((t) => t.calendarIds.includes(activeCal[0]))
+    : (view?.filterOptions.types ?? []);
   const setFilters = (patch: { cal?: string; type?: string; st?: string }) => go(patch);
   const filtersActive = activeCal.length > 0 || activeType.length > 0 || activeSt.length > 0;
 
@@ -205,6 +208,54 @@ function AvailabilityPage() {
     }
     return [...msgs, ...data.warnings];
   }, [data.meta, data.warnings]);
+
+  // FAIL-CLOSED GUARD (2026-10-07 outage): a payload without a view (loader
+  // error, legacy shape, any future fail-closed variant) must render the
+  // honest unavailable panel — never crash SSR/hydration into a blank page.
+  // All hooks above already ran, so hook order stays stable across renders.
+  if (!view) {
+    return (
+      <div className="space-y-5">
+        <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-[22px] font-semibold tracking-tight text-(--text-primary)">Availability</h1>
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-semibold ${chipCls}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${chipDot}`} aria-hidden="true" />
+                {conn.label}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[13px] text-(--text-muted)">
+              Today · {formatDateHuman(data.today)} · {OPERATIONAL_TIMEZONE}
+            </p>
+          </div>
+          {bannerMessages.length > 0 && (
+            <p className="status-banner" role="status">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--dot-caution)" aria-hidden="true" />
+              <span className="min-w-0 truncate" title={bannerMessages.join(" · ")}>
+                {bannerMessages.join(" · ")}
+              </span>
+            </p>
+          )}
+        </header>
+        <section aria-label="Unavailable">
+          <Panel className="p-5 sm:p-6">
+            <Eyebrow>Availability unavailable</Eyebrow>
+            <p className="mt-2 max-w-prose text-sm text-(--text-body)">
+              The availability payload could not be built, so no calendar is rendered — no invented slots (fail-closed rule). Check the Sync Center in Settings; a failing sync names its cause there.
+            </p>
+            {data.warnings.length > 0 && (
+              <ul className="mt-3 space-y-1 text-xs text-(--text-caption)">
+                {data.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            )}
+          </Panel>
+        </section>
+      </div>
+    );
+  }
 
   const chipCls =
     conn.tone === "positive"

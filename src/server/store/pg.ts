@@ -726,7 +726,28 @@ const DDL: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS availability_discrepancies_key_idx ON availability_discrepancies (calendar_id, date_et, time_et)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS availability_discrepancies_open_unique_idx
-     ON availability_discrepancies (calendar_id, date_et, time_et, kind) WHERE resolved_at IS NULL`
+     ON availability_discrepancies (calendar_id, date_et, time_et, kind) WHERE resolved_at IS NULL`,
+  // PR-1's cached /calendars + /appointment-types catalog - REPLACE-all cache
+  // (truth = the fresh answer; the runs table audits when it was fetched).
+  // 2026-10-07 outage fix: these two DDL entries were missing from this list
+  // while putAvailabilityCatalog/getAvailabilityCatalog already referenced the
+  // tables - every pg-mode catalog read/write threw "relation does not exist",
+  // which 500-failed the availability page loader (tests never caught it: the
+  // memory store backs the catalog with Maps, no schema involved).
+  `CREATE TABLE IF NOT EXISTS availability_calendars (
+    calendar_id text PRIMARY KEY,
+    name text NOT NULL,
+    fetched_at timestamptz NOT NULL,
+    run_id uuid NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS availability_appointment_types (
+    appointment_type_id text PRIMARY KEY,
+    name text NOT NULL,
+    calendar_ids jsonb NOT NULL,
+    duration_minutes int,
+    fetched_at timestamptz NOT NULL,
+    run_id uuid NOT NULL
+  )`
 ];
 
 /**
