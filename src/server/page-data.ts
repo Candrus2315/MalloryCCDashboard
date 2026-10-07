@@ -989,6 +989,11 @@ export async function availabilityPageData(deps?: PageDeps) {
     const copyDays = copyView.days.map(toCopyDay);
     const copyByDate: Record<string, string> = {};
     for (const d of copyDays) copyByDate[d.date] = availabilityPushCopy([d]);
+    // §7 push rows derive ONCE off the view payload's days — the pageView
+    // field AND the copy target read the same rows (deriveDatesToPush is
+    // pure, but two calls would invite drift; the copy mapper reshapes,
+    // never re-sorts).
+    const pushRows = deriveDatesToPush(view.days, today);
     const pageView: AvailabilityPageView = {
       ...view,
       filterOptions: availabilityFilterOptions(catalog),
@@ -999,7 +1004,7 @@ export async function availabilityPageData(deps?: PageDeps) {
         coverageHorizonDate: view.coverage.horizonDate,
         noFeedData: view.coverage.noFeedData,
       }),
-      datesToPush: deriveDatesToPush(view.days, today),
+      datesToPush: pushRows,
       pushRangeLabel: pushRangeLabel(
         { kind: viewRequest.kind, label: view.label },
         fourteenDayWindowLabel(today),
@@ -1009,7 +1014,7 @@ export async function availabilityPageData(deps?: PageDeps) {
         next7: availabilityPushCopy(copyDays.filter((d) => d.date >= today && d.date < addDays(today, 7))),
         next14: availabilityPushCopy(copyDays),
         datesToPush: availabilityPushCopy(
-          view.datesToPush.map((r) => ({
+          pushRows.map((r) => ({
             date: r.date,
             openCount: r.openings,
             holes: r.holes,
