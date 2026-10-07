@@ -1,0 +1,12 @@
+5d802a4 AVAILABILITY REBUILD PR-2 (2/2): range views — Month/14-Day/Day payloads, per-slot state machine, hole derivation, coverage/horizon honesty (#46)
+
+diff --git a/src/server/page-data.ts b/src/server/page-data.ts
+--- a/src/server/page-data.ts
++++ b/src/server/page-data.ts
+@@ -1008,0 +1119,6 @@
++export interface AvailabilityRangeDay {
++  date: string;
++  totalCapacity: number;
++  /** DISTINCT engine-booked slots (doubles collapse — the calendar-fill accuracy item). */
++  booked: number;
++  /** The displayed open count: feed-authoritative, engine-estimated, real 0 when feed-closed — null when no coverage. */

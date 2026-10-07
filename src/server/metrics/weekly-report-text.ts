@@ -59,8 +59,8 @@ export interface WeeklyCcReportInput {
    */
   funnel: { wins: number; leads: number; pct: number | null };
   calendar: {
-    thisWeek: { appointments: number; capacity: number };
-    nextWeek: { appointments: number; capacity: number };
+    thisWeek: { appointments: number; slotsOccupied: number; capacity: number };
+    nextWeek: { appointments: number; slotsOccupied: number; capacity: number };
     beyond: number;
     firstFullyOpenDay: string | null;
   };
@@ -90,10 +90,18 @@ function fillLine(label: string, value: string): string {
   return value.length > 0 ? `${label}: ${value}` : `${label}:`;
 }
 
-function fillSummary(appointments: number, capacity: number): string {
+/**
+ * DISTINCT-SLOT fill line (owner report 2026-10-06 "CALENDAR-FILL ACCURACY"):
+ * the filled count is DISTINCT studio slots occupied — a double-booked slot
+ * fills ONE slot (its extra sessions never inflate the fill past capacity).
+ * When the raw session count exceeds the slot count the sessions figure is
+ * appended so the excess stays visible in the copied report too.
+ */
+function fillSummary(slotsOccupied: number, capacity: number, appointments: number): string {
   const cap = capacity > 0 ? String(capacity) : "—";
-  const pct = capacity > 0 ? ` (${Math.round((appointments / capacity) * 100)}%)` : "";
-  return `${formatInt(appointments)}/${cap} filled${pct}`;
+  const pct = capacity > 0 ? ` (${Math.round((slotsOccupied / capacity) * 100)}%)` : "";
+  const sessions = appointments > slotsOccupied ? ` · ${formatInt(appointments)} sessions` : "";
+  return `${formatInt(slotsOccupied)}/${cap} filled${pct}${sessions}`;
 }
 
 /** The full CC Report — EXACT template order from the owner's spec. */
@@ -123,8 +131,8 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   lines.push(`Bookings from Leads: ${formatPercent(input.funnel.pct)}`);
   lines.push("");
   lines.push("Calendar / Booked-out:");
-  lines.push(`This week: ${fillSummary(input.calendar.thisWeek.appointments, input.calendar.thisWeek.capacity)}`);
-  lines.push(`Next week: ${fillSummary(input.calendar.nextWeek.appointments, input.calendar.nextWeek.capacity)}`);
+  lines.push(`This week: ${fillSummary(input.calendar.thisWeek.slotsOccupied, input.calendar.thisWeek.capacity, input.calendar.thisWeek.appointments)}`);
+  lines.push(`Next week: ${fillSummary(input.calendar.nextWeek.slotsOccupied, input.calendar.nextWeek.capacity, input.calendar.nextWeek.appointments)}`);
   lines.push(`Beyond next week: ${formatInt(input.calendar.beyond)} sessions`);
   lines.push(`First fully open day: ${input.calendar.firstFullyOpenDay ? formatDateHumanFull(input.calendar.firstFullyOpenDay) : "—"}`);
   lines.push("");

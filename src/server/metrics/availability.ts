@@ -39,6 +39,14 @@ export interface AcuityScope {
 export interface DayAvailability {
   date: string; // ET YYYY-MM-DD
   totalCapacity: number;
+  /**
+   * DISTINCT occupied slots — the loop counts SLOTS, not appointments, so a
+   * double-booked slot counts ONCE toward booked/capacity-fill no matter how
+   * many sessions share it (owner report 2026-10-06, calendar-fill accuracy:
+   * 65 sessions on 61 distinct slots must fill 61, not 65). The excess is the
+   * Day view's +n badge / the Weekly panel's sessions figure, never a second
+   * booked slot.
+   */
   booked: number;
   openSlotTimes: string[]; // "10:00 AM" style labels, ET
   utilization: number | null; // booked / totalCapacity; null when capacity 0

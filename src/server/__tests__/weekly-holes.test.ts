@@ -120,8 +120,10 @@ const baseInput: WeeklyCcReportInput = {
   conversion: { overall: 0.4, family: 0.35, animalia: 0.5 },
   funnel: { wins: 49, leads: 49, pct: 1 },
   calendar: {
-    thisWeek: { appointments: 40, capacity: 69 },
-    nextWeek: { appointments: 12, capacity: 69 },
+    // slotsOccupied = appointments (no double-bookings in this fixture) — the
+    // fill lines stay byte-identical to the legacy text.
+    thisWeek: { appointments: 40, slotsOccupied: 40, capacity: 69 },
+    nextWeek: { appointments: 12, slotsOccupied: 12, capacity: 69 },
     beyond: 30,
     firstFullyOpenDay: "2026-10-05",
   },
@@ -243,8 +245,16 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       conversion: { overall: data.conversion.overall, family: data.conversion.family, animalia: data.conversion.animalia },
       funnel: data.funnel,
       calendar: {
-        thisWeek: { appointments: data.calendar.thisWeek.appointments, capacity: data.calendar.thisWeek.capacity },
-        nextWeek: { appointments: data.calendar.nextWeek.appointments, capacity: data.calendar.nextWeek.capacity },
+        thisWeek: {
+          appointments: data.calendar.thisWeek.appointments,
+          slotsOccupied: data.calendar.thisWeek.slotsOccupied,
+          capacity: data.calendar.thisWeek.capacity,
+        },
+        nextWeek: {
+          appointments: data.calendar.nextWeek.appointments,
+          slotsOccupied: data.calendar.nextWeek.slotsOccupied,
+          capacity: data.calendar.nextWeek.capacity,
+        },
         beyond: data.calendar.beyond,
         firstFullyOpenDay: data.calendar.firstFullyOpenDay,
       },
