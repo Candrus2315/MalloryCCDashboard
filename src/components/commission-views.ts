@@ -164,15 +164,31 @@ export function weekCellView(record: CommissionWeeklyRow | null): WeekCellView |
     money: formatMoney(record.total),
     // RULING 5 (owner 10/2): a capped week's cell explains why no hole money
     // shows even when open-at-start slots were filled (audit rows retained).
+    // Singular/plural agrees with the count ("1 hole not paid").
     holesLine:
       record.hole_bonus_capped
         ? fills !== "0"
-          ? `${fills} holes not paid (ruling 10/2)`
+          ? fills === "1"
+            ? `1 hole not paid (ruling 10/2)`
+            : `${fills} holes not paid (ruling 10/2)`
           : null
         : holes > 0
           ? `+${formatMoney(holes)} holes (${fills})`
           : null,
   };
+}
+
+/** §3.3 cycle-level pool chip: "Unlocked" only when the cycle actually PAID pool money. */
+export function cyclePoolChipView(
+  recordsPresent: boolean,
+  teamPool: number | null,
+): ChipView {
+  if (!recordsPresent || teamPool == null) return { kind: "neutral", label: "Pool —" };
+  // The pool is a PER-WEEK construct (79 team bookings unlock that week's
+  // payout). A cycle's summed booking count is the wrong input (a 228-booking
+  // cycle whose weeks were 49/58/61/60 paid $0 pool). The honest cycle-level
+  // state: did any stored week pay pool money?
+  return poolChip(teamPool > 0, null);
 }
 
 export interface GridRowView {

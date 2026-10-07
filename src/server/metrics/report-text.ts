@@ -72,13 +72,20 @@ export function formatInt(n: number | null | undefined): string {
 }
 
 /**
- * Money as USD with the currency sign and ALWAYS 2 decimals ("$240.00") —
- * the commission tracker's contract (payroll keeps 2dp, interpretation
- * note 8). Missing data renders the em dash, never $0.00.
+ * Money as USD with the currency sign and ALWAYS 2 decimals ("$240.00",
+ * "$3,680.00" — thousands grouped, the established UI style). The commission
+ * tracker's contract (payroll keeps 2dp, interpretation note 8). Missing data
+ * renders the em dash, never $0.00.
  */
 export function formatMoney(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return EMPTY;
-  return `$${(Math.round(n * 100) / 100).toFixed(2)}`;
+  return (
+    "$" +
+    (Math.round(n * 100) / 100).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  );
 }
 
 /**

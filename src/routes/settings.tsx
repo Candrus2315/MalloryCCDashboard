@@ -1177,7 +1177,7 @@ function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promis
             )}
             {data.connections.map((c) => (
               <tr key={c.provider}>
-                <td className="font-medium capitalize text-(--text-primary)">{c.provider.replace("_", " ")}</td>
+                <td className="font-medium text-(--text-primary)">{providerLabel(c.provider)}</td>
                 <td>
                   <span className={"rounded-full px-2 py-0.5 text-xs font-medium " + (c.is_demo ? "bg-(--chip-current-bg) text-(--chip-current-fg)" : c.status === "connected" ? "bg-(--chip-good-bg) text-(--chip-good-fg)" : c.status === "error" ? "bg-(--chip-bad-bg) text-(--chip-bad-fg)" : "bg-(--bar-track) text-(--chip-neutral-fg)")}>
                     {c.is_demo ? "demo" : c.status}
@@ -1207,7 +1207,7 @@ function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promis
             <tbody>
               {data.syncRuns.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.provider}</td>
+                  <td>{providerLabel(r.provider)}</td>
                   <td className={r.status === "error" ? "text-(--neg-text)" : ""}>{r.status}</td>
                   <td>{new Date(r.started_at).toLocaleString("en-US")}</td>
                   <td className="text-right">{r.records_upserted}</td>
@@ -1299,7 +1299,7 @@ function RosterMappingSection({ data, busy, onSave }: {
               </span>
               <div className="flex items-center gap-3">
                 <span className="text-xs tabular-nums text-(--text-muted)">
-                  {u.callCount > 0 ? `${u.callCount} calls in last 30 days` : "no calls in last 30 days"}
+                  {u.callCount === 1 ? "1 call in last 30 days" : u.callCount > 0 ? `${u.callCount} calls in last 30 days` : "no calls in last 30 days"}
                 </span>
                 <select
                   aria-label={`Map ${u.name || u.externalId} to`}
