@@ -126,6 +126,7 @@ describe("normalizeAvailabilityView (pure)", () => {
   test("month default: today's month; invalid values fall back honestly", () => {
     expect(normalizeAvailabilityView({ view: "month" }, TODAY)).toEqual({
       kind: "month", month: "2026-10", from: "", to: "", date: "",
+      filters: { calendars: [], types: [], statuses: [] }, // PR-3 §3: empty = everything in scope
     });
     expect(normalizeAvailabilityView({ view: "month", month: "2026-13" }, TODAY)!.month).toBe("2026-10");
     expect(normalizeAvailabilityView({ view: "month", month: "2027-02" }, TODAY)!.month).toBe("2027-02");
@@ -134,6 +135,7 @@ describe("normalizeAvailabilityView (pure)", () => {
   test("14-day window: from..from+13; day: the single date", () => {
     expect(normalizeAvailabilityView({ view: "days" }, TODAY)).toEqual({
       kind: "days", month: "", from: TODAY, to: addDays(TODAY, 13), date: "",
+      filters: { calendars: [], types: [], statuses: [] },
     });
     expect(normalizeAvailabilityView({ view: "days", from: "2026-11-01" }, TODAY)!.to).toBe("2026-11-14");
     expect(normalizeAvailabilityView({ view: "days", from: "garbage" }, TODAY)!.from).toBe(TODAY);
