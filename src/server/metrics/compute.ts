@@ -197,6 +197,15 @@ export interface AttributionRow {
    * this column; the audit note is never parsed for it.
    */
   reason_code?: string | null;
+  /**
+   * QA PHASE 3 (§26 divergence split, display-only): when the attribution row
+   * was last rewritten (booking_attributions.updated_at). Lets the validation
+   * page distinguish a POST-CLOSE re-derivation (updated_at > the weekly
+   * record's calc_date — the tick-wipe fingerprint) from a row that has been
+   * untouched since close. Optional: tests may omit it (treated as unknown —
+   * never classified as post-close drift).
+   */
+  updated_at?: string | null;
 }
 
 export interface LeadRow {

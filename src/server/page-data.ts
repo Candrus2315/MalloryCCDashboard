@@ -12,6 +12,7 @@
  */
 import { getStore } from "./store";
 import type { AppSettings, AppointmentRow, Store } from "./store/types";
+import type { AttributionRow, CallRow } from "./metrics/compute";
 import {
   addDays,
   dateRange,
@@ -2118,6 +2119,81 @@ export function buildCancelledWinFlags(
     .sort((x, y) => (x.weekStart + x.winDate).localeCompare(y.weekStart + y.winDate));
 }
 
+/**
+ * QA PHASE 3 — S26 DIVERGENCE SPLIT (display-only; w1-recompute-anomaly 2026-10-08
+ * section 5): among the counted bookings of the STORED weekly records, classifies
+ * the ones whose attribution row was re-derived AFTER the record closed
+ * (rep NULL, manual=false, updated_at > calc_date — the tick-wipe fingerprint)
+ * AND whose in-window active-roster call still exists in `calls` (source
+ * evidence intact). These render as the "Attribution evidence restored —
+ * source intact" bucket with rewritten-at beside calc_date so the wipe is
+ * dated. Everything else stays in the plain field-level delta list — manual
+ * rows (they survive ticks), still-attributed rows, cancelled rows (those live
+ * in the cancellation flag list), rows with no recorded rewrite time, and
+ * bookings whose call evidence is genuinely absent. Never silently whitewashed.
+ */
+export interface DriftedWinFlag {
+  appointmentId: string;
+  clientName: string | null;
+  appointmentType: string | null;
+  winDate: string;
+  weekStart: string;
+  weekEnd: string;
+  /** Name snapshot from the stored record (records stay readable). */
+  repName: string | null;
+  /** attribution row's updated_at — the instant the verdict was re-derived. */
+  rewrittenAt: string;
+  /** The weekly record's calc_date — shown beside rewrittenAt so the wipe is dated. */
+  calcDate: string;
+  /** ET date the booking was made on (created_business_date) — the evidence-window anchor. */
+  createdDate: string | null;
+}
+
+export function buildAttributionDriftFlags(
+  stored: CommissionWeeklyRow[],
+  apptsById: ReadonlyMap<string, AppointmentRow>,
+  attributions: AttributionRow[],
+  calls: ReadonlyArray<Pick<CallRow, "rep_id" | "started_at">>,
+  activeRepIds: ReadonlySet<string>,
+): DriftedWinFlag[] {
+  const attrByAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
+  // ET business dates carrying at least one active-roster call in the source.
+  const callEtDates = new Set<string>();
+  for (const c of calls) {
+    if (!c.rep_id || !activeRepIds.has(c.rep_id)) continue;
+    const t = Date.parse(c.started_at);
+    if (Number.isFinite(t)) callEtDates.add(etDateStrFromInstant(t));
+  }
+  const out: DriftedWinFlag[] = [];
+  for (const rec of stored) {
+    for (const cb of rec.counted_bookings) {
+      if (cb.manual) continue; // manual owner assignments survive ticks and agree
+      const appt = apptsById.get(cb.id);
+      if (!appt || appt.cancelled_at) continue; // cancellations live in the cancelled flag list
+      const attr = attrByAppt.get(cb.id);
+      if (!attr || attr.rep_id != null || attr.manual_override) continue; // still attributed — not a wipe
+      if (!attr.updated_at) continue; // unknown rewrite time — never claimed as drift
+      if (Date.parse(attr.updated_at) <= Date.parse(rec.calc_date)) continue; // written at/before close
+      const created = appt.created_business_date ?? null;
+      // source-intact check: an active-roster call in the s1 window (created - 1 .. created ET)
+      if (!created || (!callEtDates.has(created) && !callEtDates.has(addDays(created, -1)))) continue;
+      out.push({
+        appointmentId: cb.id,
+        clientName: cb.client_name ?? null,
+        appointmentType: cb.appointment_type ?? null,
+        winDate: cb.win_date,
+        weekStart: rec.week_start,
+        weekEnd: rec.week_end,
+        repName: rec.rep_name,
+        rewrittenAt: attr.updated_at,
+        calcDate: rec.calc_date,
+        createdDate: created,
+      });
+    }
+  }
+  return out.sort((x, y) => (x.weekStart + x.winDate).localeCompare(y.weekStart + y.winDate));
+}
+
 export interface CommissionValidationPageData {
   meta: PageMeta;
   today: string;
@@ -2131,6 +2207,8 @@ export interface CommissionValidationPageData {
   dryRun: boolean;
   /** Wins the sync has confirmed cancelled since they were counted (report-only flag list). */
   cancelledWins: CancelledWinFlag[];
+  /** S26 split (display-only): counted wins whose attribution row was re-derived after close, source call evidence intact. */
+  driftedWins: DriftedWinFlag[];
 }
 
 /**
@@ -2145,17 +2223,29 @@ export async function commissionValidationPageData(deps?: PageDeps): Promise<Com
     : await loadPageMeta();
   const store = deps?.store ?? (await getStore());
 
-  const [cycle, computedWeeks, allRecords, cancelledWinRows, attributions, users] = await Promise.all([
+  const cycleEnd = addDays(VALIDATION_WEEK_STARTS[VALIDATION_WEEK_STARTS.length - 1], 6);
+  const [cycle, computedWeeks, allRecords, cancelledWinRows, attributions, users, cycleAppts, winRangeCalls] = await Promise.all([
     store.getCommissionCycle(BACKFILL_CYCLE_ID),
     computeValidationWeeks(store),
     store.getCommissionWeeklyRecords(),
     store.getCancelledWinAppointments(),
     store.getAttributions(),
     store.getUsers(),
+    // S26 split (display-only): appointment rows for the counted bookings
+    // (created date + cancellation state) and the source call evidence.
+    store.getAppointmentsByWinBusinessDateBetween(VALIDATION_WEEK_STARTS[0], cycleEnd),
+    store.getCallsBetween(etDayStartUtc(addDays(VALIDATION_WEEK_STARTS[0], -1)), etDayEndUtc(cycleEnd)),
   ]);
   const repNameByAppt = new Map(attributions.filter((a) => a.rep_id).map((a) => [a.appointment_id, users.find((u) => u.id === a.rep_id)?.name ?? null]));
   const cancelledWins = buildCancelledWinFlags(cancelledWinRows, new Set(allRecords.map((r) => r.week_start)), (apptId) => repNameByAppt.get(apptId) ?? null);
   const stored = allRecords.filter((r) => (VALIDATION_WEEK_STARTS as readonly string[]).includes(r.week_start));
+  const driftedWins = buildAttributionDriftFlags(
+    stored,
+    new Map(cycleAppts.map((a) => [a.id, a])),
+    attributions,
+    winRangeCalls,
+    new Set(users.filter((u) => u.is_active).map((u) => u.id)),
+  );
 
   const out: CommissionValidationWeek[] = [];
   for (const cw of computedWeeks) {
@@ -2192,5 +2282,6 @@ export async function commissionValidationPageData(deps?: PageDeps): Promise<Com
     storedCount: stored.length,
     dryRun: stored.length === 0,
     cancelledWins,
+    driftedWins,
   };
 }

@@ -17,7 +17,7 @@ import {
   shortRange,
 } from "~/components/commission-views";
 import { formatInt, formatMoney } from "~/server/metrics/report-text";
-import { etDateStrFromInstant, formatDateHumanFull } from "~/server/date-logic";
+import { etDateStrFromInstant, formatDateHuman, formatDateHumanFull } from "~/server/date-logic";
 import type { CommissionWeeklyRow } from "~/server/store/types";
 
 export const Route = createFileRoute("/commissions-validation")({
@@ -39,6 +39,27 @@ function CommissionsValidationPage() {
   const allMatch = data.weeks.every((w) => w.matches);
   const deltas = data.weeks.flatMap((w) => w.reconcile.deltas.map((d) => ({ ...d, week: shortRange(w.weekStart, w.weekEnd) })));
   const cycleStatus = cycleChip(data.cycle?.status);
+  // §26 divergence split (display-only, w1-recompute-anomaly §5): classify WHY
+  // the recompute differs — cancelled-after-close vs post-close attribution
+  // re-derivations with source call evidence intact — plus a per-week banner
+  // so a bare "9 vs 49" never reads as "evidence missing".
+  const driftedWins = data.driftedWins;
+  const cancelledClosed = data.cancelledWins.filter((f) => f.weekClosed);
+  const driftBanners = data.weeks
+    .map((w) => {
+      const rows = driftedWins.filter((d) => d.weekStart === w.weekStart);
+      const engineCounted = w.stored.reduce((s, r) => s + r.counted_bookings.filter((cb) => !cb.manual).length, 0);
+      return rows.length > 0
+        ? { key: w.weekStart, label: shortRange(w.weekStart, w.weekEnd), drifted: rows.length, engineCounted }
+        : null;
+    })
+    .filter((b): b is NonNullable<typeof b> => b != null);
+  // ET stamp for ISO instants (rewritten-at vs calc): explicit zone keeps SSR/CSR identical.
+  const etStamp = (iso: string): string => {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return iso;
+    return new Date(t).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  };
   // drawer: employee drill-in or team drill-in
   const [drawer, setDrawer] = useState<
     { variant: "employee"; record: CommissionWeeklyRow } | { variant: "team"; records: CommissionWeeklyRow[]; weekStart: string } | null
@@ -171,6 +192,66 @@ function CommissionsValidationPage() {
                 </ul>
               </div>
             )}
+            {!allMatch && (
+              <div className="mt-3 space-y-3">
+                {/* §5 banner — never show a bare "N vs M" without the drift classification */}
+                {driftBanners.map((b) => (
+                  <div key={b.key} className="rounded-lg border border-(--card-border) bg-(--card-bg) px-3 py-2">
+                    <p className="text-[13px] text-(--text-body)">
+                      <span className="font-medium">
+                        {formatInt(b.drifted)} of {formatInt(b.engineCounted)} engine-attributed counted wins in {b.label}
+                      </span>{" "}
+                      were re-derived after the record closed without their original call evidence (the attribution
+                      tick's 30-day rolling fetch window) — source call evidence intact {formatInt(b.drifted)}/{formatInt(b.drifted)}.
+                    </p>
+                    <p className="mt-1 text-xs text-(--text-caption)">
+                      Restoring the derived verdicts (scripts/attr-reverdict.ts) reconciles the recompute; the stored
+                      record stands frozen until the owner rules on payday. Nothing here is missing evidence.
+                    </p>
+                  </div>
+                ))}
+                {/* §5 buckets — divergence reasons, side by side */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-(--card-border) bg-(--card-bg) px-3 py-2">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-(--text-caption)">
+                      Cancelled after close
+                    </p>
+                    {cancelledClosed.length > 0 ? (
+                      <ul className="mt-1.5 space-y-1 text-[13px] text-(--text-body)">
+                        {cancelledClosed.map((f) => (
+                          <li key={f.appointmentId}>
+                            {f.clientName ?? "—"} · {f.repName ?? "unattributed"} · win {formatDateHumanFull(f.winDate)}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1.5 text-[13px] text-(--text-muted)">None in the stored cycle.</p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-(--card-border) bg-(--card-bg) px-3 py-2">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-(--text-caption)">
+                      Attribution evidence restored — source intact
+                    </p>
+                    {driftedWins.length > 0 ? (
+                      <ul className="mt-1.5 space-y-1 text-[13px] text-(--text-body)">
+                        {driftedWins.map((d) => (
+                          <li key={d.appointmentId}>
+                            {d.clientName ?? "—"} · {d.repName} · win {formatDateHumanFull(d.winDate)}
+                            <span className="text-(--text-caption)">
+                              {" "}· attribution rewritten {etStamp(d.rewrittenAt)} (calc {etStamp(d.calcDate)})
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1.5 text-[13px] text-(--text-muted)">
+                        None — every divergence is explained by cancellations or open-week data.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             {data.dryRun && (
               <p className="mt-3 text-[13px] text-(--text-caption)">
                 Stored comparison is against an empty store (dry-run) — run the backfill write after reviewing, then the
@@ -265,7 +346,7 @@ function CommissionsValidationPage() {
                   </table>
                 </div>
                 <p className="mt-3 text-[12px] tabular-nums text-(--text-muted)">
-                  Slot-days: {w.computed.holeDays.map((d) => `${d.date.slice(5)} open ${d.openAtStart}/${d.capacity}${d.filledByRep ? ` · ${d.filledByRep} rep-filled` : ""}`).join(" · ") || "—"}
+                  Slot-days: {w.computed.holeDays.map((d) => `${formatDateHuman(d.date)} open ${d.openAtStart}/${d.capacity}${d.filledByRep ? ` · ${d.filledByRep} rep-filled` : ""}`).join(" · ") || "—"}
                 </p>
                 {stored.length > 0 ? (
                   <div className="mt-3">
@@ -318,7 +399,7 @@ function CommissionsValidationPage() {
                         <span className="chip chip-neutral">
                           <span className="h-1.5 w-1.5 rounded-full bg-(--dot-muted)" aria-hidden="true" />
                           {employmentAbbr(row.employmentType) ?? "—"} · T{formatInt(row.tier)}
-                          {row.tierEffectiveDateUsed ? ` (eff. ${row.tierEffectiveDateUsed})` : ""}
+                          {row.tierEffectiveDateUsed ? ` (eff. ${formatDateHumanFull(row.tierEffectiveDateUsed)})` : ""}
                         </span>
                       </td>
                       {row.weeks.map((wk, i) => (
