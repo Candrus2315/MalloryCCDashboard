@@ -54,7 +54,7 @@ import {
 } from "./metrics/compute";
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
 import { derivePaymentState } from "./payments";
-import { computeDayAvailability, type DayAvailability } from "./metrics/availability";
+import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import {
   assignedLeadsInRange,
   buildWeeklyRepRows,
