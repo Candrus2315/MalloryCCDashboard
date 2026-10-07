@@ -42,7 +42,7 @@ import {
 import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
 import type { Store } from "./store/types";
-import { availabilityPageData, commissionPageData, commissionValidationPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
+import { availabilityPageData, type AvailabilityViewRawSearch, commissionPageData, commissionValidationPageData, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
 import { WEEKLY_CC_SECTIONS, addMonthsKey, monthKeyLabel, monthKeyOf } from "./metrics/weekly";
@@ -1126,7 +1126,28 @@ export const getTeamData = createServerFn()
   .handler(({ data }) => withDbRetry(() => teamPageData(data)));
 
 /** AVAILABILITY page — engine + Acuity connection + scope filters (playbook contract). */
-export const getAvailabilityData = createServerFn().handler(() => withDbRetry(() => availabilityPageData()));
+export const getAvailabilityData = createServerFn()
+  .validator((input?: AvailabilityViewRawSearch) => input ?? {})
+  .handler(({ data }) => withDbRetry(() => availabilityPageData({ view: data })));
+
+/**
+ * PR-3 §4 MANUAL REFRESH (the sync panel's Refresh control): re-probe the
+ * visible range NOW via PR-1's refreshAvailabilityRange (awaited, unthrottled,
+ * bounded by AVAILABILITY_REFRESH_TIMES_CAP). Demo/test resolves
+ * { outcome: "skipped", reason: "no-credentials" } — never calls.
+ */
+export const refreshAvailabilityFeed = createServerFn({ method: "POST" })
+  .validator((input: { dates: string[] }) => input)
+  .handler(async ({ data }) => {
+    const res = await withDbRetry(() => refreshAvailabilityRange({ dates: data.dates }));
+    return {
+      outcome: res.outcome,
+      reason: res.reason ?? null,
+      callsMade: res.callsMade ?? null,
+      datesProbed: res.datesProbed ?? null,
+      error: res.error ?? null,
+    };
+  });
 /** WEEKLY REPORT page — last completed week + MTD (page-data.ts weeklyPageData, PageDeps test seam). */
 export const getWeeklyData = createServerFn().handler(() => withDbRetry(() => weeklyPageData()));
 

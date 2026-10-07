@@ -91,6 +91,7 @@ import {
   type AvailabilitySyncPanel,
 } from "./availability-view";
 import { deriveDatesToPush, pushRangeLabel, type AvailabilityPushRow } from "./availability-push";
+import { availabilityPushCopy, type AvailabilityCopyDay } from "../components/availability-copy";
 import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assigned-by-day";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
@@ -962,6 +963,32 @@ export async function availabilityPageData(deps?: PageDeps) {
     if (view.dates.some((d) => d >= today)) {
       kickAvailabilityTopUp({ dates: view.dates }, { store });
     }
+    // §10 copy targets: ONE extra cache-read build of the rolling 14-day
+    // window (today..today+13) backs Today / Next 7 / Next 14 / the
+    // specific-date picker in EVERY view — a visible month alone cannot answer
+    // a window that crosses its edge. Skipped when the request already IS
+    // that window (the 14-Day view's own build is reused).
+    const isCopyBase = viewRequest.kind === "days" && viewRequest.from === today;
+    const copyView = isCopyBase
+      ? view
+      : await buildAvailabilityView({
+          store,
+          today,
+          settings,
+          rules,
+          recurring,
+          request: {
+            kind: "days",
+            month: "",
+            from: today,
+            to: addDays(today, AVAILABILITY_DAYS_VIEW_WINDOW - 1),
+            date: "",
+            filters: viewRequest.filters,
+          },
+        });
+    const copyDays = copyView.days.map(toCopyDay);
+    const copyByDate: Record<string, string> = {};
+    for (const d of copyDays) copyByDate[d.date] = availabilityPushCopy([d]);
     const pageView: AvailabilityPageView = {
       ...view,
       filterOptions: availabilityFilterOptions(catalog),
@@ -977,6 +1004,24 @@ export async function availabilityPageData(deps?: PageDeps) {
         { kind: viewRequest.kind, label: view.label },
         fourteenDayWindowLabel(today),
       ),
+      copy: {
+        today: copyByDate[today] ?? availabilityPushCopy([]),
+        next7: availabilityPushCopy(copyDays.filter((d) => d.date >= today && d.date < addDays(today, 7))),
+        next14: availabilityPushCopy(copyDays),
+        datesToPush: availabilityPushCopy(
+          view.datesToPush.map((r) => ({
+            date: r.date,
+            openCount: r.openings,
+            holes: r.holes,
+            capacity: r.capacity,
+            booked: r.booked,
+            utilization: r.utilization,
+          })),
+        ),
+        day: viewRequest.kind === "day" ? availabilityPushCopy(view.days.map(toCopyDay)) : null,
+        copyDates: copyDays.map((d) => d.date),
+        byDate: copyByDate,
+      },
     };
     return {
       meta,
@@ -1308,7 +1353,24 @@ export type AvailabilityPageView = AvailabilityViewPayload & {
   filterOptions: AvailabilityFilterOptions;
   /** §1 sync visibility: both sync rows, coverage horizon, discrepancy list. */
   sync: AvailabilitySyncPanel;
+  /** §10 copy targets — frozen block texts + the per-date map backing the specific-date picker. */
+  copy: {
+    today: string;
+    next7: string;
+    next14: string;
+    datesToPush: string;
+    /** Day view only — the visible day's own block; null elsewhere. */
+    day: string | null;
+    /** ET dates the specific-date picker can copy (today … today+13). */
+    copyDates: string[];
+    byDate: Record<string, string>;
+  };
 };
+
+/** The view day's honest displayed numbers, in the copy formatters' shape. */
+function toCopyDay(d: AvailabilityRangeDay): AvailabilityCopyDay {
+  return { date: d.date, openCount: d.openCount, holes: d.holes, capacity: d.totalCapacity, booked: d.booked, utilization: d.utilization };
+}
 
 /** Acuity connection state + the stale/disconnected honesty lines (mirrors the legacy path exactly). */
 function availabilityConnectionState(connections: Awaited<ReturnType<Store["getConnections"]>>): {
