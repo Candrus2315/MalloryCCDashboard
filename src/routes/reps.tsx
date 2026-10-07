@@ -230,6 +230,10 @@ function RepsPage() {
   }
 
   const [weekGoal, setWeekGoal] = useState<WeekGoal | null>(null);
+  // QA 2026-10-08: a failed goal-fetch previously fell into the same state as
+  // "still loading" — a PERPETUAL "Week progress loading…". A distinct failed
+  // flag renders the honest error state instead.
+  const [weekGoalFailed, setWeekGoalFailed] = useState(false);
   const fetchKey = singleDay && d ? `${d.rep.id}|${weekOf}|${data.range.start}` : null;
   useEffect(() => {
     if (!fetchKey) return;
@@ -237,6 +241,7 @@ function RepsPage() {
     if (!repId) return;
     let alive = true;
     setWeekGoal(null);
+    setWeekGoalFailed(false);
     getRepsData({
       data: { rep: repId, range: "custom", from: weekOf, to: data.range.start },
     })
@@ -259,7 +264,10 @@ function RepsPage() {
         );
       })
       .catch(() => {
-        if (alive) setWeekGoal(null);
+        if (alive) {
+          setWeekGoal(null);
+          setWeekGoalFailed(true);
+        }
       });
     return () => {
       alive = false;
@@ -660,7 +668,9 @@ function RepsPage() {
                   )}
                 </>
               ) : (
-                <p className="kpi-sub mt-3">Week progress loading…</p>
+                <p className="kpi-sub mt-3">
+                  {weekGoalFailed ? "Goal progress unavailable — the data didn't load. Reload to retry." : "Week progress loading…"}
+                </p>
               )}
             </section>
 

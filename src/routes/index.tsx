@@ -79,7 +79,12 @@ export interface PendingPaymentRow {
  * until paid.
  */
 function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
-  const fmtAmount = (n: number | null) => (n == null ? "—" : `${n.toFixed(2).replace(/\.00$/, "")}`);
+  // QA 2026-10-08: the established currency style is $X,XXX.00 (commission
+  // card, payroll email) — the drill-down previously printed a bare "200".
+  const fmtAmount = (n: number | null) =>
+    n == null
+      ? "—"
+      : "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   // OWNER REQUEST 9/30 (✕ dismiss): each pending row carries a ✕ that removes
   // it from this list immediately and permanently — optimistic removal, no
   // confirm dialog ("as i see fit"). On a server error the card snaps back
@@ -595,7 +600,7 @@ function TodayPage() {
                         </p>
                       </>
                     ) : (
-                      <p className="kpi-sub mt-2">No commission cycle stored yet.</p>
+                      <p className="kpi-sub mt-2">No upcoming commission submission stored yet.</p>
                     )}
                   </div>
                 </div>

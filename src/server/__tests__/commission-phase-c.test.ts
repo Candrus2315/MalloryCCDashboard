@@ -496,6 +496,12 @@ describe("§21 dashboard commission card payload (Today, live from commission ta
     expect(nextCommissionSubmission([c1, c2], "2026-10-06")?.id).toBe("cycle-next");
     expect(nextCommissionSubmission([c1, c2], "2026-11-03")?.id).toBe("cycle-next"); // none future → the newest cycle (being worked now)
     expect(nextCommissionSubmission([], FRI)).toBeNull();
+    // QA 2026-10-08: a SUBMITTED cycle is never shown as "next" — an
+    // already-submitted cycle's deadline is neither upcoming nor overdue.
+    const done = cycleRow({ status: "submitted", submitted_date: "2026-10-05", submitted_by: "m" });
+    expect(nextCommissionSubmission([done], "2026-10-06")).toBeNull(); // only cycle is submitted → honest empty
+    const doneNext = cycleRow({ id: "cycle-next", submission_date: "2026-11-02", start_date: BOUNDARY, status: "in_progress" });
+    expect(nextCommissionSubmission([done, doneNext], "2026-11-03")?.id).toBe("cycle-next"); // unsubmitted overdue cycle still shows honestly
   });
 });
 
