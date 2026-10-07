@@ -137,8 +137,10 @@ const baseInput = (): WeeklyCcReportInput => ({
   // 62 paid bookings / 702 sheet leads = 8.83% overall funnel rate.
   funnel: { wins: 62, leads: 702, pct: 62 / 702 },
   calendar: {
-    thisWeek: { appointments: 34, capacity: 63 },
-    nextWeek: { appointments: 12, capacity: 63 },
+    // slotsOccupied = appointments here (no double-bookings in the fixture) —
+    // the fill lines stay byte-identical; the doubled case has its own test.
+    thisWeek: { appointments: 34, slotsOccupied: 34, capacity: 63 },
+    nextWeek: { appointments: 12, slotsOccupied: 12, capacity: 63 },
     beyond: 118,
     firstFullyOpenDay: "2026-10-14",
   },
@@ -198,11 +200,23 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
     );
   });
 
+  test("DISTINCT-SLOT fill (owner report 10/6): 65 sessions on 61 slots → '61/69 filled (88%) · 65 sessions'", () => {
+    const input = baseInput();
+    // the owner's reported Oct 5–11 shape: 4 double-booked slots (Oct 5 ×1,
+    // Oct 7 ×1, Oct 11 ×2) → 65 sessions occupy 61 distinct of 69 slots.
+    input.calendar.thisWeek = { appointments: 65, slotsOccupied: 61, capacity: 69 };
+    input.calendar.nextWeek = { appointments: 12, slotsOccupied: 12, capacity: 63 };
+    const text = buildWeeklyCcReportText(input);
+    expect(text).toContain("This week: 61/69 filled (88%) · 65 sessions");
+    // sessions == slots → no redundant sessions suffix
+    expect(text).toContain("Next week: 12/63 filled (19%)\n");
+  });
+
   test("honest states: no monthly goal → 'X/—'; zero conversion denominators → '—'; open-day '—'", () => {
     const input = baseInput();
     input.bookingsMonth.goal = null;
     input.conversion = { overall: null, family: null, animalia: null };
-    input.calendar.thisWeek = { appointments: 5, capacity: 0 };
+    input.calendar.thisWeek = { appointments: 5, slotsOccupied: 5, capacity: 0 };
     input.calendar.firstFullyOpenDay = null;
     input.funnel = { wins: 0, leads: 0, pct: null }; // zero sheet leads → never a fabricated 0%
     const text = buildWeeklyCcReportText(input);

@@ -18,7 +18,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { lastCompletedWeekStart, monthStartDate, goalVsActual, isAnimaliaSession, winsByDate } from "../metrics/weekly";
-import { weeklyPageData } from "../page-data";
+import { availabilityPageData, weeklyPageData, type AvailabilityViewPayload } from "../page-data";
 import { MemoryStore } from "../store/memory";
 import type { AppointmentRow, AvailabilityRule } from "../metrics/compute";
 
@@ -295,6 +295,12 @@ describe("weeklyPageData (MemoryStore, pinned today)", () => {
     expect(data.calendar.thisWeek.appointments).toBe(4); // Mon + Tue + Wed sessions + w-next-mon-1 (its session is 9/28); the cancelled one never counts
     expect(data.calendar.nextWeek.appointments).toBe(1);
     expect(data.calendar.beyond).toBe(1); // visible, never silently dropped
+    // DISTINCT-SLOT OCCUPANCY (owner report 10/6): fill counts slots, not
+    // sessions — c-mon's 15:00 session sits OFF this schedule's grid (blocks
+    // 09–10, 11–12, 14–15 → slots 09:00/11:00/14:00), so it counts as a
+    // session but occupies NO slot: 4 sessions on 3 distinct slots.
+    expect(data.calendar.thisWeek.slotsOccupied).toBe(3);
+    expect(data.calendar.nextWeek.slotsOccupied).toBe(1);
     // capacity from the SEEDED config (3 one-hour blocks/day), not a hardcoded 9
     expect(data.calendar.thisWeek.capacity).toBe(21);
     expect(data.calendar.nextWeek.capacity).toBe(21);
@@ -311,5 +317,136 @@ describe("weeklyPageData (MemoryStore, pinned today)", () => {
     expect(data.warnings.some((w) => w.includes("No team booking goal stored"))).toBe(true);
     expect(data.warnings.some((w) => w.includes("No paid bookings recorded"))).toBe(true);
     expect(data.warnings.some((w) => w.includes("No sheet leads"))).toBe(true);
+  });
+});
+
+// ---------- OWNER REPORT 10/6 "CALENDAR-FILL ACCURACY" fixture ----------
+// The owner's real Oct 5–11 numbers (65 appointments on only 61 distinct
+// slots — 4 double-booked: Oct 5 ×1, Oct 7 ×1, Oct 11 ×2; 4 pending_payment
+// in window), reconstructed against the REAL studio schedule (the live
+// settings grid: non-Tue 08:00–13:00 + 13:30–18:30, Tue from 09:00; 60-min
+// interval/duration → 10 slots/day, 9 Tue = 69/week — the same grid the
+// commission engine derives). The live DB has moved on since the report
+// (cancellation reconciliation #44 + new bookings), so the reported snapshot
+// is pinned as a fixture, not read live.
+const OW_TODAY = "2026-10-07"; // Wednesday inside the reported week
+const OW_MON = "2026-10-05";
+const OW_SUN = "2026-10-11";
+// the REAL rules shape (weekday 2 = Tuesday starts 09:00; close 13:00 keeps
+// the 12:00 session, close 18:30 keeps the 17:30 session)
+const realRules: AvailabilityRule[] = [0, 1, 2, 3, 4, 5, 6].flatMap((weekday) => [
+  { weekday, open_time: weekday === 2 ? "09:00" : "08:00", close_time: "13:00", active: true },
+  { weekday, open_time: "13:30", close_time: "18:30", active: true },
+]);
+// per-day session layout: [singles on grid times..., doubles as [time, ×2]]
+// → Oct 5: 9 distinct/10 sessions; Oct 6: 8/8; Oct 7: 9/10; Oct 8–10: 9/9 each;
+//   Oct 11: 8 distinct/10 sessions. Totals: 61 distinct slots, 65 sessions.
+const OW_GRID = ["08:00", "09:00", "10:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30", "17:30"];
+const OW_DAY_PLAN: Array<[string, string[], string[]]> = [
+  // [date, single times, double times]
+  [OW_MON, ["08:00", "09:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30"], ["10:00"]],
+  ["2026-10-06", ["09:00", "10:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30"], []], // Tue grid (no 08:00)
+  ["2026-10-07", ["08:00", "09:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30"], ["10:00"]],
+  ["2026-10-08", ["08:00", "09:00", "10:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30"], []],
+  ["2026-10-09", ["08:00", "09:00", "10:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30"], []],
+  ["2026-10-10", ["08:00", "09:00", "10:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30"], []],
+  [OW_SUN, ["08:00", "09:00", "10:00", "11:00", "12:00", "13:30"], ["14:30", "15:30"]],
+];
+const PENDING_SLOTS = new Set(["2026-10-05|08:00", "2026-10-06|09:00", "2026-10-07|13:30", "2026-10-11|08:00"]);
+
+async function seedOwnerWeekStore(): Promise<MemoryStore> {
+  const store = new MemoryStore();
+  await store.saveSettings({
+    acuity: { calendars_included: [], types_included: [] },
+    studio: { hours: realRules }, // the engine grid == the canonical 10/day 9-Tue grid
+  });
+  await store.upsertAvailabilityRules(realRules); // the weekly report reads the mirror when non-empty
+  const rows: AppointmentRow[] = [];
+  let n = 0;
+  for (const [date, singles, doubles] of OW_DAY_PLAN) {
+    for (const t of singles) {
+      n += 1;
+      rows.push({
+        id: `ow-${n}`,
+        acuity_appointment_id: `ow-${n}`,
+        contact_id: null,
+        calendar_id: "1335091",
+        appointment_type: "Portrait Session",
+        appointment_datetime: H(date, t),
+        created_at: H("2026-10-04", "12:00"),
+        created_business_date: "2026-10-04",
+        booking_win_business_date: null,
+        raw: { paid: "no", priceSold: "300.00" },
+        status: PENDING_SLOTS.has(`${date}|${t}`) ? "scheduled" : "scheduled",
+        cancelled: false,
+        payment_state: PENDING_SLOTS.has(`${date}|${t}`) ? "pending_payment" : null,
+      });
+    }
+    for (const t of doubles) {
+      for (let k = 0; k < 2; k++) {
+        n += 1;
+        rows.push({
+          id: `ow-${n}`,
+          acuity_appointment_id: `ow-${n}`,
+          contact_id: null,
+          calendar_id: "1335091",
+          appointment_type: "Portrait Session",
+          appointment_datetime: H(date, t),
+          created_at: H("2026-10-04", "12:00"),
+          created_business_date: "2026-10-04",
+          booking_win_business_date: null,
+          raw: { paid: "no", priceSold: "300.00" },
+          status: "scheduled",
+          cancelled: false,
+          payment_state: null,
+        });
+      }
+    }
+  }
+  await store.upsertAppointments(rows);
+  return store;
+}
+
+describe("OWNER FIXTURE Oct 5–11: calendar fill counts DISTINCT occupied slots", () => {
+  test("65 sessions on 61 distinct of 69 slots — fill = 61, never 65; sessions stay visible; holes UNCHANGED (locked raw-basis)", async () => {
+    const store = await seedOwnerWeekStore();
+    const data = await weeklyPageData({ store, today: OW_TODAY });
+    const tw = data.calendar.thisWeek;
+    expect(tw.start).toBe(OW_MON);
+    expect(tw.end).toBe(OW_SUN);
+    // raw session population (the owner's count)
+    expect(tw.appointments).toBe(65);
+    // the FIX: distinct occupied slots — the fill number, not 65
+    expect(tw.slotsOccupied).toBe(61);
+    expect(tw.capacity).toBe(69); // real schedule: 10/day, 9 Tue
+    // next week empty in this fixture
+    expect(data.calendar.nextWeek.appointments).toBe(0);
+    expect(data.calendar.nextWeek.slotsOccupied).toBe(0);
+    // pending_payment sessions COUNT as booked (owner ruling pending — no
+    // decision in code): the 4 pending rows are inside the 65/61.
+    expect(tw.appointments).toBe(65); // includes the 4 pending_payment rows
+    // the LOCKED hole derivation is UNTOUCHED — appointment-count basis:
+    // 69 − 65 = 4 holes (fill basis would imply 8 unfilled slots; the
+    // divergence is flagged, not silently reconciled — see the PR).
+    expect(tw.holes).not.toBeNull();
+    expect(tw.holes!.capacity).toBe(69);
+    expect(tw.holes!.booked).toBe(65);
+    expect(tw.holes!.holes).toBe(4);
+    // the copied report line: distinct-slot fill + visible sessions
+    expect(data.report.reportText).toContain("This week: 61/69 filled (88%) · 65 sessions");
+  });
+
+  test("AVAILABILITY page booked counts are DISTINCT slots too (already the engine's behavior — regression-pinned): Oct 5–11 sums 61", async () => {
+    const store = await seedOwnerWeekStore();
+    const page = await availabilityPageData({ store, today: OW_TODAY, view: { view: "month", month: "2026-10" } });
+    const view = page.view as AvailabilityViewPayload;
+    const week = view.days.filter((d) => d.date >= OW_MON && d.date <= OW_SUN);
+    expect(week).toHaveLength(7);
+    // per-day distinct occupied slots (owner's doubles: −1 Oct 5, −1 Oct 7, −2 Oct 11)
+    expect(week.map((d) => d.booked)).toEqual([9, 8, 9, 9, 9, 9, 8]);
+    const sum = week.reduce((s, d) => s + d.booked, 0);
+    expect(sum).toBe(61); // 65 appointments − 4 doubles — never 65
+    expect(view.summary.booked).toBeGreaterThanOrEqual(61); // month summary counts the whole month
+    expect(week.map((d) => d.totalCapacity)).toEqual([10, 9, 10, 10, 10, 10, 10]);
   });
 });

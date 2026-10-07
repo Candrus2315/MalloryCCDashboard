@@ -491,16 +491,19 @@ function WeeklyPage() {
                 <>
                   Non-cancelled appointments grouped by their session date into Mon–Sun buckets, against the studio
                   capacity derived from the current schedule config (Settings → Studio Schedule — slots per day follow the
-                  configured blocks, so capacity updates with the schedule). The first fully open day scans forward for the
-                  first date with zero appointments and an open studio; sessions beyond next week still count there.
+                  configured blocks, so capacity updates with the schedule). Fill counts DISTINCT slots occupied (owner
+                  report 10/6, calendar-fill accuracy): a double-booked slot fills ONE slot, so the fill never exceeds
+                  capacity — the raw session count is shown alongside and the difference is the extra sessions sharing
+                  booked slots. The first fully open day scans forward for the first date with zero appointments and an
+                  open studio; sessions beyond next week still count there.
                 </>
               }
             />
           </p>
           <div className="mt-4 space-y-4">
             {[
-              { label: cal.thisWeek.label, start: cal.thisWeek.start, end: cal.thisWeek.end, appointments: cal.thisWeek.appointments, capacity: cal.thisWeek.capacity, holes: cal.thisWeek.holes },
-              { label: cal.nextWeek.label, start: cal.nextWeek.start, end: cal.nextWeek.end, appointments: cal.nextWeek.appointments, capacity: cal.nextWeek.capacity, holes: cal.nextWeek.holes },
+              { label: cal.thisWeek.label, start: cal.thisWeek.start, end: cal.thisWeek.end, appointments: cal.thisWeek.appointments, slotsOccupied: cal.thisWeek.slotsOccupied, capacity: cal.thisWeek.capacity, holes: cal.thisWeek.holes },
+              { label: cal.nextWeek.label, start: cal.nextWeek.start, end: cal.nextWeek.end, appointments: cal.nextWeek.appointments, slotsOccupied: cal.nextWeek.slotsOccupied, capacity: cal.nextWeek.capacity, holes: cal.nextWeek.holes },
             ].map((row) => (
               <div key={row.label}>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -511,16 +514,18 @@ function WeeklyPage() {
                 </div>
                 <div className="mt-1 flex items-baseline gap-2">
                   <p className="text-xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-                    {formatInt(row.appointments)}
+                    {formatInt(row.slotsOccupied)}
                     <span className="text-sm font-normal text-(--text-muted)"> / {row.capacity > 0 ? row.capacity : "—"}</span>
                   </p>
                   <p className="kpi-sub">
-                    sessions vs studio capacity
-                    {row.capacity > 0 && ` · ${Math.round((row.appointments / row.capacity) * 100)}% filled`}
+                    distinct slots occupied vs studio capacity
+                    {row.capacity > 0 && ` · ${Math.round((row.slotsOccupied / row.capacity) * 100)}% filled`}
+                    {row.appointments !== row.slotsOccupied &&
+                      ` · ${formatInt(row.appointments)} sessions (+${formatInt(row.appointments - row.slotsOccupied)} over slots)`}
                   </p>
                 </div>
                 <div className="mt-1.5">
-                  <RatioBar ratio={row.capacity > 0 ? row.appointments / row.capacity : null} height="h-1" max="max-w-none" />
+                  <RatioBar ratio={row.capacity > 0 ? row.slotsOccupied / row.capacity : null} height="h-1" max="max-w-none" />
                 </div>
                 {/* OWNER HOLES (9/30) — the empty-slot complement of the fill
                     above, computed by the SAME derivation the copied report

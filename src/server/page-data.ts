@@ -1413,8 +1413,24 @@ export interface WeeklyCalendarBucket {
   label: string;
   start: string;
   end: string;
-  /** Non-cancelled in-scope appointments whose SESSION falls in the bucket. */
+  /**
+   * Raw non-cancelled in-scope SESSIONS whose session date falls in the bucket
+   * — the appointment count, kept for transparency. The FILL number is
+   * `slotsOccupied` (owner report 2026-10-06 "CALENDAR-FILL ACCURACY": 65
+   * sessions sat on only 61 distinct slots — a double-booked slot fills ONE
+   * slot; the sessions figure carries the excess so nothing is hidden).
+   */
   appointments: number;
+  /**
+   * DISTINCT engine-grid slots the bucket's sessions occupy (owner directive:
+   * calendar fill counts DISTINCT SLOTS occupied — a double-booked slot
+   * counts once toward booked/capacity-fill, its extra sessions stay visible
+   * in the sessions figure). ONE engine: computeDayAvailability per ET date,
+   * `booked` summed over the bucket's 7 days. Same basis as the Availability
+   * page's booked counts. pending_payment sessions count as booked (the
+   * pending_payment occupancy ruling is the owner's — nothing decided here).
+   */
+  slotsOccupied: number;
   /** Slots the studio schedule config offers across the bucket's 7 days (derived, never hardcoded). */
   capacity: number;
   /**
@@ -1681,6 +1697,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   };
 
   const apptsByDate = new Map<string, number>();
+  const apptRowsByDate = new Map<string, AppointmentRow[]>();
   let beyond = 0;
   let thisWeekCount = 0;
   let nextWeekCount = 0;
@@ -1691,11 +1708,47 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     if (!Number.isFinite(ms)) continue; // unparsable session time — never guessed
     const d = etDateStrFromInstant(ms);
     apptsByDate.set(d, (apptsByDate.get(d) ?? 0) + 1);
+    const rows = apptRowsByDate.get(d);
+    if (rows) rows.push(a);
+    else apptRowsByDate.set(d, [a]);
     if (d >= thisMon && d < nextMon) thisWeekCount += 1;
     else if (d >= nextMon && d <= nextSun) nextWeekCount += 1;
     else beyond += 1; // d > nextSun (fetch floor is thisMon, so never earlier)
   }
   const weekCapacity = (mon: string) => dateRange(mon, addDays(mon, 6)).reduce((s, d) => s + capacityFor(d), 0);
+
+  // DISTINCT-SLOT OCCUPANCY (owner report 2026-10-06 "CALENDAR-FILL ACCURACY"):
+  // the fill number counts DISTINCT engine-grid slots occupied — a
+  // double-booked slot fills ONE slot (the raw session count above carries the
+  // excess), so fill can never exceed capacity. ONE engine:
+  // computeDayAvailability per ET date with that date's sessions — its
+  // `booked` is exactly distinct occupied slots on the SAME schedule basis as
+  // capacityFor above (blocked: [] on both sides — a blocked-but-booked slot
+  // is still occupied; blocks shape OPEN times, not fill). pending_payment
+  // sessions count as booked here — the pending_payment occupancy ruling is
+  // the owner's (rendered BOOKED-PENDING in the Availability Day view;
+  // nothing decided in code).
+  const occupiedByDate = new Map<string, number>();
+  const occupiedFor = (date: string): number => {
+    const memo = occupiedByDate.get(date);
+    if (memo != null) return memo;
+    const rows = apptRowsByDate.get(date) ?? [];
+    const occupied =
+      rows.length === 0
+        ? 0
+        : computeDayAvailability({
+            date,
+            rules,
+            blocked: [],
+            appointments: rows,
+            slotIntervalMin: settings.studio.slot_interval_min,
+            durationMin: settings.studio.appointment_duration_min,
+            paddingMin: settings.studio.padding_min,
+          }).booked;
+    occupiedByDate.set(date, occupied);
+    return occupied;
+  };
+  const weekSlotsOccupied = (mon: string) => dateRange(mon, addDays(mon, 6)).reduce((s, d) => s + occupiedFor(d), 0);
 
   // first future date with zero appointments (and an open studio) — the scan
   // includes sessions beyond next week, so nothing future is excluded
@@ -1737,6 +1790,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       start: thisMon,
       end: addDays(thisMon, 6),
       appointments: thisWeekCount,
+      slotsOccupied: weekSlotsOccupied(thisMon),
       capacity: weekCapacity(thisMon),
       holes: thisWeekHoles,
     },
@@ -1745,6 +1799,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       start: nextMon,
       end: nextSun,
       appointments: nextWeekCount,
+      slotsOccupied: weekSlotsOccupied(nextMon),
       capacity: weekCapacity(nextMon),
       holes: nextWeekHoles,
     },
