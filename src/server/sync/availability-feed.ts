@@ -445,6 +445,7 @@ export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions)
       await store.putAvailabilityDates(
         [{ calendar_id: s.calendarId, appointment_type_id: s.appointmentTypeId, month: s.month, dates_et: datesEt }],
         detailedRunId,
+        now().toISOString(), // stamp the sweep's own probe instant (sweep-age logic keys off it)
       );
       monthsFetched += 1;
       sweepsDone.push({ month: s.month, calendarId: s.calendarId, dates: datesEt });
@@ -660,6 +661,49 @@ export function kickAvailabilityTopUp(
 /** Test seam: whether a page-loader top-up is currently in flight. */
 export function availabilityTopUpInFlight(): boolean {
   return topUpInFlight;
+}
+
+// ---------- PURE: THE hole derivation (availability rebuild, PR-2) ----------
+
+/** Result of the ONE hole derivation: day count + which slots count. */
+export interface AvailabilityHoleDerivation {
+  /** Day-level hole count — the top summary / month cells / 14-Day rows. */
+  holes: number;
+  /** Slot-level hole membership: HH:mm ET times the definition counts as holes. */
+  holeSlots: string[];
+}
+
+/**
+ * THE hole derivation of the availability rebuild — ONE pure, isolated
+ * function and ONE swap point (PR-2 placeholder → PR-3 owner pick).
+ *
+ * PLACEHOLDER (PR-2) = the CURRENT rule: every empty grid slot is a hole —
+ * holes = capacity − booked over DISTINCT occupied slots (investigation §4
+ * candidate C). Inputs already carry everything a stricter definition needs,
+ * so the owner's pick (gap-run §4-B is the recommendation, with the
+ * "a blocked time ends the active schedule" sub-rule) swaps ONLY this body:
+ *
+ *   slotTimes    — the engine-generated candidate slots, chronological (HH:mm)
+ *   bookedTimes  — distinct slot times an active appointment session occupies
+ *   blockedTimes — slot times removed by dashboard blocks / turnover buffer
+ *                  (they render BLOCKED, never pushable; under the current
+ *                  rule they still count as empty grid slots)
+ *
+ * Weekly's deriveWeeklyHoles (appointment-count basis) and the commission
+ * RULING-3 filled-hole derivation (week-start-open basis) answer DIFFERENT
+ * questions and are consumed here — never edited.
+ */
+export function deriveAvailabilityHoles(input: {
+  slotTimes: string[];
+  bookedTimes: string[];
+  blockedTimes?: string[];
+}): AvailabilityHoleDerivation {
+  const booked = new Set(input.bookedTimes);
+  const holeSlots = input.slotTimes.filter((t) => !booked.has(t));
+  return {
+    holes: Math.max(0, input.slotTimes.length - booked.size),
+    holeSlots,
+  };
 }
 
 // ---------- PURE: weekday/horizon helpers used by the page-data extension ----------

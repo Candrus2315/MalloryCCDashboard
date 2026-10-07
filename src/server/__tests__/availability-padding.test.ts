@@ -273,7 +273,13 @@ describe("S4b padding hardening — padding 0 regression (byte-identical to pre-
     for (const f of fixtures) {
       const got = computeDayAvailability({ ...f, paddingMin: 0 });
       const want = referencePreS4b({ ...f, paddingMin: 0 });
-      expect(got).toEqual(want);
+      // PR-2 added `slotTimes` (the engine's generated candidate labels) — an
+      // additive field the pre-S4b reference never had. The byte-for-byte
+      // claim covers the legacy contract fields; slotTimes is separately
+      // pinned by its own invariant below.
+      const { slotTimes: _slotTimes, ...gotLegacy } = got;
+      expect(gotLegacy).toEqual(want);
+      expect(got.slotTimes.length).toBe(got.totalCapacity);
     }
   });
 

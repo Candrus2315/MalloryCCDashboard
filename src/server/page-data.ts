@@ -81,6 +81,8 @@ import {
 } from "./metrics/weekly";
 import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
 import { deriveWeeklyHoles, type DayHoleDetail } from "./commission/derive";
+import { kickAvailabilityTopUp } from "./sync/availability-feed";
+import { buildAvailabilityView } from "./availability-view";
 import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assigned-by-day";
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
@@ -105,6 +107,12 @@ export interface PageDeps {
   today?: string;
   /** Injected ET wall-clock (minutes since midnight) for deterministic tests — dailyReportPageData's anchor rule uses it. */
   etNowMinutes?: number;
+  /**
+   * AVAILABILITY REBUILD PR-2: the range-view request (raw search strings;
+   * normalized server-side). Absent → the legacy 7-day payload (its contract
+   * tests); the route always passes one (default view = month of today).
+   */
+  view?: AvailabilityViewRawSearch;
 }
 
 export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
@@ -921,6 +929,37 @@ export async function availabilityPageData(deps?: PageDeps) {
   const rules = storedRules.length > 0 ? storedRules : settings.studio.hours;
   const recurring = settings.studio.recurring_blocks ?? [];
 
+  // ---- AVAILABILITY REBUILD PR-2: range views (Month default / 14-Day / Day) ----
+  // A view request swaps the legacy 7-day strip payload for the range-view
+  // payload (the route always sends one — default = month of today; the
+  // contract tests don't, so the legacy path below stays byte-identical).
+  const viewRequest = normalizeAvailabilityView(deps?.view, today);
+  if (viewRequest) {
+    const [view, connections] = await Promise.all([
+      buildAvailabilityView({ store, today, settings, rules, recurring, request: viewRequest }),
+      store.getConnections(),
+    ]);
+    const { connection, warnings } = availabilityConnectionState(connections);
+    // PR-1's designed page-loader top-up: read the cache NOW, kick ONE bounded
+    // background run for what the visible range is missing — never awaited
+    // (SSR stays fast; the next load or tick sees fresh cache), and a no-op
+    // under test/demo (no client resolves there). A range with no future dates
+    // never triggers calls (the feed has no past availability worth caching).
+    if (view.dates.some((d) => d >= today)) {
+      kickAvailabilityTopUp({ dates: view.dates }, { store });
+    }
+    return {
+      meta,
+      today,
+      connection,
+      days: [] as AvailabilityDay[],
+      holesByDate: {} as Record<string, DayHoleDetail>,
+      filters: { calendars: settings.acuity.calendars_included, types: settings.acuity.types_included },
+      warnings: [...warnings, ...view.warnings],
+      view,
+    };
+  }
+
   const dayDates = Array.from({ length: 7 }, (_, off) => addDays(today, off));
   // Wave-2 holes adjacency input: the raw per-day overlap rows, kept before
   // the availability engine scopes them (the holes derivation consumes the
@@ -1003,6 +1042,213 @@ export async function availabilityPageData(deps?: PageDeps) {
     filters: { calendars: settings.acuity.calendars_included, types: settings.acuity.types_included },
     warnings,
   };
+}
+
+// ---------- AVAILABILITY REBUILD PR-2: range views (Month default / 14-Day / Day) ----------
+// Blueprint: /home/team/shared/design/availability-rebuild-investigation.md §6
+// PR-2 + owner directive §2–§4, §6, §8–§9. One builder, three view kinds, ONE
+// availability engine (computeDayAvailability) for every count, ONE hole
+// derivation (deriveAvailabilityHoles in availability-feed.ts — the PR-2
+// placeholder is the current rule; PR-3 swaps the owner's pick by editing only
+// that body), and the PR-1 feed cache as the ONLY Acuity source (the loader
+// never awaits API calls — it reads the cache and kicks a bounded top-up).
+
+/** Raw search fields the availability route passes through (normalized below). */
+export interface AvailabilityViewRawSearch {
+  view?: string;
+  month?: string;
+  from?: string;
+  to?: string;
+  date?: string;
+}
+
+export type AvailabilityViewKind = "month" | "days" | "day";
+
+/** The 14-Day view's rolling window length. */
+export const AVAILABILITY_DAYS_VIEW_WINDOW = 14;
+
+export interface AvailabilityViewRequest {
+  kind: AvailabilityViewKind;
+  /** kind=month → the visible month "YYYY-MM"; "" otherwise. */
+  month: string;
+  /** kind=days → window start (the end is start + window − 1). */
+  from: string;
+  to: string;
+  /** kind=day → the single date. */
+  date: string;
+}
+
+const AVAIL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const AVAIL_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * Normalize the raw search into a view request — PURE. Invalid/absent fields
+ * fall back to honest defaults (month of today / today), never an error page.
+ * `null` = no view requested (the legacy 7-day payload contract keeps running
+ * for anything that does not opt in).
+ */
+export function normalizeAvailabilityView(
+  raw: AvailabilityViewRawSearch | undefined,
+  today: string,
+): AvailabilityViewRequest | null {
+  if (!raw || (raw.view == null && raw.month == null && raw.from == null && raw.to == null && raw.date == null)) {
+    return null;
+  }
+  const validDate = (v: string | undefined) => (v && AVAIL_DATE_RE.test(v) ? v : null);
+  const validMonth = (v: string | undefined) => (v && AVAIL_MONTH_RE.test(v) ? v : null);
+  if (raw.view === "day") {
+    return { kind: "day", month: "", from: "", to: "", date: validDate(raw.date) ?? today };
+  }
+  if (raw.view === "days") {
+    const from = validDate(raw.from) ?? today;
+    return { kind: "days", month: "", from, to: addDays(from, AVAILABILITY_DAYS_VIEW_WINDOW - 1), date: "" };
+  }
+  return { kind: "month", month: validMonth(raw.month) ?? monthKeyOf(today), from: "", to: "", date: "" };
+}
+
+/** The ET dates a view request displays (month → its calendar dates; days → the window; day → itself). PURE. */
+export { availabilityViewDates } from "./availability-view";
+
+/** How one day's OPEN numbers were produced — the honesty state the views render. */
+export type AvailabilityAcuityState =
+  | "feed" // Acuity-authoritative inside the coverage horizon (feed ∖ booked)
+  | "estimated" // past the horizon / sweep snapshot — grid − booked arithmetic, labeled
+  | "past" // before today: booked-truth territory, the engine numbers are what happened
+  | "none"; // the month has no cached sweep yet — Open renders "—" (never a bare 0)
+
+export interface AvailabilityRangeDay {
+  date: string;
+  totalCapacity: number;
+  /** DISTINCT engine-booked slots (doubles collapse — the calendar-fill accuracy item). */
+  booked: number;
+  /** The displayed open count: feed-authoritative, engine-estimated, real 0 when feed-closed — null when no coverage. */
+  openCount: number | null;
+  /** The engine's open slot labels (the studio-schedule estimate / past-truth set). */
+  openSlotTimes: string[];
+  utilization: number | null;
+  blockedCount: number;
+  /** deriveAvailabilityHoles — the ONE hole derivation (current rule placeholder). */
+  holes: number;
+  acuity: AvailabilityAcuityState;
+  /** Feed open ∖ booked (HH:mm sorted) when the feed answers with times; null otherwise. */
+  feedOpenTimes: string[] | null;
+  /** The month index marks the date open but the per-date times are not probed yet. */
+  feedPending: boolean;
+  /** This day sits past the coverage horizon (the month's "Beyond Acuity booking horizon" label). */
+  beyondHorizon: boolean;
+}
+
+export interface AvailabilityRangeSummary {
+  capacity: number;
+  booked: number;
+  /** Sum over days with a known open count; the UI renders "—" when openKnown is false. */
+  open: number;
+  holes: number;
+  utilization: number | null;
+  /** false when at least one visible day has no Acuity coverage — Open renders "—" honestly. */
+  openKnown: boolean;
+}
+
+/** Per-slot availability state (Day view). CANCELLED renders struck-through on the slot's row. */
+export type AvailabilitySlotStatus = "booked" | "booked-pending" | "open" | "blocked" | "cancelled";
+
+export interface AvailabilitySlotAppointment {
+  id: string;
+  clientName: string | null;
+  appointmentType: string;
+  calendarName: string | null;
+  cancelled: boolean;
+  cancelledAt: string | null;
+  paymentState: string | null;
+  durationMinutes: number | null;
+}
+
+export interface AvailabilitySlotView {
+  /** "09:00" (HH:mm ET — the feed's shape) for grid slots; off-grid feed times keep their own. */
+  time: string;
+  /** "9:00 AM" — the engine's slot label shape. */
+  label: string;
+  status: AvailabilitySlotStatus;
+  /** The hole definition counts this slot (OPEN·HOLE — the §9 token). */
+  isHole: boolean;
+  /** Open/hole derived from the studio schedule rather than the feed. */
+  estimated: boolean;
+  /** "Unexplained — not offered by Acuity (candidate block)" etc.; null when plain. */
+  reason: string | null;
+  /** Gray "unexplained" rendering (inferred candidate block — never claimed as a real block). */
+  unexplained: boolean;
+  /** A dashboard/recurring block or the turnover buffer occupies the slot's interval. */
+  blocked: boolean;
+  /** Active (non-cancelled, in-scope) appointments whose session overlaps the slot, chronological. */
+  appointments: AvailabilitySlotAppointment[];
+  /** Cancelled rows whose session overlaps the slot — struck-through, Day view only. */
+  cancelledAppointments: AvailabilitySlotAppointment[];
+  /** activeCount − 1 — the "+n" badge (distinct-slot counting). */
+  extraCount: number;
+  /** A feed-offered time outside the generated grid (extra row after the grid, Day view). */
+  offGrid: boolean;
+}
+
+export interface AvailabilityCoverageView {
+  /** Last date any calendar still offered slots (null = the feed has no cached data at all). */
+  horizonDate: string | null;
+  months: Array<{ month: string; calendarCount: number; offeredDates: number; fetchedAt: string | null }>;
+  /** Months with a cached sweep (the feed answered them, [] included). */
+  coveredMonths: string[];
+  /** NOTHING is cached (feed never ran / demo) — engine output renders everywhere (existing behavior). */
+  noFeedData: boolean;
+}
+
+export interface AvailabilityViewPayload {
+  kind: AvailabilityViewKind;
+  month: string;
+  from: string;
+  to: string;
+  date: string;
+  /** "October 2026" / "Oct 6 – Oct 19, 2026" / "Tuesday, October 13, 2026" — the summary heading. */
+  label: string;
+  dates: string[];
+  days: AvailabilityRangeDay[];
+  summary: AvailabilityRangeSummary;
+  /** Day view only: the chronological slot list (grid slots + off-grid feed times). */
+  slots: AvailabilitySlotView[] | null;
+  /** Day view only: active in-scope appointments on the date outside every generated slot. */
+  offGridAppointments: AvailabilitySlotAppointment[];
+  coverage: AvailabilityCoverageView;
+  /** The "Beyond Acuity booking horizon — estimated" month label. */
+  beyondHorizon: boolean;
+  /** Any visible day lacks a cached sweep (Open renders "—" for those days). */
+  hasUncoveredDays: boolean;
+  /** Range-level honesty lines (the page banner appends them). */
+  warnings: string[];
+}
+
+/** Acuity connection state + the stale/disconnected honesty lines (mirrors the legacy path exactly). */
+function availabilityConnectionState(connections: Awaited<ReturnType<Store["getConnections"]>>): {
+  connection: AvailabilityConnection;
+  warnings: string[];
+} {
+  const row = connections.find((c) => c.provider === "acuity") ?? null;
+  const lastSuccess = row?.last_successful_sync_at ?? null;
+  const lastMs = lastSuccess ? Date.parse(lastSuccess) : NaN;
+  const stale =
+    row?.status === "connected" && Number.isFinite(lastMs) && Date.now() - lastMs > ACUITY_STALE_AFTER_MS;
+  const connection: AvailabilityConnection = {
+    connected: row?.status === "connected" ?? false,
+    mode: row && row.is_demo ? "demo" : row?.status === "connected" ? "live" : "disconnected",
+    lastSyncAt: lastSuccess,
+    stale,
+  };
+  const warnings: string[] = syncStaleWarnings(connections).filter((w) => w.startsWith("Acuity"));
+  if (stale) {
+    warnings.push(
+      `Availability may be outdated — last successful Acuity sync was ${Math.max(1, Math.round((Date.now() - lastMs) / 60_000))} minutes ago.`,
+    );
+  }
+  if (connection.mode === "disconnected") {
+    warnings.push("Acuity connection required — availability stays unavailable (no invented slots) until Acuity connects.");
+  }
+  return { connection, warnings };
 }
 
 // ---------- WEEKLY REPORT (owner directive 2026-09-29: the Monday leadership

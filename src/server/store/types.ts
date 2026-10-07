@@ -1512,8 +1512,11 @@ export interface Store {
    * with REPLACE-of-the-row semantics (the fresh answer IS the month's truth,
    * including an EMPTY answer — that is the coverage horizon). Writer runs
    * inside the availability-feed advisory lock in pg (one writer at a time).
+   * fetchedAt (optional) stamps the probe instant explicitly — the sweep-age
+   * logic (feed-observed-closed vs not-yet-observed) keys off it, so tests pin
+   * the fixture instant; production passes the run's own clock reading.
    */
-  putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string): Promise<void>;
+  putAvailabilityDates(rows: AvailabilityDatesInput[], runId: string, fetchedAt?: string): Promise<void>;
   /** Cached month rows for the given months (empty list → []). */
   getAvailabilityDates(months: string[]): Promise<AvailabilityDatesRow[]>;
   /**
