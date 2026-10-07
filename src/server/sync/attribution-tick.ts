@@ -27,11 +27,20 @@
  *      appointment_id — a re-run REPLACES prior computed attributions, except
  *      MANUAL WINS: an appointment with a manual_override row keeps it (the
  *      store's upsert skips manual rows; the tick reports those as reason
- *      "manually-assigned" instead of recomputing them).
+ *      "manually-assigned" instead of recomputing them) — and except the
+ *      EVIDENCE-FETCH-FLOOR GUARD below: an in-cohort appointment whose
+ *      attribution window predates the call evidence this run actually
+ *      fetched keeps its STORED verdict (never re-derived against an
+ *      evidence set that cannot contain its calls).
  */
 import { addDays, etDateStrFromInstant, etDayStartUtc } from "../date-logic";
 import { appointmentInScope } from "../metrics/availability";
-import { matchAppointmentsToCalls, type AttributionMatch } from "../metrics/attribution";
+import {
+  attributionWindowDates,
+  bookingCreationDateEt,
+  matchAppointmentsToCalls,
+  type AttributionMatch,
+} from "../metrics/attribution";
 import { assertBookingInvariant, type AttributionRow } from "../metrics/compute";
 import { buildRosterEligibility } from "../roster";
 import type { AppSettings, Store } from "../store/types";
@@ -80,6 +89,26 @@ export interface AttributionTickResult {
   unattributed?: number;
   /** Appointments whose existing manual_override row was preserved (manual wins). */
   manuallyAssigned?: number;
+  /**
+   * EVIDENCE-FETCH-FLOOR GUARD: in-cohort appointments whose attribution
+   * window (creation ET date − 1 .. creation ET date) predates the call
+   * evidence this run actually fetched. Their STORED verdict was preserved
+   * verbatim and excluded from the write — never re-derived against an
+   * evidence set that cannot contain their window's calls. (The 10/7 W1
+   * artifact: 40 stored engine verdicts were re-derived to
+   * no-qualifying-call because their August calls sat below the tick's
+   * rolling fetch floor while their future session dates kept them
+   * in-cohort.) A widened `since` run (scripts/attr-reverdict.ts) covers
+   * those windows and re-derives them normally.
+   */
+  evidenceBelowFetchFloor?: number;
+  /**
+   * Below-floor appointments with NO stored verdict to preserve (first
+   * cohort entry): derived honestly against the fetched evidence. An
+   * unattributed verdict here reflects the fetch floor, not missing source
+   * data — the widened-since re-verdict runner is the remedy.
+   */
+  belowFetchFloorUnverdicted?: number;
   reason?: string;
   error?: string;
 }
@@ -255,6 +284,43 @@ export async function computeAndPersistAttributions(
     (a) => appointmentInScope(a, settings.acuity) && a.status !== "cancelled" && !a.cancelled,
   );
 
+  // EVIDENCE-FETCH-FLOOR GUARD (the 10/7 W1 artifact, root-caused in
+  // w1-recompute-anomaly-2026-10-07.md): the cohort above is selected by
+  // SESSION date OR creation date inside the window, but the call evidence
+  // fetched below starts at `since` (cohort start − margin). A booking can
+  // therefore be in-cohort via a FUTURE session date while its creation-date
+  // attribution window sits entirely below the fetch floor — re-deriving it
+  // would judge it against an evidence set that CANNOT contain its window's
+  // calls. On 2026-10-07 19:30Z exactly that erased 40 stored W1 engine
+  // verdicts to "no-qualifying-call" (their August calls are intact in the
+  // calls table; the fetch simply never reached them).
+  //
+  // THE GUARD: such an appointment is SKIPPED, never re-derived. Its stored
+  // verdict is carried verbatim through the invariant below and EXCLUDED
+  // from the write (untouched rows are invisible to the degradation guard
+  // and keep their updated_at — the skip is auditable on the row itself).
+  // This preserves existing verdicts conservatively; the attribution RULES
+  // are unchanged (s1 frozen). A run with a widened `since` override (the
+  // attr-reverdict runner, floor ≤ 2026-08-30) covers those windows and
+  // re-derives them normally.
+  const callFloorDate = etDateStrFromInstant(Date.parse(since));
+  const existingByAppt = new Map(existing.map((r) => [r.appointment_id, r]));
+  const preserved = new Map<string, AttributionRow>();
+  let belowFetchFloorUnverdicted = 0;
+  for (const a of appts) {
+    const anchor = bookingCreationDateEt(a);
+    const windowFrom = anchor ? attributionWindowDates(anchor.date).from : null;
+    if (windowFrom != null && windowFrom >= callFloorDate) continue; // evidence fully covered
+    const existingRow = existingByAppt.get(a.id);
+    if (existingRow && !existingRow.manual_override) preserved.set(a.id, existingRow);
+    else if (!existingRow) belowFetchFloorUnverdicted += 1;
+  }
+  if (preserved.size > 0) {
+    console.log(
+      `[attribution] evidence-fetch-floor guard: preserved ${preserved.size} stored verdict(s) whose window predates the call fetch floor (${callFloorDate}) — 0 re-derived blind`,
+    );
+  }
+
   // s1 harvest interactions (parent-conversation user ownership): a harvested
   // conversation call message is VERIFIED ROSTER evidence only when its HL
   // user resolves to an ACTIVE roster user (or an owner-configured
@@ -304,6 +370,16 @@ export async function computeAndPersistAttributions(
   );
   const { rows, manuallyAssignedIds } = toAttributionRows(matches, existing, callIdByExternalId);
 
+  // CARRY the preserved verdicts: replace the engine's (evidence-blind) rows
+  // for below-floor appointments with their stored rows. Every in-cohort
+  // appointment still carries exactly one verdict row — the coverage
+  // invariant below holds over the full population. Manual rows below the
+  // floor are already carried verbatim by toAttributionRows (manual wins).
+  for (let i = 0; i < rows.length; i++) {
+    const stored = preserved.get(rows[i]!.appointment_id);
+    if (stored) rows[i] = { ...stored };
+  }
+
   // METRIC INVARIANT (owner-ratified): the engine must produce exactly one
   // verdict per in-scope, non-cancelled appointment — attributed +
   // unattributed equals the ENGINE POPULATION (paid AND pending; pending
@@ -315,7 +391,13 @@ export async function computeAndPersistAttributions(
   const unattributedCount = matches.filter((m) => m.status === "unattributed").length;
   assertBookingInvariant(appts, rows, { engineAttributed: attributedCount, engineUnattributed: unattributedCount });
 
-  await store.upsertAttributions(rows, { force: options?.force ?? false });
+  // Write only what was (re)derived: preserved verdicts are EXCLUDED from the
+  // write so their rows are never touched — updated_at stays frozen at the
+  // run that last had their evidence in window (the audit marker), and the
+  // store's degradation guard treats untouched rows as untouched (absent from
+  // the write ≠ stripped).
+  const toWrite = preserved.size > 0 ? rows.filter((r) => !preserved.has(r.appointment_id)) : rows;
+  await store.upsertAttributions(toWrite, { force: options?.force ?? false });
 
   // STAMP: this writer's version is now the latest that has written (takeover
   // — a fresh deploy always takes over; equal versions are idempotent).
@@ -329,6 +411,8 @@ export async function computeAndPersistAttributions(
     attributed: attributedCount,
     unattributed: unattributedCount,
     manuallyAssigned: manuallyAssignedIds.length,
+    evidenceBelowFetchFloor: preserved.size,
+    belowFetchFloorUnverdicted,
   };
 }
 
