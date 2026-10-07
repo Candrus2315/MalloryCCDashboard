@@ -54,11 +54,10 @@ function availabilityViewLabel(request: AvailabilityViewRequest): string {
   if (request.kind === "days") {
     const endYear = request.to.slice(0, 4);
     const startYear = request.from.slice(0, 4);
-    const endText = formatDateHuman(request.to);
-    const startText =
-      startYear === endYear
-        ? formatDateHuman(request.from).replace(`, ${startYear}`, "")
-        : formatDateHuman(request.from);
+    // the END always carries the year (a Dec→Jan window reads both); the start
+    // drops it only inside the same year
+    const endText = formatDateHumanFull(request.to);
+    const startText = startYear === endYear ? formatDateHuman(request.from) : formatDateHumanFull(request.from);
     return `${startText} – ${endText}`;
   }
   return formatDateHumanFull(request.date);
@@ -240,6 +239,37 @@ export async function buildAvailabilityView(ctx: {
     const bookedTimes: string[] = [];
     const blockedSlotTimes: string[] = [];
     const feedSet = feedTimesByDate.get(date) ?? new Set<string>();
+    // The day-level ESTIMATE reason (the honesty ladder — which schedule/feed
+    // fact stands behind an unobserved slot). Booked slots carry it too: past
+    // the horizon a BOOKED slot is still an engine estimate, and the label
+    // must say so (PR-2 FIX 3 — booked rows rendered reasonless before).
+    const dayEstimateReason =
+      acuity === "feed" && feedPending
+        ? "Acuity open times not probed yet — studio-schedule estimate"
+        : acuity === "feed" && !inDatesEt
+          ? "Not offered by the Acuity booking template"
+          : dayBeyondFlag
+            ? "Beyond the Acuity booking horizon — studio-schedule estimate"
+            : acuity === "estimated"
+              ? "Studio-schedule estimate (no Acuity availability data)"
+              : acuity === "none"
+                ? "No Acuity data for this month yet"
+                : null;
+    // A feed-offered time whose SLOT overlaps a booking's padding buffer
+    // contradicts the engine's turnover model for THAT booking (Acuity happily
+    // offers back-to-back slots there). Its buffer can then no longer honestly
+    // explain a silent slot — the slot renders the candidate-block gray
+    // (PR-2 FIX 3: an uncontradicted buffer keeps the turnover explanation).
+    const feedSlotOverlapsBuffer = (bufStartMs: number, bufEndMs: number): boolean => {
+      for (const t of feedSet) {
+        const h = Number(t.slice(0, 2));
+        const m = Number(t.slice(3, 5));
+        if (!Number.isFinite(h) || !Number.isFinite(m)) continue;
+        const slotStartMs = dayStartMs + (h * 60 + m) * 60_000;
+        if (slotStartMs < bufEndMs && slotStartMs + durationMin * 60_000 > bufStartMs) return true;
+      }
+      return false;
+    };
     for (const label of day.slotTimes) {
       const minutes = slotLabelToMinutes(label);
       if (minutes == null) continue; // unclassifiable label — never guessed (the label round-trip is tested)
@@ -263,6 +293,7 @@ export async function buildAvailabilityView(ctx: {
         // the pending row's own payment_state visible in its detail line.
         status = active.every((iv) => iv.a.payment_state === "pending_payment") ? "booked-pending" : "booked";
         bookedTimes.push(time);
+        reason = dayEstimateReason; // a booked slot is still engine-estimated where no feed answer stands behind it
       } else if (blockHere.length > 0) {
         status = "blocked";
         blocked = true;
@@ -272,16 +303,24 @@ export async function buildAvailabilityView(ctx: {
         if (feedOffers) {
           status = "open";
           if (bufferHere.length > 0) reason = "Offered by Acuity — the engine's turnover buffer flags it";
+        } else if (bufferHere.length > 0 && bufferHere.some((iv) => feedSlotOverlapsBuffer(iv.start, iv.end))) {
+          // Inside the horizon the feed answers per slot; a free grid slot it
+          // does not offer — where the ONLY available explanation (the padding
+          // buffer) is itself contradicted by the feed's own offers — is a
+          // CANDIDATE block, rendered gray "unexplained", never claimed as
+          // open or as a real block (the discrepancy detector flags the same
+          // case as acuity-silent-but-open).
+          status = "blocked";
+          blocked = true;
+          unexplained = true;
+          blockedSlotTimes.push(time);
+          reason = "Unexplained — not offered by Acuity (candidate block)";
         } else if (bufferHere.length > 0) {
           status = "blocked";
           blocked = true;
           blockedSlotTimes.push(time);
           reason = "Turnover buffer (studio padding)";
         } else {
-          // Inside the horizon the feed answers per slot; a free grid slot it
-          // does not offer is a CANDIDATE block — rendered gray "unexplained",
-          // never claimed as open or as a real block (the discrepancy detector
-          // flags the same case as acuity-silent-but-open).
           status = "blocked";
           blocked = true;
           unexplained = true;
@@ -290,19 +329,7 @@ export async function buildAvailabilityView(ctx: {
         }
       } else {
         status = "open";
-        reason = cancelledHere.length > 0
-          ? "Cancelled — the slot is free again"
-          : acuity === "feed" && feedPending
-            ? "Acuity open times not probed yet — studio-schedule estimate"
-            : acuity === "feed" && !inDatesEt
-              ? "Not offered by the Acuity booking template"
-              : dayBeyondFlag
-                ? "Beyond the Acuity booking horizon — studio-schedule estimate"
-                : acuity === "estimated"
-                  ? "Studio-schedule estimate (no Acuity availability data)"
-                  : acuity === "none"
-                    ? "No Acuity data for this month yet"
-                    : null;
+        reason = cancelledHere.length > 0 ? "Cancelled — the slot is free again" : dayEstimateReason;
       }
       slotViews.push({
         time,
