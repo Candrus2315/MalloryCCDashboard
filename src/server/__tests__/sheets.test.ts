@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
+import { DEFAULT_COLUMN_MAPPING_DAY_COUNT, DEFAULT_SHEET_IDS, DEFAULT_SETTINGS, type SheetConfig } from "../store/types";
 import type { GoogleSheetsAdapter } from "../sync/adapters";
 import {
   applySheetMapping,
@@ -405,5 +406,91 @@ describe("demo-awareness banner line", () => {
       { provider: "google_sheets", status: "connected", last_successful_sync_at: "2026-09-25T10:00:00Z", last_error: "animalia: 403" },
     ]);
     expect(warnings.join(" ")).toContain("synced partially");
+  });
+});
+
+// ========================================================================
+// SHEET-MODE PERSISTENCE HARDENING (owner directive 2026-10-07)
+// The 10/3 incident: the saved mapping mode flipped silently to
+// row_per_day_count once (writer unidentified) then self-corrected. Rule:
+// mode changes must be EXPLICIT and AUDITED, never silent. These tests pin
+// the hardened saveSettings sheets merge (mergeSheetsSettings) used by BOTH
+// stores: a patch without a valid mode cannot clobber the saved one, and any
+// real mode change lands an audit row (entity_type sheet_mapping) — old →
+// new + actor label — in the same manual_overrides sink the Audit page reads.
+// ========================================================================
+describe("sheet mapping mode persistence (never silent)", () => {
+  // The rogue/legacy writer's shape: a sheet config that OMITS `mode`
+  // (runtime JSON patches are not schema-checked, so this shape is real —
+  // the pre-hardening merge silently clobbered the saved mode with it, and
+  // normalizeSheetConfig re-derived row_per_day_count from the count column).
+  const rogueNoMode = (sheetId: string): SheetConfig =>
+    ({ sheet_id: sheetId, columns: { ...DEFAULT_COLUMN_MAPPING_DAY_COUNT } }) as unknown as SheetConfig;
+  const modeOnly = (mode: string): SheetConfig => ({ mode }) as unknown as SheetConfig;
+
+  const savedRowPerLead = async (store: MemoryStore, sheet: "family" | "animalia" = "family") => {
+    const config: SheetConfig = {
+      sheet_id: DEFAULT_SHEET_IDS[sheet],
+      mode: "row_per_lead",
+      columns: { source_date: "Q", name: "B", phone: "C", email: "D" },
+    };
+    await store.saveSettings({ sheets: sheet === "animalia" ? { animalia: config } : { family: config } }, "christopher");
+  };
+  const modeAuditRows = async (store: MemoryStore) =>
+    (await store.getManualOverrides(50)).filter((r) => r.entity_type === "sheet_mapping" && r.field === "mode");
+
+  test("explicit owner save of row_per_lead stores exactly that", async () => {
+    const store = new MemoryStore();
+    await savedRowPerLead(store);
+    expect((await store.getSettings()).sheets.family.mode).toBe("row_per_lead");
+  });
+
+  test("PIN: default-application writes cannot flip a saved mode", async () => {
+    const store = new MemoryStore();
+    await savedRowPerLead(store); // owner explicitly saved row_per_lead — what the 10/3 flip clobbered
+    const auditBefore = (await modeAuditRows(store)).length; // 1 — the explicit save itself
+    // Suspect path 1 — a partial/default-shape sheet config that OMITS mode.
+    await store.saveSettings({ sheets: { family: rogueNoMode(DEFAULT_SHEET_IDS.family) } });
+    // Suspect path 2 — re-applying the full default sheets group (which
+    // carries the DEFAULT modes): still must not flip the owner's choice.
+    await store.saveSettings({ sheets: DEFAULT_SETTINGS.sheets });
+    const got = await store.getSettings();
+    expect(got.sheets.family.mode).toBe("row_per_lead");
+    expect(got.sheets.family.columns.source_date).toBe("Q"); // columns still merged through
+    // The suspect paths changed nothing → no audit rows either.
+    expect((await modeAuditRows(store)).length).toBe(auditBefore);
+  });
+
+  test("owner-labeled mode change is honored AND audited (old → new, actor)", async () => {
+    const store = new MemoryStore();
+    await store.saveSettings({ sheets: { family: modeOnly("row_per_lead") } }, "christopher");
+    const got = await store.getSettings();
+    expect(got.sheets.family.mode).toBe("row_per_lead");
+    expect(got.sheets.family.columns.source_date).toBe("Q"); // columns preserved, not lost
+    const rows = (await modeAuditRows(store)).filter((r) => r.entity_id === "family");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].previous_value).toBe("row_per_day_count");
+    expect(rows[0].new_value).toBe("row_per_lead");
+    expect(rows[0].changed_by).toBe("christopher");
+    expect(Number.isFinite(new Date(rows[0].changed_at).getTime())).toBe(true);
+  });
+
+  test("unlabeled (system-actor) writes cannot change a saved mode at all", async () => {
+    const store = new MemoryStore();
+    // No actor → "system": even an explicitly-carried mode in the patch is
+    // ignored, so an unidentified writer can never flip the mapping mode —
+    // and there is nothing to audit because nothing changed.
+    await store.saveSettings({ sheets: { animalia: modeOnly("row_per_lead") } });
+    expect((await store.getSettings()).sheets.animalia.mode).toBe("row_per_day_count"); // default preserved
+    expect((await modeAuditRows(store)).filter((r) => r.entity_id === "animalia")).toHaveLength(0);
+  });
+
+  test("a runtime-invalid mode string in an owner write is ignored, saved mode preserved", async () => {
+    const store = new MemoryStore();
+    await savedRowPerLead(store);
+    // The server-fn validator does not validate the mode string — a bad value
+    // must fall back to the saved mode, not replace it with garbage.
+    await store.saveSettings({ sheets: { family: modeOnly("row_per_day_count_v2") } }, "christopher");
+    expect((await store.getSettings()).sheets.family.mode).toBe("row_per_lead");
   });
 });

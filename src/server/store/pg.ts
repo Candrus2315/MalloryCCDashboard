@@ -65,7 +65,7 @@ import type {
   AvailabilitySlotRow,
   AvailabilitySyncRunRow,
 } from "./types";
-import { DEFAULT_SETTINGS, isPipStatus, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_SETTINGS, isPipStatus, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -883,21 +883,36 @@ export class PgStore implements Store {
     return normalizeAppSettings(rows[0].value);
   }
 
-  async saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  async saveSettings(patch: Partial<AppSettings>, actor = "system"): Promise<AppSettings> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     const current = await this.getSettings();
+    // HARDENED sheets merge (mergeSheetsSettings): mode changes are honored
+    // ONLY from owner-labeled writes — a system/unlabeled or default-
+    // application write can never silently flip a saved mode.
+    const { sheets, modeChanges } = mergeSheetsSettings(current.sheets, patch.sheets, actor === SETTINGS_OWNER_ACTOR);
     const next: AppSettings = {
       ...current,
       ...patch,
       studio: { ...current.studio, ...(patch.studio ?? {}) },
-      sheets: { ...current.sheets, ...(patch.sheets ?? {}) },
+      sheets,
       acuity: { ...current.acuity, ...(patch.acuity ?? {}) },
     };
     await this.sql`
       INSERT INTO app_settings (key, value) VALUES ('app', ${this.sql.json(next)}::jsonb)
       ON CONFLICT (key) DO UPDATE SET value = ${this.sql.json(next)}::jsonb, updated_at = now()
     `;
+    // MODE AUDIT: every sheet-mode change THIS write made — old → new, actor.
+    for (const ch of modeChanges) {
+      await this.insertManualOverride({
+        entity_type: "sheet_mapping",
+        entity_id: ch.sheet,
+        field: "mode",
+        previous_value: ch.from,
+        new_value: ch.to,
+        changed_by: actor,
+      });
+    }
     return next;
   }
 

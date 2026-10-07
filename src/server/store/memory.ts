@@ -65,7 +65,7 @@ import type {
   AvailabilitySlotRow,
   AvailabilitySyncRunRow,
 } from "./types";
-import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -189,14 +189,29 @@ export class MemoryStore implements Store {
     // (e.g. sheets.<sheet>.mode) still see those defaults.
     return normalizeAppSettings(this.settings);
   }
-  async saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  async saveSettings(patch: Partial<AppSettings>, actor = "system"): Promise<AppSettings> {
+    // HARDENED sheets merge (mergeSheetsSettings): mode changes are honored
+    // ONLY from owner-labeled writes — a system/unlabeled or default-
+    // application write can never silently flip a saved mode.
+    const { sheets, modeChanges } = mergeSheetsSettings(this.settings.sheets, patch.sheets, actor === SETTINGS_OWNER_ACTOR);
     this.settings = {
       ...this.settings,
       ...patch,
       studio: { ...this.settings.studio, ...(patch.studio ?? {}) },
-      sheets: { ...this.settings.sheets, ...(patch.sheets ?? {}) },
+      sheets,
       acuity: { ...this.settings.acuity, ...(patch.acuity ?? {}) },
     };
+    // MODE AUDIT: every sheet-mode change THIS write made — old → new, actor.
+    for (const ch of modeChanges) {
+      await this.insertManualOverride({
+        entity_type: "sheet_mapping",
+        entity_id: ch.sheet,
+        field: "mode",
+        previous_value: ch.from,
+        new_value: ch.to,
+        changed_by: actor,
+      });
+    }
     return JSON.parse(JSON.stringify(this.settings));
   }
 
