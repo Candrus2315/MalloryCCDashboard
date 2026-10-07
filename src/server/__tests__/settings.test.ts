@@ -18,6 +18,8 @@ import {
 import { runDemoSync } from "../sync/run";
 import { applySheetMapping, columnLetterToIndex, sampleSheetRow } from "../sync/adapters";
 import { leadsToday, leadsForWeek, materializeRecurringBlocks } from "../metrics/compute";
+import { buildNonRosterPanel } from "../roster";
+import { rosterPanelVisibleRows } from "../../components/settings-views";
 
 const PASSPHRASE = "test-pass-1234";
 const ORIGIN = "https://dashboard.example.com";
@@ -270,5 +272,69 @@ describe("sheet column mapping mechanism", () => {
     const missing = applySheetMapping(sample.rows[0], { source_date: "A", name: "Z" });
     expect(missing.parsed.name).toBeNull();
     expect(missing.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("roster mapping payload (non-roster panel)", () => {
+  // Fixture mirrors the live shape: 2 active roster users + inactive users with
+  // a mix of call counts (calls carry the RAW HL external user id).
+  const user = (id: string, external_id: string, name: string, is_active: boolean) => ({
+    id,
+    provider: "highlevel",
+    external_id,
+    name,
+    email: null,
+    is_active,
+    call_start_date: null,
+  });
+  const ALL_USERS = [
+    user("r_laura", "u_laura", "Laura Rivera", true),
+    user("r_admin", "u_admin", "Admin Person", true), // active but not a CC rep
+    user("i1", "u_christy", "Christy West", false), // 349 calls, live top row
+    user("i2", "u_meg", "Meg Morton", false), // 1 call
+    user("i3", "u_test", "TEST BOOKER", false), // zero — test account
+    user("i4", "u_rocket", "Rocket App", false), // zero — app account
+    user("i5", "u_moe1", "Moe Ahm", false), // zero — duplicate 1
+    user("i6", "u_moe2", "Moe Ahm", false), // zero — duplicate 2
+  ];
+  const CALLS = new Map<string, number>([
+    ["u_christy", 349],
+    ["u_meg", 1],
+    ["u_laura", 500], // active rep — never appears in the panel
+  ]);
+
+  test("payload carries callCount + zeroCallCount; server sends ALL inactive users (zero-call rows included, never server-filtered)", () => {
+    const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel(ALL_USERS, new Set(["r_laura", "r_admin"]), CALLS, []);
+    expect(nonRosterUsers).toHaveLength(6); // every inactive user — the panel hides zero-call rows client-side only
+    expect(nonRosterUsers.map((u) => [u.name, u.callCount])).toEqual([
+      ["Christy West", 349], // sort: callCount desc…
+      ["Meg Morton", 1],
+      ["Moe Ahm", 0], // …then name; the two Moe Ahm duplicates both survive
+      ["Moe Ahm", 0],
+      ["Rocket App", 0],
+      ["TEST BOOKER", 0],
+    ]);
+    expect(zeroCallCount).toBe(4); // toggle label "Show all (4)"
+  });
+
+  test("zero-call user stays in the payload WITH its mapping — select still works when shown (UI-default filter only)", () => {
+    const mappings = [{ external_user_id: "u_test", rep_id: "r_laura" }];
+    const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel(ALL_USERS, new Set(["r_laura", "r_admin"]), CALLS, mappings);
+    expect(nonRosterUsers.find((u) => u.externalId === "u_test")).toEqual({
+      externalId: "u_test",
+      name: "TEST BOOKER",
+      callCount: 0,
+      mappedTo: "r_laura", // mapping resolves even with zero calls
+    });
+    expect(zeroCallCount).toBe(4);
+    // panel default hides it; show-all reveals it with the select's data intact
+    expect(rosterPanelVisibleRows(nonRosterUsers, false).some((u) => u.externalId === "u_test")).toBe(false);
+    expect(rosterPanelVisibleRows(nonRosterUsers, true).find((u) => u.externalId === "u_test")?.mappedTo).toBe("r_laura");
+  });
+
+  test("empty inactive set → empty rows, zeroCallCount 0 (never a guessed count)", () => {
+    const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel([], new Set(), CALLS, []);
+    expect(nonRosterUsers).toEqual([]);
+    expect(zeroCallCount).toBe(0);
   });
 });

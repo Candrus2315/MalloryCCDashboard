@@ -16,6 +16,7 @@ import {
   providerLabel,
   queueReasonBreakdown,
   queueRowState,
+  rosterPanelVisibleRows,
   sectionMeta,
   sectionNumber,
   unassignable,
@@ -247,5 +248,26 @@ describe("queueReasonBreakdown — grouped counts at the top of the manual-decis
     expect(queueReasonBreakdown([{ reason: null, reason_code: null }])).toEqual([
       { code: "unclassified", label: "Unclassified — rerun attribution", count: 1 },
     ]);
+  });
+});
+
+// ---------- 7 — Roster Mapping panel visibility (owner directive) ----------
+describe("rosterPanelVisibleRows", () => {
+  const row = (externalId: string, callCount: number, mappedTo: string | null = null) => ({ externalId, callCount, mappedTo });
+  const ROWS = [row("u_christy", 349), row("u_meg", 1), row("u_test", 0, "r_laura"), row("u_rocket", 0)];
+
+  test("default view shows only users WITH calls — zero-call rows (test/app accounts) are noise", () => {
+    expect(rosterPanelVisibleRows(ROWS, false).map((r) => r.externalId)).toEqual(["u_christy", "u_meg"]);
+  });
+
+  test("show-all reveals every row INCLUDING the mapped zero-call user (select still works when shown)", () => {
+    expect(rosterPanelVisibleRows(ROWS, true).map((r) => r.externalId)).toEqual(["u_christy", "u_meg", "u_test", "u_rocket"]);
+    expect(rosterPanelVisibleRows(ROWS, true).find((r) => r.externalId === "u_test")?.mappedTo).toBe("r_laura");
+  });
+
+  test("all-zero-call roster → default view empty (the panel's honest empty state), show-all lists all", () => {
+    const zeros = [row("a", 0), row("b", 0)];
+    expect(rosterPanelVisibleRows(zeros, false)).toEqual([]);
+    expect(rosterPanelVisibleRows(zeros, true)).toEqual(zeros);
   });
 });

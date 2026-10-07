@@ -150,3 +150,42 @@ export function applyAttributionEligibility<
     return a;
   });
 }
+
+// ---------- Settings §7 Roster Mapping panel payload ----------
+/**
+ * Pure builder for the Settings §7 Roster Mapping panel rows: every NON-ROSTER
+ * HighLevel user (inactive, and not sharing an internal id with an active row)
+ * with its 30-day call count (calls carry the RAW HL user id — immutable) and
+ * any existing mapping. Sorted callCount desc, then name.
+ *
+ * OWNER DIRECTIVE ("erase everyone not on my roster"): zero-call rows
+ * (test/app/marketing accounts) are noise — the PANEL hides them by default
+ * behind a show-all toggle (see rosterPanelVisibleRows in components/
+ * settings-views.ts). This builder still returns ALL inactive users — the
+ * server payload never excludes them, so a zero-call user stays mappable once
+ * revealed. `zeroCallCount` labels that toggle.
+ */
+export interface NonRosterPanelRow {
+  externalId: string;
+  name: string;
+  callCount: number;
+  mappedTo: string | null;
+}
+
+export function buildNonRosterPanel(
+  allUsers: { id: string; external_id: string; name: string; is_active: boolean }[],
+  activeUserIds: Set<string>,
+  callsByExternalId: Map<string, number>,
+  repMappings: RepMapping[],
+): { nonRosterUsers: NonRosterPanelRow[]; zeroCallCount: number } {
+  const nonRosterUsers = allUsers
+    .filter((u) => !u.is_active && !activeUserIds.has(u.id))
+    .map((u) => ({
+      externalId: u.external_id,
+      name: u.name,
+      callCount: callsByExternalId.get(u.external_id) ?? 0,
+      mappedTo: repMappings.find((m) => m.external_user_id === u.external_id)?.rep_id ?? null,
+    }))
+    .sort((a, b) => b.callCount - a.callCount || a.name.localeCompare(b.name));
+  return { nonRosterUsers, zeroCallCount: nonRosterUsers.filter((u) => u.callCount === 0).length };
+}
