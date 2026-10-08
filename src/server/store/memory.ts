@@ -731,13 +731,13 @@ export class MemoryStore implements Store {
     const set = new Set(dates);
     return [...this.leads.values()]
       .filter((l) => set.has(l.work_date))
-      .map(({ source_id: _s, provider: _p, name: _n, phone: _p2, email: _e, ...rest }) => rest);
+      .map(({ source_id: _s, provider: _p, phone: _p2, email: _e, ...rest }) => rest);
   }
   async getLeadsBySourceDates(dates: string[]): Promise<LeadRow[]> {
     const set = new Set(dates);
     return [...this.leads.values()]
       .filter((l) => set.has(l.source_date))
-      .map(({ source_id: _s, provider: _p, name: _n, phone: _p2, email: _e, ...rest }) => rest);
+      .map(({ source_id: _s, provider: _p, phone: _p2, email: _e, ...rest }) => rest);
   }
   async updateLeadWorkDate(id: string, workDate: string): Promise<void> {
     for (const [key, lead] of this.leads) {

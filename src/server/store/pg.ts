@@ -1768,7 +1768,7 @@ export class PgStore implements Store {
   private async getLeadsByWorkDatesCached(dates: string[]): Promise<LeadRow[]> {
     await this.ensureSchema();
     if (!dates.length) return [];
-    const rows = await this.sql`SELECT id::text, lead_type, source_date::text, work_date::text, contact_id::text, assigned_rep_id::text, source_sheet FROM leads WHERE work_date = ANY(${dates}::date[])`;
+    const rows = await this.sql`SELECT id::text, lead_type, source_date::text, work_date::text, contact_id::text, assigned_rep_id::text, source_sheet, name FROM leads WHERE work_date = ANY(${dates}::date[])`;
     return rows.map((r) => ({
       id: String(r.id),
       lead_type: String(r.lead_type),
@@ -1777,6 +1777,7 @@ export class PgStore implements Store {
       contact_id: r.contact_id ? String(r.contact_id) : null,
       assigned_rep_id: r.assigned_rep_id ? String(r.assigned_rep_id) : null,
       source_sheet: String(r.source_sheet),
+      name: r.name == null ? null : String(r.name),
     }));
   }
   async getLeadsBySourceDates(dates: string[]): Promise<LeadRow[]> {
@@ -1785,7 +1786,7 @@ export class PgStore implements Store {
   private async getLeadsBySourceDatesCached(dates: string[]): Promise<LeadRow[]> {
     await this.ensureSchema();
     if (!dates.length) return [];
-    const rows = await this.sql`SELECT id::text, lead_type, source_date::text, work_date::text, contact_id::text, assigned_rep_id::text, source_sheet FROM leads WHERE source_date = ANY(${dates}::date[])`;
+    const rows = await this.sql`SELECT id::text, lead_type, source_date::text, work_date::text, contact_id::text, assigned_rep_id::text, source_sheet, name FROM leads WHERE source_date = ANY(${dates}::date[])`;
     return rows.map((r) => ({
       id: String(r.id),
       lead_type: String(r.lead_type),
@@ -1794,6 +1795,7 @@ export class PgStore implements Store {
       contact_id: r.contact_id ? String(r.contact_id) : null,
       assigned_rep_id: r.assigned_rep_id ? String(r.assigned_rep_id) : null,
       source_sheet: String(r.source_sheet),
+      name: r.name == null ? null : String(r.name),
     }));
   }
   async updateLeadWorkDate(id: string, workDate: string): Promise<void> {

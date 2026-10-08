@@ -216,6 +216,13 @@ export interface LeadRow {
   contact_id: string | null;
   assigned_rep_id: string | null;
   source_sheet: string; // family | animalia
+  /**
+   * The lead row's own name column (sheets "Name"), when the sheet carries
+   * one. OPTIONAL so existing LeadRow literals stay valid; the settings
+   * lead-corrections picker renders it so same-day/same-type rows are
+   * distinguishable at a glance (QA audit 2026-10-08).
+   */
+  name?: string | null;
 }
 
 export interface RepGoalRow {

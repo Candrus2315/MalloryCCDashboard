@@ -20,7 +20,28 @@ import {
   sectionMeta,
   sectionNumber,
   unassignable,
+  leadPickerOptionLabel,
 } from "../settings-views";
+
+// ---------- lead-corrections picker label (QA audit 2026-10-08) ----------
+
+describe("leadPickerOptionLabel", () => {
+  const base = { lead_type: "family", source_sheet: "family", source_date: "2026-10-06", work_date: "2026-10-07" };
+  test("renders the client NAME first so same-day rows are distinguishable", () => {
+    expect(leadPickerOptionLabel({ ...base, name: "Emma Carter" })).toBe("Emma Carter · Oct 6 · family · family (works Oct 7)");
+    expect(leadPickerOptionLabel({ ...base, name: "Jane Doe" })).toBe("Jane Doe · Oct 6 · family · family (works Oct 7)");
+  });
+  test("same date+sheet+type rows with different names get different labels", () => {
+    const a = leadPickerOptionLabel({ ...base, name: "Alex Smith" });
+    const b = leadPickerOptionLabel({ ...base, name: "Sam Smith" });
+    expect(a).not.toBe(b);
+  });
+  test("honest fallback when the sheet carries no name", () => {
+    expect(leadPickerOptionLabel({ ...base, name: null })).toBe("Unnamed lead · Oct 6 · family · family (works Oct 7)");
+    expect(leadPickerOptionLabel({ ...base })).toBe("Unnamed lead · Oct 6 · family · family (works Oct 7)");
+    expect(leadPickerOptionLabel({ ...base, name: "   " })).toBe("Unnamed lead · Oct 6 · family · family (works Oct 7)");
+  });
+});
 
 // ---------- 8-section IA (spec §IA + §MICROCOPY) ----------
 
