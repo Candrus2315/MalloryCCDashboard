@@ -795,7 +795,7 @@ function WeeklyPage() {
               <div key={s.key}>
                 <label htmlFor={`cc-${s.key}`} className="kpi-label">
                   {s.label}
-                  {s.key === "celebrate" && <span className="ml-2 font-normal text-[12px] normal-case text-(--text-muted)">auto-filled from the computed top performer — editable</span>}
+                  {s.key === "celebrate" && <span className="ml-2 font-normal text-[12px] normal-case text-(--text-muted)">auto-filled with this week's computed top performer — editable</span>}
                 </label>
                 <textarea
                   id={`cc-${s.key}`}

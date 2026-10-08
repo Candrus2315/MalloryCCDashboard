@@ -660,7 +660,9 @@ export class MemoryStore implements Store {
       // mirror the PG store: never overwrite a manual override automatically
       const existing = this.attributions.get(r.appointment_id);
       if (existing?.manual_override) continue;
-      this.attributions.set(r.appointment_id, { ...r });
+      // QA phase 3 (S26 divergence split): stamp when the derived row was written
+      // so the validation page can date a post-close re-derivation.
+      this.attributions.set(r.appointment_id, { ...r, updated_at: r.updated_at ?? new Date().toISOString() });
     }
     return rows.length;
   }
@@ -670,7 +672,7 @@ export class MemoryStore implements Store {
   async setManualAttribution(row: AttributionRow): Promise<void> {
     // manual assignment wins over the engine and survives re-syncs (engine
     // upserts skip rows with manual_override = true)
-    this.attributions.set(row.appointment_id, { ...row, method: "manual", manual_override: true });
+    this.attributions.set(row.appointment_id, { ...row, method: "manual", manual_override: true, updated_at: row.updated_at ?? new Date().toISOString() });
   }
   async deleteAttribution(appointmentId: string): Promise<void> {
     // manual UNASSIGN: mirror the PG store — delete the derived row; the next

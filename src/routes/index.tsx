@@ -379,7 +379,7 @@ function TodayPage() {
               </p>
               {pendingCount > 0 && (
                 <p className="kpi-sub mt-1.5">
-                  {pendingCount} pending · of {m.bookings.weeklyGoal} goal
+                  {pendingCount} pending payment{pendingCount === 1 ? "" : "s"} · not counted toward the goal
                 </p>
               )}
               <div className="mt-5">
@@ -574,7 +574,13 @@ function TodayPage() {
               <>
                 <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
                   <div>
-                    <p className="kpi-label">Team Bookings</p>
+                    <p className="kpi-label flex items-center gap-1.5">
+                      Team Bookings
+                      <InfoTip
+                        label="Why this differs from Bookings WTD"
+                        tip="The 79-pool counts rep-attributed paid wins only — unattributed wins never enter the pool, so this number can sit below the Bookings WTD hero above."
+                      />
+                    </p>
                     <p className="kpi-value mt-2">
                       {data.commission.estimate.teamBookings}
                       <span className="text-lg font-medium text-(--text-faint)"> / 79</span>
@@ -659,7 +665,7 @@ function TodayPage() {
                 <tr>
                   {th("name", "Rep", { left: true, stickyLeft: true })}
                   {th("totalBookings", "Bookings / Goal", { left: true })}
-                  {th("callsOverThreshold", "Calls >2 Min")}
+                  {th("callsOverThreshold", "Calls Over 2 Min")}
                   {th("conversationConversion", "Conv. Conversion")}
                   {th("assignedLeadConversion", "Assigned Lead Conv.")}
                   {th("avgCallDurationSeconds", "Avg Call", { hideBelowMd: true })}

@@ -826,7 +826,8 @@ function RepsPage() {
             </span>
             <p className="mt-1 text-xs text-(--text-caption)">
               Lead distribution by rep · Week of {formatDateHuman(assignedGrid.week_start)} –{" "}
-              {formatDateHuman(assignedGrid.week_end)} · America/New_York
+              {formatDateHuman(assignedGrid.week_end)} · America/New_York · Al = Alliance · Au = Auction
+              <span className="block">Defaults to the last complete week — use the selector to jump to any stored week.</span>
             </p>
           </div>
           <span className="flex flex-wrap items-center gap-2">

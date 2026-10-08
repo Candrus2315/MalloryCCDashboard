@@ -1668,7 +1668,7 @@ export class PgStore implements Store {
   }
   private async getAttributionsCached(): Promise<AttributionRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text, appointment_id::text, call_id::text, rep_id::text, method, confidence, manual_override, note, reason_code FROM booking_attributions`;
+    const rows = await this.sql`SELECT id::text, appointment_id::text, call_id::text, rep_id::text, method, confidence, manual_override, note, reason_code, updated_at FROM booking_attributions`;
     return rows.map((r) => ({
       id: String(r.id),
       appointment_id: String(r.appointment_id),
@@ -1679,6 +1679,8 @@ export class PgStore implements Store {
       manual_override: Boolean(r.manual_override),
       note: r.note == null ? null : String(r.note),
       reason_code: r.reason_code == null ? null : String(r.reason_code),
+      // QA phase 3 (S26 divergence split, display-only): when the row was last rewritten.
+      updated_at: r.updated_at == null ? null : new Date(r.updated_at).toISOString(),
     }));
   }
   async setManualAttribution(row: AttributionRow): Promise<void> {
