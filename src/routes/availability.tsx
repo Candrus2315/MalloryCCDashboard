@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { getAvailabilityData, refreshAvailabilityFeed } from "~/server/queries";
-import { OPERATIONAL_TIMEZONE, addDays, formatDateHuman, formatDateHumanFull, formatDateShort } from "~/server/date-logic";
+import { OPERATIONAL_TIMEZONE, addDays, etSyncStamp, formatDateHuman, formatDateHumanFull, formatDateShort } from "~/server/date-logic";
 import type {
   AvailabilityPageView,
   AvailabilityRangeDay,
@@ -710,13 +710,13 @@ function AvailabilityPage() {
               <div className="flex justify-between gap-3">
                 <dt className="text-(--text-muted)">Acuity (appointments)</dt>
                 <dd className="tabular-nums text-(--text-body)">
-                  {data.connection.connected ? `Last synced ${data.connection.lastSyncAt ? formatDateHumanFull(data.connection.lastSyncAt.slice(0, 10)) : "—"}` : "Disconnected"}
+                  {data.connection.connected ? `Last synced ${data.connection.lastSyncAt ? etSyncStamp(data.connection.lastSyncAt) : "—"}` : "Disconnected"}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-(--text-muted)">Availability feed</dt>
                 <dd className="tabular-nums text-(--text-body)">
-                  {view.sync.feedLastSuccessAt ? formatDateHumanFull(view.sync.feedLastSuccessAt.slice(0, 10)) : "never ran"}
+                  {view.sync.feedLastSuccessAt ? etSyncStamp(view.sync.feedLastSuccessAt) : "never ran"}
                   {view.sync.feedRuns[0]?.callsMade != null ? ` · ${view.sync.feedRuns[0].callsMade} calls` : ""}
                 </dd>
               </div>

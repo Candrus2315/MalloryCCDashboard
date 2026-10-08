@@ -284,8 +284,7 @@ describe("sync runner provider-awareness (stub adapters, no live API)", () => {
       throw new Error("The Google Sheets API is not enabled for the key's Google Cloud project. Enable it, then run SYNC NOW.");
     },
   };
-  const liveAdapter = (): GoogleSheetsAdapter & { lastRun: unknown } => {
-    const d = "2026-09-24";
+  const liveAdapter = (d: string): GoogleSheetsAdapter & { lastRun: unknown } => {
     return {
       provider: "google_sheets",
       isDemo: false,
@@ -320,10 +319,18 @@ describe("sync runner provider-awareness (stub adapters, no live API)", () => {
     const store = new MemoryStore();
     // First a demo seed so we can prove the replace happened.
     await runDemoSync({ store, sheetsAdapter: null, highlevelAdapter: null });
-    const demoCount = (await store.getLeadsByWorkDates([getWorkDate("2026-09-24")])).length;
+    // The work date comes FROM the seeded demo data itself (QA audit 2026-10-08
+    // re-pin): the demo seed's window rolls with etToday(), so a date pinned at
+    // authoring time (was 2026-09-24) drifts out of it within ~2 weeks. A demo
+    // family row's source_date is guaranteed inside the current window — the
+    // canary can never drift again.
+    const demoFamilyRow = (await store.getLeadsByProvider("google_sheets")).find((l) => l.source_id.startsWith("demo-fam-"));
+    expect(demoFamilyRow).toBeDefined();
+    const d = demoFamilyRow!.source_date;
+    const demoCount = (await store.getLeadsByWorkDates([getWorkDate(d)])).length;
     expect(demoCount).toBeGreaterThan(0);
 
-    const adapter = liveAdapter();
+    const adapter = liveAdapter(d);
     const res = await runDemoSync({ store, sheetsAdapter: adapter, highlevelAdapter: null });
     const sheets = res.providers.find((p) => p.provider === "google_sheets")!;
     expect(sheets.error).toBeNull();
@@ -331,13 +338,13 @@ describe("sync runner provider-awareness (stub adapters, no live API)", () => {
     expect(conn.status).toBe("connected");
     expect(conn.is_demo).toBe(false);
     expect(conn.last_error).toBeNull();
-    const family = (await store.getLeadsByWorkDates([getWorkDate("2026-09-24")])).filter((l) => l.source_sheet === "family");
+    const family = (await store.getLeadsByWorkDates([getWorkDate(d)])).filter((l) => l.source_sheet === "family");
     expect(family.length).toBe(3); // demo family rows replaced by 3 live rows
     // (source_id isn't exposed by getLeadsByWorkDates; replace semantics are
     // proven by the count above + the idempotency re-sync below.)
     // re-sync is idempotent
-    await runDemoSync({ store, sheetsAdapter: liveAdapter(), highlevelAdapter: null });
-    const again = (await store.getLeadsByWorkDates([getWorkDate("2026-09-24")])).filter((l) => l.source_sheet === "family");
+    await runDemoSync({ store, sheetsAdapter: liveAdapter(d), highlevelAdapter: null });
+    const again = (await store.getLeadsByWorkDates([getWorkDate(d)])).filter((l) => l.source_sheet === "family");
     expect(again.length).toBe(3);
   });
 });

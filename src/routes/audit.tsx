@@ -107,9 +107,9 @@ function AuditPage() {
           </div>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-(--text-caption)">
             <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
-            <span>DB call rows for one rep × one day · America/New_York · also served as JSON at /api/audit</span>
+            <span>DB call rows for one rep × one day · America/New_York</span>
             <InfoTip
-              tip={`Read-only rows from the normalized calls table — the same rows Reps/Team count. Over-threshold uses the live settings threshold (${p?.threshold_seconds ?? 120}s), the same rule as every page; no live HighLevel harvesting happens here. Buckets per the owner's terminology: Non Roster Calls = a known HighLevel user outside the CC roster; Unattributed = no determinable owner. Roster mappings (Settings) change reporting eligibility at query time — these raw rows always show the original source values.`}
+              tip={`Read-only rows from the normalized calls table — the same rows Reps/Team count. Over-threshold uses the live settings threshold (${p?.threshold_seconds ?? 120}s), the same rule as every page; no live HighLevel harvesting happens here. Also served as JSON at /api/audit. Buckets per the owner's terminology: Non Roster Calls = a known HighLevel user outside the CC roster; Unattributed = no determinable owner. Roster mappings (Settings) change reporting eligibility at query time — these raw rows always show the original source values.`}
               label="About these audit rows"
             />
           </p>

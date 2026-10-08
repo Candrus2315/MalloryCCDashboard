@@ -9,6 +9,20 @@
  * payload as-is (demo stays demo, errors stay visible), never prettified.
  */
 import { lastSyncLabel } from "./availability-views";
+import { formatDateShort } from "~/server/date-logic";
+
+/**
+ * QA audit 2026-10-08 (designer report §5): the lead-corrections picker's
+ * option label. The sheet row's own NAME comes first so rows that share a
+ * date + sheet + type are distinguishable at a glance (the select's value
+ * always carried the distinct lead id — this is display-only); honest
+ * "Unnamed lead" fallback when the sheet carries no name; dates in the app's
+ * human convention ("Oct 6") via the compact picker format.
+ */
+export function leadPickerOptionLabel(l: { name?: string | null; source_date: string; lead_type: string; source_sheet: string; work_date: string }): string {
+  const who = l.name && l.name.trim() ? l.name.trim() : "Unnamed lead";
+  return `${who} · ${formatDateShort(l.source_date)} · ${l.lead_type} · ${l.source_sheet} (works ${formatDateShort(l.work_date)})`;
+}
 
 // ---------- 8-section IA (spec §IA; sticky sub-nav anchors) ----------
 

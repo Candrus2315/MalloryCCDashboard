@@ -222,10 +222,12 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     attributionSplit,
     observedCounts,
     leadAdjustments,
-    // lead work-date editor: recent cohort rows with ids (work-date + origin)
+    // lead work-date editor: recent cohort rows with ids (work-date + origin).
+    // name: the sheet row's own name — the picker renders it so same-day/
+    // same-type rows are distinguishable (QA audit 2026-10-08).
     recentLeads: weekLeads
       .slice(0, 200)
-      .map((l) => ({ id: l.id, lead_type: l.lead_type, source_sheet: l.source_sheet, source_date: l.source_date, work_date: l.work_date }))
+      .map((l) => ({ id: l.id, lead_type: l.lead_type, source_sheet: l.source_sheet, source_date: l.source_date, work_date: l.work_date, name: l.name ?? null }))
       .sort((a, b) => (a.work_date < b.work_date ? 1 : a.work_date > b.work_date ? -1 : 0)),
     blockedTimes: blockedWindow,
     staleWarnings: syncStaleWarnings(connections),
@@ -1117,7 +1119,9 @@ export const getAuditData = createServerFn()
       payload: res.body as AuditOkBody,
       picker: {
         reps,
-        allLabel: `All calls (${reps.length} roster reps + non-roster + unattributed)`,
+        // UNIFIED with the payload's rep_label (audit-api.ts) — one phrasing for
+        // the same concept, no live rep count in the label (QA audit 2026-10-08).
+        allLabel: "All calls (roster + non-roster + unattributed)",
         nonRosterLabel: LABEL_NON_ROSTER,
         unattributedLabel: LABEL_UNATTRIBUTED,
         unassignedLabel: "Unassigned (legacy — both buckets)",
