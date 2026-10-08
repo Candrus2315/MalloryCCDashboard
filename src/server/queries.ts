@@ -1119,7 +1119,9 @@ export const getAuditData = createServerFn()
       payload: res.body as AuditOkBody,
       picker: {
         reps,
-        allLabel: `All calls (${reps.length} roster reps + non-roster + unattributed)`,
+        // UNIFIED with the payload's rep_label (audit-api.ts) — one phrasing for
+        // the same concept, no live rep count in the label (QA audit 2026-10-08).
+        allLabel: "All calls (roster + non-roster + unattributed)",
         nonRosterLabel: LABEL_NON_ROSTER,
         unattributedLabel: LABEL_UNATTRIBUTED,
         unassignedLabel: "Unassigned (legacy — both buckets)",

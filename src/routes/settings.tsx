@@ -24,7 +24,7 @@ import {
   unassignable,
 } from "~/components/settings-views";
 import { bookingSplitLine } from "~/components/team-views";
-import { formatDateShort } from "~/server/date-logic";
+import { etSyncStamp, formatDateShort } from "~/server/date-logic";
 import { InfoTip } from "~/components/InfoTip";
 import { Eyebrow, Panel } from "~/components/page-panel";
 import { formatInt } from "~/server/metrics/report-text";
@@ -1339,15 +1339,8 @@ function RosterMappingSection({ data, busy, onSave }: {
   );
 }
 
-/**
- * QA phase 3: sync-log timestamps in the app's human convention — "Oct 7, 7:14 PM"
- * (ET, explicit zone keeps SSR/CSR identical) instead of raw toLocaleString.
- */
-function etSyncStamp(iso: string): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return iso;
-  return new Date(t).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
+/* etSyncStamp moved to date-logic.ts (QA audit 2026-10-08) — the availability
+   sync panel renders the SAME ET stamp; imported above. */
 /* ================= 7 — unattributed queue + corrections ================= */
 
 /** Owner vocabulary for the engine's unattributed reasons (never guessed here). */

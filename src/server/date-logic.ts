@@ -331,6 +331,18 @@ export function formatDateShort(dateStr: string): string {
 }
 
 /**
+ * QA audit 2026-10-08: sync-log timestamps in the app's human convention —
+ * "Oct 7, 7:14 PM" (ET, explicit zone keeps SSR/CSR identical). ONE shared
+ * helper: the Settings Sync Center (phase 3) and the Availability sync panel
+ * (this phase) render the same ET stamp.
+ */
+export function etSyncStamp(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  return new Date(t).toLocaleString("en-US", { timeZone: OPERATIONAL_TIMEZONE, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+/**
  * The most recent Mondays (week starts), current operating week first, for
  * the historical "Week of…" picker. Centralized so no page invents its own
  * week list.
