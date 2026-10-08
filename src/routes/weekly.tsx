@@ -569,35 +569,37 @@ function WeeklyPage() {
                         </svg>
                         Per-day
                       </summary>
-                      <table className="mt-2 w-full max-w-md text-xs">
-                        <thead>
-                          <tr className="border-b border-(--card-border) text-left text-(--text-caption)">
-                            <th scope="col" className="py-1 pr-2 font-medium" />
-                            {row.holes.days.map((d) => (
-                              <th scope="col" key={d.date} className="py-1 text-right font-medium tabular-nums">
-                                {weekdayName(d.date, false).slice(0, 3)}
-                                <span className="ml-1 font-normal text-(--text-muted)">{formatDateShort(d.date)}</span>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="tabular-nums text-(--text-body)">
-                          {[
-                            { label: "Capacity", pick: (d: { capacity: number }) => d.capacity },
-                            { label: "Booked", pick: (d: { booked: number }) => d.booked },
-                            { label: "Holes", pick: (d: { holes: number }) => d.holes },
-                          ].map((r) => (
-                            <tr key={r.label} className="border-b border-(--table-border-weak)">
-                              <th scope="row" className="py-1 pr-2 text-left font-medium text-(--text-caption)">{r.label}</th>
-                              {row.holes!.days.map((d) => (
-                                <td key={d.date} className={"py-1 text-right " + (r.label === "Holes" && d.holes > 0 ? "font-semibold text-(--text-primary)" : "")}>
-                                  {formatInt(r.pick(d))}
-                                </td>
+                      <div className="overflow-x-auto">
+                        <table className="mt-2 w-full max-w-md text-xs">
+                          <thead>
+                            <tr className="border-b border-(--card-border) text-left text-(--text-caption)">
+                              <th scope="col" className="py-1 pr-2 font-medium" />
+                              {row.holes.days.map((d) => (
+                                <th scope="col" key={d.date} className="py-1 text-right font-medium tabular-nums">
+                                  {weekdayName(d.date, false).slice(0, 3)}
+                                  <span className="ml-1 font-normal text-(--text-muted)">{formatDateShort(d.date)}</span>
+                                </th>
                               ))}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="tabular-nums text-(--text-body)">
+                            {[
+                              { label: "Capacity", pick: (d: { capacity: number }) => d.capacity },
+                              { label: "Booked", pick: (d: { booked: number }) => d.booked },
+                              { label: "Holes", pick: (d: { holes: number }) => d.holes },
+                            ].map((r) => (
+                              <tr key={r.label} className="border-b border-(--table-border-weak)">
+                                <th scope="row" className="py-1 pr-2 text-left font-medium text-(--text-caption)">{r.label}</th>
+                                {row.holes!.days.map((d) => (
+                                  <td key={d.date} className={"py-1 text-right " + (r.label === "Holes" && d.holes > 0 ? "font-semibold text-(--text-primary)" : "")}>
+                                    {formatInt(r.pick(d))}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </details>
                   )}
                 </div>
