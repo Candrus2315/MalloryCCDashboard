@@ -1183,8 +1183,8 @@ function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promis
                     {c.is_demo ? "demo" : c.status}
                   </span>
                 </td>
-                <td>{c.last_sync_at ? new Date(c.last_sync_at).toLocaleString("en-US") : "—"}</td>
-                <td>{c.last_successful_sync_at ? new Date(c.last_successful_sync_at).toLocaleString("en-US") : "—"}</td>
+                <td>{c.last_sync_at ? etSyncStamp(c.last_sync_at) : "—"}</td>
+                <td>{c.last_successful_sync_at ? etSyncStamp(c.last_successful_sync_at) : "—"}</td>
                 <td className="text-(--neg-text)">{c.last_error ?? "—"}</td>
               </tr>
             ))}
@@ -1209,7 +1209,7 @@ function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promis
                 <tr key={r.id}>
                   <td>{providerLabel(r.provider)}</td>
                   <td className={r.status === "error" ? "text-(--neg-text)" : ""}>{r.status}</td>
-                  <td>{new Date(r.started_at).toLocaleString("en-US")}</td>
+                  <td>{etSyncStamp(r.started_at)}</td>
                   <td className="text-right">{r.records_upserted}</td>
                   <td className="text-(--neg-text)">{r.error ?? "—"}</td>
                 </tr>
@@ -1337,6 +1337,15 @@ function RosterMappingSection({ data, busy, onSave }: {
   );
 }
 
+/**
+ * QA phase 3: sync-log timestamps in the app's human convention — "Oct 7, 7:14 PM"
+ * (ET, explicit zone keeps SSR/CSR identical) instead of raw toLocaleString.
+ */
+function etSyncStamp(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  return new Date(t).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
 /* ================= 7 — unattributed queue + corrections ================= */
 
 /** Owner vocabulary for the engine's unattributed reasons (never guessed here). */
