@@ -10,6 +10,9 @@
  */
 import { lastSyncLabel } from "./availability-views";
 import { formatDateShort } from "~/server/date-logic";
+// Pure shared constants + parse helper (types.ts is client-safe — settings.tsx
+// already value-imports DEFAULT_COLUMN_MAPPING from it).
+import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "~/server/store/types";
 
 /**
  * QA audit 2026-10-08 (designer report §5): the lead-corrections picker's
@@ -187,6 +190,93 @@ export function connectionStatusView(
     tone,
     lastSync: lastSyncLabel(c.last_successful_sync_at, nowMs),
     error: c.last_error,
+  };
+}
+
+// ---------- Sync Center per-provider status (owner directive 2026-10-09) ----------
+
+export interface ProviderLatestRunView {
+  provider: string;
+  /** Honest state chip: demo stays demo; otherwise the LATEST run decides — running / connected / error / disconnected. */
+  label: "demo" | "running" | "connected" | "error" | "disconnected";
+  tone: "positive" | "risk" | "neutral";
+  /**
+   * The latest run's stamp (finished_at; started_at while running) — feeds the
+   * "Last Sync" cell. Null when the provider has no runs and its connection
+   * row never synced.
+   */
+  lastRunAt: string | null;
+  /**
+   * The latest run's error — shown ONLY while that run is the latest and it
+   * failed. A later success clears it (the run log decides, never a sticky
+   * last_error), and a live running run clears it too.
+   */
+  lastRunError: string | null;
+}
+
+/**
+ * Owner directive 2026-10-09 (fix 2): the Sync Center's per-provider status
+ * reflects the LATEST sync_runs run for that provider — success / running /
+ * error with its timestamp — and never lingers on the most recent error after
+ * a later success. `providerRuns` are that provider's rows newest-first (the
+ * getSyncRuns order); `running` is its in-flight sync_runs row (getRunningSyncRuns).
+ *
+ * A "running" row counts as live only inside the shared stale-run reap window
+ * (STALE_RUN_REAP_MINUTES) — an older zombie is a hung process, not a live
+ * run, and the view falls through to the latest FINISHED run (the reaper marks
+ * the zombie error within minutes). With no run in the window at all, the view
+ * falls back to the connection row honestly: its error text shows only when
+ * the connection state itself is an error. Demo connections stay demo
+ * regardless of the run log. A null `nowMs` (SSR, pre-hydration) never reads
+ * as live — the chip resolves on mount, same as the relative-age clocks.
+ */
+export function providerLatestRunView(
+  connection: {
+    provider: string;
+    status: string;
+    is_demo: boolean;
+    last_sync_at: string | null;
+    last_successful_sync_at: string | null;
+    last_error: string | null;
+  },
+  providerRuns: Array<{ status: string; started_at: string; finished_at: string | null; error: string | null }>,
+  running: { started_at: string } | null,
+  nowMs: number | null,
+): ProviderLatestRunView {
+  const provider = connection.provider;
+  if (connection.is_demo) {
+    return { provider, label: "demo", tone: "neutral", lastRunAt: connection.last_sync_at, lastRunError: connection.last_error };
+  }
+  let runningLive = false;
+  if (running && nowMs != null) {
+    const startedMs = parseSyncStartedMs(running.started_at);
+    runningLive = Number.isFinite(startedMs) && nowMs - startedMs <= STALE_RUN_REAP_MINUTES * 60_000;
+  }
+  if (runningLive && running) {
+    return { provider, label: "running", tone: "neutral", lastRunAt: running.started_at, lastRunError: null };
+  }
+  // Latest FINISHED run decides (a stale zombie "running" row yields to it).
+  const latest = providerRuns.find((r) => r.status !== "running");
+  if (latest) {
+    if (latest.status === "error") {
+      return {
+        provider,
+        label: "error",
+        tone: "risk",
+        lastRunAt: latest.finished_at ?? latest.started_at,
+        lastRunError: latest.error ?? "Sync failed",
+      };
+    }
+    return { provider, label: "connected", tone: "positive", lastRunAt: latest.finished_at ?? latest.started_at, lastRunError: null };
+  }
+  // No run in the recent window: the connection row is the fallback state.
+  const label = connection.status === "error" ? "error" : connection.status === "connected" ? "connected" : "disconnected";
+  return {
+    provider,
+    label,
+    tone: label === "error" ? "risk" : label === "connected" ? "positive" : "neutral",
+    lastRunAt: connection.last_sync_at,
+    lastRunError: connection.status === "error" ? connection.last_error : null,
   };
 }
 

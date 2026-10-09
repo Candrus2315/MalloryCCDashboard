@@ -314,10 +314,9 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
     return () => clearInterval(id);
   }, []);
 
-  // QA 2026-10-08: the "Last synced" label is the data-freshness FLOOR — the
-  // oldest last-success across all real providers (it previously keyed on
-  // HighLevel only, understating the staleness of the other sources).
-  const ts = data.oldestSuccessAt ?? data.highlevel.lastSuccessAt ?? data.highlevel.lastSyncAt;
+  // Owner directive 2026-10-09: "Last synced" reads the NEWEST completed sync
+  // (the stamp a reader expects), not the QA 2026-10-08 oldest-provider floor.
+  const ts = data.newestSuccessAt ?? data.highlevel.lastSuccessAt ?? data.highlevel.lastSyncAt;
   const label = busy || data.running
     ? "Syncing…"
     : ts
@@ -343,7 +342,7 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
           lastSuccessAt: res.lastSuccessAt,
           lastError: res.lastError,
         },
-        oldestSuccessAt: res.oldestSuccessAt,
+        newestSuccessAt: res.newestSuccessAt,
         running: res.running,
         runningStartedAt: null,
         intervalSeconds: data.intervalSeconds,
