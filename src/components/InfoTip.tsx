@@ -59,7 +59,7 @@ export function InfoTip({
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         className={
-          "inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full border text-xs font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) " +
+          "info-tip-trigger inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full border text-xs font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) " +
           (open
             ? "border-(--accent-solid) bg-(--accent-solid) text-(--accent-solid-fg)"
             : "border-(--table-border-strong) text-(--text-muted) hover:border-(--text-muted) hover:text-(--text-primary)")
