@@ -3,12 +3,27 @@
 // this wraps them in a Bun server on port 3000 — static files first, SSR for the
 // rest. Run `bun run build` before starting. Restart it with `bun run publish`.
 //
-// Starting a new instance supersedes the old one: it frees the port no matter
-// which user owns the current server (provisioning starts it as `engine`; a team
-// member's `bun run publish` runs as their own user), so publish never collides
-// with an already-running server. Every sandbox user has passwordless sudo, so
-// the takeover works across user boundaries.
+// SECOND-INSTANCE GUARD (2026-10-09 outage hardening): before binding, a port
+// pre-check classifies whoever already listens on :3000 (src/server/boot-guard).
+// A plain `bun run start` while a healthy server (or a boot still inside its
+// grace window) owns the port now EXITS CLEANLY — it never opens a DB pool and
+// never starts the sync scheduler, so stray restarts can no longer stack pools
+// and saturate the managed Postgres connection ceiling (the Oct-8 outage chain:
+// ~37 warm connections ≈ 2.5 stacked processes × max 12 → ensureSchema boots
+// hung for minutes → publish.sh's old 10s health window expired → the wedged
+// old runtime stayed live serving 500s). publish.sh sets SERVE_SUPERSEDE=1 so
+// a DEPLOY still takes the port over from the previous build; a long-wedged
+// listener (unhealthy beyond the boot-grace window) is also replaced by a
+// manual restart, same as before.
 import handler from "./dist/server/server.js";
+import {
+  classifyExistingListener,
+  listenerAgeSeconds,
+  listenerPidsOnPort,
+  probeHttp,
+  readServerLockfile,
+  writeServerLockfile,
+} from "./src/server/boot-guard";
 
 // Pinned, NOT read from the environment. The published preview URL
 // (<label>.<PUBLIC_SITE_DOMAIN>) is reverse-proxied to 0.0.0.0:3000 inside the
@@ -28,9 +43,44 @@ const HOST = "0.0.0.0";
 const IDLE_TIMEOUT = 255;
 const CLIENT_DIR = `${import.meta.dir}/dist/client`;
 
+// ---------------------------------------------------------------------------
+// SECOND-INSTANCE GUARD — runs before anything opens a DB pool or scheduler.
+// Evidence (boot-timeline probe, 2026-10-09): dist import 86ms (module scope
+// touches no DB) → Bun.serve bound at +0ms; the hanging phase is ensureSchema
+// (204 idempotent DDL statements — 65s measured on a HEALTHY DB, minutes when
+// connections are slow), reached on the first SSR store touch. So the bind was
+// never the blocked step — but every STACKED process held a warm pool while it
+// hung, and the old unconditional takeover let each new `bun run start` kill
+// the running server (restart storms). The guard stops both.
+// ---------------------------------------------------------------------------
+const LOCK_PATH = `${import.meta.dir}/.run/server.lock`;
+const SUPERSEDE = process.env.SERVE_SUPERSEDE === "1";
+const existingPids = await listenerPidsOnPort(PORT);
+if (existingPids.length > 0) {
+  const probeStatus = await probeHttp(`http://127.0.0.1:${String(PORT)}/`, 3000);
+  const age = await listenerAgeSeconds(existingPids[0]);
+  const verdict = classifyExistingListener({ probeStatus, listenerAgeSeconds: age, supersede: SUPERSEDE });
+  if (verdict === "exit-duplicate") {
+    const lock = readServerLockfile(LOCK_PATH);
+    const owner = lock ? ` (lock: pid ${String(lock.pid)}, up since ${lock.started_at})` : "";
+    console.log(
+      `[boot-guard] a server already serves on :${String(PORT)} — pid(s) ${existingPids.map((p) => String(p)).join(",")}${owner}, ` +
+        `probe GET / → ${probeStatus == null ? "no answer" : String(probeStatus)}${age == null ? "" : `, up ${String(age)}s`}. ` +
+        `Exiting cleanly: no second pool, no second scheduler. ` +
+        `To replace the running server deliberately, publish (SERVE_SUPERSEDE=1) or wait out the boot-grace window if it is wedged.`,
+    );
+    process.exit(0);
+  }
+  // verdict === "takeover": publish replacing the old build (SERVE_SUPERSEDE=1)
+  // or a manual restart replacing a long-wedged listener — fall through to the
+  // existing free-port + retry bind loop below.
+}
+
 // Free PORT regardless of which user owns the current listener. lsof runs under
 // sudo so it can see (and the kill can signal) a process owned by another user;
-// the loop waits for the socket to actually release before we bind.
+// the loop waits for the socket to actually release before we bind. Reached
+// only when the guard above classified the boot as a takeover (or the port
+// was already free — where the kill loop is a no-op).
 const freePort =
   `for _ in $(seq 1 25); do ` +
   `pids=$(lsof -t -iTCP:${String(PORT)} -sTCP:LISTEN 2>/dev/null || true); ` +
@@ -85,6 +135,14 @@ for (let attempt = 1; ; attempt++) {
 }
 
 console.log(`team-site serving on http://${HOST}:${String(PORT)}`);
+
+// Lockfile: record THIS process as the port owner (observability + the
+// duplicate-exit message reads it). Best-effort — never blocks serving.
+await writeServerLockfile(LOCK_PATH, {
+  pid: process.pid,
+  port: PORT,
+  started_at: new Date().toISOString(),
+});
 
 // Background HighLevel sync (owner directive): incremental tick every
 // highlevel_sync_interval_seconds (settings, default 90s). Skips while another

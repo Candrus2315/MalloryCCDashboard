@@ -19,7 +19,12 @@ import {
 
 describe("pool profiles — the managed-ceiling connection math", () => {
   test("profiles are the documented, bounded values", () => {
-    expect(POOL_PROFILES.web).toEqual({ max: 12, idle_timeout: 60, max_lifetime: 1800 });
+    // 2026-10-09 outage hardening: web cap lowered 12 → 5. The Oct-8 outage
+    // stacked ~2.5 server processes × 12 warm conns ≈ the ~37 observed
+    // connections; the boot guard (serve.ts) stops stacking, and this cap
+    // bounds the damage a single (even unguarded) process can do to the ceiling.
+    expect(POOL_PROFILES.web).toEqual({ max: 5, idle_timeout: 60, max_lifetime: 1800 });
+    expect(POOL_PROFILES.web.max).toBeLessThanOrEqual(5); // pin: a future bump is a deliberate ceiling decision
     expect(POOL_PROFILES.job).toEqual({ max: 4, idle_timeout: 60, max_lifetime: 1800 });
     expect(POOL_PROFILES.test).toEqual({ max: 4, idle_timeout: 10, max_lifetime: 300 });
   });
@@ -30,7 +35,7 @@ describe("pool profiles — the managed-ceiling connection math", () => {
     const CEILING = 88;
     // 2 web servers (dev vite SSR + published serve.ts) + 1 job-profile process
     const steadyState = 2 * POOL_PROFILES.web.max + POOL_PROFILES.job.max;
-    expect(steadyState).toBe(28);
+    expect(steadyState).toBe(14);
     expect(steadyState).toBeLessThan(CEILING);
     // Test battery: bun test files run in parallel; each PgStore battery file
     // builds ≤ 2 stores per file. 10 concurrent store files × 2 × 4 ≈ 80 worst

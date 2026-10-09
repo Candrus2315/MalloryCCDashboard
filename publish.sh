@@ -16,7 +16,11 @@ mkdir -p .run
 # once node_modules is current.
 bun install
 bun run build
-setsid nohup bun run start > .run/server.log 2>&1 < /dev/null &
+# SERVE_SUPERSEDE=1 tells serve.ts's second-instance guard that this is a
+# DEPLOY: it must take the port over from the previous build even when that
+# build is perfectly healthy. A plain `bun run start` (no flag) exits cleanly
+# instead of stacking a second DB pool + scheduler — the Oct-8 outage chain.
+SERVE_SUPERSEDE=1 setsid nohup bun run start > .run/server.log 2>&1 < /dev/null &
 
 # Wait for the new server to actually answer before reporting success, so a
 # startup crash surfaces here instead of silently leaving the old page live.
@@ -25,7 +29,17 @@ setsid nohup bun run start > .run/server.log 2>&1 < /dev/null &
 # server is fine; the old check treated that as failure and exited 1 with
 # "server isn't responding" even though everything was healthy). Connection
 # refused (000) or a crashed boot keeps the loop waiting.
-for _ in $(seq 1 50); do
+#
+# 2026-10-09 hardening: window widened from 50×0.2s (~10s) to 120×2s (~240s).
+# Measured boot timeline (probe, 2026-10-09): the HTTP bind lands in <100ms,
+# but SSR cannot answer / until the first store touch runs the ensureSchema
+# DDL sweep — 204 idempotent statements over the managed TLS wire, 65s measured
+# on a HEALTHY DB and minutes when connections are slow (the outage condition).
+# The old ~10s window expired mid-boot on every degraded-DB publish, the script
+# reported "published, but the server isn't responding", and the wedged old
+# runtime stayed live serving 500s. 240s covers the measured worst case while
+# still surfacing a genuinely dead boot in bounded time.
+for _ in $(seq 1 120); do
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:3000 || true)
   case "$code" in
     200|201|202|204|301|302|303|307|308|401)
@@ -33,7 +47,7 @@ for _ in $(seq 1 50); do
       exit 0
       ;;
   esac
-  sleep 0.2
+  sleep 2
 done
 echo "warning: published, but the server isn't responding — check .run/server.log" >&2
 exit 1

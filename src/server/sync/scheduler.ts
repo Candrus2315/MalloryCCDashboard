@@ -552,6 +552,21 @@ export async function schedulerTick(options?: {
 
 // ---------- the always-on loop ----------
 
+/**
+ * SCHEDULER CONCURRENCY BOUND (2026-10-09 outage hardening).
+ *
+ * One process can never run more than ONE tick: `inflight` holds the running
+ * tick's promise and the loop SKIPS a round while it is set, and within a tick
+ * every piece is strictly sequential (highlevel → availability → attribution →
+ * sheets → commission, each awaited before the next starts). So the scheduler's
+ * own demand on the shared process pool is a single sequential query chain —
+ * the hard per-process DB ceiling is the POOL PROFILES max (store/pg.ts, web
+ * profile now capped at 5 after the Oct-8 connection-stacking outage). A manual
+ * SYNC NOW tick can overlap a background tick (queries queue on the pool), but
+ * the pool cap — not the scheduler — is the binding bound, by design.
+ */
+export const SCHEDULER_MAX_CONCURRENT_TICKS = 1;
+
 let inflight: Promise<SchedulerTickResult> | null = null;
 let started = false;
 
@@ -585,7 +600,7 @@ export function startScheduler(options?: {
         // store not ready yet — pace with the default and retry next round
       }
       await new Promise((r) => setTimeout(r, intervalSeconds * 1000));
-      if (inflight) continue; // previous tick still running — skip this round
+      if (inflight !== null) continue; // SCHEDULER_MAX_CONCURRENT_TICKS = 1: skip while a tick runs
       inflight = (async () => {
         const t0 = Date.now();
         try {
