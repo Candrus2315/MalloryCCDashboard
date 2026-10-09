@@ -58,7 +58,7 @@ import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
 import type { AuditOkBody } from "./audit-api";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
-import { normalizeRepMappings, SETTINGS_OWNER_ACTOR, type AppSettings, type RepMapping } from "./store/types";
+import { normalizeRepMappings, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, type AppSettings, type RepMapping, type SyncRunRow } from "./store/types";
 import { applyCommissionCorrection, assignCommissionWeeks, submitCommissionCycle, transitionCommissionCycle, unassignCommissionWeeks, type CommissionCycleStatus, type CorrectionKind } from "./commission/lifecycle";
 
 export interface PageMeta {
@@ -92,13 +92,20 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
   const editorWeeks = Array.from({ length: 9 }, (_, i) => addDays(weekStart(today), 7 * (i - 2)));
   const week = dateRange(ws, addDays(ws, 6));
 
-  const [meta, settings, teamGoals, connections, runs, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow, allUsers, monthlyGoalCurrent, monthlyGoalNext] =
+  const [meta, settings, teamGoals, connections, runs, runningRuns, overrides, users, repGoalsByWeekRows, leadAdjustments, weekLeads, apptsWindow, callsWindow, contacts, attributions, blockedWindow, allUsers, monthlyGoalCurrent, monthlyGoalNext] =
     await Promise.all([
       metaPromise,
       settingsPromise,
       store.getTeamGoals(),
       store.getConnections(),
-      store.getSyncRuns(12),
+      // 200 = the canonical recent-N run window (types.ts): the Sync Center's
+      // per-provider LATEST-RUN status must see each provider's most recent
+      // run even when the attribution ticker floods the newest rows; the
+      // recent-runs table still renders only the first 12.
+      store.getSyncRuns(200),
+      // In-flight rows of ANY provider (older running rows can fall outside
+      // the 200-row window — that's exactly why getRunningSyncRuns exists).
+      store.getRunningSyncRuns(),
       store.getManualOverrides(40),
       store.getUsers(),
       Promise.all(editorWeeks.map((w) => store.getRepGoals(w))),
@@ -216,7 +223,13 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     nonRosterUsers,
     zeroCallCount,
     connections: serializableConnections(connections),
-    syncRuns: runs,
+    // Recent-runs table (12 rows, unchanged display) + the full recent window
+    // and in-flight rows the per-provider latest-run status view derives from
+    // (the 12-row table window alone can miss a provider's latest run when the
+    // attribution ticker floods the newest rows).
+    syncRuns: runs.slice(0, 12),
+    runWindow: runs,
+    runningSyncRuns: runningRuns,
     overrides,
     unattributed,
     attributionSplit,
@@ -923,12 +936,13 @@ export interface FreshnessData {
   intervalSeconds: number;
   serverNow: string;
   /**
-   * QA 2026-10-08: the shell "Last synced" label is the data-freshness FLOOR —
-   * the OLDEST last-success across all real (non-demo) providers. It previously
-   * keyed on HighLevel only, understating staleness (Sheets older than the
-   * displayed "1h 5m"). Null when no provider has ever succeeded.
+   * Owner directive 2026-10-09: the shell "Last synced" chip shows the NEWEST
+   * completed-provider stamp — the most recent completed sync (success runs
+   * only; a provider currently running never resets it). Supersedes the QA
+   * 2026-10-08 "freshness floor" (oldest last-success) the owner flagged.
+   * Null when no live provider has ever succeeded.
    */
-  oldestSuccessAt: string | null;
+  newestSuccessAt: string | null;
   /**
    * Harmonization Wave 1: nav count badges (shell, all pages). Factual record
    * counts from the SAME stores the sections render — a zero or absent count
@@ -942,23 +956,55 @@ export interface FreshnessData {
   };
 }
 
-/** Pure: the oldest last-successful-sync timestamp across non-demo providers. */
-export function oldestSyncSuccessAt(
+/**
+ * Owner directive 2026-10-09: the shell "Last synced" chip reads the NEWEST
+ * completed sync — the stamp a reader expects ("when did our data last land?"),
+ * the reverse of the QA 2026-10-08 freshness-floor choice the owner flagged.
+ * Strictly sync_runs-driven: SUCCESS runs only, for providers with a live
+ * (non-demo) connection row, stamped by finished_at (started_at fallback), so
+ * a provider currently running — or an earlier error run — never resets the
+ * stamp. When no live provider has a success inside the recent-runs window the
+ * view falls back to the newest connections last_successful_sync_at (both
+ * stores write it on every success and preserve it on failure — same stamp,
+ * same semantics). Null when no live provider has ever succeeded.
+ */
+export function newestSyncSuccessAt(
+  runs: SyncRunRow[],
   connections: Array<{ provider: string; is_demo: boolean; last_successful_sync_at: string | null }>,
 ): string | null {
-  let oldest: string | null = null;
-  for (const c of connections) {
-    if (c.is_demo || !c.last_successful_sync_at) continue;
-    if (oldest == null || c.last_successful_sync_at < oldest) oldest = c.last_successful_sync_at;
+  const live = new Set(connections.filter((c) => !c.is_demo).map((c) => c.provider));
+  if (live.size === 0) return null;
+  let best: { stamp: string; ms: number } | null = null;
+  for (const r of runs) {
+    if (r.status !== "success" || !live.has(r.provider)) continue;
+    const stamp = r.finished_at ?? r.started_at;
+    const ms = parseSyncStartedMs(stamp);
+    if (!Number.isFinite(ms)) continue;
+    if (!best || ms > best.ms) best = { stamp, ms };
   }
-  return oldest;
+  if (best) return best.stamp;
+  for (const c of connections) {
+    if (!live.has(c.provider) || !c.last_successful_sync_at) continue;
+    const ms = parseSyncStartedMs(c.last_successful_sync_at);
+    if (!Number.isFinite(ms)) continue;
+    if (!best || ms > best.ms) best = { stamp: c.last_successful_sync_at, ms };
+  }
+  return best?.stamp ?? null;
 }
 
 /** Connection freshness for the shell's "Last synced Xm ago" indicator. */
 export const getFreshnessData = createServerFn().handler((): Promise<FreshnessData> => withDbRetry(async (): Promise<FreshnessData> => {
   const { readSchedulerIntervalSeconds } = await import("./sync/scheduler");
   const store = await getStore();
-  const [connections, running, settings] = await Promise.all([store.getConnections(), store.getRunningSyncRun("highlevel"), store.getSettings()]);
+  const [connections, running, settings, runs] = await Promise.all([
+    store.getConnections(),
+    store.getRunningSyncRun("highlevel"),
+    store.getSettings(),
+    // The newest completed-provider stamp reads the run log (getSyncRuns'
+    // recent-N window always contains the newest run; the connections row is
+    // the in-function fallback when the window holds no success).
+    store.getSyncRuns(200),
+  ]);
   const hl = connections.find((c) => c.provider === "highlevel") ?? null;
   // Nav count badges (Wave 1): active PIPs for the Performance pill, cycles in
   // Ready for Review for the Commissions pill. Read-only + guarded — any store
@@ -981,7 +1027,7 @@ export const getFreshnessData = createServerFn().handler((): Promise<FreshnessDa
       lastSuccessAt: hl?.last_successful_sync_at ?? null,
       lastError: hl?.last_error ?? null,
     },
-    oldestSuccessAt: oldestSyncSuccessAt(connections),
+    newestSuccessAt: newestSyncSuccessAt(runs, connections),
     running: !!running,
     runningStartedAt: running?.started_at ?? null,
     intervalSeconds: readSchedulerIntervalSeconds(settings.highlevel_sync_interval_seconds),
@@ -998,13 +1044,13 @@ export const refreshNow = createServerFn({ method: "POST" }).handler(async () =>
   const { schedulerTick } = await import("./sync/scheduler");
   const tick = await schedulerTick({ trigger: "manual" });
   const store = await getStore();
-  const [connections, running] = await Promise.all([store.getConnections(), store.getRunningSyncRun("highlevel")]);
+  const [connections, running, runs] = await Promise.all([store.getConnections(), store.getRunningSyncRun("highlevel"), store.getSyncRuns(200)]);
   const hl = connections.find((c) => c.provider === "highlevel") ?? null;
   return {
     tick,
     lastSyncAt: hl?.last_sync_at ?? null,
     lastSuccessAt: hl?.last_successful_sync_at ?? null,
-    oldestSuccessAt: oldestSyncSuccessAt(connections),
+    newestSuccessAt: newestSyncSuccessAt(runs, connections),
     lastError: hl?.last_error ?? null,
     running: !!running,
     serverNow: new Date().toISOString(),

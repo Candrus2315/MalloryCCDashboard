@@ -16,6 +16,7 @@ import {
   leadPickerOptionLabel,
   passphraseStatus,
   providerLabel,
+  providerLatestRunView,
   queueReasonBreakdown,
   queueRowState,
   rosterPanelVisibleRows,
@@ -1135,6 +1136,10 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
 function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promise<string> }) {
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  // Hydration-safe clock: a live "running" chip resolves after mount (SSR
+  // shows the latest finished run's state — same pattern as the age clocks).
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => setNowMs(Date.now()), []);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1177,19 +1182,38 @@ function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promis
                 </td>
               </tr>
             )}
-            {data.connections.map((c) => (
-              <tr key={c.provider}>
-                <td className="font-medium text-(--text-primary)">{providerLabel(c.provider)}</td>
-                <td>
-                  <span className={"rounded-full px-2 py-0.5 text-xs font-medium " + (c.is_demo ? "bg-(--chip-current-bg) text-(--chip-current-fg)" : c.status === "connected" ? "bg-(--chip-good-bg) text-(--chip-good-fg)" : c.status === "error" ? "bg-(--chip-bad-bg) text-(--chip-bad-fg)" : "bg-(--bar-track) text-(--chip-neutral-fg)")}>
-                    {c.is_demo ? "demo" : c.status}
-                  </span>
-                </td>
-                <td>{c.last_sync_at ? etSyncStamp(c.last_sync_at) : "—"}</td>
-                <td>{c.last_successful_sync_at ? etSyncStamp(c.last_successful_sync_at) : "—"}</td>
-                <td className="text-(--neg-text)">{c.last_error ?? "—"}</td>
-              </tr>
-            ))}
+            {data.connections.map((c) => {
+              // Owner directive 2026-10-09: Status/Last Sync/Sync Errors read
+              // the LATEST sync_runs run for the provider (success / running /
+              // error + its stamp) — an earlier error never outlives a later
+              // success. "Last Successful" stays the connection row's
+              // last_successful_sync_at (preserved across failed attempts).
+              const run = providerLatestRunView(
+                c,
+                data.runWindow.filter((r) => r.provider === c.provider),
+                data.runningSyncRuns.find((r) => r.provider === c.provider) ?? null,
+                nowMs,
+              );
+              const chip =
+                run.label === "demo" || run.label === "running"
+                  ? "bg-(--chip-current-bg) text-(--chip-current-fg)"
+                  : run.label === "connected"
+                    ? "bg-(--chip-good-bg) text-(--chip-good-fg)"
+                    : run.label === "error"
+                      ? "bg-(--chip-bad-bg) text-(--chip-bad-fg)"
+                      : "bg-(--bar-track) text-(--chip-neutral-fg)";
+              return (
+                <tr key={c.provider}>
+                  <td className="font-medium text-(--text-primary)">{providerLabel(c.provider)}</td>
+                  <td>
+                    <span className={"rounded-full px-2 py-0.5 text-xs font-medium " + chip}>{run.label}</span>
+                  </td>
+                  <td>{run.lastRunAt ? etSyncStamp(run.lastRunAt) : "—"}</td>
+                  <td>{c.last_successful_sync_at ? etSyncStamp(c.last_successful_sync_at) : "—"}</td>
+                  <td className="text-(--neg-text)">{run.lastRunError ?? "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

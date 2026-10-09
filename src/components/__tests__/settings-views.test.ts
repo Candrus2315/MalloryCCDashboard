@@ -14,6 +14,7 @@ import {
   connectionStatusView,
   passphraseStatus,
   providerLabel,
+  providerLatestRunView,
   queueReasonBreakdown,
   queueRowState,
   rosterPanelVisibleRows,
@@ -290,5 +291,116 @@ describe("rosterPanelVisibleRows", () => {
     const zeros = [row("a", 0), row("b", 0)];
     expect(rosterPanelVisibleRows(zeros, false)).toEqual([]);
     expect(rosterPanelVisibleRows(zeros, true)).toEqual(zeros);
+  });
+});
+
+// ---------- Sync Center per-provider status (owner directive 2026-10-09) ----------
+describe("providerLatestRunView", () => {
+  const connection = {
+    provider: "highlevel",
+    status: "connected",
+    is_demo: false,
+    last_sync_at: "2026-10-09 20:32:55.226+00",
+    last_successful_sync_at: "2026-10-09 20:32:54.206+00",
+    last_error: null as string | null,
+  };
+  const run = (status: string, started_at: string, finished_at: string | null = null, error: string | null = null) => ({
+    status,
+    started_at,
+    finished_at,
+    error,
+  });
+  const NOW = Date.parse("2026-10-09T20:40:00Z");
+
+  test("a later SUCCESS clears an earlier error — status never lingers on the stale error", () => {
+    const view = providerLatestRunView(
+      { ...connection, status: "connected", last_error: null },
+      [
+        run("success", "2026-10-09 20:30:41.209+00", "2026-10-09 20:32:54.206+00"),
+        run("error", "2026-10-09 20:27:30.690+00", "2026-10-09 20:29:12.462+00", "write CONNECT_TIMEOUT"),
+      ],
+      null,
+      NOW,
+    );
+    expect(view.label).toBe("connected");
+    expect(view.tone).toBe("positive");
+    expect(view.lastRunAt).toBe("2026-10-09 20:32:54.206+00");
+    expect(view.lastRunError).toBeNull();
+  });
+
+  test("the LATEST error run stays visible and honest (with its own stamp)", () => {
+    const view = providerLatestRunView(
+      { ...connection, status: "error", last_error: "write CONNECT_TIMEOUT" },
+      [
+        run("error", "2026-10-09 20:27:30.690+00", "2026-10-09 20:29:12.462+00", "write CONNECT_TIMEOUT"),
+        run("success", "2026-10-09 20:00:00+00", "2026-10-09 20:02:00+00"),
+      ],
+      null,
+      NOW,
+    );
+    expect(view.label).toBe("error");
+    expect(view.tone).toBe("risk");
+    expect(view.lastRunAt).toBe("2026-10-09 20:29:12.462+00");
+    expect(view.lastRunError).toBe("write CONNECT_TIMEOUT");
+  });
+
+  test("a fresh RUNNING row shows running + its start stamp, clearing any old error", () => {
+    const view = providerLatestRunView(
+      { ...connection, status: "error", last_error: "write CONNECT_TIMEOUT" },
+      [run("error", "2026-10-09 20:27:30.690+00", "2026-10-09 20:29:12.462+00", "write CONNECT_TIMEOUT")],
+      { started_at: "2026-10-09 20:39:30.000+00" },
+      NOW,
+    );
+    expect(view.label).toBe("running");
+    expect(view.tone).toBe("neutral");
+    expect(view.lastRunAt).toBe("2026-10-09 20:39:30.000+00");
+    expect(view.lastRunError).toBeNull();
+  });
+
+  test("a STALE running row (beyond the reap window) is a zombie — the latest finished run decides", () => {
+    const view = providerLatestRunView(
+      connection,
+      [run("success", "2026-10-09 20:30:41.209+00", "2026-10-09 20:32:54.206+00")],
+      { started_at: "2026-10-09 20:00:00.000+00" }, // > 15 min old at NOW
+      NOW,
+    );
+    expect(view.label).toBe("connected");
+    expect(view.lastRunAt).toBe("2026-10-09 20:32:54.206+00");
+  });
+
+  test("demo connections stay demo regardless of the run log", () => {
+    const view = providerLatestRunView(
+      { ...connection, is_demo: true, status: "demo", last_error: "no credentials" },
+      [run("success", "2026-10-09 20:30:41.209+00", "2026-10-09 20:32:54.206+00")],
+      null,
+      NOW,
+    );
+    expect(view.label).toBe("demo");
+    expect(view.lastRunError).toBe("no credentials");
+  });
+
+  test("no runs in the window falls back to the connection row — its error text only when the state is an error", () => {
+    const errored = providerLatestRunView(
+      { ...connection, status: "error", last_error: "write CONNECT_TIMEOUT" },
+      [],
+      null,
+      NOW,
+    );
+    expect(errored.label).toBe("error");
+    expect(errored.lastRunError).toBe("write CONNECT_TIMEOUT");
+    expect(errored.lastRunAt).toBe(connection.last_sync_at);
+
+    const connected = providerLatestRunView(connection, [], null, NOW);
+    expect(connected.label).toBe("connected");
+    expect(connected.lastRunError).toBeNull();
+
+    const disconnected = providerLatestRunView({ ...connection, status: "disconnected" }, [], null, NOW);
+    expect(disconnected.label).toBe("disconnected");
+    expect(disconnected.tone).toBe("neutral");
+  });
+
+  test("a null clock (SSR, pre-hydration) never reads as running", () => {
+    const view = providerLatestRunView(connection, [], { started_at: "2026-10-09 20:39:30.000+00" }, null);
+    expect(view.label).toBe("connected"); // falls through to the connection fallback
   });
 });
