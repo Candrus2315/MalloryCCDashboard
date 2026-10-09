@@ -382,23 +382,26 @@ function AvailabilityPage() {
                         key={date}
                         type="button"
                         onClick={() => go({ view: "day", date })}
-                        className={`day-card day-card-off flex min-h-[92px] flex-col items-start rounded-xl p-2 text-left ${date === data.today ? "ring-1 ring-(--input-border)" : ""}`}
+                        className={`day-card day-card-off flex min-h-[92px] flex-col items-start rounded-xl p-2 text-left max-md:min-w-0 max-md:p-1.5 ${date === data.today ? "ring-1 ring-(--input-border)" : ""}`}
                       >
                         <span className={`text-xs font-medium ${date === data.today ? "text-(--text-primary)" : "text-(--text-caption)"}`}>
                           {Number(date.slice(8))}
                         </span>
                         <span className="mt-1 text-xl font-semibold leading-none tabular-nums text-(--text-primary)">
                           {suppressed || d.openCount == null ? "—" : d.openCount}
-                          {!suppressed && d.openCount != null && <span className="ml-1 text-[10px] font-normal text-(--text-muted)">open</span>}
+                          {!suppressed && d.openCount != null && <span className="ml-1 text-[10px] font-normal text-(--text-muted) max-md:hidden">open</span>}
                         </span>
-                        <span className="mt-1 text-[10px] tabular-nums text-(--text-muted)">
+                        <span className="mt-1 text-[10px] tabular-nums text-(--text-muted) max-md:hidden">
                           {suppressed ? "—" : `${d.holes}h · ${pctWhole(d.utilization)}`}
                           {d.acuity === "estimated" ? " · est" : ""}
                         </span>
                         {tone && status && (
-                          <span className={`mt-auto inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${tone.badge}`}>
-                            {tone.dot && <span className={`mr-1 h-1 w-1 rounded-full ${tone.dot}`} aria-hidden="true" />}
-                            {status.label}
+                          <span
+                            className={`mt-auto inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${tone.badge}`}
+                            title={status.label}
+                          >
+                            {tone.dot && <span className={`mr-1 h-1 w-1 rounded-full max-md:h-1.5 max-md:w-1.5 max-md:mr-0 ${tone.dot}`} aria-hidden="true" />}
+                            <span className="max-md:hidden">{status.label}</span>
                           </span>
                         )}
                       </button>

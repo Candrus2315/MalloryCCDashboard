@@ -71,7 +71,7 @@ export function CommissionsShell({
                 to={t.to}
                 aria-current={active ? "page" : undefined}
                 className={
-                  "rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors " +
+                  "rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors max-md:inline-flex max-md:min-h-[44px] max-md:items-center " +
                   (active
                     ? "bg-(--surface-subtle) text-(--text-primary)"
                     : "text-(--text-caption) hover:bg-(--surface-subtle) hover:text-(--text-primary)")

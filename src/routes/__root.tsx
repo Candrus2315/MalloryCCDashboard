@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import appCss from "~/styles/app.css?url";
 import { useAppearance } from "~/components/appearance";
+import { BottomNav } from "~/components/bottom-nav";
 import { getFreshnessData, refreshNow, type FreshnessData } from "~/server/queries";
 
 type NavBadgeKey = "activePips" | "commissionsAwaitingReview";
@@ -184,6 +185,10 @@ function AppShell({ children }: { children: ReactNode }) {
       </header>
       <main className="mx-auto max-w-7xl px-4 py-4 sm:px-6 sm:py-6">{children}</main>
       <MobileNav open={navOpen} onClose={() => setNavOpen(false)} path={path} badgeFor={badgeCount} />
+      {/* Mobile Phase 2: the owner's 5-tab bottom bar (Today·Reps·Teams·
+          Availability·Settings) sits under the drawer; secondary routes stay
+          reachable via the drawer. md:hidden — desktop renders unchanged. */}
+      <BottomNav path={path} />
     </div>
   );
 }

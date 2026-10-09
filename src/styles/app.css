@@ -249,6 +249,34 @@
   .card {
     padding: 1rem;
   }
+  /* P0-2 (mobile audit): status banners sit in flex rows; min-width:auto lets
+     a nowrap child push the banner past the viewport (Today's honesty banner
+     rendered 1,370px wide). Phones only — ≥768 renders unchanged. */
+  .status-banner {
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* P1-1 (mobile audit): the 16px "i" glyph is a precision tap — an invisible
+     hit-slop layer widens the tap area to 44×44 without moving the glyph or
+     its neighbors (spec §2.3). The class is desktop-inert (rules live here). */
+  .info-tip-trigger {
+    position: relative;
+  }
+  .info-tip-trigger::before {
+    content: "";
+    position: absolute;
+    inset: -14px; /* 16px glyph + 2 × 14px slop = 44×44 */
+  }
+  /* Bottom nav clearance (Mobile Phase 2): the fixed bar is 56px tabs + 8px
+     safe-area foot; main pads down by 76px + safe-area so content never hides
+     behind it. Same value as the mounted bar anatomy in bottom-nav.tsx. */
+  body:not(.pip-print-page) main {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 76px);
+  }
+  /* The PIP print page is a paper preview — it renders without the bar. */
+  body.pip-print-page nav[aria-label="Primary"] {
+    display: none;
+  }
 }
 
 @layer components {

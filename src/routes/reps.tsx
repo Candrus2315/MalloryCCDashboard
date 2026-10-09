@@ -460,7 +460,7 @@ function RepsPage() {
                   onClick={() => selectRep(r.id)}
                   aria-pressed={r.isSelected}
                   className={
-                    "block w-full min-w-[190px] shrink-0 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) lg:min-w-0 lg:rounded-none " +
+                    "block w-full min-w-[190px] shrink-0 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) lg:min-w-0 lg:rounded-none max-md:w-52 " +
                     (r.isSelected ? "bg-(--surface-selected)" : "hover:bg-(--surface-hover)")
                   }
                 >

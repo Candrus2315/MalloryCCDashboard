@@ -394,7 +394,7 @@ function SubNav() {
           <a
             key={s.id}
             href={`#${s.id}`}
-            className="whitespace-nowrap rounded-md px-2.5 py-2 text-[13px] font-medium text-(--text-caption) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
+            className="whitespace-nowrap rounded-md px-2.5 py-2 text-[13px] font-medium text-(--text-caption) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) max-md:inline-flex max-md:min-h-[44px] max-md:items-center"
           >
             <span className="mr-1.5 text-xs tabular-nums text-(--text-faint)">{String(i + 1).padStart(2, "0")}</span>
             {s.nav}
