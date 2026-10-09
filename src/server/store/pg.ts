@@ -778,18 +778,32 @@ export function normalizePgBusinessDate(v: unknown): string | null {
  * are rejected with SQLSTATE 53300 (the "pg_use_reserved_connections"
  * rejection seen during the Oct 2026 transient-500 window).
  *
+ * 2026-10-09 OUTAGE HARDENING — web cap 12 → 5. The Oct-8 outage chain was
+ * process STACKING, not single-process concurrency: pg_stat_activity showed
+ * ~37 connections ≈ 2.5 stacked server processes × 12 warm conns each (vite
+ * dev SSR + repeated bun-start restarts; idle_timeout only sheds conns after
+ * a quiet minute, so pools stayed warm during churn). Every stacked pool ate
+ * the ceiling and new boots hung minutes in ensureSchema. The second-instance
+ * boot guard (serve.ts + boot-guard.ts) makes stacking structurally
+ * impossible for plain restarts; with that in place the per-process cap is
+ * lowered so even an unguarded process can never hold more than a sliver of
+ * the ceiling.
+ *
  * Connection math (worst case → headroom):
- *   2 web servers (dev :3000 vite SSR + published serve.ts) × max 12 = 24
+ *   2 web servers (dev vite SSR + published serve.ts) × max 5 = 10
  *   sync jobs (scheduler tick, SYNC NOW, ops scripts) share the process
  *     store — 0 extra in web processes; a standalone job-profile process = 4
  *   test batteries (bun test, parallel files, NODE_ENV=test) × max 4 ≈ ≤ 40
  *     transiently
  *   platform exporter + managed-host background workers ≈ 2–4 (not ours)
- *   → steady-state ≈ 28, transient peak ≈ ≤ 68 of 88 — ≥ 20 slots of
- *     headroom at all times. The old config (max 16, idle_timeout 240s, no
- *     documented max_lifetime) warmed ~16 idle conns per pool generation
- *     across both servers plus per-instance probe/CLI pools and crossed the
- *     ceiling during the dual-restart + sync window.
+ *   → steady-state ≈ 14, transient peak ≈ ≤ 54 of 88 — ≥ 30 slots of
+ *     headroom at all times (was ≈ 28 steady / ≤ 68 peak at web max 12).
+ *
+ * SSR cost of the lower cap: page loaders fire 15–30 parallel queries, so
+ * 5 conns = 3–6 RTT-bound waves over the Timescale wire instead of 1–2 —
+ * sub-second extra latency on an internal dashboard, a price worth the
+ * guaranteed headroom (the outage's 500-storms were ceiling rejections,
+ * never RTT latency).
  *
  * idle_timeout 60s (was 240s): a heavy page fills the pool with 15–30
  * parallel queries; after the burst the pool sheds within a minute instead
@@ -811,7 +825,7 @@ export interface PoolProfileOptions {
 }
 
 export const POOL_PROFILES: Record<PoolProfile, PoolProfileOptions> = {
-  web: { max: 12, idle_timeout: 60, max_lifetime: 1800 },
+  web: { max: 5, idle_timeout: 60, max_lifetime: 1800 },
   job: { max: 4, idle_timeout: 60, max_lifetime: 1800 },
   test: { max: 4, idle_timeout: 10, max_lifetime: 300 },
 };
@@ -858,11 +872,13 @@ export class PgStore implements Store {
     } catch {
       // probePg validates the URL before constructing; ignore here
     }
-    // POOL HARDENING (2026-10-06): one profile-sized pool per process (see the
-    // POOL PROFILES math above — 2 servers × 12 stays under the managed 88-slot
-    // ceiling with headroom; tests/CLI jobs take the smaller profiles). Page
-    // loaders fire 15–30 parallel queries: 12 conns = 2–3 RTT-bound waves vs
-    // the old 16 — a ≤1-wave difference, and the ceiling no longer 500s pages.
+    // POOL HARDENING (2026-10-06; cap lowered 2026-10-09): one profile-sized
+    // pool per process (see the POOL PROFILES math above — 2 servers × 5 stays
+    // far under the managed 88-slot ceiling; tests/CLI jobs take the smaller
+    // profiles). Page loaders fire 15–30 parallel queries: 5 conns = 3–6
+    // RTT-bound waves — sub-second extra latency, in exchange for a pool that
+    // cannot hold the ceiling hostage even if processes stack (boot-guard
+    // prevents stacking; this cap bounds the damage if one ever happens).
     const pool = resolvePoolOptions(options?.profile);
     this.sql = postgres(databaseUrl, {
       max: pool.max,
