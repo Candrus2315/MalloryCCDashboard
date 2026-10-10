@@ -127,15 +127,22 @@ function SettingsPage() {
       {/* 1 — Security & Status (spec §1: compact strip replacing the stacked banners) */}
       <SecuritySection data={data} />
 
-      {/* 2 — Goals (spec §2: weekly grid + rep goals + rep start dates) */}
+      {/* 2 — Goals (spec §2: weekly grid + rep goals + rep start dates).
+          Mobile Phase 3a (P1-16): on phones each numbered section collapses
+          into an accordion — the input/label/body wrappers are desktop-inert
+          (rules live in the max-width:767px app.css block); Goals (02) is the
+          first numbered section and ships open. */}
       <section id="goals" className="scroll-mt-28">
-        <Panel className="p-5 sm:p-6">
-          <SectionHeader id="goals" />
-          <div className="mt-5 space-y-6">
+        <Panel className="p-5 sm:p-6 m-acc">
+          <input type="checkbox" id="macc-goals" className="m-acc-input" defaultChecked />
+          <label htmlFor="macc-goals" className="m-acc-head">
+            <SectionHeader id="goals" />
+          </label>
+          <div className="mt-5 space-y-6 m-acc-body">
             <div className="space-y-3">
               <h3 className="section-heading">Weekly Booking Goal &amp; Lead Budget</h3>
               <p className="text-[13px] text-(--text-caption)">Edit any week — past weeks keep history, future weeks are the plan. Changes are audited.</p>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto scroll-x">
                 <table className="data-table min-w-[720px]">
                   <thead>
                     <tr>
@@ -163,9 +170,12 @@ function SettingsPage() {
 
       {/* 3 — Operational Rules (spec §3: compact, feel important) */}
       <section id="rules" className="scroll-mt-28">
-        <Panel className="p-5 sm:p-6">
-          <SectionHeader id="rules" />
-          <div className="mt-4">
+        <Panel className="p-5 sm:p-6 m-acc">
+          <input type="checkbox" id="macc-rules" className="m-acc-input" />
+          <label htmlFor="macc-rules" className="m-acc-head">
+            <SectionHeader id="rules" />
+          </label>
+          <div className="mt-4 m-acc-body">
             <CoreOpsCard data={data} busy={busy} onSave={(thresholdSeconds, windowHours) => run("Operational settings saved", () => saveSettings({ data: { thresholdSeconds, windowHours } }))} />
           </div>
         </Panel>
@@ -173,9 +183,12 @@ function SettingsPage() {
 
       {/* 4 — Acuity scope + availability rules (spec §4, one major section) */}
       <section id="acuity" className="scroll-mt-28">
-        <Panel className="p-5 sm:p-6">
-          <SectionHeader id="acuity" />
-          <div className="mt-5 space-y-6">
+        <Panel className="p-5 sm:p-6 m-acc">
+          <input type="checkbox" id="macc-acuity" className="m-acc-input" />
+          <label htmlFor="macc-acuity" className="m-acc-head">
+            <SectionHeader id="acuity" />
+          </label>
+          <div className="mt-5 space-y-6 m-acc-body">
             <div className="space-y-3">
               <h3 className="section-heading">Acuity Reporting Scope</h3>
               <AcuityScopeCard data={data} busy={busy} onSave={(calendars, types) => run("Acuity scope saved", () => saveAcuityScope({ data: { calendars, types } }))} />
@@ -223,11 +236,15 @@ function SettingsPage() {
         </div>
       </details>
 
-      {/* 6 — Sync Center (spec: operations panel, default expanded) */}
+      {/* 6 — Sync Center (spec: operations panel, default expanded). Accordion
+          wrapper (P1-16) — desktop-inert, see the Goals section note. */}
       <section id="sync" className="scroll-mt-28">
-        <Panel className="p-5 sm:p-6">
-          <SectionHeader id="sync" />
-          <div className="mt-4">
+        <Panel className="p-5 sm:p-6 m-acc">
+          <input type="checkbox" id="macc-sync" className="m-acc-input" />
+          <label htmlFor="macc-sync" className="m-acc-head">
+            <SectionHeader id="sync" />
+          </label>
+          <div className="mt-4 m-acc-body">
             <SyncCenter data={data} onSync={async () => {
               const res = await syncNow();
               await router.invalidate();
@@ -239,8 +256,12 @@ function SettingsPage() {
 
       {/* 7 — Manual overrides & roster (spec §7; roster mapping = ownership correction) */}
       <section id="overrides" className="scroll-mt-28">
-        <Panel className="p-5 sm:p-6">
-          <SectionHeader id="overrides" />
+        <Panel className="p-5 sm:p-6 m-acc">
+          <input type="checkbox" id="macc-overrides" className="m-acc-input" />
+          <label htmlFor="macc-overrides" className="m-acc-head">
+            <SectionHeader id="overrides" />
+          </label>
+          <div className="m-acc-body">
           <p className="mt-3 text-[13px] text-(--text-caption)">Corrections Christopher makes by hand — every one is written to the audit trail below with previous value, new value, who and when.</p>
           <div className="mt-5 space-y-6">
             {/* (a) Roster mapping — eligibility correction, folded in as the first subsection */}
@@ -316,6 +337,7 @@ function SettingsPage() {
             <LeadCountCard data={data} busy={busy} onSave={(date, sheet, count, reason) => run("Lead count corrected", () => setLeadCount({ data: { date, sheet, count, reason } }))} />
           </div>
         </div>
+          </div>
           </div>
         </Panel>
       </section>
@@ -905,7 +927,7 @@ function StudioBlockEditor({ day, which, block, onChange }: {
   onChange: (b: StudioBlockVM) => void;
 }) {
   return (
-    <span className="flex w-full items-center gap-1.5 sm:w-58 sm:shrink-0">
+    <span className="flex w-full items-center gap-1.5 studio-block sm:w-58 sm:shrink-0">
       <span className="w-[74px] shrink-0 text-xs font-medium uppercase tracking-wide text-(--text-muted) sm:hidden">
         {which}
       </span>
@@ -923,7 +945,7 @@ function StudioBlockEditor({ day, which, block, onChange }: {
         disabled={!block.active}
         onChange={(e) => onChange({ ...block, open: e.target.value })}
       />
-      <span className="shrink-0 text-(--text-muted)">–</span>
+      <span className="shrink-0 text-(--text-muted) studio-dash">–</span>
       <input
         type="time"
         aria-label={`${which} close time on ${day}`}
@@ -1163,7 +1185,7 @@ function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promis
         </button>
       </div>
       {msg && <p className="text-xs text-(--text-caption)">{msg}</p>}
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto scroll-x">
         <table className="data-table min-w-[760px]">
           <thead>
             <tr>
