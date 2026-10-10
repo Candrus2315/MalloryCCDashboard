@@ -337,7 +337,11 @@ function AvailabilityPage() {
               ))}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 pb-5 pt-3 sm:grid-cols-5">
+          {/* P2-1 (max-md: 3+2 grid instead of an awkward 2-col hole) and P2-2
+              (on the Day view the same five numbers repeat in the day-detail
+              card, so the top band hides on phones — the numbers stay visible
+              in the day card; ≥768 unchanged). */}
+          <div className={`grid grid-cols-2 gap-x-6 gap-y-4 px-5 pb-5 pt-3 sm:grid-cols-5 max-md:grid-cols-3${view.kind === "day" ? " max-md:hidden" : ""}`}>
             <SummaryStat label="Capacity" value={num(String(summary.capacity))} />
             <SummaryStat label="Booked" value={num(String(summary.booked))} />
             <SummaryStat label="Open" value={summary.openKnown ? num(String(summary.open)) : "—"} />
@@ -418,12 +422,15 @@ function AvailabilityPage() {
           )}
 
           {view.kind === "days" && (
-            <div className="p-5">
-              <div className="overflow-x-auto">
+            <div className="p-5 scroll-fade">
+              {/* P1-12: the 7-column table scrolls on phones with the date
+                  column pinned and a right-edge fade affordance; the date cell
+                  stops wrapping into three fragments. ≥768 unchanged. */}
+              <div className="overflow-x-auto scroll-x">
                 <table className="w-full text-[13px]">
                   <thead>
                     <tr className="border-b border-(--table-border-weak) text-left text-xs uppercase tracking-wide text-(--text-faint)">
-                      <th className="py-2 pr-3 font-medium">Date</th>
+                      <th className="py-2 pr-3 font-medium max-md:sticky max-md:left-0 max-md:z-[1] max-md:bg-(--card-bg)">Date</th>
                       <th className="py-2 pr-3 text-right font-medium">Openings</th>
                       <th className="py-2 pr-3 text-right font-medium">Holes</th>
                       <th className="py-2 pr-3 text-right font-medium">Capacity</th>
@@ -438,7 +445,7 @@ function AvailabilityPage() {
                       const tone = status ? TONE_BADGE[status.tone] : null;
                       return (
                         <tr key={d.date} className="cursor-pointer border-b border-(--table-border-weak) last:border-0 hover:bg-(--chip-neutral-bg)" onClick={() => go({ view: "day", date: d.date })}>
-                          <td className="py-2 pr-3 font-medium text-(--text-primary)">
+                          <td className="py-2 pr-3 font-medium text-(--text-primary) max-md:whitespace-nowrap">
                             {dayPrefix(d.date, data.today)} — {formatDateHumanFull(d.date)}
                           </td>
                           <td className="py-2 pr-3 text-right tabular-nums">{suppressed || d.openCount == null ? "—" : d.openCount}</td>

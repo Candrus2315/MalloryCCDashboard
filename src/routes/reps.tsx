@@ -750,8 +750,8 @@ function RepsPage() {
               />
             </span>
           </div>
-          <div className="card mt-3 overflow-hidden p-0">
-            <div className="overflow-x-auto">
+          <div className="card mt-3 overflow-hidden p-0 scroll-fade">
+            <div className="overflow-x-auto scroll-x">
               {/* Metric column pinned on horizontal scroll (phones) so the
                   metric name stays visible while the numbers slide. */}
               <table className="data-table min-w-[640px] [&_td]:py-2.5 [&_td]:text-right [&_td:first-child]:text-left">

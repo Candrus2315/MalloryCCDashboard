@@ -868,8 +868,12 @@ function TeamPage() {
           </span>
           <p className="text-xs text-(--text-muted)">Click a rep for their full detail on the Reps page</p>
         </div>
-        <Panel className="mt-3 overflow-hidden">
-          <div className="overflow-x-auto">
+        <Panel className="mt-3 overflow-hidden scroll-fade">
+          {/* P1-10/P1-2: the BY REP table scrolls on phones — the Rep column is
+              already sticky, so this adds the right-edge fade affordance plus
+              momentum scrolling; columns are never dropped (every metric stays
+              in the table). ≥768 unchanged. */}
+          <div className="overflow-x-auto scroll-x">
             <table className="w-full min-w-[760px] text-[13px]">
               <thead>
                 <tr className="border-b border-(--card-border)">

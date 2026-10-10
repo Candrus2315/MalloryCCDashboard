@@ -118,7 +118,11 @@ function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
   };
   return (
     <details className="card card-dense mt-3">
-      <summary className="cursor-pointer select-none">
+      {/* Mobile Phase 3a (P2-7): the native disclosure marker floats on its own
+          line above the title at 390 — on phones the summary becomes a flex row
+          with a CSS-drawn arrow (.pp-summary, max-md block in app.css); ≥768
+          keeps the native marker and this class is inert. */}
+      <summary className="pp-summary cursor-pointer select-none">
         <span className="section-heading inline-flex items-center gap-2">
           Pending Payments ({visible.length})
           <span className="text-xs font-normal text-(--text-muted)">— awaiting deposit · not counted</span>
@@ -166,7 +170,7 @@ function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
                         disabled={busyId === r.appointment_id}
                         aria-label={`Dismiss from pending payments: ${r.client_name ?? r.appointment_type ?? "unknown client"}`}
                         title="Dismiss from pending payments (the appointment is kept — it only leaves this list)"
-                        className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--text-muted) hover:bg-(--surface-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) disabled:opacity-40"
+                        className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--text-muted) hover:bg-(--surface-hover) hover:text-(--text-primary) focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) disabled:opacity-40 max-md:min-h-[44px] max-md:min-w-[44px] max-md:px-3"
                       >
                         <span aria-hidden="true">✕</span>
                       </button>

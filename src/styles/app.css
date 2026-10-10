@@ -277,6 +277,107 @@
   body.pip-print-page nav[aria-label="Primary"] {
     display: none;
   }
+  /* ===== Mobile Phase 3a — primary-section polish (max-md only; ≥768 inert) =====
+     P1-2: horizontally scrollable tables get momentum scrolling plus a
+     right-edge fade — the scroll affordance invisible iOS scrollbars can't
+     show. .scroll-fade sits on the containing card; both classes are inert at
+     ≥768. No per-table "swipe" copy is added, so computed content is untouched. */
+  .scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+  }
+  .scroll-fade {
+    position: relative;
+  }
+  .scroll-fade::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 20px;
+    pointer-events: none;
+    background: linear-gradient(to right, transparent, var(--card-bg));
+  }
+  /* P2-7 + P1-4: the pending-payments <details> header — the native marker
+     floats on its own line above the title at 390. On phones the summary
+     becomes a flex row with a CSS-drawn arrow; ≥768 keeps the native marker. */
+  .pp-summary {
+    display: flex;
+    align-items: center;
+  }
+  .pp-summary::-webkit-details-marker {
+    display: none;
+  }
+  .pp-summary::before {
+    content: "▶";
+    flex: none;
+    margin-right: 8px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  details[open] > .pp-summary::before {
+    content: "▼";
+  }
+  /* P1-16: the five numbered Panel sections on /settings collapse into
+     accordions on phones (Sheets 05 + Audit 08 are already native <details>;
+     Security 01 is a compact strip and stays open). The toggle input is
+     invisible at every width; the collapse RULES exist only in this block, so
+     ≥768 renders byte-identical. Goals (02) ships defaultChecked = open. */
+  .m-acc > .m-acc-head {
+    display: block;
+    cursor: pointer;
+  }
+  .m-acc > .m-acc-head::after {
+    content: "▾";
+    float: right;
+    color: var(--text-muted);
+  }
+  .m-acc > .m-acc-body {
+    display: none;
+  }
+  .m-acc > .m-acc-input:checked ~ .m-acc-body {
+    display: block;
+  }
+  .m-acc > .m-acc-input:checked ~ .m-acc-head::after {
+    content: "▴";
+  }
+  /* §2.3 sweep: controls inside accordion sections get a 44px tap height on
+     phones — covers every per-section Save/SYNC NOW button on /settings. */
+  .m-acc button {
+    min-height: 44px;
+  }
+  /* P1-17: studio time rows — the time inputs stop shrinking below readable
+     width (they wrap instead of clipping to "08:0…") and the dash frees the
+     space on phones. */
+  .studio-block {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .studio-block .studio-dash {
+    display: none;
+  }
+  .studio-block input[type="time"] {
+    min-width: 118px;
+  }
+  /* P2-3: the discrepancy wall scrolls in place instead of growing the page
+     (13+ three-line rows); the list itself is never removed. */
+  .disc-scroll {
+    max-height: 16rem;
+    overflow-y: auto;
+  }
+}
+
+/* Mobile Phase 3a plumbing (desktop-inert): the settings accordion toggle
+   input is invisible at every width — without this rule a native checkbox
+   would paint at ≥768. The collapse rules themselves live only in the
+   max-width:767px block above. */
+.m-acc-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 @layer components {
