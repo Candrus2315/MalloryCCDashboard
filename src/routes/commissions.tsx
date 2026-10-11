@@ -232,7 +232,13 @@ function CommissionsPage() {
                     click any cell for the exact counted records · bookings / weekly bonus
                   </p>
                 </div>
-                <div className="overflow-x-auto p-5 sm:p-6">
+                {/* P1-14 (mobile): the 960px cycle grid scrolls at 390 with no
+                    visible affordance — momentum scrolling + the right-edge
+                    fade join the already-sticky Employee column. The Employee
+                    cell was already sticky; the Tier chip cannot be
+                    abbreviated without changing its computed label (out of
+                    contract), noted in the PR. */}
+                <div className="overflow-x-auto p-5 sm:p-6 scroll-x scroll-fade">
                   <table className="data-table min-w-[960px]">
                     <thead>
                       <tr>

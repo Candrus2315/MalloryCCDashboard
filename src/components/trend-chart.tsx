@@ -67,6 +67,17 @@ export interface TrendCardProps {
    * labels and tooltips are unchanged.
    */
   formatValue?: (v: number) => string;
+  /**
+   * Mobile Phase 3b (audit spec P1-11 / P1-5, opt-in): on phones (<768px) the
+   * SVG plot hides (`max-md:hidden`) and a compact per-bucket stat list
+   * renders instead — built ONLY from props this component already receives
+   * (`points`, `refLine`, `meta`, `unit`, `formatValue`), using the same
+   * formatters as the chart. Null buckets keep their honest "—"; partial /
+   * non-working markers reuse the exact "(in progress)" / "(closed)" strings
+   * the chart's accessible labels use. ≥768 renders the chart byte-identical:
+   * the list wrapper is display:none there. Omit → untouched at every width.
+   */
+  mobileStats?: boolean;
 }
 
 function fmt(v: number, unit: TrendUnit): string {
@@ -84,7 +95,7 @@ const H = 176;
 const WIDE_H = 200;
 const M = { l: 40, r: 10, t: 12, b: 20 };
 
-export function TrendCard({ title, points, unit, refLine, note, info, wide, meta, onPointClick, tooltip, formatValue }: TrendCardProps) {
+export function TrendCard({ title, points, unit, refLine, note, info, wide, meta, onPointClick, tooltip, formatValue, mobileStats }: TrendCardProps) {
   const w = wide ? WIDE_W : W;
   const h = wide ? WIDE_H : H;
   const PW = w - M.l - M.r;
@@ -163,16 +174,18 @@ export function TrendCard({ title, points, unit, refLine, note, info, wide, meta
 
   return (
     <div className="card">
-      <div className="flex items-baseline justify-between gap-2">
+      <div className="flex items-baseline justify-between gap-2 max-md:flex-wrap max-md:gap-y-1">
         <span className="inline-flex min-w-0 items-center gap-1.5">
-          <p className="truncate text-[13px] font-medium text-(--chip-neutral-fg)">{title}</p>
+          <p className="truncate text-[13px] font-medium text-(--chip-neutral-fg) max-md:whitespace-normal">
+            {title}
+          </p>
           {info && <InfoTip tip={info} label={`About ${title}`} />}
         </span>
         <p className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
           {latest == null ? "—" : formatValue ? formatValue(latest) : fmt(latest, unit)}
         </p>
       </div>
-      <div className="relative mt-2">
+      <div className={"relative mt-2" + (mobileStats ? " max-md:hidden" : "")}>
         <svg
           viewBox={`0 0 ${w} ${h}`}
           className={"w-full " + (onPointClick ? "cursor-pointer" : "")}
@@ -359,6 +372,37 @@ export function TrendCard({ title, points, unit, refLine, note, info, wide, meta
           </div>
         )}
       </div>
+      {/* Mobile Phase 3b (P1-11 / P1-5): the compact per-bucket stat list that
+          replaces the plot on phones — hidden ≥768 by construction, composed
+          only from props (points/refLine/meta/unit/formatValue). */}
+      {mobileStats && (
+        <ul className="mt-2 hidden max-md:block">
+          {points.map((p, i) => {
+            const m = meta?.[i] ?? null;
+            const marker = m?.isPartial ? " (in progress)" : m?.isNonWorking ? " (closed)" : "";
+            return (
+              <li
+                key={i}
+                className="flex items-baseline justify-between gap-3 border-b border-(--table-border-weak) py-1.5 last:border-0 last:pb-0 first:pt-0 text-[13px]"
+              >
+                <span className="min-w-0 text-(--text-muted)">
+                  {p.label}
+                  {marker}
+                </span>
+                <span className="shrink-0 font-medium tabular-nums text-(--text-body)">
+                  {p.value == null ? "—" : formatValue ? formatValue(p.value) : fmt(p.value, unit)}
+                </span>
+              </li>
+            );
+          })}
+          {refLine && refLine.value > 0 && (
+            <li className="flex items-baseline justify-between gap-3 pt-1.5 text-xs text-(--text-muted)">
+              <span className="min-w-0">{refLine.label}</span>
+              <span className="shrink-0 tabular-nums">{fmt(refLine.value, unit)}</span>
+            </li>
+          )}
+        </ul>
+      )}
       {note && <p className="mt-1 text-xs leading-snug text-(--text-muted)">{note}</p>}
     </div>
   );

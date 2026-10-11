@@ -58,7 +58,10 @@ function RhythmStrip({ daily }: { daily: { date: string; count: number }[] }) {
   const max = Math.max(1, ...daily.map((d) => d.count));
   return (
     <div className="overflow-x-auto">
-      <div className="grid min-w-[560px] grid-cols-7 gap-3">
+      {/* P1-8 (mobile): the 7-col strip scrolls past MON–THU at 390 — phones get
+          the same cells wrapped 4+3 (7 items in grid-cols-4). Same bars, same
+          numbers, same labels; ≥768 keeps the single-row strip byte-identical. */}
+      <div className="grid min-w-[560px] grid-cols-7 gap-3 max-md:min-w-0 max-md:grid-cols-4">
         {daily.map((d) => (
           <div key={d.date} className="min-w-0">
             <p className="text-[12px] font-medium uppercase tracking-wide text-(--text-caption)">
@@ -100,14 +103,18 @@ function RankedRepTable({ rows, unattributed, total }: {
   const share = (n: number) => (total > 0 ? Math.min(100, (n / total) * 100) : null);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[560px] text-sm">
+      {/* P1-6 (mobile): rank + the two all-dash goal columns hide on phones and
+          the table drops its 560px floor, so Rep | Paid bookings | Share fits
+          390 without the mid-word clip. The dash columns carry no data ("—"
+          only — no per-rep goals in this payload); ≥768 keeps all six columns. */}
+      <table className="w-full min-w-[560px] text-sm max-md:min-w-0">
         <thead>
           <tr className="border-b border-(--card-border) text-left text-xs text-(--text-caption)">
-            <th scope="col" className="w-8 py-1.5 pr-2 font-medium" aria-label="Rank" />
+            <th scope="col" className="w-8 py-1.5 pr-2 font-medium max-md:hidden" aria-label="Rank" />
             <th scope="col" className="py-1.5 pr-3 font-medium">Rep</th>
             <th scope="col" className="py-1.5 pr-3 text-right font-medium">Paid bookings</th>
             <th scope="col" className="py-1.5 pr-3 font-medium">Share of team</th>
-            <th scope="col" className="py-1.5 pr-3 text-right font-medium">
+            <th scope="col" className="py-1.5 pr-3 text-right font-medium max-md:hidden">
               <span className="inline-flex items-center gap-1.5">
                 Weekly goal
                 <InfoTip
@@ -116,13 +123,13 @@ function RankedRepTable({ rows, unattributed, total }: {
                 />
               </span>
             </th>
-            <th scope="col" className="py-1.5 text-right font-medium">Goal achievement</th>
+            <th scope="col" className="py-1.5 text-right font-medium max-md:hidden">Goal achievement</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={r.rep_id} className="border-b border-(--table-border-weak) transition-colors hover:bg-(--surface-3)">
-              <td className="py-2 pr-2 text-[12px] font-medium tabular-nums text-(--text-muted)">{`0${i + 1}`.slice(-2)}</td>
+              <td className="py-2 pr-2 text-[12px] font-medium tabular-nums text-(--text-muted) max-md:hidden">{`0${i + 1}`.slice(-2)}</td>
               <td className="py-2 pr-3 font-medium text-(--text-body)">
                 {r.rep_name}
                 {r.manual > 0 && (
@@ -142,22 +149,22 @@ function RankedRepTable({ rows, unattributed, total }: {
                   <span className="tabular-nums text-(--text-body)">{share(r.total) == null ? "—" : formatPercent(r.total / total)}</span>
                 </span>
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums text-(--text-faint)">—</td>
-              <td className="py-2 text-right tabular-nums text-(--text-faint)">—</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-(--text-faint) max-md:hidden">—</td>
+              <td className="py-2 text-right tabular-nums text-(--text-faint) max-md:hidden">—</td>
             </tr>
           ))}
           {unattributed > 0 && (
             <tr className="border-b border-(--table-border-weak)">
-              <td className="py-2 pr-2" aria-label="Unattributed" />
+              <td className="py-2 pr-2 max-md:hidden" aria-label="Unattributed" />
               <td className="py-2 pr-3 text-(--text-muted)">Online / unattributed</td>
               <td className="py-2 pr-3 text-right tabular-nums text-(--text-muted)">{formatInt(unattributed)}</td>
               <td className="py-2 pr-3 tabular-nums text-(--text-muted)">{share(unattributed) == null ? "—" : formatPercent(unattributed / total)}</td>
-              <td className="py-2 pr-3" />
-              <td className="py-2" />
+              <td className="py-2 pr-3 max-md:hidden" />
+              <td className="py-2 max-md:hidden" />
             </tr>
           )}
           <tr>
-            <td className="py-2 pr-2" />
+            <td className="py-2 pr-2 max-md:hidden" />
             <td className="py-2 pr-3 font-semibold text-(--text-primary)">Team total</td>
             <td className="py-2 pr-3 text-right font-semibold tabular-nums text-(--text-primary)">{formatInt(total)}</td>
             <td className="py-2 pr-3">
@@ -166,8 +173,8 @@ function RankedRepTable({ rows, unattributed, total }: {
                 <span className="tabular-nums font-semibold text-(--text-primary)">{total > 0 ? "100.00%" : "—"}</span>
               </span>
             </td>
-            <td className="py-2 pr-3" />
-            <td className="py-2" />
+            <td className="py-2 pr-3 max-md:hidden" />
+            <td className="py-2 max-md:hidden" />
           </tr>
         </tbody>
       </table>
@@ -447,6 +454,11 @@ function WeeklyPage() {
             formatValue={formatPercent}
             info="The last 5 completed Mon–Sun weeks, oldest first — all paid bookings ÷ all sheet leads (the same counts as the conversion block). The in-progress week is excluded — its % would be meaningless mid-week. A week with zero sheet leads renders “—” (the Google Sheets sync begins 2026-08-24), never a fabricated 0%."
             tooltip={funnelTooltip}
+            // P1-5 (mobile): at 390 the plot is a ~55px flat line with illegible
+            // labels; phones get the compact per-week stat list instead (same
+            // funnelPoints/formatPercent props). The unit-aware y-scale logic
+            // (PR #56) is untouched — it keeps running for ≥768.
+            mobileStats
           />
           <Panel className="overflow-hidden p-5 sm:p-6">
             <p className="kpi-label flex items-center gap-1.5">
@@ -513,7 +525,10 @@ function WeeklyPage() {
                   </p>
                 </div>
                 <div className="mt-1 flex items-baseline gap-2">
-                  <p className="text-xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                  {/* P1-20 (mobile): the flex row squeezed the number so
+                      "55 / 69" stacked into 3 fragments — phones keep the
+                      pair on one line and the caption wraps instead. */}
+                  <p className="text-xl font-semibold tracking-tight tabular-nums text-(--text-primary) max-md:whitespace-nowrap">
                     {formatInt(row.slotsOccupied)}
                     <span className="text-sm font-normal text-(--text-muted)"> / {row.capacity > 0 ? row.capacity : "—"}</span>
                   </p>
@@ -734,8 +749,11 @@ function WeeklyPage() {
         </Panel>
         <Panel className="mt-6 max-w-2xl overflow-hidden p-5 sm:p-6">
           <p className="kpi-label mb-3">By Rep — month to date</p>
+          {/* P1-7 (mobile): the 420px floor pushed the right-aligned numbers
+              off-screen at 390 — phones drop the floor so Rep | Paid bookings
+              fits (names wrap); ≥768 keeps the exact table. */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[420px] text-sm">
+            <table className="w-full min-w-[420px] text-sm max-md:min-w-0">
               <thead>
                 <tr className="border-b border-(--card-border) text-left text-xs text-(--text-caption)">
                   <th scope="col" className="py-1.5 pr-3 font-medium">Rep</th>
@@ -810,12 +828,15 @@ function WeeklyPage() {
               </div>
             ))}
           </div>
-          <div className="mt-4 flex items-center gap-3 border-t border-(--table-border-weak) pt-4">
+          {/* P1-9 (mobile): the Save CTA went 3-lines tall squeezed beside the
+              hint — phones give it the full row (global rules already give
+              every button ≥44px height); the hint wraps below. ≥768 unchanged. */}
+          <div className="mt-4 flex items-center gap-3 border-t border-(--table-border-weak) pt-4 max-md:flex-wrap">
             <button
               type="button"
               onClick={saveNotes}
               disabled={saveState === "saving"}
-              className="rounded-lg bg-(--accent-solid) px-4 py-2 text-[13px] font-medium text-(--accent-solid-fg) transition-colors hover:bg-(--accent-hover) disabled:opacity-50"
+              className="rounded-lg bg-(--accent-solid) px-4 py-2 text-[13px] font-medium text-(--accent-solid-fg) transition-colors hover:bg-(--accent-hover) disabled:opacity-50 max-md:w-full"
             >
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Save CC Report narrative"}
             </button>

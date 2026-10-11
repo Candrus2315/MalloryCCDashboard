@@ -367,6 +367,26 @@
     max-height: 16rem;
     overflow-y: auto;
   }
+  /* ===== Mobile Phase 3b — secondary report pages (max-md only; ≥768 inert) ===== */
+
+  /* P1-15: the commission drawer's filled-holes table drops its 560px floor on
+     phones and long cell values (slot labels, qualifying-win ids) wrap instead
+     of forcing the table past the card — the whole table reads without the
+     horizontal scrollbar iOS never shows. The class is appended in
+     commission-drawer.tsx; ≥768 keeps the exact scrollable table. */
+  .m-wrap-table td,
+  .m-wrap-table th {
+    overflow-wrap: anywhere;
+  }
+
+  /* P2-10: stop iOS's double-tap zoom on rapid taps of chips, sort buttons and
+     sub-nav pills. No visual change; panning inside .scroll-x keeps working
+     (its own touch-action rule targets the container). */
+  button,
+  a,
+  summary {
+    touch-action: manipulation;
+  }
 }
 
 /* Mobile Phase 3a plumbing (desktop-inert): the settings accordion toggle
