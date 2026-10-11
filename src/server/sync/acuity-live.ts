@@ -48,6 +48,7 @@ import { addDays, etDateStrFromInstant, etDayStartUtc, etToday } from "../date-l
 import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics/attribution";
 import { deriveBookingPaymentFields } from "../payments";
 import type { Store } from "../store/types";
+import { withSyncWriteRetry } from "../store/sync-write-retry";
 import type { NormalizedAppointment } from "./adapters";
 
 // ---------- credentials ----------
@@ -695,7 +696,8 @@ export async function availabilityTick(options?: {
   trigger?: "background" | "manual";
 }): Promise<AvailabilityTickResult> {
   const now = options?.now ?? (() => new Date());
-  const store = options?.store ?? (await import("../store").then((m) => m.getStore()));
+  // SYNC WRITE RESILIENCE: idempotent sync writes retry transient DB failures.
+  const store = withSyncWriteRetry(options?.store ?? (await import("../store").then((m) => m.getStore())));
   const trigger = options?.trigger ?? "background";
 
   const running = await store.getRunningSyncRun("acuity");

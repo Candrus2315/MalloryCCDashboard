@@ -10,6 +10,7 @@
 import { addDays, etDayStartUtc, weekStart } from "../date-logic";
 import { isRosterUser } from "../roster";
 import { getStore, type Store } from "../store";
+import { withSyncWriteRetry } from "../store/sync-write-retry";
 import type { AppSettings } from "../store/types";
 import { createDemoAdapters } from "./adapters";
 import type { HighLevelAdapter, NormalizedLead } from "./adapters";
@@ -83,7 +84,10 @@ export async function runDemoSync(options?: {
   attributionForce?: boolean;
 }): Promise<SyncResult> {
   const startedAt = new Date().toISOString();
-  const store = options?.store ?? (await getStore());
+  // SYNC WRITE RESILIENCE: the store's idempotent sync-write methods retry
+  // transient connection failures (store/sync-write-retry.ts); everything
+  // else passes through unchanged.
+  const store = withSyncWriteRetry(options?.store ?? (await getStore()));
   const settings = options?.settings ?? (await store.getSettings());
   const { highlevel: demoHl, acuity } = createDemoAdapters({
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
@@ -679,7 +683,7 @@ let lastSeedAttempt = 0;
 export async function ensureDemoData(): Promise<{ seeded: boolean; mode: "postgres" | "memory" }> {
   if (seedInflight) return seedInflight;
   seedInflight = (async () => {
-    const store = await getStore();
+    const store = withSyncWriteRetry(await getStore()); // SYNC WRITE RESILIENCE (demo seed deletes are idempotent)
     const users = await store.getUsers();
     if (users.length === 0) {
       if (Date.now() - lastSeedAttempt < SEED_RETRY_MS) return { seeded: false, mode: store.mode };

@@ -44,6 +44,7 @@ import {
 import { assertBookingInvariant, type AttributionRow } from "../metrics/compute";
 import { buildRosterEligibility } from "../roster";
 import type { AppSettings, Store } from "../store/types";
+import { withSyncWriteRetry } from "../store/sync-write-retry";
 
 /** Minimum gap between BACKGROUND attribution recomputes (manual skips it). */
 export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
@@ -443,7 +444,8 @@ export async function attributionTick(options?: {
   trigger?: "background" | "manual";
 }): Promise<AttributionTickResult> {
   const now = options?.now ?? (() => new Date());
-  const store = options?.store ?? (await import("../store").then((m) => m.getStore()));
+  // SYNC WRITE RESILIENCE: idempotent sync writes retry transient DB failures.
+  const store = withSyncWriteRetry(options?.store ?? (await import("../store").then((m) => m.getStore())));
   const settings = options?.settings ?? (await store.getSettings());
   const trigger = options?.trigger ?? "background";
 
