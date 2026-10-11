@@ -213,7 +213,12 @@ export function CommissionWeeklyDrawer(props: {
           </p>
         ) : (
           <div className="mt-2 overflow-x-auto rounded-lg border border-(--card-border)">
-            <table className="data-table min-w-[560px]">
+            {/* P1-15 (mobile): the 560px floor forced a bare horizontal
+                scrollbar (invisible on iOS) with WHEN/SLOT cut — phones drop
+                the floor so the table fits the card and long cell values wrap
+                (`.m-wrap-table` rules live in the ≤767px block only). ≥768
+                keeps the exact scrollable table. */}
+            <table className="data-table min-w-[560px] max-md:min-w-0 m-wrap-table">
               <thead>
                 <tr>
                   {isTeam && <th scope="col" className="text-left">Rep</th>}

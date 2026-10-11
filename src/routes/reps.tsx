@@ -841,7 +841,11 @@ function RepsPage() {
             </button>
           </span>
         </div>
-        <div className="mt-3 overflow-x-auto">
+        {/* P1-2 completion (mobile): the 820px day grid scrolls with sticky
+            Rep/Weekly-Total columns already in place — this adds the momentum
+            + right-edge-fade affordance Phase 3a gave the page's other wide
+            tables. */}
+        <div className="mt-3 overflow-x-auto scroll-x scroll-fade">
           <table className="data-table min-w-[820px]">
             <thead>
               <tr>

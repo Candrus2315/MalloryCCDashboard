@@ -338,6 +338,10 @@ function TeamPage() {
       meta={trendMeta}
       tooltip={tooltipFor(c)}
       onPointClick={(i) => openDrill(c.key, i)}
+      // P1-11 (mobile): only the leads-by-work-date chart — the one the audit
+      // flagged as unusable at 390 — swaps to the compact stat list on phones.
+      // The six sibling charts render fine at 390 and stay charts there.
+      mobileStats={c.key === "leads"}
     />
   );
 

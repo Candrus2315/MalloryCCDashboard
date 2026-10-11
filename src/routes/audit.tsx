@@ -127,11 +127,15 @@ function AuditPage() {
         <div className="p-4 sm:p-5">
           <Eyebrow>Filters</Eyebrow>
           <section aria-label="Audit filters" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+            {/* P1-19 (mobile): the select's intrinsic width (longest rep name,
+                ~394px) overflowed the 343px card — phones give it the full
+                row (the wrap filter section already stacks the last-7-days
+                strip beneath); ≥768 keeps the intrinsic-width control. */}
             <select
               aria-label="Rep"
               value={search.rep ?? "all"}
               onChange={(e) => navigate(e.target.value, search.date ?? data.today ?? "")}
-              className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border)"
+              className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border) max-md:w-full"
             >
               <option value="all">{data.picker?.allLabel ?? "All calls"}</option>
               <option value="non-roster">{data.picker?.nonRosterLabel ?? "Non Roster Calls"}</option>
