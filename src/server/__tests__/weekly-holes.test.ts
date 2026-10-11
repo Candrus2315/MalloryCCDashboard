@@ -28,7 +28,7 @@ const EDT = "-04:00"; // September = EDT
 const H = (date: string, time: string) => new Date(`${date}T${time}:00.000${EDT}`).toISOString();
 
 /** A session appointment (holes care about the SESSION instant, not payment). */
-const sess = (id: string, date: string, time: string, opts?: { cancelled?: boolean; datetime?: string }): AppointmentRow => ({
+const sess = (id: string, date: string, time: string, opts?: { cancelled?: boolean; datetime?: string; pending?: boolean }): AppointmentRow => ({
   id,
   acuity_appointment_id: id,
   contact_id: null,
@@ -41,6 +41,7 @@ const sess = (id: string, date: string, time: string, opts?: { cancelled?: boole
   raw: {},
   status: opts?.cancelled ? "cancelled" : "scheduled",
   cancelled: opts?.cancelled ?? false,
+  payment_state: opts?.pending ? "pending_payment" : null,
 });
 
 /** On-grid slot times: non-Tue 08:00–12:00 hourly then 13:30–17:30 half-hours (T(i)); Tuesday starts 09:00 (TU(i) = T(i+1)). Fixtures sit on the REAL grid so slot-basis expectations are exact. */
@@ -104,6 +105,17 @@ describe("deriveWeeklyHoles (pure, RULING 8 — owner ruling 10/11)", () => {
     expect(w.holes).toBe(64); // 5 open Monday slots + Tue..Sun fully empty (59)
   });
 
+  test("RULING 9: a pending_payment session does NOT occupy its slot — the slot counts open; the raw booked figure still shows it", () => {
+    const sessions: AppointmentRow[] = [
+      sess("p1", "2026-09-21", "08:00"), // normal — occupies
+      sess("p2", "2026-09-21", "09:00", { pending: true }), // pending-only slot → OPEN (RULING 9)
+      sess("p3", "2026-09-21", "10:00", { pending: true }), // pending on a slot that also has a paid row → still occupied
+      sess("p4", "2026-09-21", "10:00"),
+    ];
+    const w = deriveWeeklyHoles({ weekStart: "2026-09-21", sessionAppts: sessions });
+    expect(w.days[0]).toMatchObject({ capacity: 10, booked: 4, holes: 8 }); // occupied: 08:00 + 10:00; 09:00 open
+    expect(w.holes).toBe(67); // 8 open Monday slots + Tue..Sun fully empty (59)
+  });
   test("sessions outside the week and unparsable instants are ignored — never guessed", () => {
     const sessions: AppointmentRow[] = [
       sess("before", "2026-09-20", "10:00"), // prior Sunday

@@ -408,7 +408,7 @@ async function seedOwnerWeekStore(): Promise<MemoryStore> {
 }
 
 describe("OWNER FIXTURE Oct 5–11: calendar fill counts DISTINCT occupied slots", () => {
-  test("65 sessions on 61 distinct of 69 slots — fill = 61, never 65; sessions stay visible; holes = OPEN SLOTS (RULING 8: 69 − 61 = 8)", async () => {
+  test("65 sessions, 61 distinct on-grid, 4 pending → 57 occupied (RULING 9) — fill = 57, never 65; holes = OPEN SLOTS (RULING 8: 69 − 57 = 12)", async () => {
     const store = await seedOwnerWeekStore();
     const data = await weeklyPageData({ store, today: OW_TODAY });
     const tw = data.calendar.thisWeek;
@@ -416,25 +416,26 @@ describe("OWNER FIXTURE Oct 5–11: calendar fill counts DISTINCT occupied slots
     expect(tw.end).toBe(OW_SUN);
     // raw session population (the owner's count)
     expect(tw.appointments).toBe(65);
-    // the FIX: distinct occupied slots — the fill number, not 65
-    expect(tw.slotsOccupied).toBe(61);
+    // RULING 9 (owner 10/11): pending_payment does not occupy — 61 distinct
+    // on-grid slots minus the 4 pending-only slots = 57 occupied
+    expect(tw.slotsOccupied).toBe(57);
     expect(tw.capacity).toBe(69); // real schedule: 10/day, 9 Tue
     // next week empty in this fixture
     expect(data.calendar.nextWeek.appointments).toBe(0);
     expect(data.calendar.nextWeek.slotsOccupied).toBe(0);
-    // pending_payment sessions COUNT as booked (owner ruling pending — no
-    // decision in code): the 4 pending rows are inside the 65/61.
-    expect(tw.appointments).toBe(65); // includes the 4 pending_payment rows
-    // RULING 8 (owner ruling 10/11): holes = OPEN SLOTS in the same working
-    // week — 69 capacity − 61 distinct occupied = 8. The raw 65 sessions stay
-    // visible in `booked` (overbooking never hides); the former raw-basis 4
-    // is retired with the owner's ruling.
+    // the 4 pending_payment rows stay inside the raw 65 sessions (visible),
+    // but no longer count as occupancy (RULING 9).
+    expect(tw.appointments).toBe(65);
+    // RULING 8 (owner 10/11): holes = OPEN SLOTS in the same working week.
+    // RULING 9 (owner 10/11): pending does not occupy — 69 − 57 = 12 holes.
+    // The raw 65 sessions stay visible in `booked` (overbooking AND pending
+    // both stay visible); the former raw-basis 4 is retired.
     expect(tw.holes).not.toBeNull();
     expect(tw.holes!.capacity).toBe(69);
     expect(tw.holes!.booked).toBe(65);
-    expect(tw.holes!.holes).toBe(8);
+    expect(tw.holes!.holes).toBe(12);
     // the copied report line: distinct-slot fill + visible sessions
-    expect(data.report.reportText).toContain("This week: 61/69 filled (88%) · 65 sessions");
+    expect(data.report.reportText).toContain("This week: 57/69 filled (83%) · 65 sessions");
   });
 
   test("AVAILABILITY page booked counts are DISTINCT slots too (already the engine's behavior — regression-pinned): Oct 5–11 sums 61", async () => {

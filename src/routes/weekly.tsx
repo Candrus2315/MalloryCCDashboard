@@ -560,8 +560,10 @@ function WeeklyPage() {
                           Owner ruling (10/11): holes = OPEN SLOTS in the same Mon–Sun working week — derived studio
                           capacity (10 slots/day, 9 on Tuesday) minus the DISTINCT slots occupied per ET day, summed
                           Mon–Sun. A double-booked slot fills one slot; its extra sessions stay visible in the sessions
-                          figure. Cancelled appointments book no session; pending_payment still counts as occupied
-                          (that ruling is pending). For the in-progress week this is open-so-far (it shrinks as the
+                          figure. Cancelled appointments book no session; a pending-payment booking does NOT occupy
+                          its slot either — it counts open (owner ruling 10/11: pending clients usually don't pay and
+                          the agents take them off the schedule), while the session itself stays in the sessions
+                          figure. For the in-progress week this is open-so-far (it shrinks as the
                           week fills); for next week it is open slots. The copied CC Report carries the last COMPLETED
                           week's holes.
                         </>

@@ -1437,8 +1437,9 @@ export interface WeeklyCalendarBucket {
    * counts once toward booked/capacity-fill, its extra sessions stay visible
    * in the sessions figure). ONE engine: computeDayAvailability per ET date,
    * `booked` summed over the bucket's 7 days. Same basis as the Availability
-   * page's booked counts. pending_payment sessions count as booked (the
-   * pending_payment occupancy ruling is the owner's — nothing decided here).
+   * page's booked counts. RULING 9 (owner ruling 10/11): pending_payment
+   * sessions do NOT occupy — a pending-only slot counts OPEN here (the
+   * pending session stays visible in the raw appointments figure).
    */
   slotsOccupied: number;
   /** Slots the studio schedule config offers across the bucket's 7 days (derived, never hardcoded). */
@@ -1737,23 +1738,26 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // computeDayAvailability per ET date with that date's sessions — its
   // `booked` is exactly distinct occupied slots on the SAME schedule basis as
   // capacityFor above (blocked: [] on both sides — a blocked-but-booked slot
-  // is still occupied; blocks shape OPEN times, not fill). pending_payment
-  // sessions count as booked here — the pending_payment occupancy ruling is
-  // the owner's (rendered BOOKED-PENDING in the Availability Day view;
-  // nothing decided in code).
+  // is still occupied; blocks shape OPEN times, not fill). RULING 9 (owner
+  // 10/11): pending_payment sessions do NOT occupy — the client most likely
+  // won't pay and the agents take them off the schedule — so pending-only
+  // slots count OPEN here (the Availability page keeps rendering them
+  // BOOKED-PENDING as an honest label; the raw session counts stay visible).
   const occupiedByDate = new Map<string, number>();
   const occupiedFor = (date: string): number => {
     const memo = occupiedByDate.get(date);
     if (memo != null) return memo;
     const rows = apptRowsByDate.get(date) ?? [];
+    // RULING 9 (owner 10/11): pending_payment sessions do not occupy a slot.
+    const occRows = rows.filter((r) => r.payment_state !== "pending_payment");
     const occupied =
-      rows.length === 0
+      occRows.length === 0
         ? 0
         : computeDayAvailability({
             date,
             rules,
             blocked: [],
-            appointments: rows,
+            appointments: occRows,
             slotIntervalMin: settings.studio.slot_interval_min,
             durationMin: settings.studio.appointment_duration_min,
             paddingMin: settings.studio.padding_min,

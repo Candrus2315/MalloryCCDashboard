@@ -306,9 +306,11 @@ export async function buildAvailabilityView(ctx: {
       let unexplained = false;
       let blocked = false;
       if (active.length > 0) {
-        // Placeholder swap point for the pending_payment ruling: all-active-
-        // pending slots render BOOKED-PENDING; mixed slots render BOOKED with
-        // the pending row's own payment_state visible in its detail line.
+        // RULING 9 landed on the OCCUPANCY side (weekly holes + calendar fill
+        // count pending-only slots OPEN). This page stays Acuity-truth: all-
+        // active-pending slots render BOOKED-PENDING so the agents see them to
+        // chase/remove; mixed slots render BOOKED with the pending row's own
+        // payment_state visible in its detail line.
         status = active.every((iv) => iv.a.payment_state === "pending_payment") ? "booked-pending" : "booked";
         bookedTimes.push(time);
         reason = dayEstimateReason; // a booked slot is still engine-estimated where no feed answer stands behind it
