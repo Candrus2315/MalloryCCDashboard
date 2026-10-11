@@ -452,7 +452,11 @@ function RepsPage() {
         <aside aria-label="Rep selector">
           <p className="section-heading mb-2">Reps</p>
           <div className="card p-0">
-            <div className="flex gap-2 overflow-x-auto p-2 lg:block lg:space-y-0 lg:overflow-visible lg:p-0 lg:divide-y lg:divide-(--table-border-weak)">
+            {/* Rep selector: ONE vertical divided list at every width (owner
+                directive 10/11 — the mobile horizontal slide bar is gone).
+                Desktop keeps its exact previous computed styles: the old
+                `lg:` classes were precisely block/p-0/divide-y. */}
+            <div className="block divide-y divide-(--table-border-weak)">
               {data.repList.map((r) => (
                 <button
                   key={r.id}
@@ -460,7 +464,7 @@ function RepsPage() {
                   onClick={() => selectRep(r.id)}
                   aria-pressed={r.isSelected}
                   className={
-                    "block w-full min-w-[190px] shrink-0 rounded-lg px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) lg:min-w-0 lg:rounded-none max-md:w-52 " +
+                    "block w-full min-h-[44px] rounded-none px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--focus-ring) " +
                     (r.isSelected ? "bg-(--surface-selected)" : "hover:bg-(--surface-hover)")
                   }
                 >
