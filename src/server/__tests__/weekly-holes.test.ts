@@ -43,7 +43,11 @@ const sess = (id: string, date: string, time: string, opts?: { cancelled?: boole
   cancelled: opts?.cancelled ?? false,
 });
 
-describe("deriveWeeklyHoles (pure, owner definition 9/30)", () => {
+/** On-grid slot times: non-Tue 08:00–12:00 hourly then 13:30–17:30 half-hours (T(i)); Tuesday starts 09:00 (TU(i) = T(i+1)). Fixtures sit on the REAL grid so slot-basis expectations are exact. */
+const T = (i: number): string => (i < 5 ? `${String(8 + i).padStart(2, "0")}:00` : `${String(8 + i).padStart(2, "0")}:30`);
+const TU = (i: number): string => T(i + 1);
+
+describe("deriveWeeklyHoles (pure, RULING 8 — owner ruling 10/11)", () => {
   test("derived capacity: 10 slots/day, 9 on Tuesday = 69/week", () => {
     const w = deriveWeeklyHoles({ weekStart: "2026-09-21", sessionAppts: [] });
     expect(w.capacity).toBe(69);
@@ -58,14 +62,14 @@ describe("deriveWeeklyHoles (pure, owner definition 9/30)", () => {
   test("the owner's reference week 9/21–9/27: 49 booked, Thu 9/24 fully dark → 20 holes", () => {
     // Per-day booked: 8 + 7 + 8 + 0 + 8 + 9 + 9 = 49 (owner's reference total).
     const sessions: AppointmentRow[] = [
-      ...Array.from({ length: 8 }, (_, i) => sess(`m${i}`, "2026-09-21", `${String(8 + i).padStart(2, "0")}:00`)),
-      ...Array.from({ length: 7 }, (_, i) => sess(`t${i}`, "2026-09-22", `${String(9 + i).padStart(2, "0")}:00`)),
-      ...Array.from({ length: 8 }, (_, i) => sess(`w${i}`, "2026-09-23", `${String(8 + i).padStart(2, "0")}:00`)),
+      ...Array.from({ length: 8 }, (_, i) => sess(`m${i}`, "2026-09-21", T(i))),
+      ...Array.from({ length: 7 }, (_, i) => sess(`t${i}`, "2026-09-22", TU(i))),
+      ...Array.from({ length: 8 }, (_, i) => sess(`w${i}`, "2026-09-23", T(i))),
       // Thursday 9/24: fully dark — zero sessions (and a cancelled record that must NOT count).
       sess("thx-cancelled", "2026-09-24", "10:00", { cancelled: true }),
-      ...Array.from({ length: 8 }, (_, i) => sess(`f${i}`, "2026-09-25", `${String(8 + i).padStart(2, "0")}:00`)),
-      ...Array.from({ length: 9 }, (_, i) => sess(`s${i}`, "2026-09-26", `${String(8 + i).padStart(2, "0")}:00`)),
-      ...Array.from({ length: 9 }, (_, i) => sess(`u${i}`, "2026-09-27", `${String(8 + i).padStart(2, "0")}:00`)),
+      ...Array.from({ length: 8 }, (_, i) => sess(`f${i}`, "2026-09-25", T(i))),
+      ...Array.from({ length: 9 }, (_, i) => sess(`s${i}`, "2026-09-26", T(i))),
+      ...Array.from({ length: 9 }, (_, i) => sess(`u${i}`, "2026-09-27", T(i))),
     ];
     const w = deriveWeeklyHoles({ weekStart: "2026-09-21", sessionAppts: sessions });
     expect(w.capacity).toBe(69);
@@ -87,11 +91,17 @@ describe("deriveWeeklyHoles (pure, owner definition 9/30)", () => {
     expect(isCancelledSession(statusCancelled)).toBe(true);
   });
 
-  test("an overbooked day clamps at zero — holes are never negative", () => {
-    const sessions = Array.from({ length: 12 }, (_, i) => sess(`x${i}`, "2026-09-21", `${String(8 + (i % 11)).padStart(2, "0")}:${i % 2 ? "30" : "00"}`));
+  test("double-booked on-grid slots fill ONE slot; off-grid sessions occupy no slot (RULING 8)", () => {
+    // 12 Monday sessions on 5 DISTINCT on-grid slots (08:00/09:00/10:00 each
+    // double-booked, 13:30/14:30 single) plus one off-grid session (09:30 —
+    // occupies no derived slot). RULING 8: holes = capacity − distinct
+    // occupied, so the day has 5 open slots, not 0 and never negative; the
+    // raw booked figure stays 12 so the overbooking stays visible.
+    const times = ["08:00", "08:00", "08:00", "09:00", "09:00", "09:00", "10:00", "10:00", "10:00", "13:30", "14:30", "09:30"];
+    const sessions = times.map((t, i) => sess(`x${i}`, "2026-09-21", t));
     const w = deriveWeeklyHoles({ weekStart: "2026-09-21", sessionAppts: sessions });
-    expect(w.days[0]).toMatchObject({ capacity: 10, booked: 12, holes: 0 });
-    expect(w.holes).toBe(59); // 10 clamped Monday + Tue..Sun full 69 capacity... minus the other 10 booked = 69-10
+    expect(w.days[0]).toMatchObject({ capacity: 10, booked: 12, holes: 5 });
+    expect(w.holes).toBe(64); // 5 open Monday slots + Tue..Sun fully empty (59)
   });
 
   test("sessions outside the week and unparsable instants are ignored — never guessed", () => {
@@ -184,7 +194,7 @@ function referenceWeekSessions(): AppointmentRow[] {
     ["2026-09-27", 9],
   ];
   for (const [date, n] of shape) {
-    for (let i = 0; i < n; i++) out.push(sess(`${date}-s${i}`, date, `${String(8 + i).padStart(2, "0")}:00`));
+    for (let i = 0; i < n; i++) out.push(sess(`${date}-s${i}`, date, date === "2026-09-22" ? TU(i) : T(i)));
   }
   out.push(sess("ref-thu-cancelled", "2026-09-24", "10:00", { cancelled: true })); // books no session
   return out;

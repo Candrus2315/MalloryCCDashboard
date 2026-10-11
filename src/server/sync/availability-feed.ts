@@ -715,9 +715,10 @@ export interface AvailabilityHoleDerivation {
  *                  (they render BLOCKED, never pushable; under the current
  *                  rule they still count as empty grid slots)
  *
- * Weekly's deriveWeeklyHoles (appointment-count basis) and the commission
- * RULING-3 filled-hole derivation (week-start-open basis) answer DIFFERENT
- * questions and are consumed here — never edited.
+ * Weekly's deriveWeeklyHoles (RULING 8, owner 10/11: open-slot basis — the
+ * same slot basis as this engine) and the commission RULING-3 filled-hole
+ * derivation (week-start-open basis) answer DIFFERENT questions and are
+ * consumed here — never edited.
  */
 export function deriveAvailabilityHoles(input: {
   slotTimes: string[];

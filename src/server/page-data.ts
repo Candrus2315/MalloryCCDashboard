@@ -1444,10 +1444,13 @@ export interface WeeklyCalendarBucket {
   /** Slots the studio schedule config offers across the bucket's 7 days (derived, never hardcoded). */
   capacity: number;
   /**
-   * OWNER HOLES (owner definition 2026-09-30): empty booking slots = derived
-   * capacity (10/day, 9 Tue — the commission engine's schedule) − booked
-   * sessions per ET day (cancelled excluded), with the per-day breakdown.
-   * Derived by the SAME deriveWeeklyHoles the copied report uses. Null →
+   * OWNER HOLES (RULING 8, owner ruling 10/11): empty booking slots = derived
+   * capacity (10/day, 9 Tue — the commission engine's schedule) − DISTINCT
+   * on-grid slots occupied per ET day (cancelled excluded; a double-booked
+   * slot fills one slot), within the same Mon–Sun working week — with the
+   * per-day breakdown. The holes object keeps `booked` = the RAW session
+   * count so overbooking stays visible alongside. Derived by the SAME
+   * deriveWeeklyHoles the copied report uses. Null →
    * "—" (holes not defined for the bucket — never a fabricated number).
    */
   holes: { capacity: number; booked: number; holes: number; days: DayHoleDetail[] } | null;
