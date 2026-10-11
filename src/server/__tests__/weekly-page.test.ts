@@ -408,7 +408,7 @@ async function seedOwnerWeekStore(): Promise<MemoryStore> {
 }
 
 describe("OWNER FIXTURE Oct 5–11: calendar fill counts DISTINCT occupied slots", () => {
-  test("65 sessions on 61 distinct of 69 slots — fill = 61, never 65; sessions stay visible; holes UNCHANGED (locked raw-basis)", async () => {
+  test("65 sessions on 61 distinct of 69 slots — fill = 61, never 65; sessions stay visible; holes = OPEN SLOTS (RULING 8: 69 − 61 = 8)", async () => {
     const store = await seedOwnerWeekStore();
     const data = await weeklyPageData({ store, today: OW_TODAY });
     const tw = data.calendar.thisWeek;
@@ -425,13 +425,14 @@ describe("OWNER FIXTURE Oct 5–11: calendar fill counts DISTINCT occupied slots
     // pending_payment sessions COUNT as booked (owner ruling pending — no
     // decision in code): the 4 pending rows are inside the 65/61.
     expect(tw.appointments).toBe(65); // includes the 4 pending_payment rows
-    // the LOCKED hole derivation is UNTOUCHED — appointment-count basis:
-    // 69 − 65 = 4 holes (fill basis would imply 8 unfilled slots; the
-    // divergence is flagged, not silently reconciled — see the PR).
+    // RULING 8 (owner ruling 10/11): holes = OPEN SLOTS in the same working
+    // week — 69 capacity − 61 distinct occupied = 8. The raw 65 sessions stay
+    // visible in `booked` (overbooking never hides); the former raw-basis 4
+    // is retired with the owner's ruling.
     expect(tw.holes).not.toBeNull();
     expect(tw.holes!.capacity).toBe(69);
     expect(tw.holes!.booked).toBe(65);
-    expect(tw.holes!.holes).toBe(4);
+    expect(tw.holes!.holes).toBe(8);
     // the copied report line: distinct-slot fill + visible sessions
     expect(data.report.reportText).toContain("This week: 61/69 filled (88%) · 65 sessions");
   });
