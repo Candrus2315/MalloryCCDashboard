@@ -20,6 +20,7 @@
  *      successful timestamp) and keep retrying on the next tick.
  */
 import { getStore, type Store } from "../store";
+import { withSyncWriteRetry } from "../store/sync-write-retry";
 import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, type AppSettings } from "../store/types";
 import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds, type LiveHighLevelAdapter } from "./highlevel-live";
@@ -166,7 +167,9 @@ async function highlevelTick(options?: {
   acuityAdapter?: import("./acuity-live").AcuityLiveAdapter | null;
 }): Promise<SchedulerTickResult> {
   const now = options?.now ?? (() => new Date());
-  const store = options?.store ?? (await getStore());
+  // SYNC WRITE RESILIENCE: idempotent sync writes retry transient DB
+  // failures (store/sync-write-retry.ts) — transport-level only.
+  const store = withSyncWriteRetry(options?.store ?? (await getStore()));
   const settings = options?.settings ?? (await store.getSettings());
 
   // --- skip 1: a sync run for this provider is already in progress ---
@@ -494,7 +497,7 @@ export async function schedulerTick(options?: {
   // zombie row is cleared before this tick's own guards check for in-flight runs.
   let reaped: number | undefined;
   try {
-    reaped = await reapStaleSyncRuns(options?.store ?? (await getStore()), now);
+    reaped = await reapStaleSyncRuns(withSyncWriteRetry(options?.store ?? (await getStore())), now); // SYNC WRITE RESILIENCE
   } catch {
     reaped = undefined;
   }

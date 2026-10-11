@@ -884,7 +884,15 @@ export class PgStore implements Store {
       max: pool.max,
       idle_timeout: pool.idle_timeout,
       max_lifetime: pool.max_lifetime,
-      connect_timeout: 10,
+      // CONNECT TIMEOUT 10s -> 30s (2026-10-11 provider degradation): the
+      // managed host intermittently refuses/drops connections while raw TCP
+      // connect stays healthy (~75ms, ~20 conns - nowhere near the ceiling).
+      // Those windows surface as post-cap CONNECT_TIMEOUT errors the old 10s
+      // timeout made worse (a slow-but-alive TLS/auth handshake gets abandoned
+      // mid-flight and sync runs fail). 30s gives a degraded provider room to
+      // finish the handshake. Pool max stays hard-capped at 5/process (PR
+      // #57) - never raised here.
+      connect_timeout: 30,
       ...(needsSsl ? { ssl: "require" } : {}),
     });
   }

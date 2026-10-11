@@ -24,6 +24,7 @@
  * contact linking → per-sheet REPLACE, with stored leads never demo-replaced.
  */
 import { getStore } from "../store";
+import { withSyncWriteRetry } from "../store/sync-write-retry";
 import type { Store } from "../store/types";
 import type { GoogleSheetsAdapter } from "./adapters";
 import { runSheetsSync } from "./run";
@@ -49,7 +50,8 @@ export async function sheetsTick(options?: {
   trigger?: "background" | "manual";
 }): Promise<SheetsTickResult> {
   const now = options?.now ?? (() => new Date());
-  const store = options?.store ?? (await getStore());
+  // SYNC WRITE RESILIENCE: idempotent sync writes retry transient DB failures.
+  const store = withSyncWriteRetry(options?.store ?? (await getStore()));
   const trigger = options?.trigger ?? "background";
 
   // --- skip 1: a sheets sync run is already in progress (crashed rows are
