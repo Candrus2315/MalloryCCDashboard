@@ -337,8 +337,10 @@ export function deriveFilledHolesForWeek(input: {
 // app has ONE studio-slot derivation, never a second engine. A session
 // occupies a derived slot only when its ET time sits on that day's grid (same
 // mapping as the RULING-3 occupancy derivation); a double-booked slot fills
-// ONE slot. Cancelled records book no session. pending_payment sessions count
-// as occupied (that occupancy ruling is the owner's — nothing decided here).
+// ONE slot. Cancelled records book no session. RULING 9 (owner 10/11):
+// pending_payment sessions do NOT occupy — the client most likely won't pay
+// and the agents take them off the schedule — so a pending-only slot counts
+// OPEN; the pending session itself stays visible in the raw booked figure.
 // Holes are EMPTY slots — never negative, never above capacity.
 // ---------------------------------------------------------------------------
 
@@ -390,6 +392,7 @@ export function deriveWeeklyHoles(input: {
     const sd = sessionDateOf(a);
     if (sd == null || sd < input.weekStart || sd > weekEnd) continue; // sessions outside the week's schedule are irrelevant
     bookedByDay.set(sd, (bookedByDay.get(sd) ?? 0) + 1);
+    if (a.payment_state === "pending_payment") continue; // RULING 9 (owner 10/11): pending does not occupy — the slot counts open; the raw session stays visible above
     const ms = Date.parse(a.appointment_datetime);
     const t = Number.isFinite(ms) ? etTimeOfInstant(ms) : null;
     if (t == null || !scheduledSlotTimesForDay(sd).includes(t)) continue; // off-grid — occupies no derived slot
