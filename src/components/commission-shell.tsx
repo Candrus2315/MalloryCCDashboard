@@ -60,9 +60,12 @@ export function CommissionsShell({
       </p>
       <nav
         aria-label="Commission sections"
-        className="sticky top-[68px] z-[1] -mx-4 mt-3 border-b border-(--card-border) bg-(--sticky-header-bg) px-4 backdrop-blur-sm sm:-mx-6 sm:px-6 md:top-14"
+        className="sticky max-md:static top-[68px] z-[1] -mx-4 mt-3 border-b border-(--card-border) bg-(--sticky-header-bg) px-4 backdrop-blur-sm sm:-mx-6 sm:px-6 md:top-14"
       >
-        <div className="flex items-center gap-1 overflow-x-auto py-2 whitespace-nowrap">
+        {/* Section nav: vertical divided list on phones (owner directive
+            10/11 — same treatment as the Reps selector), wrapped pill row
+            from md up. No overflow-x scrolling at any width. */}
+        <div className="flex items-center py-2 whitespace-nowrap max-md:flex-col max-md:items-stretch max-md:divide-y max-md:divide-(--table-border-weak) md:gap-1 md:flex-wrap">
           {COMMISSION_TABS.map((t) => {
             const active = path === t.to;
             return (
@@ -71,7 +74,7 @@ export function CommissionsShell({
                 to={t.to}
                 aria-current={active ? "page" : undefined}
                 className={
-                  "rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors max-md:inline-flex max-md:min-h-[44px] max-md:items-center " +
+                  "rounded-md px-2.5 py-2 text-[13px] font-medium transition-colors max-md:inline-flex max-md:w-full max-md:min-h-[44px] max-md:items-center max-md:rounded-none max-md:px-3 " +
                   (active
                     ? "bg-(--surface-subtle) text-(--text-primary)"
                     : "text-(--text-caption) hover:bg-(--surface-subtle) hover:text-(--text-primary)")
