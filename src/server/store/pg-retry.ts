@@ -8,8 +8,11 @@
  * - RETRIES ONLY connection-class failures — server slot exhaustion
  *   (53300 "too many connections" / the pg_use_reserved_connections
  *   rejection, 08004 "sorry, too many clients already"), dead connection
- *   (08006), failed establish (08001/08003), admin termination (57P01), and
- *   the socket-level resets that surface as raw Node/Bun errors. A business
+ *   (08006), failed establish (08001/08003), admin termination (57P01), the
+ *   socket-level resets that surface as raw Node/Bun errors, and postgres.js's
+ *   own client-side socket codes CONNECT_TIMEOUT / CONNECTION_CLOSED
+ *   (non-SQLSTATE, always set as err.code — the 2026-10-12 provider flare's
+ *   exact failure mode). A business
  *   error (constraint, SQL typo, empty result) is never retried and never
  *   masked — the first non-connection error is rethrown as-is.
  * - READ PATHS ONLY. Callers wrap read-only page-data loaders; a write (or
@@ -29,6 +32,14 @@ export const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
   "08001", // sqlclient_unable_to_establish_sqlconnection
   "08003", // connection_does_not_exist
   "57P01", // admin termination (cloud managed host killed an idle connection)
+  // postgres.js CLIENT-SIDE socket codes — NOT SQLSTATE. errors.js connection()
+  // sets err.code to the exact token on every connection error (message:
+  // "write <code> host:port") and queryError() rejects with that same object,
+  // so code classification suffices. These were the 2026-10-12 provider
+  // flare's failure modes (sync_runs: "write CONNECT_TIMEOUT",
+  // "write CONNECTION_CLOSED") that passed through unretried until now.
+  "CONNECT_TIMEOUT", // startup phase (tcp/negotiation/auth) exceeded connect_timeout
+  "CONNECTION_CLOSED", // socket closed mid-connection (provider hang/drop)
 ]);
 
 /** Message fragments for raw (non-SQLSTATE) socket errors worth one retry. */
