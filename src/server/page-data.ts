@@ -2275,8 +2275,24 @@ export async function commissionValidationPageData(deps?: PageDeps): Promise<Com
     );
   }
   if (cancelledWins.length > 0) {
+    const n = cancelledWins.length;
+    // Banner honesty (owner-flagged polish pass): a stored-week flag was counted
+    // in stored weekly records; flags in weeks with NO stored commission record
+    // (unattributed historical wins, open weeks) never paid a CC — the copy must
+    // not imply otherwise. Sub-counts derive from the same flags as the list.
+    const storedN = cancelledWins.filter((f) => f.weekClosed).length;
+    const unstoredN = n - storedN;
+    const lead = `${n} Booking Win${n === 1 ? "" : "s"} have been confirmed CANCELLED by the Acuity sync reconciliation — `;
+    const storedClause =
+      `${storedN} ${storedN === 1 ? "was" : "were"} counted in stored weekly records (stored rows stay frozen; corrections go through the audited reason-required manual path only on the owner's direction)`;
+    const unstoredClause =
+      `the other ${unstoredN} ${unstoredN === 1 ? "win" : "wins"} ${unstoredN === 1 ? "is" : "are"} in weeks with no stored commission record (unattributed historical wins that never paid a CC — no payroll impact; open-week flags simply apply at the Sunday close)`;
     warnings.push(
-      `${cancelledWins.length} Booking Win${cancelledWins.length === 1 ? "" : "s"} previously counted have been confirmed CANCELLED by the Acuity sync reconciliation — stored records are frozen; corrections go through the audited reason-required manual path only on the owner's direction. Open-week flags simply apply at the Sunday close.`,
+      unstoredN === 0
+        ? `${lead}${storedClause}.`
+        : storedN === 0
+          ? `${lead}all ${n} ${n === 1 ? "is" : "are"} in weeks with no stored commission record (unattributed historical wins that never paid a CC — no payroll impact; open-week flags simply apply at the Sunday close).`
+          : `${lead}${storedClause}; ${unstoredClause}.`,
     );
   }
   return {
