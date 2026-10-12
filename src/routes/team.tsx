@@ -702,12 +702,15 @@ function TeamPage() {
 
             {/* right / supporting — achievement + remaining + pace, secondary to the anchor */}
             <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
-              <Eyebrow>Goal Pacing</Eyebrow>
-              {m.goal.note && (
-                <p className="mt-1.5">
-                  <InfoTip tip={m.goal.note} label="Where this goal comes from" />
-                </p>
-              )}
+              {/* Wave 2 harmonization: the goal-note InfoTip sits INLINE with the
+                  eyebrow (Today's kpi-label anatomy) instead of dangling on its
+                  own line under the label. */}
+              <Eyebrow>
+                <span className="inline-flex items-center gap-1.5">
+                  Goal Pacing
+                  {m.goal.note && <InfoTip tip={m.goal.note} label="Where this goal comes from" />}
+                </span>
+              </Eyebrow>
               <dl className="mt-4 space-y-4">
                 <div>
                   <dt className="flex items-center gap-1.5 text-[13px] font-medium text-(--text-body)">
