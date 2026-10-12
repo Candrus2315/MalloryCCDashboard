@@ -439,7 +439,7 @@ function RepsPage() {
             <button
               type="button"
               onClick={applyCustom}
-              className="rounded-lg bg-(--accent-solid) px-3 py-1.5 font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover)"
+              className="btn-primary"
             >
               Apply
             </button>

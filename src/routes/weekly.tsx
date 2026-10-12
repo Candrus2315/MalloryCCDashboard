@@ -840,7 +840,7 @@ function WeeklyPage() {
               type="button"
               onClick={saveNotes}
               disabled={saveState === "saving"}
-              className="rounded-lg bg-(--accent-solid) px-4 py-2 text-[13px] font-medium text-(--accent-solid-fg) transition-colors hover:bg-(--accent-hover) disabled:opacity-50 max-md:w-full"
+              className="btn-primary max-md:w-full"
             >
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Save CC Report narrative"}
             </button>

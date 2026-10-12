@@ -533,13 +533,13 @@ function WeekGoalRow({ week, busy, onSave }: { week: EditorWeek; busy: boolean; 
         <span className="ml-2 text-xs text-(--text-muted)">{week.weekStart}</span>
       </td>
       <td className="text-right">
-        <input type="number" className="w-24 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-right text-[13px] outline-none focus:border-(--input-focus-border)" value={goal} onChange={(e) => setGoal(e.target.value)} />
+        <input type="number" className="input-field w-24 text-right" value={goal} onChange={(e) => setGoal(e.target.value)} />
       </td>
       <td className="text-right">
-        <input type="number" className="w-24 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-right text-[13px] outline-none focus:border-(--input-focus-border)" value={budget} onChange={(e) => setBudget(e.target.value)} />
+        <input type="number" className="input-field w-24 text-right" value={budget} onChange={(e) => setBudget(e.target.value)} />
       </td>
       <td className="text-right">
-        <button className="rounded-lg border border-(--input-border) px-3 py-1 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle) disabled:opacity-50" disabled={busy} onClick={() => onSave(Number(goal), Number(budget))}>
+        <button className="btn-secondary text-xs" disabled={busy} onClick={() => onSave(Number(goal), Number(budget))}>
           Save
         </button>
       </td>
@@ -585,7 +585,7 @@ function MonthlyGoalsSection({ data, busy, onSave }: {
               type="number"
               placeholder="not set"
               aria-label={`Booking goal for ${g.label}`}
-              className="w-28 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-right text-[13px] outline-none focus:border-(--input-focus-border)"
+              className="input-field w-28 text-right"
               value={draft[g.month] ?? ""}
               onChange={(e) => setDraft({ ...draft, [g.month]: e.target.value })}
             />
@@ -593,7 +593,7 @@ function MonthlyGoalsSection({ data, busy, onSave }: {
         ))}
         <div className="flex justify-end px-5 py-3">
           <button
-            className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50"
+            className="btn-primary"
             disabled={busy}
             onClick={() => onSave(data.monthlyGoals.map((g) => ({ month: g.month, goal: (draft[g.month] ?? "").trim() === "" ? null : Number(draft[g.month]) })))}
           >
@@ -632,7 +632,7 @@ function RepGoalsSection({ data, busy, onSave }: {
             Leave blank to use the team share: {teamGoal} ÷ {data.repCount || "—"} = {teamShare != null ? (Math.round(teamShare * 100) / 100).toFixed(2) : "—"} bookings per rep (labeled on rep pages). Week of {week}.
           </p>
         </div>
-        <select aria-label="Rep goals week" className="rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={week} onChange={(e) => switchWeek(e.target.value)}>
+        <select aria-label="Rep goals week" className="input-field" value={week} onChange={(e) => switchWeek(e.target.value)}>
           {data.editorWeeks.map((w) => (
             <option key={w.weekStart} value={w.weekStart}>
               {w.label}
@@ -657,7 +657,7 @@ function RepGoalsSection({ data, busy, onSave }: {
                 <input
                   type="number"
                   placeholder="team share"
-                  className="w-24 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-right text-[13px] outline-none focus:border-(--input-focus-border)"
+                  className="input-field w-24 text-right"
                   value={val}
                   onChange={(e) => setDraft({ ...draft, [u.id]: e.target.value })}
                 />
@@ -667,7 +667,7 @@ function RepGoalsSection({ data, busy, onSave }: {
         })}
         <div className="flex justify-end px-5 py-3">
           <button
-            className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50"
+            className="btn-primary"
             disabled={busy || data.users.length === 0}
             onClick={() => onSave(week, data.users.map((u) => ({ repId: u.id, goal: (draft[u.id] ?? "").trim() === "" ? null : Number(draft[u.id]) })))}
           >
@@ -707,7 +707,7 @@ function RepStartDatesSection({ data, busy, onSave }: {
             <input
               type="date"
               aria-label={`Call start date for ${u.name}`}
-              className="rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px]"
+              className="input-field"
               value={draft[u.id] ?? ""}
               onChange={(e) => setDraft({ ...draft, [u.id]: e.target.value })}
             />
@@ -715,7 +715,7 @@ function RepStartDatesSection({ data, busy, onSave }: {
         ))}
         <div className="flex justify-end px-5 py-3">
           <button
-            className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50"
+            className="btn-primary"
             disabled={busy || !dirty}
             onClick={() => onSave(data.users.map((u) => ({ repId: u.id, date: (draft[u.id] ?? "").trim() === "" ? null : draft[u.id] })))}
           >
@@ -750,7 +750,7 @@ function CoreOpsCard({ data, busy, onSave }: {
         </div>
       </div>
       <div className="flex justify-end">
-        <button className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50" disabled={busy} onClick={() => onSave(Number(threshold), Number(windowHours))}>
+        <button className="btn-primary" disabled={busy} onClick={() => onSave(Number(threshold), Number(windowHours))}>
           Save operational settings
         </button>
       </div>
@@ -815,7 +815,7 @@ function AcuityScopeCard({ data, busy, onSave }: {
         </div>
       </div>
       <div className="flex justify-end">
-        <button className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50" disabled={busy} onClick={() => onSave(calendars, types)}>
+        <button className="btn-primary" disabled={busy} onClick={() => onSave(calendars, types)}>
           Save Acuity scope
         </button>
       </div>
@@ -897,7 +897,7 @@ function StudioRulesCard({ data, busy, onSave }: {
       <div className="space-y-1 border-t border-(--table-border-weak) pt-3">
         {/* Column legend only where the three columns actually fit (sm+); on
             phones each day stacks vertically with per-block labels. */}
-        <div className="hidden items-center gap-2 text-xs font-medium uppercase tracking-wide text-(--text-faint) sm:flex">
+        <div className="hidden items-center gap-2 text-xs font-medium uppercase tracking-wide text-(--text-muted) sm:flex">
           <span className="w-20 shrink-0">Day</span>
           <span className="w-58 shrink-0">Morning block</span>
           <span className="w-58 shrink-0">Afternoon block</span>
@@ -914,7 +914,7 @@ function StudioRulesCard({ data, busy, onSave }: {
         </p>
       </div>
       <div className="flex justify-end border-t border-(--table-border-weak) pt-3">
-        <button className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50" disabled={busy} onClick={() => onSave({ durationMin: Number(duration), slotIntervalMin: Number(interval), paddingMin: Number(padding), hours: studioTwoBlockDaysToHours(days) })}>
+        <button className="btn-primary" disabled={busy} onClick={() => onSave({ durationMin: Number(duration), slotIntervalMin: Number(interval), paddingMin: Number(padding), hours: studioTwoBlockDaysToHours(days) })}>
           Save studio rules
         </button>
       </div>
@@ -942,7 +942,7 @@ function StudioBlockEditor({ day, which, block, onChange }: {
       <input
         type="time"
         aria-label={`${which} open time on ${day}`}
-        className="min-w-0 flex-1 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px] disabled:opacity-50 sm:flex-none"
+        className="input-field min-w-0 flex-1 disabled:opacity-50 sm:flex-none"
         value={block.open}
         disabled={!block.active}
         onChange={(e) => onChange({ ...block, open: e.target.value })}
@@ -951,7 +951,7 @@ function StudioBlockEditor({ day, which, block, onChange }: {
       <input
         type="time"
         aria-label={`${which} close time on ${day}`}
-        className="min-w-0 flex-1 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px] disabled:opacity-50 sm:flex-none"
+        className="input-field min-w-0 flex-1 disabled:opacity-50 sm:flex-none"
         value={block.close}
         disabled={!block.active}
         onChange={(e) => onChange({ ...block, close: e.target.value })}
@@ -971,17 +971,17 @@ function RecurringBlocksCard({ data, busy, onSave }: {
       <p className="text-xs text-(--text-muted)">Repeat every week on the chosen weekday — e.g. a standing lunch block. Feeds the same open-slot engine as one-off blocks.</p>
       {blocks.map((b, i) => (
         <div key={b.id} className="flex flex-wrap items-center gap-2 text-[13px]">
-          <select className="rounded-lg border border-(--input-border) px-2 py-1" value={b.weekday} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, weekday: Number(e.target.value) } : x)))}>
+          <select className="input-field" value={b.weekday} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, weekday: Number(e.target.value) } : x)))}>
             {WEEKDAYS.map((d, wd) => (
               <option key={d} value={wd}>
                 {d}
               </option>
             ))}
           </select>
-          <input type="time" className="rounded-lg border border-(--input-border) px-2 py-1" value={b.start_time} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, start_time: e.target.value } : x)))} />
+          <input type="time" className="input-field" value={b.start_time} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, start_time: e.target.value } : x)))} />
           <span className="text-(--text-muted)">–</span>
-          <input type="time" className="rounded-lg border border-(--input-border) px-2 py-1" value={b.end_time} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, end_time: e.target.value } : x)))} />
-          <input type="text" placeholder="Reason" className="w-36 rounded-lg border border-(--input-border) px-2 py-1" value={b.reason ?? ""} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, reason: e.target.value } : x)))} />
+          <input type="time" className="input-field" value={b.end_time} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, end_time: e.target.value } : x)))} />
+          <input type="text" placeholder="Reason" className="input-field w-36" value={b.reason ?? ""} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, reason: e.target.value } : x)))} />
           <label className="flex items-center gap-1 text-(--chip-neutral-fg)">
             <input type="checkbox" checked={b.active} onChange={(e) => setBlocks(blocks.map((x, j) => (j === i ? { ...x, active: e.target.checked } : x)))} />
             active
@@ -992,10 +992,10 @@ function RecurringBlocksCard({ data, busy, onSave }: {
         </div>
       ))}
       <div className="flex gap-2">
-        <button className="rounded-lg border border-(--input-border) px-3 py-1.5 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle)" onClick={() => setBlocks([...blocks, { id: `rb-${Date.now()}`, weekday: 5, start_time: "12:00", end_time: "13:00", reason: "", active: true }])}>
+        <button className="btn-secondary text-xs" onClick={() => setBlocks([...blocks, { id: `rb-${Date.now()}`, weekday: 5, start_time: "12:00", end_time: "13:00", reason: "", active: true }])}>
           Add block
         </button>
-        <button className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50" disabled={busy} onClick={() => onSave(blocks)}>
+        <button className="btn-primary" disabled={busy} onClick={() => onSave(blocks)}>
           Save recurring blocks
         </button>
       </div>
@@ -1017,12 +1017,12 @@ function BlockedTimesCard({ data, busy, onAdd, onRemove }: {
     <div className="space-y-3">
       <p className="text-xs text-(--text-muted)">Concrete availability blocks (manual corrections or imported). Removing one also writes the audit trail.</p>
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
-        <input type="date" className="rounded-lg border border-(--input-border) px-2 py-1" value={date} onChange={(e) => setDate(e.target.value)} />
-        <input type="time" className="rounded-lg border border-(--input-border) px-2 py-1" value={start} onChange={(e) => setStart(e.target.value)} />
+        <input type="date" className="input-field" value={date} onChange={(e) => setDate(e.target.value)} />
+        <input type="time" className="input-field" value={start} onChange={(e) => setStart(e.target.value)} />
         <span className="text-(--text-muted)">–</span>
-        <input type="time" className="rounded-lg border border-(--input-border) px-2 py-1" value={end} onChange={(e) => setEnd(e.target.value)} />
-        <input type="text" placeholder="Reason" className="w-40 rounded-lg border border-(--input-border) px-2 py-1" value={reason} onChange={(e) => setReason(e.target.value)} />
-        <button className="rounded-lg bg-(--accent-solid) px-3 py-1.5 text-xs font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50" disabled={busy} onClick={() => onAdd({ date, startHHMM: start, endHHMM: end, reason })}>
+        <input type="time" className="input-field" value={end} onChange={(e) => setEnd(e.target.value)} />
+        <input type="text" placeholder="Reason" className="input-field w-40" value={reason} onChange={(e) => setReason(e.target.value)} />
+        <button className="btn-primary" disabled={busy} onClick={() => onAdd({ date, startHHMM: start, endHHMM: end, reason })}>
           Add block
         </button>
       </div>
@@ -1098,7 +1098,7 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
         {fields.map((f) => (
           <label key={f.key} className="block">
             <span className="kpi-label">{f.label}</span>
-            <select className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={draft[f.key] ?? ""} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}>
+            <select className="input-field mt-1 w-full" value={draft[f.key] ?? ""} onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}>
               {COLUMN_LETTERS.map((l) => (
                 <option key={l} value={l}>
                   Column {l}
@@ -1109,11 +1109,11 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
         ))}
       </div>
       <div className="flex gap-2">
-        <button className="rounded-lg border border-(--input-border) px-3 py-1.5 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle) disabled:opacity-50" disabled={busy} onClick={() => onSave(draft, mode)}>
+        <button className="btn-secondary text-xs" disabled={busy} onClick={() => onSave(draft, mode)}>
           Save mapping
         </button>
         <button
-          className="rounded-lg border border-(--input-border) px-3 py-1.5 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle) disabled:opacity-50"
+          className="btn-secondary text-xs"
           disabled={busy}
           onClick={async () => {
             const { testSheetMapping } = await import("~/server/queries");
@@ -1169,7 +1169,7 @@ function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promis
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-[13px] text-(--text-caption)">Background syncs are duplicate-safe; cancellations update in place. Google Sheets syncs live when its access is granted; HighLevel and Acuity run on demo adapters until their credentials arrive.</p>
         <button
-          className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50"
+          className="btn-primary"
           disabled={syncing}
           onClick={async () => {
             setSyncing(true);
@@ -1353,7 +1353,7 @@ function RosterMappingSection({ data, busy, onSave }: {
                 </span>
                 <select
                   aria-label={`Map ${u.name || u.externalId} to`}
-                  className="rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px]"
+                  className="input-field"
                   value={val}
                   onChange={(e) => setDraft({ ...draft, [u.externalId]: e.target.value })}
                 >
@@ -1370,7 +1370,7 @@ function RosterMappingSection({ data, busy, onSave }: {
         })}
         <div className="flex justify-end px-5 py-3">
           <button
-            className="rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50"
+            className="btn-primary"
             disabled={busy || !dirty}
             onClick={() => onSave(nextMappings())}
           >
@@ -1438,7 +1438,7 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
       <td>{users.find((u) => u.id === row.suggested_rep_id)?.name ?? "—"}</td>
       <td>
         {row.candidate_calls.length > 0 ? (
-          <select className="rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px]" value={callId} onChange={(e) => setCallId(e.target.value)}>
+          <select className="input-field" value={callId} onChange={(e) => setCallId(e.target.value)}>
             {row.candidate_calls.map((c) => (
               <option key={c.call_id} value={c.call_id}>
                 {new Date(c.started_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })} · {Math.round(c.duration_seconds / 60)}m · {users.find((u) => u.id === c.rep_id)?.name ?? "non-roster"}
@@ -1450,7 +1450,7 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
         )}
       </td>
       <td>
-        <select className="rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1 text-[13px]" value={repId} onChange={(e) => setRepId(e.target.value)}>
+        <select className="input-field" value={repId} onChange={(e) => setRepId(e.target.value)}>
           <option value="">Choose rep…</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>
@@ -1461,7 +1461,7 @@ function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
       </td>
       <td>
         <div className="flex flex-col items-start gap-1.5">
-          <button className="rounded-lg border border-(--input-border) px-3 py-1 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle) disabled:opacity-50" disabled={busy || !repId} onClick={() => onAssign(row.appointment_id, repId, callId || null)}>
+          <button className="btn-secondary text-xs" disabled={busy || !repId} onClick={() => onAssign(row.appointment_id, repId, callId || null)}>
             Assign
           </button>
           {unassignable(row.reason) && (
@@ -1523,7 +1523,7 @@ function UnattributedCard({ row, users, busy, onAssign, onUnassign }: {
       {row.candidate_calls.length > 0 && (
         <label className="mt-3 block">
           <span className="kpi-label">Call</span>
-          <select className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={callId} onChange={(e) => setCallId(e.target.value)}>
+          <select className="input-field mt-1 w-full" value={callId} onChange={(e) => setCallId(e.target.value)}>
             {row.candidate_calls.map((c) => (
               <option key={c.call_id} value={c.call_id}>
                 {new Date(c.started_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })} · {Math.round(c.duration_seconds / 60)}m · {users.find((u) => u.id === c.rep_id)?.name ?? "non-roster"}
@@ -1534,7 +1534,7 @@ function UnattributedCard({ row, users, busy, onAssign, onUnassign }: {
       )}
       <label className="mt-2 block">
         <span className="kpi-label">Assign to</span>
-        <select className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={repId} onChange={(e) => setRepId(e.target.value)}>
+        <select className="input-field mt-1 w-full" value={repId} onChange={(e) => setRepId(e.target.value)}>
           <option value="">Choose rep…</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>
@@ -1544,7 +1544,7 @@ function UnattributedCard({ row, users, busy, onAssign, onUnassign }: {
         </select>
       </label>
       <div className="mt-3 flex items-center gap-3">
-        <button className="rounded-lg border border-(--input-border) px-4 py-1.5 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle) disabled:opacity-50" disabled={busy || !repId} onClick={() => onAssign(row.appointment_id, repId, callId || null)}>
+        <button className="btn-secondary text-xs" disabled={busy || !repId} onClick={() => onAssign(row.appointment_id, repId, callId || null)}>
           Assign
         </button>
         {unassignable(row.reason) && (
@@ -1569,7 +1569,7 @@ function LeadWorkDateCard({ data, busy, onSave }: {
   return (
     <div className="card card-nest card-dense space-y-3">
       <p className="section-title">Correct a lead&apos;s work date</p>
-      <select className="w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px]" value={selected} onChange={(e) => setSelected(e.target.value)}>
+      <select className="input-field w-full" value={selected} onChange={(e) => setSelected(e.target.value)}>
         <option value="">Choose a lead (recent cohorts)…</option>
         {data.recentLeads.slice(0, 80).map((l) => (
           <option key={l.id} value={l.id}>
@@ -1579,10 +1579,10 @@ function LeadWorkDateCard({ data, busy, onSave }: {
       </select>
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className="text-(--text-caption)">Move to</span>
-        <input type="date" className="rounded-lg border border-(--input-border) px-2 py-1" value={workDate} onChange={(e) => setWorkDate(e.target.value)} />
-        <input type="text" placeholder="Reason (optional)" className="w-full rounded-lg border border-(--input-border) px-2 py-1 sm:w-40" value={reason} onChange={(e) => setReason(e.target.value)} />
+        <input type="date" className="input-field" value={workDate} onChange={(e) => setWorkDate(e.target.value)} />
+        <input type="text" placeholder="Reason (optional)" className="input-field w-full sm:w-40" value={reason} onChange={(e) => setReason(e.target.value)} />
       </div>
-      <button className="w-fit rounded-lg bg-(--accent-solid) px-4 py-2 text-sm font-medium text-(--accent-solid-fg) hover:bg-(--accent-hover) disabled:opacity-50" disabled={busy || !selected || !lead} onClick={() => selected && lead && onSave(selected, workDate, lead.work_date, reason)}>
+      <button className="btn-primary w-fit" disabled={busy || !selected || !lead} onClick={() => selected && lead && onSave(selected, workDate, lead.work_date, reason)}>
         Save work date
       </button>
       <p className="text-xs text-(--text-muted)">Operational reporting counts this lead under its work date (Mon folds Fri–Sun) — moving it moves every &quot;leads today&quot; number that includes it.</p>
@@ -1618,12 +1618,12 @@ function LeadCountCard({ data, busy, onSave }: {
               <div className="flex items-center gap-2">
                 <input
                   type="number"
-                  className="w-20 rounded-lg border border-(--input-border) px-2 py-1 text-right text-[13px]"
+                  className="w-20 input-field text-right text-[13px]"
                   value={val}
                   onChange={(e) => setDrafts({ ...drafts, [key(r.date, r.sheet)]: e.target.value })}
                 />
                 <button
-                  className="rounded-lg border border-(--input-border) px-2 py-1 text-xs font-medium text-(--text-body) hover:bg-(--surface-subtle) disabled:opacity-50"
+                  className="btn-secondary text-xs"
                   disabled={busy || Number(val) === effective}
                   onClick={() => onSave(r.date, r.sheet, Number(val), `corrected from ${effective}`)}
                 >
@@ -1649,7 +1649,7 @@ function NumberField({ label, value, onChange }: { label: string; value: string;
         type="number"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-3 py-2 text-sm text-(--text-primary) outline-none focus:border-(--input-focus-border)"
+        className="input-field mt-1 w-full"
       />
     </label>
   );

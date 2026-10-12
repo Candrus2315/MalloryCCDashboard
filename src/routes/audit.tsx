@@ -10,6 +10,9 @@
  * Presentation only — same loader, same route search params (rep · date), same
  * rep-filter semantics, same client-side sort keys and default (Started desc),
  * same honesty rules (honest "—" for missing, raw ids always inspectable).
+ * Wave-3-final vocabulary pass: selects onto .input-field, the last-7-days
+ * strip onto the shared Segmented control, chart-token hovers onto
+ * --surface-subtle.
  */
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -19,6 +22,7 @@ import { formatInt } from "~/server/metrics/report-text";
 import type { AuditOkBody } from "~/server/audit-api";
 import { InfoTip } from "~/components/InfoTip";
 import { Eyebrow, Panel } from "~/components/page-panel";
+import { Segmented } from "~/components/Segmented";
 
 export const Route = createFileRoute("/audit")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -135,7 +139,7 @@ function AuditPage() {
               aria-label="Rep"
               value={search.rep ?? "all"}
               onChange={(e) => navigate(e.target.value, search.date ?? data.today ?? "")}
-              className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border) max-md:w-full"
+              className="input-field max-md:w-full"
             >
               <option value="all">{data.picker?.allLabel ?? "All calls"}</option>
               <option value="non-roster">{data.picker?.nonRosterLabel ?? "Non Roster Calls"}</option>
@@ -152,25 +156,17 @@ function AuditPage() {
               aria-label="Date (ET)"
               value={search.date ?? data.today ?? ""}
               onChange={(e) => navigate(search.rep ?? "all", e.target.value)}
-              className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1.5 text-[13px] text-(--text-primary) outline-none focus:border-(--input-focus-border)"
+              className="input-field"
             />
-            <span className="flex flex-wrap items-center gap-1" aria-label="Last 7 days">
-              {days.map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => navigate(search.rep ?? "all", d)}
-                  className={
-                    "rounded-md px-2 py-1 text-[12px] font-medium transition-colors " +
-                    ((search.date ?? data.today) === d
-                      ? "bg-(--accent-solid) text-(--accent-solid-fg)"
-                      : "text-(--text-caption) hover:bg-(--bar-track)/60 hover:text-(--text-primary)")
-                  }
-                >
-                  {formatDateHuman(d)}
-                </button>
-              ))}
-            </span>
+            {/* Last-7-days strip — the shared Segmented control (same labels,
+                same active-state logic, same navigate handler the bespoke
+                pill buttons had; wave-3-final vocabulary). */}
+            <Segmented
+              ariaLabel="Last 7 days"
+              value={search.date ?? data.today ?? ""}
+              onChange={(d) => navigate(search.rep ?? "all", d)}
+              options={days.map((d) => ({ value: d, label: formatDateHuman(d) }))}
+            />
           </section>
         </div>
       </Panel>
@@ -233,7 +229,7 @@ function AuditPage() {
                     const key = e.target.value as SortKey;
                     setSort((s) => (s.key === key ? s : { key, asc: key === "rep_name" || key === "direction" }));
                   }}
-                  className="rounded-lg border border-(--card-border) bg-(--card-bg) px-2 py-1 text-[12px] text-(--text-primary) outline-none focus:border-(--input-focus-border)"
+                  className="input-field"
                 >
                   {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
                     <option key={k} value={k}>
@@ -246,7 +242,7 @@ function AuditPage() {
                 type="button"
                 aria-label={sort.asc ? "Sort ascending" : "Sort descending"}
                 onClick={() => setSort((s) => ({ ...s, asc: !s.asc }))}
-                className="rounded-md px-2 py-1 text-[12px] font-medium text-(--text-caption) hover:bg-(--bar-track)/60 hover:text-(--text-primary)"
+                className="rounded-md px-2 py-1 text-[12px] font-medium text-(--text-caption) transition-colors hover:bg-(--surface-subtle) hover:text-(--text-primary)"
               >
                 {sort.asc ? "↑" : "↓"}
               </button>
