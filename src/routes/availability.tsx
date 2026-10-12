@@ -12,6 +12,9 @@ import { availabilityCopyText, capacityStatus, connectionView } from "~/componen
 import { TONE_BADGE_STYLES } from "~/components/DayCardStrip";
 import { InfoTip } from "~/components/InfoTip";
 import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
+// Wave 2 harmonization: the view switcher uses the SAME shared segmented
+// control as Team/Reps date ranges (one control language across the app).
+import { Segmented } from "~/components/Segmented";
 
 /* ---------------------------------------------------------------------------
    AVAILABILITY REBUILD PR-3 — the rebuilt page over the range-view payload
@@ -309,33 +312,25 @@ function AvailabilityPage() {
         <Panel className="overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 px-5 pt-5">
             <Eyebrow>{view.label}</Eyebrow>
-            <div className="flex items-center gap-1" role="group" aria-label="View">
-              {(
-                [
-                  ["month", "Month"],
-                  ["days", "14-Day"],
-                  ["day", "Day"],
-                ] as const
-              ).map(([kind, label]) => (
-                <button
-                  key={kind}
-                  type="button"
-                  aria-pressed={view.kind === kind}
-                  onClick={() =>
-                    kind === "month"
-                      ? go({ view: "month", month: undefined, date: undefined, from: undefined })
-                      : kind === "days"
-                        ? go({ view: "days", from: data.today, month: undefined, date: undefined })
-                        : go({ view: "day", date: view.kind === "day" ? view.date : data.today, month: undefined, from: undefined })
-                  }
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    view.kind === kind ? "bg-(--accent-solid) text-(--accent-solid-fg)" : "border border-(--card-border) text-(--text-caption) hover:text-(--text-primary)"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {/* Wave 2 harmonization: the shared Segmented control (Team/Reps
+                date-range anatomy) replaces the bespoke trio — same three
+                labels, same aria-pressed semantics, same navigation targets. */}
+            <Segmented
+              ariaLabel="View"
+              options={[
+                { value: "month", label: "Month" },
+                { value: "days", label: "14-Day" },
+                { value: "day", label: "Day" },
+              ]}
+              value={view.kind}
+              onChange={(kind) =>
+                kind === "month"
+                  ? go({ view: "month", month: undefined, date: undefined, from: undefined })
+                  : kind === "days"
+                    ? go({ view: "days", from: data.today, month: undefined, date: undefined })
+                    : go({ view: "day", date: view.kind === "day" ? view.date : data.today, month: undefined, from: undefined })
+              }
+            />
           </div>
           {/* P2-1 (max-md: 3+2 grid instead of an awkward 2-col hole) and P2-2
               (on the Day view the same five numbers repeat in the day-detail
@@ -361,17 +356,17 @@ function AvailabilityPage() {
           {view.kind === "month" && (
             <div className="p-5">
               <div className="flex items-center justify-between pb-3">
-                <button type="button" onClick={() => monthNav(-1)} className="rounded-lg border border-(--card-border) px-3 py-1.5 text-xs font-medium text-(--text-caption) hover:text-(--text-primary)">
+                <button type="button" onClick={() => monthNav(-1)} className="btn-secondary text-xs">
                   ← Previous
                 </button>
                 <p className="text-sm font-medium text-(--text-primary)">{view.label}</p>
-                <button type="button" onClick={() => monthNav(1)} className="rounded-lg border border-(--card-border) px-3 py-1.5 text-xs font-medium text-(--text-caption) hover:text-(--text-primary)">
+                <button type="button" onClick={() => monthNav(1)} className="btn-secondary text-xs">
                   Next →
                 </button>
               </div>
               <div className="grid grid-cols-7 gap-1.5">
                 {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((w) => (
-                  <p key={w} className="pb-1 text-center text-xs font-medium uppercase tracking-wide text-(--text-faint)">
+                  <p key={w} className="pb-1 text-center text-xs font-medium uppercase tracking-wide text-(--text-muted)">
                     {w}
                   </p>
                 ))}
@@ -429,7 +424,7 @@ function AvailabilityPage() {
               <div className="overflow-x-auto scroll-x">
                 <table className="w-full text-[13px]">
                   <thead>
-                    <tr className="border-b border-(--table-border-weak) text-left text-xs uppercase tracking-wide text-(--text-faint)">
+                    <tr className="border-b border-(--table-border-weak) text-left text-xs uppercase tracking-wide text-(--text-muted)">
                       <th className="py-2 pr-3 font-medium max-md:sticky max-md:left-0 max-md:z-[1] max-md:bg-(--card-bg)">Date</th>
                       <th className="py-2 pr-3 text-right font-medium">Openings</th>
                       <th className="py-2 pr-3 text-right font-medium">Holes</th>
@@ -444,7 +439,7 @@ function AvailabilityPage() {
                       const status = suppressed ? null : capacityStatus(d.utilization);
                       const tone = status ? TONE_BADGE[status.tone] : null;
                       return (
-                        <tr key={d.date} className="cursor-pointer border-b border-(--table-border-weak) last:border-0 hover:bg-(--chip-neutral-bg)" onClick={() => go({ view: "day", date: d.date })}>
+                        <tr key={d.date} className="table-hover-row cursor-pointer border-b border-(--table-border-weak) last:border-0" onClick={() => go({ view: "day", date: d.date })}>
                           <td className="py-2 pr-3 font-medium text-(--text-primary) max-md:whitespace-nowrap">
                             {dayPrefix(d.date, data.today)} — {formatDateHumanFull(d.date)}
                           </td>
@@ -573,7 +568,7 @@ function AvailabilityPage() {
               <select
                 value={activeCal[0] ?? ""}
                 onChange={(e) => setFilters({ cal: e.target.value, type: "" })}
-                className="mt-1 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px] text-(--text-body)"
+                className="input-field mt-1"
               >
                 <option value="">All Studios</option>
                 {view.filterOptions.calendars.map((c) => (
@@ -588,7 +583,7 @@ function AvailabilityPage() {
               <select
                 value={activeType[0] ?? ""}
                 onChange={(e) => setFilters({ type: e.target.value })}
-                className="mt-1 rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px] text-(--text-body)"
+                className="input-field mt-1"
               >
                 <option value="">All types</option>
                 {typeOptions.map((t) => (
@@ -623,7 +618,7 @@ function AvailabilityPage() {
               </div>
             </div>
             {filtersActive && (
-              <button type="button" onClick={() => setFilters({ cal: undefined, type: undefined, st: undefined })} className="rounded-lg border border-(--card-border) px-3 py-1.5 text-xs font-medium text-(--text-caption) hover:text-(--text-primary)">
+              <button type="button" onClick={() => setFilters({ cal: undefined, type: undefined, st: undefined })} className="btn-secondary text-xs">
                 Clear filters
               </button>
             )}
@@ -688,7 +683,7 @@ function AvailabilityPage() {
                   onChange={(e) => {
                     if (e.target.value) void copyText(view.copy.byDate[e.target.value] ?? "");
                   }}
-                  className="mt-1 w-full rounded-lg border border-(--input-border) bg-(--input-bg) px-2 py-1.5 text-[13px] text-(--text-body)"
+                  className="input-field mt-1 w-full"
                 >
                   <option value="">Pick a date to copy…</option>
                   {view.copy.copyDates.map((d) => (
@@ -711,7 +706,7 @@ function AvailabilityPage() {
                 type="button"
                 onClick={doRefresh}
                 disabled={refresh.state === "busy"}
-                className="rounded-lg border border-(--card-border) px-3 py-1.5 text-xs font-medium text-(--text-caption) hover:border-(--input-border) hover:text-(--text-primary) disabled:opacity-50"
+                className="btn-secondary text-xs disabled:opacity-50"
               >
                 {refresh.state === "busy" ? "Refreshing…" : "REFRESH"}
               </button>
