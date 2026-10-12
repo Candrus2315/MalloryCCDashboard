@@ -44,7 +44,10 @@ const headers = {
 };
 
 async function fetchPage(url: string): Promise<ContactsPage> {
-  const res = await fetch(url, { headers });
+  // Hard 60s cap per page (2026-10-12 hardening; GHL parity — the sync engine
+  // bounds each request at 60s, so a stalled socket here must never wedge the
+  // checkpointed backfill either). AbortSignal covers the body read too.
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(60_000) });
   if (res.status === 429 || (res.status >= 500 && res.status <= 504)) {
     throw new Error(`HTTP ${res.status} from HighLevel (retryable)`);
   }

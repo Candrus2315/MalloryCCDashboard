@@ -33,6 +33,7 @@ import { runDemoSync, runSheetsSync } from "../sync/run";
 import { sheetsTick, SHEETS_MIN_INTERVAL_MS } from "../sync/sheets-tick";
 import { reapStaleSyncRuns, schedulerTick, STALE_RUN_REAP_MINUTES } from "../sync/scheduler";
 import { hlRequest } from "../sync/highlevel-live";
+import { isNetworkBodyError } from "../sync/sheets-live";
 import { getWorkDate, addDays } from "../date-logic";
 import type { SyncRunRow } from "../store/types";
 /** Backdoor into MemoryStore's private syncRuns — backdate started_at (see zombie-run-reaper.test.ts). */
@@ -366,4 +367,32 @@ test("dayLead helper produces work-date-correct counts", () => {
   expect(l.sheet).toBe("family");
   expect(l.workDate).toBe(getWorkDate("2026-09-27"));
   expect(addDays("2026-09-27", 1)).toBe(getWorkDate("2026-09-27"));
+});
+
+// ---------- Sheets body-read honesty (2026-10-12 hardening) ----------
+// A socket failure MID-BODY used to be masked as {} and surfaced downstream
+// as an empty sheet — the lead-count sheets feed commissions, so silent-empty
+// is corruption risk. These are the Step-0-probe-recorded error shapes: the
+// token can ride in `code` (fetch layer), in `message` (node:net / the
+// 43-min flare string), or in NEITHER-but-name (TimeoutError) — dual-path
+// classification (code OR message) is what makes both surface.
+describe("sheets body-read network classification", () => {
+  test("network-class body failures surface; a genuine non-JSON body keeps the legacy path", () => {
+    // Bun fetch layer (probe L3): humanized message WITHOUT the token, code carries it
+    const truncated = new TypeError(
+      "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+    );
+    (truncated as { code?: string }).code = "ECONNRESET";
+    expect(isNetworkBodyError(truncated)).toBe(true);
+    // the 43-min flare string (message carries the token)
+    expect(isNetworkBodyError(new Error("ETIMEDOUT: connection timed out, read"))).toBe(true);
+    // aborted body read (probe L4): TimeoutError, numeric code, message carries it
+    const aborted = new Error("The operation timed out.");
+    aborted.name = "TimeoutError";
+    (aborted as { code?: unknown }).code = 23;
+    expect(isNetworkBodyError(aborted)).toBe(true);
+    // genuine non-JSON body (proxy HTML error page) → legacy {} → !res.ok status path
+    expect(isNetworkBodyError(new SyntaxError("Unexpected token '<' in JSON"))).toBe(false);
+    expect(isNetworkBodyError(null)).toBe(false);
+  });
 });

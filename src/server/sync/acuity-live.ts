@@ -230,6 +230,14 @@ export const ACUITY_LOOKAHEAD_DAYS = 180;
 /** Acuity hard cap on one appointments response (the `max` param). */
 export const ACUITY_MAX_PAGE = 500;
 /**
+ * Hard per-request cap on every Acuity API call (2026-10-12 hardening): a
+ * stalled connection must never wedge a sync run. Mirror of the 2026-10-07
+ * bound in acuity-availability.ts (same 20s value, which is ≫ a healthy paced
+ * call at ~1.1s); injectable per-adapter via the constructor's `timeoutMs`
+ * (tests shrink it) — the same pattern as GHL's HlEndpointOpts.timeoutMs.
+ */
+export const ACUITY_FETCH_TIMEOUT_MS = 20_000;
+/**
  * Inclusive date-chunk size for paginated pulls. 90 days ≈ 190 appointments
  * at current volume — comfortable headroom under the 500 cap; chunks merge
  * by appointment id. A chunk that still fills the cap is split in half
@@ -282,7 +290,7 @@ export interface AcuityLiveRunReport {
   warnings: string[];
 }
 
-type FetchImpl = (url: string, init?: { headers?: Record<string, string>; method?: string }) => Promise<Response>;
+type FetchImpl = (url: string, init?: { headers?: Record<string, string>; method?: string; signal?: AbortSignal }) => Promise<Response>;
 
 export class AcuityLiveAdapter {
   provider = "acuity" as const;
@@ -294,6 +302,8 @@ export class AcuityLiveAdapter {
     private creds: AcuityCreds,
     private fetchImpl: FetchImpl = fetch as unknown as FetchImpl,
     private sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    /** Hard per-request cap; injectable for test shrinking (the GHL HlEndpointOpts.timeoutMs pattern). */
+    private timeoutMs: number = ACUITY_FETCH_TIMEOUT_MS,
   ) {}
 
   private authHeader(): string {
@@ -311,6 +321,12 @@ export class AcuityLiveAdapter {
     const url = `https://acuityscheduling.com/api/v1/${path}${qs ? `?${qs}` : ""}`;
     const res = await this.fetchImpl(url, {
       method: "GET",
+      // Bounded (2026-10-12: a stalled Acuity connection must never wedge a
+      // sync run — mirror of acuity-availability.ts's 2026-10-07 bound, same
+      // 20s cap). 20s ≫ a healthy paced call (~1.1s); the abort covers the
+      // body read too. Individual network failures throw here; the sync run's
+      // own retry/resume rules stay in charge (no run-level timeout added).
+      signal: AbortSignal.timeout(this.timeoutMs),
       headers: {
         Authorization: this.authHeader(),
         Accept: "application/json",
@@ -436,10 +452,10 @@ export class AcuityLiveAdapter {
 }
 
 /** Live adapter when both credentials resolve, else null (demo mode stays). */
-export function createAcuityLiveAdapter(options?: { fetchImpl?: FetchImpl; sleep?: (ms: number) => Promise<void> }): AcuityLiveAdapter | null {
+export function createAcuityLiveAdapter(options?: { fetchImpl?: FetchImpl; sleep?: (ms: number) => Promise<void>; timeoutMs?: number }): AcuityLiveAdapter | null {
   const creds = readAcuityCreds();
   if (!creds) return null;
-  return new AcuityLiveAdapter(creds, options?.fetchImpl, options?.sleep);
+  return new AcuityLiveAdapter(creds, options?.fetchImpl, options?.sleep, options?.timeoutMs);
 }
 
 /**
