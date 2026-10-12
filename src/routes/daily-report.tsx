@@ -257,7 +257,7 @@ function DailyReportPage() {
                   type="button"
                   onClick={save}
                   disabled={saveState === "saving"}
-                  className="rounded-lg bg-(--accent-solid) px-4 py-2 text-[13px] font-medium text-(--accent-solid-fg) transition-colors hover:bg-(--accent-hover) disabled:opacity-50"
+                  className="btn-primary"
                 >
                   {saveState === "saving" ? "Saving…" : "Save Big 3"}
                 </button>

@@ -297,4 +297,4 @@ export function ListEditor({
 }
 
 export const inputClass =
-  "w-full rounded-md border border-(--input-border) bg-(--card-bg) px-3 py-2 text-[13px] outline-none focus:border-(--text-muted)";
+  "w-full rounded-md border border-(--input-border) bg-(--card-bg) px-3 py-2 text-[13px] outline-none focus:border-(--input-focus-border)";

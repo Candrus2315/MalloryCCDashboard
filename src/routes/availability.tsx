@@ -608,7 +608,7 @@ function AvailabilityPage() {
                         setFilters({ st: (on ? activeSt.filter((x) => x !== st) : [...activeSt, st]).join(",") || undefined })
                       }
                       className={`rounded-full px-2.5 py-1 text-xs font-medium uppercase tracking-wide transition-colors ${
-                        on ? "bg-(--accent-solid) text-(--accent-solid-fg)" : "border border-(--card-border) text-(--text-caption) hover:text-(--text-primary)"
+                        on ? "bg-(--accent-solid) text-(--accent-solid-fg)" : "border border-(--card-border) text-(--text-caption) hover:bg-(--surface-subtle) hover:text-(--text-primary)"
                       }`}
                     >
                       {st}
