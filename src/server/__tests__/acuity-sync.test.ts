@@ -437,3 +437,58 @@ describe("S7 sync window (35 back / 180 forward)", () => {
     expect(adapter.lastRun?.truncated).toBe(false);
   });
 });
+
+// ---------- Acuity fetch hard timeout (2026-10-12 hardening) ----------
+// Mirror of the HighLevel hung-fetch test (sheets-auto-sync.test.ts) and the
+// 2026-10-07 acuity-availability.ts bound: a stalled Acuity connection must
+// fail FAST through getJson — never wedge a sync run. The injected doubles
+// emulate the runtime contract the Step-0 probe verified for Bun's fetch
+// (AbortSignal aborts a pending request AND a stalled body read).
+describe("AcuityLiveAdapter fetch hard timeout", () => {
+  const abortAwareFetch = (mode: "request" | "body") => {
+    const seen: { signal: AbortSignal | null } = { signal: null };
+    const impl = (_url: string, init?: { headers?: Record<string, string>; method?: string; signal?: AbortSignal }): Promise<Response> => {
+      seen.signal = init?.signal ?? null;
+      const signal = init?.signal;
+      /** A promise that only rejects when the adapter's signal aborts — the stall under test. */
+      const hang = () =>
+        new Promise<never>((_, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("The operation was aborted.")), { once: true });
+        });
+      if (mode === "request") return hang() as unknown as Promise<Response>; // request itself never resolves
+      // request resolves; the BODY read stalls until abort (what Bun does with a real stalled socket)
+      return Promise.resolve(new Response(new ReadableStream<Uint8Array>({ pull: () => hang() }), { status: 200 }));
+    };
+    return { impl, seen };
+  };
+
+  test("a hung request times out fast through getJson (signal passed to fetch)", async () => {
+    const started = Date.now();
+    const { impl, seen } = abortAwareFetch("request");
+    const adapter = new AcuityLiveAdapter({ userId: "u", apiKey: "k" }, impl, async () => {}, 80);
+    await expect(adapter.fetchAppointmentTypes()).rejects.toThrow(/aborted|timed out/i);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(seen.signal).toBeInstanceOf(AbortSignal); // the 80ms cap rides on real fetch honoring the signal
+  });
+
+  test("the adapter bounds EVERY call by default (signal present even without timeoutMs injected)", async () => {
+    // resolve immediately this time: only the default WIRING is under test
+    const seen: { signal: AbortSignal | null } = { signal: null };
+    const resolving = (_url: string, init?: { signal?: AbortSignal }): Promise<Response> => {
+      seen.signal = init?.signal ?? null;
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }));
+    };
+    const adapter = new AcuityLiveAdapter({ userId: "u", apiKey: "k" }, resolving, async () => {});
+    await expect(adapter.fetchAppointmentTypes()).resolves.toEqual([]);
+    expect(seen.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("a stalled BODY read aborts at the cap (body reads are covered too)", async () => {
+    const started = Date.now();
+    const { impl, seen } = abortAwareFetch("body");
+    const adapter = new AcuityLiveAdapter({ userId: "u", apiKey: "k" }, impl, async () => {}, 80);
+    await expect(adapter.fetchAppointmentTypes()).rejects.toThrow(/aborted|timed out/i);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(seen.signal).toBeInstanceOf(AbortSignal);
+  });
+});

@@ -180,7 +180,8 @@ describe("withDbRetry — bounded retry on pool-exhaustion/connection errors", (
     // sets err.code (and errno) to the exact token on EVERY connection error —
     // message is "write <code> host:port" — and connection.js queryError()
     // rejects queries with that same object, so a message-only variant cannot
-    // occur; RETRYABLE_MESSAGE_RE is deliberately left untouched.
+    // occur for these two. RETRYABLE_MESSAGE_RE gained \bETIMEDOUT\b on
+    // 2026-10-12 (hardening PR) for the OS-errno strings below.
     expect(RETRYABLE_ERROR_CODES.has("CONNECT_TIMEOUT")).toBe(true);
     expect(RETRYABLE_ERROR_CODES.has("CONNECTION_CLOSED")).toBe(true);
     expect(isTransientDbError({ code: "CONNECT_TIMEOUT" })).toBe(true);
@@ -196,5 +197,31 @@ describe("withDbRetry — bounded retry on pool-exhaustion/connection errors", (
     // business errors still never retry
     expect(isTransientDbError({ code: "23505" })).toBe(false);
     expect(isTransientDbError(new Error("write 28P01 fatal: password authentication failed"))).toBe(false);
+  });
+
+  test("isTransientDbError: OS-level socket errnos — the 43-min hang mode — are connection-class", () => {
+    // 2026-10-12 hardening: a sync query parked 43 min on a stalled DB
+    // connection and surfaced only when the kernel gave up on the read.
+    // Step-0 probe: node:net sockets carry the token in BOTH fields; Bun's
+    // fetch layer carries it ONLY in code (message humanized). Dual-path
+    // (code set OR message regex) matches either layout.
+    expect(RETRYABLE_ERROR_CODES.has("ETIMEDOUT")).toBe(true);
+    expect(RETRYABLE_ERROR_CODES.has("ECONNRESET")).toBe(true);
+    expect(isTransientDbError({ code: "ETIMEDOUT" })).toBe(true);
+    expect(isTransientDbError({ code: "ECONNRESET" })).toBe(true);
+    // the two observed raw runtime strings (sync_runs 2026-10-12 + node:net form)
+    expect(isTransientDbError(new Error("ETIMEDOUT: connection timed out, read"))).toBe(true);
+    expect(isTransientDbError(new Error("read ECONNRESET"))).toBe(true);
+    // combined layout — token in both fields, whatever layer produced it
+    const both = new Error("ETIMEDOUT: connection timed out, read");
+    (both as { code?: string }).code = "ETIMEDOUT";
+    expect(isTransientDbError(both)).toBe(true);
+    // SCOPING: Bun's fetch-layer humanized wording carries NO errno token and
+    // DB errors travel postgres.js's node:net socket (where code IS set) —
+    // the message regex deliberately does not chase fetch-layer phrasing
+    expect(isTransientDbError(new Error("The socket connection was closed unexpectedly"))).toBe(false);
+    // business errors still never retry
+    expect(isTransientDbError({ code: "23505" })).toBe(false);
+    expect(isTransientDbError(new Error("relation \"x\" does not exist"))).toBe(false);
   });
 });

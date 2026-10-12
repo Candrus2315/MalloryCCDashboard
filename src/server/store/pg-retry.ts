@@ -40,11 +40,25 @@ export const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
   // "write CONNECTION_CLOSED") that passed through unretried until now.
   "CONNECT_TIMEOUT", // startup phase (tcp/negotiation/auth) exceeded connect_timeout
   "CONNECTION_CLOSED", // socket closed mid-connection (provider hang/drop)
+  // OS-level socket errnos (2026-10-12: the same flare's 43-min mode — a
+  // query on a stalled DB connection surfaced only when the kernel gave up
+  // on the read: "ETIMEDOUT: connection timed out, read"). RAW passthrough
+  // path connection.js:139 (on(e)) → :381 → :396 → :410: postgres.js never
+  // wraps or re-tags these errors — the runtime's own object reaches
+  // query.reject unchanged. STEP-0 BUN PROBE: which field carries the token
+  // depends on the runtime layer — node:net sockets set BOTH (code
+  // "ECONNRESET", message "read ECONNRESET"), while Bun's fetch layer sets
+  // `code` but HUMANIZES the message without the token ("The socket
+  // connection was closed unexpectedly", code ECONNRESET). Dual-path
+  // classification (code set OR message regex) is therefore REQUIRED —
+  // either field can be the only carrier.
+  "ETIMEDOUT", // kernel connect/read timeout on a stalled socket
+  "ECONNRESET", // connection reset by peer mid-session
 ]);
 
 /** Message fragments for raw (non-SQLSTATE) socket errors worth one retry. */
 const RETRYABLE_MESSAGE_RE =
-  /too many connections|too many clients|connection slots are reserved|server closed the connection unexpectedly|terminating connection due to administrator command|\bECONNRESET\b|\bECONNREFUSED\b|\bEPIPE\b/i;
+  /too many connections|too many clients|connection slots are reserved|server closed the connection unexpectedly|terminating connection due to administrator command|\bECONNRESET\b|\bECONNREFUSED\b|\bEPIPE\b|\bETIMEDOUT\b/i;
 
 export function isTransientDbError(e: unknown): boolean {
   if (!e || typeof e !== "object") return false;

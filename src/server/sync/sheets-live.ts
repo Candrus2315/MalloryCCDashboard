@@ -133,11 +133,46 @@ async function sheetsFetch(token: string, url: string, sa: ServiceAccountInfo): 
   } catch (e) {
     throw new SheetsError("network", `Could not reach Google Sheets: ${e instanceof Error ? e.message : String(e)}`);
   }
-  const body = (await res.json().catch(() => ({}))) as { values?: unknown; sheets?: unknown; error?: { message?: string } };
+  // BODY-READ HONESTY (2026-10-12 hardening): this catch used to swallow EVERY
+  // body-read failure as {} — including a socket dying MID-BODY, which then
+  // surfaced downstream as an empty sheet. The lead-count sheets feed
+  // commissions, so silent-empty is corruption risk: a network-class body
+  // failure now surfaces as SheetsError("network") (same class as the connect
+  // path); only a genuine NON-JSON body keeps the legacy {} path so the
+  // !res.ok classification below still renders Google's status/message.
+  const body = (await res.json().catch((e) => {
+    if (isNetworkBodyError(e)) {
+      throw new SheetsError("network", `Google Sheets response body read failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return {};
+  })) as { values?: unknown; sheets?: unknown; error?: { message?: string } };
   if (!res.ok) {
     throw classifySheetsError(res.status, body.error?.message ?? `HTTP ${res.status}`, sa);
   }
   return body;
+}
+
+/**
+ * Network-class failure vs a merely non-JSON body, dual-path (code OR message)
+ * per the isTransientDbError classification convention. Step-0 probe: Bun's
+ * fetch layer reports a truncated/stalled body read as TypeError with
+ * code "ECONNRESET" and a HUMANIZED message without the token (an
+ * AbortSignal timeout during the body read surfaces as TimeoutError
+ * "The operation timed out." with a numeric code) — so the token can arrive
+ * via either field and both must be checked. A genuine non-JSON body (proxy
+ * HTML error page) is not network-class — it keeps the legacy {} → !res.ok
+ * status-classification path.
+ */
+const NETWORK_BODY_ERROR_RE =
+  /\bETIMEDOUT\b|\bECONNRESET\b|\bECONNREFUSED\b|\bEPIPE\b|CONNECT_TIMEOUT|CONNECTION_CLOSED|connection timed out|timed out|timeout|fetch failed|body read|aborted|underlying connection/i;
+
+/** Exported for the body-read-honesty test (probe-recorded error shapes). */
+export function isNetworkBodyError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  // JSON.parse truncation = the body stream ended before the document did
+  if (e instanceof SyntaxError && /unexpected end/i.test(e.message)) return true;
+  const code = (e as { code?: unknown }).code;
+  return NETWORK_BODY_ERROR_RE.test(String(code)) || NETWORK_BODY_ERROR_RE.test(e.message);
 }
 
 // ---------- API calls ----------

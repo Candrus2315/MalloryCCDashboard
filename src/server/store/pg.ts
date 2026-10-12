@@ -893,6 +893,22 @@ export class PgStore implements Store {
       // finish the handshake. Pool max stays hard-capped at 5/process (PR
       // #57) - never raised here.
       connect_timeout: 30,
+      // STATEMENT TIMEOUT 300s (2026-10-12 hardening): a session-level server
+      // cap so a query parked on a stalled DB connection can no longer hang
+      // for 43+ minutes (the 10/12 flare's failure mode) — the server cancels
+      // it after 5 min. Headroom is ≥5× the worst legit work observed: the
+      // 65s ensureSchema sweep is ~204 individual DDL statements, so no single
+      // statement comes near 300s; ordinary page-loader queries are sub-second.
+      // VERIFIED FORM: `connection` is postgres.js's documented startup-
+      // parameter channel — options.connection merges into the connection
+      // parameters (installed postgres@3.4.9 cjs/src/index.js:484–487) and
+      // `statement_timeout` is a typed ConnectionParameter (types/index.d.ts
+      // :335) sent in the startup packet, applying to every pooled session.
+      // Value is milliseconds (SHOW statement_timeout renders it as '5min').
+      // Reversible: delete this one block to restore the old behavior.
+      connection: {
+        statement_timeout: 300_000,
+      },
       ...(needsSsl ? { ssl: "require" } : {}),
     });
   }
