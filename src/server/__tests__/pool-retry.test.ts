@@ -174,4 +174,27 @@ describe("withDbRetry — bounded retry on pool-exhaustion/connection errors", (
     expect(isTransientDbError("nope")).toBe(false);
     expect(isTransientDbError(new Error("totally ordinary failure"))).toBe(false);
   });
+
+  test("isTransientDbError: postgres.js client-side socket codes (2026-10-12 flare) are connection-class", () => {
+    // Verified against installed postgres@3.4.9 source: errors.js connection()
+    // sets err.code (and errno) to the exact token on EVERY connection error —
+    // message is "write <code> host:port" — and connection.js queryError()
+    // rejects queries with that same object, so a message-only variant cannot
+    // occur; RETRYABLE_MESSAGE_RE is deliberately left untouched.
+    expect(RETRYABLE_ERROR_CODES.has("CONNECT_TIMEOUT")).toBe(true);
+    expect(RETRYABLE_ERROR_CODES.has("CONNECTION_CLOSED")).toBe(true);
+    expect(isTransientDbError({ code: "CONNECT_TIMEOUT" })).toBe(true);
+    expect(isTransientDbError({ code: "CONNECTION_CLOSED" })).toBe(true);
+    // realistic flare shape — the exact sync_runs error strings of the
+    // 2026-10-12 9:38–10:04 AM ET provider outage (previously UNRETRIED)
+    const connectTimeout = new Error("write CONNECT_TIMEOUT 10.0.0.1:5432");
+    (connectTimeout as { code?: string }).code = "CONNECT_TIMEOUT";
+    const closed = new Error("write CONNECTION_CLOSED 10.0.0.1:5432");
+    (closed as { code?: string }).code = "CONNECTION_CLOSED";
+    expect(isTransientDbError(connectTimeout)).toBe(true);
+    expect(isTransientDbError(closed)).toBe(true);
+    // business errors still never retry
+    expect(isTransientDbError({ code: "23505" })).toBe(false);
+    expect(isTransientDbError(new Error("write 28P01 fatal: password authentication failed"))).toBe(false);
+  });
 });
