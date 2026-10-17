@@ -18,6 +18,7 @@
 import { createSign } from "node:crypto";
 import { addDays, etToday } from "../date-logic";
 import { getSecret } from "../env";
+import { raceBodyRead } from "./body-read";
 import type { AppSettings } from "../store/types";
 import type { GoogleSheetsAdapter } from "./adapters";
 import {
@@ -100,7 +101,19 @@ async function getAccessToken(sa: ServiceAccountInfo): Promise<string> {
   } catch (e) {
     throw new SheetsError("network", `Could not reach Google's OAuth endpoint: ${e instanceof Error ? e.message : String(e)}`);
   }
-  const body = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
+  // BOUNDED + HONEST body read (2026-10-17): the armed fetch signal cannot
+  // wake a read PARKED on a silent socket (body-read.ts docblock — the live
+  // scheduler wedged ~8h on 2026-10-17 inside the sheets tick), and this
+  // catch used to mask EVERY body failure as {} → a parked/failed token read
+  // surfaced as a bogus "credentials rejected" auth error. Network-class
+  // failures now throw SheetsError("network") (retry next tick); only a
+  // genuine non-JSON body keeps the legacy {} → auth-classification path.
+  const body = (await raceBodyRead(res.json(), 60_000, "Google OAuth response body").catch((e) => {
+    if (isNetworkBodyError(e)) {
+      throw new SheetsError("network", `Google OAuth response body read failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return {};
+  })) as { access_token?: string; expires_in?: number; error?: string; error_description?: string };
   if (!res.ok || !body.access_token) {
     throw new SheetsError("auth", `Google rejected the service-account credentials (HTTP ${res.status}${body.error ? ` ${body.error}` : ""}) — check GOOGLE_SERVICE_ACCOUNT_JSON. ${body.error_description ?? ""}`.trim());
   }
@@ -140,7 +153,7 @@ async function sheetsFetch(token: string, url: string, sa: ServiceAccountInfo): 
   // failure now surfaces as SheetsError("network") (same class as the connect
   // path); only a genuine NON-JSON body keeps the legacy {} path so the
   // !res.ok classification below still renders Google's status/message.
-  const body = (await res.json().catch((e) => {
+  const body = (await raceBodyRead(res.json(), 60_000, "Google Sheets response body").catch((e) => {
     if (isNetworkBodyError(e)) {
       throw new SheetsError("network", `Google Sheets response body read failed: ${e instanceof Error ? e.message : String(e)}`);
     }

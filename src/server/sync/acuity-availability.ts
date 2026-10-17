@@ -41,6 +41,7 @@
  * would make every `bun test` run fire live API calls).
  */
 import { getSecret } from "../env";
+import { raceBodyRead } from "./body-read";
 
 // ---------- credentials (same pattern as acuity-live.ts) ----------
 
@@ -207,14 +208,17 @@ export class AcuityAvailabilityClient {
     if (!res.ok) {
       let hint = "";
       try {
-        const body = (await res.json()) as { error?: string; message?: string };
+        // Bounded body read (2026-10-17): parked reads never wake on the
+        // armed signal — race them (body-read.ts docblock).
+        const body = (await raceBodyRead(res.json(), 20_000, `Acuity /${path} error body`)) as { error?: string; message?: string };
         hint = body?.error ? ` (${body.error})` : "";
       } catch {
         // body was not JSON — the status alone is the message
       }
       throw new Error(`Acuity API error ${res.status} on GET /${path}${hint}`);
     }
-    return res.json();
+    // Bounded body read (2026-10-17): race — see body-read.ts docblock.
+    return raceBodyRead(res.json(), 20_000, `Acuity /${path} response body`);
   }
 
   /** GET /calendars — the studio's calendars (probed: exactly 3, §1.1). */

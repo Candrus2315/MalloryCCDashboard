@@ -33,6 +33,7 @@ import postgres from "postgres";
 import { readFileSync } from "node:fs";
 import { runHarvestChunk, harvestCoverageComplete } from "../src/server/sync/call-harvest";
 import { readHighLevelCreds } from "../src/server/sync/highlevel-live";
+import { makeBudgetBoundedFetch } from "../src/server/sync/body-read";
 import type { NormalizedCall } from "../src/server/sync/adapters";
 import { getStore } from "../src/server/store";
 
@@ -75,7 +76,11 @@ function openSql(databaseUrl: string) {
   } catch {
     // validated below by the first query
   }
-  return postgres(databaseUrl, { max: 3, idle_timeout: 20, connect_timeout: 10, ...(needsSsl ? { ssl: "require" } : {}) });
+  // statement_timeout 300s (2026-10-17, mirrors the server pool from PR #70):
+  // this script opens its OWN raw pool, which PR #70 did not cover — a query
+  // parked on a stalled DB connection was the 10/12 flare shape and would
+  // leave the harvest's 'highlevel' mutex row stuck.
+  return postgres(databaseUrl, { max: 3, idle_timeout: 20, connect_timeout: 10, ...(needsSsl ? { ssl: "require" } : {}), connection: { statement_timeout: 300_000 } });
 }
 
 async function main(): Promise<void> {
@@ -208,78 +213,109 @@ async function main(): Promise<void> {
     await store.finishSyncRun(running.id, "error", 0, "reclaimed by harvest runner (stale running row)");
   }
   const syncRunId = await store.insertSyncRun("highlevel");
-  const [harvestRun] = (await sql`INSERT INTO harvest_runs (sync_run_id, window_start_utc) VALUES (${syncRunId}::uuid, ${WINDOW_START_ISO}) RETURNING id::text`) as Record<string, unknown>[];
-  console.log(`harvest run ${String(harvestRun.id)} · window >= ${WINDOW_START_ISO} · budget ${RUN_MINUTES} min`);
-
-  // ---------- rep/contact maps for attribution ----------
-  const users = await store.getUsers();
-  const byExt = new Map(users.map((u) => [u.external_id, u]));
-  const contactRows = (await sql`SELECT id::text, external_id FROM contacts WHERE provider = 'highlevel' AND external_id IS NOT NULL`) as Record<string, unknown>[];
-  const contactByExt = new Map(contactRows.map((r) => [String(r.external_id), String(r.id)]));
-
+  // SELF-HEALING GUARANTEES (2026-10-17, after the 2026-10-15 run hung ~14.8h
+  // holding this mutex and a killed run left its row 'running' forever):
+  //   1. TIME BUDGET ABORTS FETCHES — every fetch below is wrapped by
+  //      makeBudgetBoundedFetch against `budget`; when the minutes-argument
+  //      budget expires the signal aborts in-flight fetches (combined with
+  //      hlRequest's own per-request 60s cap) instead of the old behavior of
+  //      only checking the deadline BETWEEN chunks (a single parked fetch
+  //      defeated it for ~15 hours).
+  //   2. TRY/FINALLY CLOSES THE MUTEX — finishSyncRun (and the harvest_runs
+  //      close) run on EVERY exit path: error, budget abort, interrupt. The
+  //      script never exits leaving a 'running' row behind. SIGINT/SIGTERM
+  //      abort the budget first so the closers still run; a second signal
+  //      force-exits (the scheduler's independent stale-run reaper closes the
+  //      row within ~20 min as the last-resort net).
+  const budget = new AbortController();
+  let interrupted = false;
+  const onInterrupt = (): void => {
+    if (interrupted) {
+      process.exit(1); // second signal: force exit; the independent reaper closes the row
+    }
+    interrupted = true;
+    console.log(`[interrupt] signal received — aborting in-flight fetches and closing the sync row cleanly…`);
+    budget.abort();
+  };
+  process.on("SIGINT", onInterrupt);
+  process.on("SIGTERM", onInterrupt);
+  const budgetTimer = setTimeout(() => budget.abort(), Math.max(1, RUN_MINUTES * 60_000));
+  const harvestFetch = makeBudgetBoundedFetch(fetch, budget.signal, "harvest run");
+  let harvestRunId: string | null = null;
   const stats = { listRequests: 0, listed: 0, visits: 0, calls: 0, messages: 0 };
   const deadline = Date.now() + RUN_MINUTES * 60_000;
 
-  async function onCalls(calls: NormalizedCall[]): Promise<void> {
-    if (!calls.length) return;
-    await store.upsertCalls(
-      calls.map((c) => {
-        const rep = c.repExternalId ? byExt.get(c.repExternalId) : undefined;
-        return {
-          id: "",
-          provider: "highlevel",
-          external_call_id: c.external_call_id,
-          rep_id: rep && rep.is_active ? String(rep.id) : null,
-          contact_id: contactByExt.get(c.contactExternalId) ?? null,
-          direction: c.direction,
-          call_status: c.status,
-          started_at: c.startedAt,
-          duration_seconds: c.durationSeconds,
-          over_two_minutes: c.durationSeconds > 120,
-          provider_rep_external_id: c.repExternalId || null,
-          conversation_id: c.conversation_id ?? null,
-        };
-      }),
-    );
-    for (const c of calls) {
-      await sql`INSERT INTO harvest_calls (message_id, conversation_id, user_external_id, contact_external_id, started_at, duration_seconds, direction, call_status)
-        VALUES (${c.external_call_id}, ${c.conversation_id ?? ""}, ${c.repExternalId || null}, ${c.contactExternalId}, ${c.startedAt}, ${c.durationSeconds > 0 ? c.durationSeconds : null}, ${c.direction}, ${c.status})
-        ON CONFLICT (message_id) DO UPDATE SET user_external_id = EXCLUDED.user_external_id, contact_external_id = EXCLUDED.contact_external_id,
-          started_at = EXCLUDED.started_at, duration_seconds = EXCLUDED.duration_seconds, direction = EXCLUDED.direction,
-          call_status = EXCLUDED.call_status, harvested_at = now()`;
-    }
-    stats.calls += calls.length;
-  }
-
   let stoppedReason = "coverage-complete";
   let chunk = 0;
-  const runChunk = async (o: { progressId: string; maxListRequests: number; maxVisits: number; listExtraQuery?: Record<string, string> }) => {
-    const r = await runHarvestChunk({
-      store,
-      creds,
-      fetchImpl: fetch,
-      windowStartUtc: WINDOW_START_ISO,
-      progressId: o.progressId,
-      listExtraQuery: o.listExtraQuery,
-      maxListRequests: o.maxListRequests,
-      maxVisits: o.maxVisits,
-      onCalls,
-      now: () => new Date(),
-    });
-    chunk += 1;
-    stats.listRequests += r.listRequests;
-    stats.listed += r.conversationsListed;
-    stats.visits += r.visitsDone;
-    stats.calls += r.callsFound;
-    stats.messages += r.messagesScanned;
-    if (r.warnings.length) for (const w of r.warnings.slice(0, 3)) console.log(`  warn: ${w}`);
-    if (chunk % 5 === 0 || r.coverageComplete) {
-      console.log(`chunk ${chunk}: +${r.visitsDone} visits, +${r.callsFound} calls · totals: list=${stats.listRequests} listed=${fmt(stats.listed)} visits=${fmt(stats.visits)} calls=${fmt(stats.calls)} msgs=${fmt(stats.messages)}`);
-    }
-    return r;
-  };
 
   try {
+    const [harvestRun] = (await sql`INSERT INTO harvest_runs (sync_run_id, window_start_utc) VALUES (${syncRunId}::uuid, ${WINDOW_START_ISO}) RETURNING id::text`) as Record<string, unknown>[];
+    harvestRunId = String(harvestRun.id);
+    console.log(`harvest run ${harvestRunId} · window >= ${WINDOW_START_ISO} · budget ${RUN_MINUTES} min`);
+
+    // ---------- rep/contact maps for attribution ----------
+    const users = await store.getUsers();
+    const byExt = new Map(users.map((u) => [u.external_id, u]));
+    const contactRows = (await sql`SELECT id::text, external_id FROM contacts WHERE provider = 'highlevel' AND external_id IS NOT NULL`) as Record<string, unknown>[];
+    const contactByExt = new Map(contactRows.map((r) => [String(r.external_id), String(r.id)]));
+
+    async function onCalls(calls: NormalizedCall[]): Promise<void> {
+      if (!calls.length) return;
+      await store.upsertCalls(
+        calls.map((c) => {
+          const rep = c.repExternalId ? byExt.get(c.repExternalId) : undefined;
+          return {
+            id: "",
+            provider: "highlevel",
+            external_call_id: c.external_call_id,
+            rep_id: rep && rep.is_active ? String(rep.id) : null,
+            contact_id: contactByExt.get(c.contactExternalId) ?? null,
+            direction: c.direction,
+            call_status: c.status,
+            started_at: c.startedAt,
+            duration_seconds: c.durationSeconds,
+            over_two_minutes: c.durationSeconds > 120,
+            provider_rep_external_id: c.repExternalId || null,
+            conversation_id: c.conversation_id ?? null,
+          };
+        }),
+      );
+      for (const c of calls) {
+        await sql`INSERT INTO harvest_calls (message_id, conversation_id, user_external_id, contact_external_id, started_at, duration_seconds, direction, call_status)
+          VALUES (${c.external_call_id}, ${c.conversation_id ?? ""}, ${c.repExternalId || null}, ${c.contactExternalId}, ${c.startedAt}, ${c.durationSeconds > 0 ? c.durationSeconds : null}, ${c.direction}, ${c.status})
+          ON CONFLICT (message_id) DO UPDATE SET user_external_id = EXCLUDED.user_external_id, contact_external_id = EXCLUDED.contact_external_id,
+            started_at = EXCLUDED.started_at, duration_seconds = EXCLUDED.duration_seconds, direction = EXCLUDED.direction,
+            call_status = EXCLUDED.call_status, harvested_at = now()`;
+      }
+      stats.calls += calls.length;
+    }
+
+    const runChunk = async (o: { progressId: string; maxListRequests: number; maxVisits: number; listExtraQuery?: Record<string, string> }) => {
+      const r = await runHarvestChunk({
+        store,
+        creds,
+        fetchImpl: harvestFetch,
+        windowStartUtc: WINDOW_START_ISO,
+        progressId: o.progressId,
+        listExtraQuery: o.listExtraQuery,
+        maxListRequests: o.maxListRequests,
+        maxVisits: o.maxVisits,
+        onCalls,
+        now: () => new Date(),
+      });
+      chunk += 1;
+      stats.listRequests += r.listRequests;
+      stats.listed += r.conversationsListed;
+      stats.visits += r.visitsDone;
+      stats.calls += r.callsFound;
+      stats.messages += r.messagesScanned;
+      if (r.warnings.length) for (const w of r.warnings.slice(0, 3)) console.log(`  warn: ${w}`);
+      if (chunk % 5 === 0 || r.coverageComplete) {
+        console.log(`chunk ${chunk}: +${r.visitsDone} visits, +${r.callsFound} calls · totals: list=${stats.listRequests} listed=${fmt(stats.listed)} visits=${fmt(stats.visits)} calls=${fmt(stats.calls)} msgs=${fmt(stats.messages)}`);
+      }
+      return r;
+    };
+
     // Phase 1: list + visit the call-last subset (server-filtered, fastest path to every call).
     for (;;) {
       if (Date.now() >= deadline) { stoppedReason = "time-budget"; break; }
@@ -304,13 +340,35 @@ async function main(): Promise<void> {
       if (r.visitsDone === 0) break; // nothing unvisited left
     }
   } catch (e) {
-    stoppedReason = `error: ${e instanceof Error ? e.message : String(e)}`;
+    const msg = e instanceof Error ? e.message : String(e);
+    // Honest stopped_reason: a budget/interrupt abort is NOT an API error —
+    // it is the runner's own bound firing (or the operator's signal).
+    stoppedReason = interrupted
+      ? "interrupted: signal received (in-flight fetches aborted; sync row closed)"
+      : /time budget/i.test(msg)
+        ? "time-budget"
+        : `error: ${msg}`;
+  } finally {
+    clearTimeout(budgetTimer);
+    if (harvestRunId) {
+      try {
+        await sql`UPDATE harvest_runs SET finished_at = now(), list_requests = ${stats.listRequests}, conversations_listed = ${stats.listed},
+          visits_done = ${stats.visits}, calls_found = ${stats.calls}, messages_scanned = ${stats.messages}, stopped_reason = ${stoppedReason}
+          WHERE id = ${harvestRunId}::uuid`;
+      } catch (e) {
+        console.error(`[harvest] closing the harvest_runs row failed (audit row stays open; the sync row below is still closed): ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    try {
+      await store.finishSyncRun(syncRunId, stoppedReason.startsWith("error") ? "error" : "success", stats.calls, stoppedReason.startsWith("error") ? stoppedReason : null);
+    } catch (e) {
+      // Never swallow silently: if THIS fails the row stays 'running' — name it,
+      // name the row, and point at the independent reaper that will close it.
+      console.error(`[harvest] FATAL: finishing the sync_runs row ${syncRunId} failed — the row stays 'running' until the scheduler's independent stale-run reaper closes it (≈20 min): ${e instanceof Error ? e.message : String(e)}`);
+    }
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onInterrupt);
   }
-
-  await sql`UPDATE harvest_runs SET finished_at = now(), list_requests = ${stats.listRequests}, conversations_listed = ${stats.listed},
-    visits_done = ${stats.visits}, calls_found = ${stats.calls}, messages_scanned = ${stats.messages}, stopped_reason = ${stoppedReason}
-    WHERE id = ${String(harvestRun.id)}::uuid`;
-  await store.finishSyncRun(syncRunId, stoppedReason.startsWith("error") ? "error" : "success", stats.calls, stoppedReason.startsWith("error") ? stoppedReason : null);
   console.log(`\nDONE (${stoppedReason}): list=${stats.listRequests} listed=${fmt(stats.listed)} visits=${fmt(stats.visits)} calls=${fmt(stats.calls)} msgs=${fmt(stats.messages)}`);
 
   await printReconciliation();

@@ -49,6 +49,7 @@ import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics
 import { deriveBookingPaymentFields } from "../payments";
 import type { Store } from "../store/types";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { raceBodyRead } from "./body-read";
 import type { NormalizedAppointment } from "./adapters";
 
 // ---------- credentials ----------
@@ -344,7 +345,9 @@ export class AcuityLiveAdapter {
     if (!res.ok) {
       throw new Error(`Acuity API error ${res.status} on GET /${path}`);
     }
-    return res.json();
+    // Bounded body read (2026-10-17): the armed signal cannot wake a read
+    // parked on a silent socket — race it (body-read.ts docblock).
+    return raceBodyRead(res.json(), this.timeoutMs, `Acuity /${path} response body`);
   }
 
   /**

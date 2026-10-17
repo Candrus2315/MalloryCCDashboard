@@ -49,6 +49,7 @@
  */
 import { addDays } from "../date-logic";
 import { getSecret } from "../env";
+import { isNetworkBodyErrorLike, raceBodyRead } from "./body-read";
 import type { NormalizedCall, NormalizedContact, NormalizedUser } from "./adapters";
 
 // ---------- errors ----------
@@ -175,9 +176,11 @@ export async function hlRequest(req: HlRequest, opts: HlEndpointOpts): Promise<u
       );
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
-      throw new HighLevelError("network", /abort/i.test(raw)
-        ? `HighLevel API request timed out after ${Math.round(timeoutMs / 1000)}s (no response) — hung request aborted`
-        : `Could not reach the HighLevel API (${BASE_URL}): ${raw}`);
+      throw new HighLevelError("network", /time budget/i.test(raw)
+        ? `HighLevel fetch aborted by the caller's time budget: ${raw}`
+        : /abort/i.test(raw)
+          ? `HighLevel API request timed out after ${Math.round(timeoutMs / 1000)}s (no response) — hung request aborted`
+          : `Could not reach the HighLevel API (${BASE_URL}): ${raw}`);
     }
     if (res.status === 429) {
       if (rateLimited >= RATE_LIMIT_RETRIES) {
@@ -200,12 +203,23 @@ export async function hlRequest(req: HlRequest, opts: HlEndpointOpts): Promise<u
       throw new HighLevelError("permission", "HighLevel denied access (403) — the API key may lack this location's scope, or HIGHLEVEL_LOCATION_ID points at a different location than the key can read.");
     }
     if (!res.ok) {
-      const bodyText = (await res.text().catch(() => "")).slice(0, 300);
+      // Bounded body read (2026-10-17): the abort signal covers an actively
+      // streaming body but cannot wake a read PARKED on a stalled socket —
+      // the JS-timer race is the only dependable bound (body-read.ts docblock).
+      const bodyText = (await raceBodyRead(res.text().catch(() => ""), timeoutMs, `HighLevel ${req.path} error body`).catch(() => "")).slice(0, 300);
       throw new HighLevelError("api", `HighLevel API error (HTTP ${res.status} on ${req.path}): ${bodyText || "(no body)"}`);
     }
     try {
-      return (await res.json()) as unknown;
-    } catch {
+      // Bounded body read (2026-10-17): the 2026-10-15 harvest run hung ~14.8h
+      // HERE — headers raced, body read unguarded, parked on a silent socket
+      // until the OS broke it. Every body read is now raced against the same
+      // per-request cap. Network-class failures surface honestly; a genuine
+      // non-JSON document keeps the legacy api-class message.
+      return (await raceBodyRead(res.json(), timeoutMs, `HighLevel ${req.path} response body`)) as unknown;
+    } catch (e) {
+      if (isNetworkBodyErrorLike(e)) {
+        throw new HighLevelError("network", `HighLevel ${req.path} response body read failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
       throw new HighLevelError("api", `HighLevel API returned non-JSON on ${req.path} (HTTP ${res.status}) — possibly an HTML error page; run SYNC NOW again.`);
     }
   }
