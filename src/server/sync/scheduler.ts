@@ -43,6 +43,77 @@ import type { LiveSheetsAdapter } from "./sheets-live";
 /** A "running" sync_runs row older than this is a crashed process, not a live one. */
 export const STALE_RUNNING_CUTOFF_HOURS = 12;
 
+/**
+ * TICK WATCHDOG CAP (2026-10-17) — one tick may hold the scheduler loop at
+ * most this long. A healthy tick is seconds (the heaviest legit piece, a
+ * manual bootstrap full-sync, is minutes); 30 min ≫ any real tick. Evidence
+ * for the cap: /tmp/serve.log recorded wedged ticks of 66.2h / 19.2h / 5.2h
+ * (a parked fetch body read / stalled DB write holding `inflight`), and on
+ * 2026-10-17 the loop sat hung from 12:03 inside the sheets sync — the
+ * background scheduler silently dead the whole time. The watchdog RELEASES
+ * the loop when the cap fires; the parked tick keeps running detached (it
+ * cannot be cancelled) and its stale sync_runs rows are reaped by the
+ * independent reaper below.
+ */
+export const TICK_WATCHDOG_CAP_MS = 30 * 60_000;
+
+/** Independent stale-run reaper cadence (see runStaleRunReaperLoop). */
+export const REAPER_INTERVAL_MS = 5 * 60_000;
+
+export type TickWatchdogWinner = "settled" | "watchdog";
+
+/**
+ * Race a tick promise against the watchdog cap. Injectable sleep for tests.
+ * Returns which side won — the caller releases the loop when the watchdog
+ * does, with an identity check against the CURRENT inflight holder so a
+ * late-settling zombie can never clobber a newer tick's lock.
+ */
+export async function raceTickWatchdog(
+  tickPromise: Promise<unknown>,
+  capMs: number,
+  sleep: (ms: number) => Promise<void>,
+): Promise<TickWatchdogWinner> {
+  return await Promise.race([
+    tickPromise.then(() => "settled" as const),
+    sleep(capMs).then(() => "watchdog" as const),
+  ]);
+}
+
+/**
+ * INDEPENDENT STALE-RUN REAPER LOOP (2026-10-17) — the stale-run reaper used
+ * to run ONLY at the top of a scheduler tick, so when a tick itself hung, the
+ * reaper hung with it: the 2026-10-15 harvest run's 'highlevel' row and the
+ * 2026-10-16 sheets row sat 'running' for 13–15h while the wedged loop never
+ * reached the reap pass (manual recovery required). This loop reaps on its
+ * own cadence, decoupled from tick health: a 'running' row older than
+ * STALE_RUN_REAP_MINUTES is marked failed within ~REAPER_INTERVAL_MS of the
+ * threshold — script-launched or scheduler-launched alike (the reaper scans
+ * by STATUS; it never distinguished launchers). Best-effort: a failed pass
+ * retries on the next round, never crashes the loop.
+ */
+export async function runStaleRunReaperLoop(opts?: {
+  store?: Store;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => Date;
+  /** Test hook: run a bounded number of passes instead of looping forever. */
+  rounds?: number;
+  /** Test hook: shrink the cadence (default REAPER_INTERVAL_MS). */
+  intervalMs?: number;
+}): Promise<void> {
+  const sleep = opts?.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const intervalMs = opts?.intervalMs ?? REAPER_INTERVAL_MS;
+  const rounds = opts?.rounds ?? Number.POSITIVE_INFINITY;
+  for (let i = 0; i < rounds; i++) {
+    await sleep(intervalMs);
+    try {
+      const n = await reapStaleSyncRuns(withSyncWriteRetry(opts?.store ?? (await getStore())), opts?.now); // SYNC WRITE RESILIENCE
+      if (n > 0) console.log(`[scheduler] reaper (independent): reaped ${String(n)} stale running row(s)`);
+    } catch {
+      // best-effort — the next pass retries
+    }
+  }
+}
+
 /** COMMISSION CLOSE throttle: weekly data settles daily — a check every 15 min is plenty (manual triggers skip the throttle). */
 export const COMMISSION_CLOSE_MIN_INTERVAL_MS = 15 * 60_000;
 let lastCommissionCloseAt = 0;
@@ -571,6 +642,8 @@ export async function schedulerTick(options?: {
 export const SCHEDULER_MAX_CONCURRENT_TICKS = 1;
 
 let inflight: Promise<SchedulerTickResult> | null = null;
+/** Identity token of the run that currently owns `inflight` (the watchdog and late-settling zombies use it to avoid clobbering a newer tick's lock). */
+let inflightToken: object | null = null;
 let started = false;
 
 /** In-process mutex so a manual refresh and a background tick never overlap. */
@@ -593,6 +666,9 @@ export function startScheduler(options?: {
   started = true;
   const tick = options?.tick ?? schedulerTick;
   const liveAdapters = options?.liveAdapters;
+  // Independent reaper: stale rows get closed even while a tick is wedged
+  // (the in-tick reap pass only runs when ticks complete — 2026-10-17).
+  void runStaleRunReaperLoop();
   void (async () => {
     for (;;) {
       let intervalSeconds = 90;
@@ -604,7 +680,9 @@ export function startScheduler(options?: {
       }
       await new Promise((r) => setTimeout(r, intervalSeconds * 1000));
       if (inflight !== null) continue; // SCHEDULER_MAX_CONCURRENT_TICKS = 1: skip while a tick runs
-      inflight = (async () => {
+      const token: object = {};
+      let runPromise: Promise<void> | null = null;
+      runPromise = (async () => {
         const t0 = Date.now();
         try {
           const res = await tick(liveAdapters ? { liveAdapters } : undefined);
@@ -612,9 +690,31 @@ export function startScheduler(options?: {
         } catch (e) {
           console.log(`[scheduler] tick crashed: ${e instanceof Error ? e.message : String(e)}`);
         } finally {
-          inflight = null;
+          // IDENTITY GUARD (2026-10-17): release the slot only if THIS run still
+          // holds it — the watchdog may have already released the loop and a
+          // newer tick may own it; a late-settling zombie must not clobber
+          // the newer run's lock.
+          if (inflightToken === token) {
+            inflightToken = null;
+            inflight = null;
+          }
         }
       })();
+      inflight = runPromise as Promise<SchedulerTickResult>;
+      inflightToken = token;
+      // TICK WATCHDOG (2026-10-17): never let one parked tick own the loop
+      // forever (measured wedged ticks: 66.2h / 19.2h / 5.2h). If the cap
+      // fires while this run is STILL the holder, release the loop — the
+      // zombie keeps running detached and the independent reaper closes its
+      // stale rows; the next round starts a fresh tick.
+      const watched = runPromise as Promise<unknown>;
+      void raceTickWatchdog(watched, TICK_WATCHDOG_CAP_MS, (ms) => new Promise((r) => setTimeout(r, ms))).then((winner) => {
+        if (winner === "watchdog" && inflightToken === token) {
+          inflightToken = null;
+          inflight = null;
+          console.log(`[scheduler] tick watchdog: a tick exceeded ${Math.round(TICK_WATCHDOG_CAP_MS / 60_000)} min without finishing — loop released (the parked tick stays detached; its stale rows are reaped by the stale-run reaper)`);
+        }
+      });
     }
   })();
 }
