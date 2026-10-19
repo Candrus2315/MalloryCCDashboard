@@ -129,6 +129,77 @@ export function buildWeeklyRepRows(
   return rows.sort((a, b) => b.total - a.total || a.rep_name.localeCompare(b.rep_name));
 }
 
+// ---------- PER-DAY × PER-REP WINS GRID (owner request 2026-10-19) ----------
+
+/** One rep row of the per-day wins grid: counts aligned to `dates` (same order), zero-filled. */
+export interface WeeklyDayByRepRow {
+  rep_id: string;
+  rep_name: string;
+  /** Paid wins whose DEPOSIT was received on each date of `dates`; 0 where none. */
+  counts: number[];
+  /** Sum of `counts` — equals the rep's WeeklyRepRow.total (same ownership rule). */
+  total: number;
+}
+
+/** The per-day (booking_win_business_date) × rep matrix of one Mon–Sun week. */
+export interface WeeklyDayByRepGrid {
+  /** The week's ET calendar dates (Mon..Sun), in order — Sat/Sun always present. */
+  dates: string[];
+  /** One row per rep, in `repRows` order (roster + attributed, largest first). */
+  reps: WeeklyDayByRepRow[];
+  /** Wins with NO attribution rep, per day — team total only, never a rep row (rev-13). */
+  unattributed: number[];
+  /** ALL wins per day (reps + unattributed) — identical to winsByDate(wins, dates). */
+  team: number[];
+}
+
+/**
+ * Bucket in-window BOOKING WINS by DEPOSIT-PAID ET date (bookingWinBusinessDateOf —
+ * Ruling 1/1a) AND attributed rep (booking_attributions, same splitWinOwnership
+ * rule) — the per-day × per-rep grid. NO new counting rule: the input `wins` is
+ * the same isBookingWin+scope+window set every other figure counts, the bucket
+ * is the same win date the daily strip uses, and the ownership split is the
+ * same rev-13 join (manual overrides ARE rep bookings; no-rep → unattributed
+ * line, team total only). A session HELD Monday whose deposit PAID Saturday
+ * buckets under Saturday — the bucket is the deposit date, never the session
+ * date. Out-of-window wins are ignored by construction (the date index gates).
+ */
+export function weeklyDayByRepGrid(
+  wins: AppointmentRow[],
+  attributions: AttributionRow[],
+  dates: string[],
+  repRows: WeeklyRepRow[],
+): WeeklyDayByRepGrid {
+  const idxOf = new Map(dates.map((d, i) => [d, i]));
+  const byAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
+  const rows: WeeklyDayByRepRow[] = repRows.map((r) => ({
+    rep_id: r.rep_id,
+    rep_name: r.rep_name,
+    counts: dates.map(() => 0),
+    total: 0,
+  }));
+  const rowByRep = new Map(rows.map((r) => [r.rep_id, r]));
+  const unattributed = dates.map(() => 0);
+  const team = dates.map(() => 0);
+  for (const w of wins) {
+    const d = bookingWinBusinessDateOf(w);
+    const i = d ? idxOf.get(d) : undefined;
+    if (i == null) continue; // not one of the grid's dates — out by construction
+    team[i] += 1;
+    const repId = byAppt.get(w.id)?.rep_id;
+    if (repId) {
+      const row = rowByRep.get(repId);
+      if (row) {
+        row.counts[i] += 1;
+        row.total += 1;
+      }
+    } else {
+      unattributed[i] += 1;
+    }
+  }
+  return { dates, reps: rows, unattributed, team };
+}
+
 /** Conversion rate; null when the denominator is 0 (never a fabricated 0%). */
 export function conversionRate(numerator: number, denominator: number): number | null {
   return denominator > 0 ? numerator / denominator : null;

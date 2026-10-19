@@ -17,7 +17,7 @@
  *     9/day), first fully open day, and the no-goal honest state.
  */
 import { describe, expect, test } from "bun:test";
-import { lastCompletedWeekStart, monthStartDate, goalVsActual, isAnimaliaSession, winsByDate } from "../metrics/weekly";
+import { lastCompletedWeekStart, monthStartDate, goalVsActual, isAnimaliaSession, winsByDate, weeklyDayByRepGrid } from "../metrics/weekly";
 import { availabilityPageData, weeklyPageData, type AvailabilityViewPayload } from "../page-data";
 import { MemoryStore } from "../store/memory";
 import type { AppointmentRow, AvailabilityRule } from "../metrics/compute";
@@ -319,6 +319,170 @@ describe("weeklyPageData (MemoryStore, pinned today)", () => {
     expect(data.warnings.some((w) => w.includes("No sheet leads"))).toBe(true);
   });
 });
+
+// ---------- PER-DAY × PER-REP WINS GRID (owner request 2026-10-19) ----------
+// The owner's Saturday-deposit problem: deposits PAID on a weekend day were
+// invisible per rep (only in the weekly sum). The grid buckets the SAME wins
+// every other figure counts by DEPOSIT-paid ET date × attributed rep —
+// session date never creates a bucket. Dashboard-only: the copied CC Report
+// text must carry none of it.
+
+/** The 7 Mon–Sun ET dates of the pinned last-completed week (Sat 9/26, Sun 9/27 in). */
+const LW_DATES = [
+  LW_MON,
+  "2026-09-22",
+  "2026-09-23",
+  "2026-09-24",
+  "2026-09-25",
+  "2026-09-26",
+  LW_SUN,
+];
+
+describe("PER-DAY × PER-REP wins grid (owner request 2026-10-19)", () => {
+  test("existing fixture: per-day × rep buckets reconcile with the daily strip AND the By-Rep table; zeros explicit; Sat/Sun columns present", async () => {
+    const { store } = await seedWeeklyStore();
+    const data = await weeklyPageData({ store, today: TODAY });
+    const g = data.bookings.dayByRep;
+    // all 7 calendar days of the Mon–Sun week, in order — Sat 9/26 + Sun 9/27 included
+    expect(g.dates).toEqual(LW_DATES);
+    const byName = (n: string) => g.reps.find((r) => r.rep_name === n)!;
+    // Allison's two Monday wins (w-mon-1 + w-mon-2)
+    expect(byName("Allison Wittner").counts).toEqual([2, 0, 0, 0, 0, 0, 0]);
+    expect(byName("Allison Wittner").total).toBe(2);
+    // Carmine's manual-override win deposited Tuesday
+    expect(byName("Carmine Morgano").counts).toEqual([0, 1, 0, 0, 0, 0, 0]);
+    expect(byName("Carmine Morgano").total).toBe(1);
+    // Jennifer's win deposit landed SUNDAY — the last day of the week still gets its column
+    expect(byName("Jennifer Stitt").counts).toEqual([0, 0, 0, 0, 0, 0, 1]);
+    // Laura's win is NEXT Monday (out of window); Dan has no wins — both still get explicit zero rows
+    expect(byName("Laura Rivera").counts).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(byName("Dan McKillop").counts).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    // the unattributed win (w-unattr-1, Thu 9/24) is the team-only line, never a rep cell
+    expect(g.unattributed).toEqual([0, 0, 0, 1, 0, 0, 0]);
+    expect(g.team).toEqual([2, 1, 0, 1, 0, 0, 1]);
+    // reconciliation invariants: grid ↔ daily strip ↔ By-Rep table ↔ grand total
+    expect(g.team).toEqual(data.bookings.daily.map((d) => d.count));
+    for (const r of g.reps) {
+      expect(r.counts).toHaveLength(7); // zero days are explicit 0s, never blank/null
+      expect(r.counts.reduce((s, n) => s + n, 0)).toBe(r.total);
+      expect(r.total).toBe(data.bookings.repRows.find((x) => x.rep_id === r.rep_id)!.total);
+      for (const n of r.counts) expect(Number.isInteger(n)).toBe(true);
+    }
+    expect(g.reps.reduce((s, r) => s + r.total, 0) + g.unattributed.reduce((s, n) => s + n, 0)).toBe(
+      g.team.reduce((s, n) => s + n, 0),
+    );
+    // dashboard-only: the copied CC Report text carries none of the grid
+    expect(data.report.reportText).not.toContain("Per-day wins by rep");
+    expect(data.report.reportText).not.toContain("Sat/Sun");
+  });
+
+  test("DEPOSIT-date bucketing (the Sat 10/17 pattern): sessions HELD Mon/Tue/Thu whose deposits PAID Sat/Sun count under Sat/Sun — never the session day", async () => {
+    const store = await seedWeekendDepositStore();
+    const data = await weeklyPageData({ store, today: TODAY });
+    const g = data.bookings.dayByRep;
+    expect(data.bookings.total).toBe(5);
+    expect(g.dates).toEqual(LW_DATES);
+    const byName = (n: string) => g.reps.find((r) => r.rep_name === n)!;
+    // Allison: deposit PAID Monday 9/21 (session held THU 9/24) + deposit PAID Saturday 9/26 (session HELD Monday 9/21)
+    expect(byName("Allison Wittner").counts).toEqual([1, 0, 0, 0, 0, 1, 0]);
+    // Jennifer: session AND deposit both Saturday 9/26
+    expect(byName("Jennifer Stitt").counts).toEqual([0, 0, 0, 0, 0, 1, 0]);
+    // Carmine: manual-override deposit PAID Sunday 9/27 (session held Tuesday 9/22)
+    expect(byName("Carmine Morgano").counts).toEqual([0, 0, 0, 0, 0, 0, 1]);
+    expect(byName("Carmine Morgano").total).toBe(1);
+    // Dan: zero-win roster rep — an explicit all-zero row (zero-render)
+    expect(byName("Dan McKillop").counts).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    // the unattributed Sunday deposit stays team-total only
+    expect(g.unattributed).toEqual([0, 0, 0, 0, 0, 0, 1]);
+    // team row: Mon=1, Sat=2 (Allison + Jennifer), Sun=2 (Carmine + unattributed) — the weekend days light up
+    expect(g.team).toEqual([1, 0, 0, 0, 0, 2, 2]);
+    // the grid's team row IS the daily strip (bucket = deposit date, not session date):
+    // sessions on Tue/Thu contribute NOTHING to Tue/Thu buckets
+    expect(g.team).toEqual(data.bookings.daily.map((d) => d.count));
+    expect(data.bookings.daily.find((d) => d.date === "2026-09-22")!.count).toBe(0);
+    expect(data.bookings.daily.find((d) => d.date === "2026-09-24")!.count).toBe(0);
+    expect(data.bookings.daily.find((d) => d.date === "2026-09-26")!.count).toBe(2);
+    // row totals match the By-Rep table's totals (same ownership rule)
+    for (const r of g.reps) {
+      expect(r.total).toBe(data.bookings.repRows.find((x) => x.rep_id === r.rep_id)!.total);
+    }
+    expect(g.reps.reduce((s, r) => s + r.total, 0) + g.unattributed.reduce((s, n) => s + n, 0)).toBe(5);
+  });
+
+  test("weeklyDayByRepGrid pure: empty week → every cell an explicit 0 (never blank); out-of-window wins ignored", () => {
+    const g = weeklyDayByRepGrid(
+      [],
+      [],
+      LW_DATES,
+      [{ rep_id: "r1", rep_name: "A", total: 0, manual: 0 }],
+    );
+    expect(g.dates).toEqual(LW_DATES);
+    expect(g.team).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(g.unattributed).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(g.reps).toHaveLength(1);
+    expect(g.reps[0].counts).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(g.reps[0].total).toBe(0);
+  });
+});
+
+/**
+ * Dedicated fixture for the DEPOSIT-date bucket rule: every row's SESSION
+ * (appointment_datetime/created date) deliberately differs from its DEPOSIT
+ * week-date (booking_win_business_date) — the Sat 10/17 owner case where
+ * deposits paid on a weekend for sessions held earlier in the week.
+ */
+async function seedWeekendDepositStore(): Promise<MemoryStore> {
+  const store = new MemoryStore();
+  await store.saveSettings({ acuity: { calendars_included: [], types_included: [] } });
+  await store.upsertUsers(
+    ["Allison Wittner", "Carmine Morgano", "Jennifer Stitt", "Dan McKillop"].map((name) => ({
+      id: name,
+      provider: "highlevel",
+      external_id: name.toLowerCase().replace(/\s+/g, "-"),
+      name,
+      email: null,
+      is_active: true,
+      call_start_date: null,
+    })),
+  );
+  const all = await store.getAllUsers();
+  const idOf = (name: string) => all.find((u) => u.name === name)!.id;
+
+  // [id, session date, DEPOSIT-paid date] — the session day NEVER buckets
+  const win = (id: string, sessionDate: string, winDate: string) => ({
+    id,
+    acuity_appointment_id: id,
+    contact_id: "k1",
+    calendar_id: "cal-1",
+    appointment_type: "Portrait Session",
+    appointment_datetime: H(sessionDate, "14:00"),
+    created_at: H(sessionDate, "12:00"),
+    created_business_date: sessionDate,
+    booking_win_business_date: winDate,
+    raw: { priceSold: "300.00", amountPaid: "300.00" },
+    status: "scheduled",
+    cancelled: false,
+  });
+  await store.upsertAppointments([
+    win("d-mon-dep", "2026-09-24", LW_MON), // session THU — deposit PAID Mon (Allison)
+    win("d-sat-dep", LW_MON, "2026-09-26"), // session HELD Mon — deposit PAID SAT (Allison)
+    win("d-sat-sess", "2026-09-26", "2026-09-26"), // session + deposit both SAT (Jennifer)
+    win("d-sun-dep", "2026-09-22", LW_SUN), // session TUE — deposit PAID SUN (Carmine, manual)
+    win("d-sun-unattr", "2026-09-23", LW_SUN), // session WED — deposit SUN, NO attribution
+  ]);
+
+  const stored = await store.getAppointmentsOverlapping("2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z");
+  const apptId = (acuityId: string) => stored.find((a) => a.acuity_appointment_id === acuityId)!.id;
+
+  await store.upsertAttributions([
+    { id: "g1", appointment_id: apptId("d-mon-dep"), call_id: null, rep_id: idOf("Allison Wittner"), method: "contact_id", confidence: 1, manual_override: false },
+    { id: "g2", appointment_id: apptId("d-sat-dep"), call_id: null, rep_id: idOf("Allison Wittner"), method: "contact_id", confidence: 1, manual_override: false },
+    { id: "g3", appointment_id: apptId("d-sat-sess"), call_id: null, rep_id: idOf("Jennifer Stitt"), method: "contact_id", confidence: 1, manual_override: false },
+    { id: "g4", appointment_id: apptId("d-sun-dep"), call_id: null, rep_id: idOf("Carmine Morgano"), method: "manual", confidence: 1, manual_override: true },
+    // d-sun-unattr deliberately has NO attribution row → online/unattributed line
+  ]);
+  return store;
+}
 
 // ---------- OWNER REPORT 10/6 "CALENDAR-FILL ACCURACY" fixture ----------
 // The owner's real Oct 5–11 numbers (65 appointments on only 61 distinct
