@@ -39,6 +39,13 @@ import { attributionTick, type AttributionTickResult } from "./attribution-tick"
 import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
 import { commissionCloseTick, type CommissionCloseResult } from "../commission/close";
 import type { LiveSheetsAdapter } from "./sheets-live";
+import { availabilityFeedTick, type AvailabilityFeedResult } from "./availability-feed";
+import {
+  runFreshnessWatchdogPass,
+  type FreshnessPassResult,
+  type ForceAttemptFn,
+  type SendAlertFn,
+} from "./freshness-watchdog";
 
 /** A "running" sync_runs row older than this is a crashed process, not a live one. */
 export const STALE_RUNNING_CUTOFF_HOURS = 12;
@@ -99,17 +106,65 @@ export async function runStaleRunReaperLoop(opts?: {
   rounds?: number;
   /** Test hook: shrink the cadence (default REAPER_INTERVAL_MS). */
   intervalMs?: number;
+  /**
+   * Reliability Phase 2a: run the provider FRESHNESS WATCHDOG pass on this
+   * same loop after each reap — one loop, two safety nets (a hung tick is
+   * PR #73's job; a stale provider is the freshness watchdog's). Undefined =
+   * disabled (existing reaper-only callers and tests unchanged).
+   */
+  freshness?: {
+    settings?: AppSettings;
+    forceAttempt?: ForceAttemptFn;
+    sendAlert?: SendAlertFn;
+    liveAdapters?: { sheets?: LiveSheetsAdapter | null };
+  };
 }): Promise<void> {
   const sleep = opts?.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const intervalMs = opts?.intervalMs ?? REAPER_INTERVAL_MS;
   const rounds = opts?.rounds ?? Number.POSITIVE_INFINITY;
   for (let i = 0; i < rounds; i++) {
     await sleep(intervalMs);
+    // Store resolution stays best-effort: at boot the store may not be ready
+    // yet — the loop must survive that and retry next round (pre-Phase-2a
+    // behavior; the original code had this inside the reap try/catch).
+    let store: Store;
     try {
-      const n = await reapStaleSyncRuns(withSyncWriteRetry(opts?.store ?? (await getStore())), opts?.now); // SYNC WRITE RESILIENCE
+      store = withSyncWriteRetry(opts?.store ?? (await getStore())); // SYNC WRITE RESILIENCE
+    } catch {
+      continue; // store not ready yet — pace and retry next round
+    }
+    try {
+      const n = await reapStaleSyncRuns(store, opts?.now);
       if (n > 0) console.log(`[scheduler] reaper (independent): reaped ${String(n)} stale running row(s)`);
     } catch {
       // best-effort — the next pass retries
+    }
+    // PROVIDER FRESHNESS WATCHDOG (Phase 2a): same loop, own cadence — a
+    // provider stale beyond 3× its cadence gets one bounded self-recovery
+    // attempt, and a provider that stays stale after N attempts escalates to
+    // a DEGRADED ops alert (once per incident, restart-proof). Best-effort:
+    // a failed pass retries on the next round, never crashes the loop.
+    if (opts?.freshness) {
+      try {
+        const r: FreshnessPassResult = await runFreshnessWatchdogPass({
+          store,
+          now: opts?.now,
+          settings: opts.freshness.settings,
+          forceAttempt: opts.freshness.forceAttempt,
+          sendAlert: opts.freshness.sendAlert,
+          liveAdapters: opts.freshness.liveAdapters,
+        });
+        const bits = [
+          r.forced.length ? `forced ${r.forced.join(",")}` : "",
+          r.recovered.length ? `recovered ${r.recovered.join(",")}` : "",
+          r.escalated.length ? `ESCALATED ${r.escalated.join(",")}` : "",
+          r.clearedRunningRows ? `cleared ${String(r.clearedRunningRows)} stale row(s)` : "",
+          r.alerts.length ? `alerts ${r.alerts.map((a) => `${a.level}:${a.provider}:${a.delivered ? "sent" : a.configured ? "failed" : "log-only"}`).join(",")}` : "",
+        ].filter(Boolean);
+        if (bits.length) console.log(`[scheduler] freshness watchdog: ${bits.join(" · ")}`);
+      } catch {
+        // best-effort — the next pass retries
+      }
     }
   }
 }
@@ -194,6 +249,8 @@ export interface SchedulerTickResult {
   contactsReconciliation?: { dbCount: number | null; sourceTotal: number | null; delta: number | null; status: string };
   /** Independent Google Sheets lead sync piggy-backed on the same tick (never fails the tick). */
   sheets?: SheetsTickResult;
+  /** Independent Acuity availability-FEED refresh piggy-backed on the same tick (never fails the tick). */
+  availabilityFeed?: AvailabilityFeedResult;
   /** Independent commission weekly close piggy-backed on the same tick (never fails the tick; throttled). */
   commission?: CommissionCloseResult;
   /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
@@ -219,8 +276,12 @@ async function runAttributionRun(store: Store, settings: AppSettings, opts?: { f
  * Wrapped by schedulerTick, which piggy-backs the independent availability
  * refresh. Injectable for tests: store, creds, fetchImpl, sleep and the clock
  * are all options — no live API and no real time needed.
+ *
+ * EXPORTED (Reliability Phase 2a): the freshness watchdog's recovery
+ * dispatcher forces ONE bounded highlevelTick for a stale provider — the same
+ * code path, trigger:"manual", all guards intact. Nothing else changed.
  */
-async function highlevelTick(options?: {
+export async function highlevelTick(options?: {
   store?: Store;
   settings?: AppSettings;
   creds?: HighLevelCreds | null;
@@ -608,6 +669,23 @@ export async function schedulerTick(options?: {
   } catch (e) {
     sheets = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
+  // AVAILABILITY FEED (Phase 2a): the acuity_availability tick was DESIGNED to
+  // piggy-back on this tick (its own module doc says so) but was never wired
+  // in — it only ran on page-load top-ups, so its background freshness was
+  // demand-driven and the freshness watchdog would have flapped on it
+  // overnight. Same piggy-back contract as the others: own guards (running
+  // guard, 5-min throttle, no-credentials skip), own sync_runs audit rows,
+  // never fails the tick.
+  let availabilityFeed: AvailabilityFeedResult | undefined;
+  try {
+    availabilityFeed = await availabilityFeedTick({
+      store: options?.store,
+      now: options?.now,
+      trigger: options?.trigger,
+    });
+  } catch (e) {
+    availabilityFeed = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
   // COMMISSION WEEKLY CLOSE (owner directive 2026-10-01): independent finalize
   // of completed Mon–Sun weeks (idempotent — existing records are skipped).
   // Throttled like the sheets sync (commission data settles daily; a check
@@ -621,7 +699,7 @@ export async function schedulerTick(options?: {
       commission = { outcome: "error", weeksConsidered: 0, recordsWritten: 0, weeksClosed: [], error: e instanceof Error ? e.message : String(e) };
     }
   }
-  return { ...base, availability, attribution, sheets, commission, reaped };
+  return { ...base, availability, attribution, sheets, availabilityFeed, commission, reaped };
 }
 
 // ---------- the always-on loop ----------
@@ -668,7 +746,11 @@ export function startScheduler(options?: {
   const liveAdapters = options?.liveAdapters;
   // Independent reaper: stale rows get closed even while a tick is wedged
   // (the in-tick reap pass only runs when ticks complete — 2026-10-17).
-  void runStaleRunReaperLoop();
+  // Phase 2a: the SAME loop also runs the provider freshness watchdog
+  // (self-recovery + escalation) — one loop, two safety nets; liveAdapters
+  // threads the sheets adapter into forced recovery syncs exactly as the
+  // tick gets it.
+  void runStaleRunReaperLoop(liveAdapters ? { freshness: { liveAdapters } } : { freshness: {} });
   void (async () => {
     for (;;) {
       let intervalSeconds = 90;

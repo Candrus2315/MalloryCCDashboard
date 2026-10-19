@@ -2303,6 +2303,26 @@ export class PgStore implements Store {
   async getSyncRuns(limit: number): Promise<SyncRunRow[]> {
     return this.cache.wrap("getSyncRuns:" + JSON.stringify([limit]), () => this.getSyncRunsCached(limit));
   }
+  async getLatestSuccessfulSyncRunByProvider(): Promise<Record<string, string>> {
+    await this.ensureSchema();
+    // One indexed probe per provider — sync_runs_provider_idx (provider,
+    // started_at DESC) makes each a single index seek, so /health and the
+    // freshness watchdog stay fast even as sync_runs grows. Deliberately NOT
+    // wrapped in the read cache: freshness must report the current truth.
+    const providers = await this.sql`SELECT DISTINCT provider FROM sync_runs`;
+    const out: Record<string, string> = {};
+    for (const p of providers) {
+      const provider = String(p.provider);
+      const rows = await this.sql`SELECT started_at::text, finished_at::text FROM sync_runs
+        WHERE provider = ${provider} AND status = 'success' AND finished_at IS NOT NULL
+        ORDER BY started_at DESC LIMIT 1`;
+      if (rows.length === 0) continue;
+      const raw = String(rows[0].finished_at ?? rows[0].started_at);
+      const ms = parseSyncStartedMs(raw);
+      if (Number.isFinite(ms)) out[provider] = new Date(ms).toISOString();
+    }
+    return out;
+  }
   private async getSyncRunsCached(limit: number): Promise<SyncRunRow[]> {
     await this.ensureSchema();
     const rows = await this.sql`SELECT id::text, provider, status, started_at::text, finished_at::text, records_upserted, error FROM sync_runs ORDER BY started_at DESC LIMIT ${limit}`;

@@ -28,6 +28,12 @@ export const SECRET_NAMES = [
   "ACUITY_API_KEY",
   "GOOGLE_SERVICE_ACCOUNT_JSON",
   "DASHBOARD_PASSPHRASE",
+  // Reliability Phase 2a (owner directive 2026-10-16): ops alerting via Knock.
+  // All three are OPTIONAL — when KNOCK_API_KEY or ALERT_TO_EMAIL is absent,
+  // sendOpsAlert degrades to log-only ({configured:false}) and never throws.
+  "KNOCK_API_KEY",
+  "KNOCK_SIGNING_KEY",
+  "ALERT_TO_EMAIL",
 ] as const;
 
 export type SecretName = (typeof SECRET_NAMES)[number];
