@@ -193,8 +193,11 @@ export interface AttributionRow {
    * the engine's triage category for UNATTRIBUTED rows ("no-window-interaction"
    * | "interaction-without-roster-rep" | "no-matching-contact" |
    * "no-contact-identity" | "bad-datetime") or "ambiguous" on ambiguous rows.
-   * NULL on attributed and manually-assigned rows. Grouped queue counts read
-   * this column; the audit note is never parsed for it.
+   * NULL on attributed and manually-assigned rows — EXCEPT the owner-rule
+   * rows (directive 2026-10-19): attributed auction-genre bookings carry
+   * "owner-rule-auction" so the rule's provenance is queryable on the row.
+   * Grouped queue counts read this column; the audit note is never parsed
+   * for it.
    */
   reason_code?: string | null;
   /**
@@ -1515,9 +1518,10 @@ export interface UnattributedBookingRow {
    * stored tick-time classification when the booking has a verdict row
    * ("no-window-interaction" | "interaction-without-roster-rep" |
    * "no-matching-contact" | "no-contact-identity" | "bad-datetime" |
-   * "ambiguous"), else the live engine match's noRepReason, else null. The
-   * grouped queue summary and the per-row reason label read THIS, never the
-   * freeform note.
+   * "ambiguous"), else the live engine match's noRepReason, else null.
+   * Attributed owner-rule rows carry "owner-rule-auction" instead (directive
+   * 2026-10-19). The grouped queue summary and the per-row reason label read
+   * THIS, never the freeform note.
    */
   reason_code: string | null;
   /** True when the stored attribution row for this appointment is a manual override. */

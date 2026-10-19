@@ -210,8 +210,8 @@ describe("S4b reason_code persistence — the sync wiring stores the category", 
     ...over,
   });
 
-  test("writer version bumped to 4 (a v3 writer would revert Rule B junk-contact email resolutions behind conflict-updates)", () => {
-    expect(ATTRIBUTION_WRITER_VERSION).toBe(4);
+  test("writer version bumped to 5 (a v4 writer would not carry the 2026-10-19 auction owner rule or its manual-supersede audit)", () => {
+    expect(ATTRIBUTION_WRITER_VERSION).toBe(5);
   });
 
   test("unattributed rows carry reason_code; attributed rows are NULL; note format unchanged", () => {

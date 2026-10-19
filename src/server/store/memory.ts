@@ -16,6 +16,7 @@ import {
   createdBusinessDateOf,
 } from "../metrics/compute";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
+import { OWNER_RULE_AUCTION_METHOD, OWNER_RULE_AUCTION_REP_NAME } from "../metrics/attribution";
 import type {
   AppSettings,
   AuditCallRow,
@@ -657,9 +658,22 @@ export class MemoryStore implements Store {
       }
     }
     for (const r of rows) {
-      // mirror the PG store: never overwrite a manual override automatically
+      // mirror the PG store: never overwrite a manual override automatically —
+      // EXCEPT the owner rule for auction-genre bookings (directive
+      // 2026-10-19): a rule row naming a DIFFERENT rep supersedes the manual
+      // override (flip audited below); a same-rep rule row is a no-op.
       const existing = this.attributions.get(r.appointment_id);
-      if (existing?.manual_override) continue;
+      if (existing?.manual_override) {
+        if (r.method !== OWNER_RULE_AUCTION_METHOD || existing.rep_id === (r.rep_id ?? null)) continue;
+        await this.insertManualOverride({
+          entity_type: "booking_attribution",
+          entity_id: r.appointment_id,
+          field: "rep",
+          previous_value: this.users.get(existing.rep_id ?? "")?.name ?? existing.rep_id ?? "unattributed",
+          new_value: OWNER_RULE_AUCTION_REP_NAME,
+          changed_by: "owner-rule-auction",
+        });
+      }
       // QA phase 3 (S26 divergence split): stamp when the derived row was written
       // so the validation page can date a post-close re-derivation.
       this.attributions.set(r.appointment_id, { ...r, updated_at: r.updated_at ?? new Date().toISOString() });
