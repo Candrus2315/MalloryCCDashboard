@@ -99,12 +99,42 @@
 import type { AppSettings } from "../store/types";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import { addDays, etDateStrFromInstant } from "../date-logic";
+import { isAuctionSession } from "./weekly";
 import {
   buildRosterEligibility,
   applyAttributionEligibility,
   eligibleRepId,
   type RosterEligibility,
 } from "../roster";
+
+// ---------- OWNER RULE: auction-genre bookings → Allison Wittner ----------
+
+/**
+ * OWNER DIRECTIVE 2026-10-19 (verbatim): "if there is ever any auction
+ * bookings it came from Allison, always contribute those to her".
+ *
+ * A FIRST-CLASS standing attribution rule alongside the s1 evidence rules:
+ * every appointment whose Acuity type is the auction genre (isAuctionSession —
+ * the canonical classifier) attributes to Allison Wittner, ALWAYS:
+ *   - it WINS OVER interaction evidence (a qualifying call naming another rep
+ *     does not move an auction booking), over the ambiguity queue, and over a
+ *     manual override that names a different rep;
+ *   - it applies at sync time (the tick/full-sync wiring resolves Allison's
+ *     roster id and passes ownerRules) so every FUTURE auction booking needs
+ *     no manual action;
+ *   - every rule-applied row is auditable on its face: method
+ *     'owner-rule-auction' + reason_code 'owner-rule-auction' + the directive
+ *     quote in the note (visible in booking_attributions / Audit page).
+ * A manual override that ALREADY names the rule rep is carried verbatim (no
+ * churn — the ownership is already the rule's outcome). Non-auction genres
+ * are completely unaffected.
+ */
+export const OWNER_RULE_AUCTION_METHOD = "owner-rule-auction" as const;
+export const OWNER_RULE_AUCTION_REASON = "owner-rule-auction" as const;
+export const OWNER_RULE_AUCTION_NOTE =
+  'Owner directive 2026-10-19: "if there is ever any auction bookings it came from Allison, always contribute those to her"';
+/** Roster name the directive names (exact, case-insensitive match on users.name). */
+export const OWNER_RULE_AUCTION_REP_NAME = "Allison Wittner" as const;
 
 // Canonical identity normalizers re-exported under the engine's historical
 // names (callers keep compiling; the DEFINITION is the canonical one — the
@@ -132,6 +162,12 @@ export interface AttributionAppointment {
   /** Internal appointments.id — returned verbatim as `appointmentId`. */
   id: string;
   contact_id: string | null;
+  /**
+   * Acuity appointment type (raw). Read ONLY by the OWNER RULE (auction genre
+   * → Allison Wittner, owner directive 2026-10-19) — never by the s1
+   * evidence rules, which stay identity+interaction based.
+   */
+  appointment_type?: string | null;
   /** Normalized at sync via the CANONICAL normalizer — digits, leading 1 dropped. */
   client_phone?: string | null;
   /** Normalized at sync (lowercase-trimmed) or null. */
@@ -191,7 +227,12 @@ export interface AttributionContact {
 
 // ---------- output ----------
 
-export type AttributionMethod = "contact_id" | "phone" | "email" | "window_interaction";
+export type AttributionMethod =
+  | "contact_id"
+  | "phone"
+  | "email"
+  | "window_interaction"
+  | typeof OWNER_RULE_AUCTION_METHOD;
 
 /**
  * ONE s1 window interaction (owner-frozen s1 rule, 2026-09-27): a VERIFIED
@@ -460,6 +501,20 @@ export interface AttributionOptions {
    * ROSTER-REP interaction. Pure input: the engine never fetches.
    */
   s1Interactions?: AttributionHarvestInteraction[];
+  /**
+   * OWNER RULES (first-class standing attributions, caller-owned roster truth):
+   * `auctionRepId` — the internal roster id of Allison Wittner (the owner
+   * directive 2026-10-19 rep). When set, EVERY auction-genre appointment
+   * (isAuctionSession) attributes to that rep regardless of interaction
+   * evidence, ambiguity, or manual override — the rule short-circuits the
+   * evidence pipeline and emits method 'owner-rule-auction'. Omitted/null →
+   * rule inactive (e.g. Allison not on the roster: fail-honest, nothing
+   * guessed). The caller resolves the rep id from the roster; the engine
+   * stays pure.
+   */
+  ownerRules?: {
+    auctionRepId?: string | null;
+  };
 }
 
 interface Candidate {
@@ -600,6 +655,23 @@ export function matchAppointmentsToCalls(
 
   for (const appt of appointments) {
     const apptId = appt.id;
+
+    // OWNER RULE (directive 2026-10-19): auction-genre bookings belong to
+    // Allison Wittner, ALWAYS — short-circuit BEFORE identity/evidence: the
+    // rule wins over qualifying-call evidence, over the ambiguity queue, and
+    // (at the wiring/persist layer) over a different-rep manual override.
+    // Inactive without ownerRules.auctionRepId (fail-honest — never guessed).
+    const auctionRepId = options.ownerRules?.auctionRepId ?? null;
+    if (auctionRepId && isAuctionSession(appt.appointment_type)) {
+      out.push({
+        appointmentId: apptId,
+        status: "attributed",
+        repId: auctionRepId,
+        method: OWNER_RULE_AUCTION_METHOD,
+      });
+      continue;
+    }
+
     const apptContactId = (appt.contact_id ?? "").trim() || null;
     const apptPhone = normalizeUSPhone(appt.client_phone);
     const apptEmail = normalizeEmail(appt.client_email);

@@ -30,6 +30,19 @@ export function isAnimaliaSession(appointmentType: string): boolean {
   return /animalia/i.test(appointmentType ?? "");
 }
 
+/**
+ * CANONICAL AUCTION-GENRE CLASSIFIER: an Acuity appointment type belongs to
+ * the auction genre when the type name contains the channel word
+ * "auction" (case-insensitive — live types are e.g. "Auction Portrait
+ * Session"). Same convention as isAnimaliaSession and the Alliance/Auction
+ * BOOKINGS funnel split below; every consumer (funnel counts, attribution
+ * owner rule, retro scripts) MUST use this one function — never an ad-hoc
+ * string list.
+ */
+export function isAuctionSession(appointmentType: string | null | undefined): boolean {
+  return /auction/i.test(appointmentType ?? "");
+}
+
 /** Monday starting the most recent COMPLETED Mon–Sun work week (see module doc). */
 export function lastCompletedWeekStart(today: string): string {
   return addDays(weekStart(today), -7);
@@ -286,7 +299,7 @@ export function splitWinsByChannel(wins: AppointmentRow[]): { alliance: number; 
   let auction = 0;
   for (const w of wins) {
     if (/alliance/i.test(w.appointment_type ?? "")) alliance += 1;
-    if (/auction/i.test(w.appointment_type ?? "")) auction += 1;
+    if (isAuctionSession(w.appointment_type)) auction += 1;
   }
   return { alliance, auction };
 }

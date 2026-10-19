@@ -39,8 +39,13 @@ import {
   attributionWindowDates,
   bookingCreationDateEt,
   matchAppointmentsToCalls,
+  OWNER_RULE_AUCTION_METHOD,
+  OWNER_RULE_AUCTION_NOTE,
+  OWNER_RULE_AUCTION_REASON,
+  OWNER_RULE_AUCTION_REP_NAME,
   type AttributionMatch,
 } from "../metrics/attribution";
+import { isAuctionSession } from "../metrics/weekly";
 import { assertBookingInvariant, type AttributionRow } from "../metrics/compute";
 import { buildRosterEligibility } from "../roster";
 import type { AppSettings, Store } from "../store/types";
@@ -60,6 +65,14 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * takes over automatically — the recovery path). `force` bypasses for a
  * deliberate owner-directed recompute.
  *
+ * v5 = OWNER RULE auction→Allison (owner directive 2026-10-19, verbatim "if
+ *      there is ever any auction bookings it came from Allison, always
+ *      contribute those to her"): auction-genre appointments attribute to
+ *      Allison Wittner regardless of evidence/ambiguity/manual override,
+ *      method 'owner-rule-auction' + reason_code 'owner-rule-auction' +
+ *      directive-quote note; the rule may supersede a different-rep manual
+ *      override (flip recorded in manual_overrides by the persist layer).
+ *      s1 evidence rules for non-auction genres are UNCHANGED.
  * v4 = RULE B (owner-approved 2026-09-28): deterministic email-identity
  *      resolution for junk/shared stored contacts — a junk stored contact
  *      (appointments against it carry ≥2 distinct client emails) resolves via
@@ -76,7 +89,7 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * no version check — operationally retired by the 9/27 republish; from s6 on
  * every shipped writer carries the guard).
  */
-export const ATTRIBUTION_WRITER_VERSION = 4;
+export const ATTRIBUTION_WRITER_VERSION = 5;
 /** sync_checkpoints key holding the latest writer version that has written. */
 export const ATTRIBUTION_WRITER_VERSION_KEY = "attribution-writer-version";
 
@@ -90,6 +103,16 @@ export interface AttributionTickResult {
   unattributed?: number;
   /** Appointments whose existing manual_override row was preserved (manual wins). */
   manuallyAssigned?: number;
+  /**
+   * OWNER RULE (directive 2026-10-19): auction-genre appointments the rule
+   * attributed to Allison Wittner this run (evidence-independent). Rule rows
+   * already matching stored state (or carried manual rows naming her) are
+   * included in `manuallyAssigned`/no-op territory — this counts RULE rows in
+   * the write.
+   */
+  ownerRuleApplied?: number;
+  /** Auction appointments where the rule SUPERSEDED a different-rep manual override. */
+  ownerRuleSupersededManual?: number;
   /**
    * EVIDENCE-FETCH-FLOOR GUARD: in-cohort appointments whose attribution
    * window (creation ET date − 1 .. creation ET date) predates the call
@@ -135,14 +158,53 @@ export function toAttributionRows(
   matches: AttributionMatch[],
   existingAttributions: AttributionRow[],
   callIdByExternalId: Map<string, string>,
-): { rows: AttributionRow[]; manuallyAssignedIds: string[] } {
+  ownerRules?: { auctionRepId?: string | null },
+): { rows: AttributionRow[]; manuallyAssignedIds: string[]; supersededManualIds: string[] } {
   const manualByAppt = new Map(
     existingAttributions.filter((r) => r.manual_override).map((r) => [r.appointment_id, r]),
   );
-  const CONFIDENCE: Record<string, number> = { contact_id: 1, phone: 0.8, email: 0.8, window_interaction: 0.6 };
+  const CONFIDENCE: Record<string, number> = {
+    contact_id: 1,
+    phone: 0.8,
+    email: 0.8,
+    window_interaction: 0.6,
+    [OWNER_RULE_AUCTION_METHOD]: 1,
+  };
   const rows: AttributionRow[] = [];
   const manuallyAssignedIds: string[] = [];
+  const supersededManualIds: string[] = [];
   for (const m of matches) {
+    // OWNER RULE (directive 2026-10-19): auction-genre matches are rule rows —
+    // method/reason 'owner-rule-auction', directive quote as the audit note.
+    // A manual override that names the rule rep is carried VERBATIM (the
+    // ownership is already the rule's outcome — no churn, provenance kept); a
+    // manual override naming a DIFFERENT rep is SUPERSEDED by the rule row
+    // (the directive is "always") — the persist layer records the flip in the
+    // manual_overrides audit trail.
+    const isRuleMatch = m.status === "attributed" && m.method === OWNER_RULE_AUCTION_METHOD;
+    if (isRuleMatch) {
+      const manual = manualByAppt.get(m.appointmentId);
+      if (manual && manual.rep_id === ownerRules?.auctionRepId) {
+        rows.push({ ...manual });
+        manuallyAssignedIds.push(m.appointmentId);
+        continue;
+      }
+      if (manual && manual.rep_id !== ownerRules?.auctionRepId) {
+        supersededManualIds.push(m.appointmentId);
+      }
+      rows.push({
+        id: `attr:${m.appointmentId}`,
+        appointment_id: m.appointmentId,
+        call_id: null,
+        rep_id: m.repId ?? null,
+        method: OWNER_RULE_AUCTION_METHOD,
+        confidence: 1,
+        manual_override: false,
+        note: OWNER_RULE_AUCTION_NOTE,
+        reason_code: OWNER_RULE_AUCTION_REASON,
+      });
+      continue;
+    }
     const manual = manualByAppt.get(m.appointmentId);
     if (manual) {
       rows.push({ ...manual });
@@ -203,7 +265,7 @@ export function toAttributionRows(
       });
     }
   }
-  return { rows, manuallyAssignedIds };
+  return { rows, manuallyAssignedIds, supersededManualIds };
 }
 
 /**
@@ -276,6 +338,17 @@ export async function computeAndPersistAttributions(
     store.getHarvestCallsSince(since),
   ]);
 
+  // OWNER RULE resolution (directive 2026-10-19): Allison Wittner's ACTIVE
+  // roster id, resolved from the roster the caller owns. Not on the roster →
+  // the rule stays INACTIVE (fail-honest: no attribution is guessed, the tick
+  // result shows ownerRuleApplied 0 — a missing rule rep is an operator-
+  // visible roster problem, never a silent misattribution).
+  const ownerRuleAuctionRepId =
+    allUsers.find(
+      (u) => u.is_active && (u.name ?? "").trim().toLowerCase() === OWNER_RULE_AUCTION_REP_NAME.toLowerCase(),
+    )?.id ?? null;
+  const ownerRules = { auctionRepId: ownerRuleAuctionRepId };
+
   // OWNER DIRECTIVE: only in-scope Acuity calendars/types may feed attribution
   // — the same appointmentInScope rule every booking-feeding read applies —
   // and only QUALIFYING bookings (non-cancelled) need verdicts: the coverage
@@ -309,6 +382,10 @@ export async function computeAndPersistAttributions(
   const preserved = new Map<string, AttributionRow>();
   let belowFetchFloorUnverdicted = 0;
   for (const a of appts) {
+    // OWNER RULE: auction-genre appointments RE-DERIVE as rule rows even below
+    // the fetch floor — the rule is evidence-independent, so the floor guard's
+    // "cannot contain its window's calls" concern never applies to it.
+    if (ownerRuleAuctionRepId && isAuctionSession(a.appointment_type)) continue;
     const anchor = bookingCreationDateEt(a);
     const windowFrom = anchor ? attributionWindowDates(anchor.date).from : null;
     if (windowFrom != null && windowFrom >= callFloorDate) continue; // evidence fully covered
@@ -363,13 +440,13 @@ export async function computeAndPersistAttributions(
       attribution_window_hours: settings.attribution_window_hours,
       rep_mappings: settings.rep_mappings,
     },
-    { today, users: allUsers.map((u) => ({ id: u.id, is_active: u.is_active })), s1Interactions },
+    { today, users: allUsers.map((u) => ({ id: u.id, is_active: u.is_active })), s1Interactions, ownerRules },
   );
 
   const callIdByExternalId = new Map(
     storedCalls.filter((c) => c.external_call_id).map((c) => [c.external_call_id as string, c.id]),
   );
-  const { rows, manuallyAssignedIds } = toAttributionRows(matches, existing, callIdByExternalId);
+  const { rows, manuallyAssignedIds, supersededManualIds } = toAttributionRows(matches, existing, callIdByExternalId, ownerRules);
 
   // CARRY the preserved verdicts: replace the engine's (evidence-blind) rows
   // for below-floor appointments with their stored rows. Every in-cohort
@@ -414,6 +491,8 @@ export async function computeAndPersistAttributions(
     manuallyAssigned: manuallyAssignedIds.length,
     evidenceBelowFetchFloor: preserved.size,
     belowFetchFloorUnverdicted,
+    ownerRuleApplied: toWrite.filter((r) => r.method === OWNER_RULE_AUCTION_METHOD).length,
+    ownerRuleSupersededManual: supersededManualIds.length,
   };
 }
 

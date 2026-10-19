@@ -13,6 +13,7 @@ import {
   type LeadRow,
   attributionDegradation,
 } from "../metrics/compute";
+import { OWNER_RULE_AUCTION_METHOD, OWNER_RULE_AUCTION_REP_NAME } from "../metrics/attribution";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type {
   AppSettings,
@@ -1666,8 +1667,11 @@ export class PgStore implements Store {
     await this.sql.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(72240901)`;
       const existingRows = await tx`
-        SELECT appointment_id::text, rep_id::text, manual_override
-        FROM booking_attributions WHERE appointment_id = ANY(${ids}::uuid[])`;
+        SELECT ba.appointment_id::text AS appointment_id, ba.rep_id::text AS rep_id,
+               ba.manual_override, u.name AS rep_name
+        FROM booking_attributions ba
+        LEFT JOIN users u ON u.id = ba.rep_id
+        WHERE ba.appointment_id = ANY(${ids}::uuid[])`;
       if (!opts?.force) {
         const degrade = attributionDegradation(
           existingRows.map((r: Record<string, unknown>) => ({
@@ -1689,16 +1693,42 @@ export class PgStore implements Store {
       }
       for (const r of rows) {
         // appointment_id is UNIQUE — re-syncs replace attributions instead of duplicating.
-        // Never overwrite a manual override automatically.
+        // Never overwrite a manual override automatically — EXCEPT the owner
+        // rule for auction-genre bookings (directive 2026-10-19): a rule row
+        // naming a DIFFERENT rep supersedes even a manual override (the flip
+        // is audited into manual_overrides below); a rule row for an
+        // appointment ALREADY owned by the rule rep is a no-op (no churn,
+        // Christopher's manual provenance stays verbatim).
         await tx`
         INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note, reason_code)
         VALUES (${r.appointment_id}::uuid, ${r.call_id}, ${r.rep_id}, ${r.method}, ${r.confidence}, ${r.manual_override}, ${r.note ?? null}, ${r.reason_code ?? null})
         ON CONFLICT (appointment_id) DO UPDATE SET
           call_id = EXCLUDED.call_id, rep_id = EXCLUDED.rep_id, method = EXCLUDED.method,
-          confidence = EXCLUDED.confidence, manual_override = booking_attributions.manual_override,
+          confidence = EXCLUDED.confidence,
+          manual_override = CASE WHEN EXCLUDED.method = ${OWNER_RULE_AUCTION_METHOD} THEN false ELSE booking_attributions.manual_override END,
           note = EXCLUDED.note, reason_code = EXCLUDED.reason_code, updated_at = now()
         WHERE booking_attributions.manual_override = false
+           OR (EXCLUDED.method = ${OWNER_RULE_AUCTION_METHOD} AND booking_attributions.rep_id IS DISTINCT FROM EXCLUDED.rep_id)
       `;
+        // OWNER-RULE SUPERSEDE AUDIT: when the rule flipped a manual override
+        // that named a different rep, record the previous owner in the
+        // manual_overrides trail (the Audit page) — the directive is owner
+        // authority, and every takeover of a human decision is auditable.
+        const prior = existingRows.find(
+          (e: Record<string, unknown>) => String(e.appointment_id) === r.appointment_id,
+        );
+        if (
+          r.method === OWNER_RULE_AUCTION_METHOD &&
+          prior &&
+          Boolean(prior.manual_override) &&
+          (prior.rep_id == null ? null : String(prior.rep_id)) !== (r.rep_id ?? null)
+        ) {
+          await tx`
+            INSERT INTO manual_overrides (entity_type, entity_id, field, previous_value, new_value, changed_by)
+            VALUES ('booking_attribution', ${r.appointment_id}, 'rep',
+                    ${prior.rep_name ?? (prior.rep_id == null ? "unattributed" : String(prior.rep_id))},
+                    ${OWNER_RULE_AUCTION_REP_NAME}, 'owner-rule-auction')`;
+        }
       }
     });
     return rows.length;
