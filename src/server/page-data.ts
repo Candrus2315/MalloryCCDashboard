@@ -74,10 +74,12 @@ import {
   splitWinsByChannel,
   splitWinsBySessionType,
   weekFunnelRows,
+  weeklyDayByRepGrid,
   winsByDate,
   ALLIANCE_PIPELINE_ID,
   AUCTION_PIPELINE_ID,
   type WeekFunnelRow,
+  type WeeklyDayByRepGrid,
   type WeeklyRepRow,
 } from "./metrics/weekly";
 import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
@@ -1448,6 +1450,12 @@ export interface WeeklyPageData {
     repRows: WeeklyRepRow[];
     /** Wins with no attribution rep — team total only, NEVER a rep row (rev-13). */
     unattributed: number;
+    /**
+     * PER-DAY × PER-REP wins grid (owner request 2026-10-19): same wins, same
+     * win-bucket dates as `daily`, same attribution join as `repRows` —
+     * dashboard-only (never in the copied CC Report text).
+     */
+    dayByRep: WeeklyDayByRepGrid;
   };
   /**
    * Previous week's Alliance/Auction/Website split (owner CC Report template).
@@ -1608,6 +1616,10 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const lwSplit = splitWinsBySessionType(winsLw);
   const lwOwnership = splitWinOwnership(winsLw, attributions);
   const lwRepRows = buildWeeklyRepRows(lwOwnership.repCounts, nameById, rosterIds);
+  // PER-DAY × PER-REP grid (owner request 2026-10-19): the SAME winsLw set,
+  // bucketed per booking_win_business_date × attribution rep — the daily
+  // strip (team row) and the by-rep table (row totals) must reconcile with it.
+  const lwDayByRep = weeklyDayByRepGrid(winsLw, attributions, lwDates, lwRepRows);
   const weeklyGoal = teamGoal?.booking_goal ?? 79; // the app-wide team-goal default (Today/Daily Report convention)
 
   // ---- LAST WEEK: assigned-lead conversion (source-dated denominators) ----
@@ -1836,6 +1848,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       goalLine: goalVsActual(winsLw.length, weeklyGoal),
       daily: lwDates.map((d) => ({ date: d, count: dailyMap.get(d) ?? 0 })),
       repRows: lwRepRows,
+      dayByRep: lwDayByRep,
       unattributed: lwOwnership.unattributed,
     },
     channels,

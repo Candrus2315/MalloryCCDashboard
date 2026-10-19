@@ -90,6 +90,85 @@ function RhythmStrip({ daily }: { daily: { date: string; count: number }[] }) {
 }
 
 /**
+ * PER-DAY × PER-REP WINS GRID (owner request 2026-10-19) — one row per rep,
+ * one column per Mon–Sun ET calendar day (Sat/Sun always shown), plus the
+ * online/unattributed line (team total only) and the Team total row.
+ * Bucket = booking_win_business_date, the DEPOSIT-paid ET date (Ruling 1/1a):
+ * a session HELD Monday whose deposit PAID Saturday shows under Saturday, so
+ * weekend deposit activity is visible instead of hiding in the weekly sum.
+ * Same wins, same ownership rule as the By-Rep table (rep rows + unattributed);
+ * zeros render 0 — a zero day is a computed fact, never blank. Dashboard-only:
+ * the copied CC Report text carries none of this.
+ */
+function DayByRepGrid({ grid }: {
+  grid: {
+    dates: string[];
+    reps: { rep_id: string; rep_name: string; counts: number[]; total: number }[];
+    unattributed: number[];
+    team: number[];
+  };
+}) {
+  const sum = (a: number[]) => a.reduce((s, n) => s + n, 0);
+  const unattrTotal = sum(grid.unattributed);
+  const cell = (n: number, key: string) => (
+    <td
+      key={key}
+      className={
+        "py-2 pr-3 text-right tabular-nums " + (n > 0 ? "text-(--text-primary)" : "text-(--text-muted)")
+      }
+    >
+      {formatInt(n)}
+    </td>
+  );
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        {/* Phone: the grid keeps every day column (that IS the feature) and
+            scrolls horizontally — same overflow pattern as the RhythmStrip. */}
+        <table className="w-full min-w-[640px] text-sm">
+          <thead>
+            <tr className="border-b border-(--card-border) text-left text-xs text-(--text-caption)">
+              <th scope="col" className="py-1.5 pr-3 font-medium">Rep</th>
+              {grid.dates.map((d) => (
+                <th key={d} scope="col" className="py-1.5 pr-3 text-right font-medium">
+                  <span className="block uppercase tracking-wide">{weekdayName(d, false)}</span>
+                  <span className="block font-normal tabular-nums text-(--text-muted)">{formatDateShort(d)}</span>
+                </th>
+              ))}
+              <th scope="col" className="py-1.5 text-right font-medium">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {grid.reps.map((r) => (
+              <tr key={r.rep_id} className="border-b border-(--table-border-weak) transition-colors hover:bg-(--surface-3)">
+                <td className="py-2 pr-3 font-medium text-(--text-body)">{r.rep_name}</td>
+                {r.counts.map((n, i) => cell(n, `${r.rep_id}-${grid.dates[i]}`))}
+                <td className="py-2 text-right font-semibold tabular-nums text-(--text-primary)">{formatInt(r.total)}</td>
+              </tr>
+            ))}
+            {unattrTotal > 0 && (
+              <tr className="border-b border-(--table-border-weak)">
+                <td className="py-2 pr-3 text-(--text-muted)">Online / unattributed</td>
+                {grid.unattributed.map((n, i) => cell(n, `unattr-${grid.dates[i]}`))}
+                <td className="py-2 text-right tabular-nums text-(--text-muted)">{formatInt(unattrTotal)}</td>
+              </tr>
+            )}
+            <tr>
+              <td className="py-2 pr-3 font-semibold text-(--text-primary)">Team total</td>
+              {grid.team.map((n, i) => cell(n, `team-${grid.dates[i]}`))}
+              <td className="py-2 text-right font-semibold tabular-nums text-(--text-primary)">{formatInt(sum(grid.team))}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2.5 text-xs text-(--text-muted)">
+        Sat/Sun counts are wins whose deposit was PAID that day — the session itself may have been held any earlier day.
+      </p>
+    </div>
+  );
+}
+
+/**
  * REP CONTRIBUTION — ranked table (payload rows are already largest-first).
  * Share of team = rep wins ÷ team total (both payload numbers; presentation
  * ratio). Weekly goal / goal achievement: the weekly payload carries no
@@ -336,7 +415,10 @@ function WeeklyPage() {
         </Panel>
       </section>
 
-      {/* 3 — DAILY BOOKING RHYTHM: one proportional Mon–Sun strip */}
+      {/* 3 — DAILY BOOKING RHYTHM: one proportional Mon–Sun strip + the
+          PER-DAY × PER-REP grid (owner request 2026-10-19): same wins bucketed
+          by deposit-paid ET date × attributed rep — Sat/Sun deposit activity
+          visible, not buried in the weekly sum. Dashboard-only (not copied). */}
       <section aria-label="Daily booking rhythm">
         <Panel className="p-5 sm:p-6">
           <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
@@ -345,6 +427,25 @@ function WeeklyPage() {
           </div>
           <div className="mt-4">
             <RhythmStrip daily={b.daily} />
+          </div>
+          <div className="mt-6 border-t border-(--table-border-weak) pt-5">
+            <p className="kpi-label flex items-center gap-1.5">
+              Per-day wins by rep
+              <InfoTip
+                label="How the per-day grid buckets wins"
+                tip={
+                  <>
+                    The week's paid bookings split by the ET calendar day the DEPOSIT was received
+                    (booking_win_business_date) and the attributed rep — the same win set and the same
+                    attribution join as the By-Rep table. A session held Monday whose deposit paid Saturday
+                    counts under Saturday. Online / unattributed wins stay team-total only.
+                  </>
+                }
+              />
+            </p>
+            <div className="mt-4">
+              <DayByRepGrid grid={b.dayByRep} />
+            </div>
           </div>
         </Panel>
       </section>
