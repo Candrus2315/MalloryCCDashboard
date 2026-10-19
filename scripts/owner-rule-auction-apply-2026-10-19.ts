@@ -32,12 +32,12 @@
 import { readFileSync } from "node:fs";
 import { getStore } from "../src/server/store";
 import {
-  isAuctionSession,
   OWNER_RULE_AUCTION_METHOD,
   OWNER_RULE_AUCTION_NOTE,
   OWNER_RULE_AUCTION_REASON,
   OWNER_RULE_AUCTION_REP_NAME,
 } from "../src/server/metrics/attribution";
+import { isAuctionSession } from "../src/server/metrics/weekly";
 import { appointmentInScope } from "../src/server/metrics/availability";
 import { ATTRIBUTION_WRITER_VERSION, ATTRIBUTION_WRITER_VERSION_KEY } from "../src/server/sync/attribution-tick";
 import type { AppointmentRow } from "../src/server/metrics/compute";
