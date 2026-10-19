@@ -5,10 +5,9 @@ import { formatDateHuman } from "~/server/date-logic";
 import { AttentionPanel } from "~/components/AttentionPanel";
 import { DayCardStrip, type DayCardData } from "~/components/DayCardStrip";
 import { InfoTip } from "~/components/InfoTip";
-import { cycleChip, dateWithWeekday, poolChip } from "~/components/commission-views";
 import { StatusChip } from "~/components/StatusChip";
 // Harmonization Wave 1: Today composes the SAME page primitives as Daily
-// Report / Weekly / Commission Center (Panel / Eyebrow / RatioBar).
+// Report / Weekly (Panel / Eyebrow / RatioBar).
 import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
 import {
   attentionNotes,
@@ -79,8 +78,8 @@ export interface PendingPaymentRow {
  * until paid.
  */
 function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
-  // QA 2026-10-08: the established currency style is $X,XXX.00 (commission
-  // card, payroll email) — the drill-down previously printed a bare "200".
+  // QA 2026-10-08: the established currency style is $X,XXX.00 (payroll
+  // email) — the drill-down previously printed a bare "200".
   const fmtAmount = (n: number | null) =>
     n == null
       ? "—"
@@ -556,94 +555,6 @@ function TodayPage() {
           </div>
         </Panel>
       </section>
-
-      {/* 4c — commission card (§21 dashboard card, Phase C): live estimate for the
-          in-progress week from the SAME pure engine as the close job + the next
-          stored submission date. Estimates only until the Sunday cutoff. */}
-      {data.commission && (
-        <section aria-label="Commission this week">
-          <div className="card">
-            <p className="section-heading flex flex-wrap items-center gap-x-2 gap-y-1">
-              Commission — this week
-              <span className="chip chip-risk">
-                <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" />
-                Estimated
-              </span>
-              <InfoTip
-                tip="The in-progress week's estimate comes from the same pure commission engine the Sunday close job uses (identical inputs — no second math); the next submission date reads the stored commission cycle. Numbers move until the cutoff. Full detail: Commission Center."
-                label="How the commission card works"
-              />
-            </p>
-            {data.commission.estimate ? (
-              <>
-                <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-3">
-                  <div>
-                    <p className="kpi-label flex items-center gap-1.5">
-                      Team Bookings
-                      <InfoTip
-                        label="Why this differs from Bookings WTD"
-                        tip="The 79-pool counts rep-attributed paid wins only — unattributed wins never enter the pool, so this number can sit below the Bookings WTD hero above."
-                      />
-                    </p>
-                    <p className="kpi-value mt-2">
-                      {data.commission.estimate.teamBookings}
-                      <span className="text-lg font-medium text-(--text-faint)"> / 79</span>
-                    </p>
-                    <div className="mt-1.5">
-                      <StatusChip
-                        kind={poolChip(data.commission.estimate.poolUnlocked, data.commission.estimate.teamBookings).kind}
-                        label={poolChip(data.commission.estimate.poolUnlocked, data.commission.estimate.teamBookings).label}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <p className="kpi-label">Next Commission Submission</p>
-                    {data.commission.nextSubmission ? (
-                      <>
-                        <p className="kpi-value mt-2">{dateWithWeekday(data.commission.nextSubmission.submissionDate)}</p>
-                        <p className="kpi-sub mt-1 flex flex-wrap items-center gap-1.5">
-                          {data.commission.nextSubmission.label}
-                          <StatusChip
-                            kind={cycleChip(data.commission.nextSubmission.status).kind}
-                            label={cycleChip(data.commission.nextSubmission.status).label}
-                          />
-                        </p>
-                      </>
-                    ) : (
-                      <p className="kpi-sub mt-2">No upcoming commission submission stored yet.</p>
-                    )}
-                  </div>
-                </div>
-                <div className="mt-4 divide-y divide-(--table-border-weak)">
-                  {data.commission.estimate.employees.map((e) => (
-                    <div key={e.name} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2">
-                      <span className="text-[13px] font-medium text-(--text-body)">{e.name}</span>
-                      <span className="flex items-baseline gap-3 text-[13px] tabular-nums">
-                        <span className="font-semibold text-(--text-primary)">{e.bookings}</span>
-                        <span className="text-(--text-muted)">Est. bonus {e.bonusMoney ?? "—"}</span>
-                      </span>
-                    </div>
-                  ))}
-                  <p className="py-2 text-[12px] text-(--text-caption)">
-                    Estimates during the active week — after the Sunday ET cutoff these become Final Weekly Commission.
-                    Full payroll view on the{" "}
-                    <a href="/commissions" className="underline underline-offset-2 hover:text-(--text-primary)">
-                      Commission Center
-                    </a>
-                    .
-                  </p>
-                </div>
-              </>
-            ) : (
-              <p className="mt-3 text-[13px] text-(--text-muted)">
-                — commission estimate unavailable
-                {data.commission.estimateError ? ` (${data.commission.estimateError})` : ""} — no estimate is shown
-                rather than a plausible number.
-              </p>
-            )}
-          </div>
-        </section>
-      )}
 
       {/* 5 — management attention */}
       <AttentionPanel notes={notes} />

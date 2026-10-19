@@ -3,7 +3,7 @@
  *
  * The owner picked the five tabs and their order: Today · Reps · Teams ·
  * Availability · Settings. This is deliberately NOT the desktop NAV array:
- * the secondary routes (weekly, daily-report, commissions, performance, audit)
+ * the secondary routes (weekly, daily-report, performance, audit)
  * leave the primary mobile nav but stay reachable through the MobileNav
  * drawer, which keeps listing every route (their mobile reach path).
  *
@@ -42,7 +42,7 @@ export const BOTTOM_NAV_TABS: BottomNavTab[] = [
 /**
  * Active rule copied verbatim from the desktop nav / drawer in __root.tsx:
  * "/" matches exactly, every other tab owns its path prefix. On a secondary
- * route (weekly, daily-report, commissions, performance, audit) NO tab is
+ * route (weekly, daily-report, performance, audit) NO tab is
  * active — the honest state; those routes live in the drawer.
  */
 export function isBottomTabActive(to: string, path: string): boolean {
