@@ -1444,6 +1444,21 @@ export interface Store {
   finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<void>;
   getSyncRuns(limit: number): Promise<SyncRunRow[]>;
   /**
+   * The most recent SUCCESSFUL sync_runs row per provider, keyed by provider,
+   * value = the row's finished_at normalized to ISO (fallback: started_at —
+   * a success row is always finished, this is belt-and-braces). Providers
+   * with no success row in their history are ABSENT from the map.
+   *
+   * Reliability Phase 2a (owner directive 2026-10-16): the freshness
+   * watchdog + /health read this instead of getSyncRuns(200)'s recency
+   * window — at the 90s HighLevel cadence 200 rows span only a few hours,
+   * so a provider stale for longer than that would look "fresh" to any
+   * recent-N read. Deliberately NOT wrapped in the pg read cache: /health
+   * must answer with the current truth, and the per-provider indexed query
+   * is already fast.
+   */
+  getLatestSuccessfulSyncRunByProvider(): Promise<Record<string, string>>;
+  /**
    * EVERY in-flight sync_runs row (status=running, finished_at null) of any
    * age, oldest first — the stale-run reaper's full scan. NOT bounded by
    * getSyncRuns' recent-N window: at the ~90s sync cadence the 200 most

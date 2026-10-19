@@ -1051,6 +1051,18 @@ export class MemoryStore implements Store {
   async getSyncRuns(limit: number): Promise<SyncRunRow[]> {
     return this.syncRuns.slice(-limit).reverse();
   }
+  async getLatestSuccessfulSyncRunByProvider(): Promise<Record<string, string>> {
+    const out: Record<string, string> = {};
+    for (const r of this.syncRuns) {
+      if (r.status !== "success") continue;
+      const ms = parseSyncStartedMs(r.finished_at ?? r.started_at);
+      if (!Number.isFinite(ms)) continue;
+      const iso = new Date(ms).toISOString();
+      const prev = out[r.provider];
+      if (!prev || Date.parse(prev) < ms) out[r.provider] = iso;
+    }
+    return out;
+  }
   async getRunningSyncRuns(): Promise<SyncRunRow[]> {
     return this.syncRuns.filter((r) => r.status === "running" && r.finished_at === null);
   }

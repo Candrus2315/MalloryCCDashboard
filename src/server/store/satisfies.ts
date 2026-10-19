@@ -118,6 +118,7 @@ const STORE_METHOD_FLAGS = {
   insertSyncRun: 1,
   finishSyncRun: 1,
   getSyncRuns: 1,
+  getLatestSuccessfulSyncRunByProvider: 1,
   getRunningSyncRuns: 1,
   getRunningSyncRun: 1,
   getSyncWatermark: 1,

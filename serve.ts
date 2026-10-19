@@ -101,6 +101,21 @@ for (let attempt = 1; ; attempt++) {
       idleTimeout: IDLE_TIMEOUT,
       async fetch(req) {
         const { pathname } = new URL(req.url);
+        // HEALTH ENDPOINT (Reliability Phase 2a, owner directive 2026-10-16):
+        // JSON only, no business data — app version/commit + per-provider sync
+        // freshness (last success, age, ok|degraded|unknown) + overall status.
+        // 200 when every tracked provider is ok, 503 when ANY is degraded
+        // (stale beyond 3× its cadence) — the contract the external scheduled
+        // ping (Phase 2b) polls. Fast indexed queries only; safe to expose
+        // publicly (no secrets, no customer data). Unauthenticated on purpose.
+        if (pathname === "/health") {
+          const { buildHealthPayload, healthHttpStatus } = await import("./src/server/health");
+          const payload = await buildHealthPayload();
+          return new Response(JSON.stringify(payload), {
+            status: healthHttpStatus(payload),
+            headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+          });
+        }
         // RAW AUDIT ENDPOINT (GET /api/audit?rep=&date=) — read-only DB rows via
         // the shared audit-api core. Same passphrase gate as every other route
         // (resolveGate), so enabling DASHBOARD_PASSPHRASE later protects it too.
