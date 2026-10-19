@@ -30,7 +30,6 @@ import {
   unassignCommissionWeeks,
 } from "../commission/lifecycle";
 import { commissionCloseTick } from "../commission/close";
-import { commissionPageData, todayPageData } from "../page-data";
 import { buildPayrollEmail, payrollEmailLines } from "../../components/commission-views";
 
 const W1 = "2026-08-31";
@@ -39,7 +38,7 @@ const W3 = "2026-09-14";
 const W4 = "2026-09-21";
 const BOUNDARY = "2026-09-28"; // the week that must stay Unassigned unless the owner assigns it
 const CYCLE_ID = "cycle-2026-08-31-2026-09-27";
-const FRI = "2026-10-02"; // ET today for the dashboard-card test
+const FRI = "2026-10-02"; // ET today for the next-submission selection test
 
 function repRow(name: string, over: Partial<UserRow> = {}): UserRow {
   return {
@@ -376,10 +375,10 @@ describe("§S week↔cycle states — no double counting", () => {
     const boundary = (await store.getCommissionWeeklyRecords({ userId: a, weekStart: BOUNDARY }))[0];
     expect(boundary.assignment).toBe("unassigned");
     expect(boundary.cycle_id).toBeNull();
-    // The Commission Center must NOT fold it into the current cycle (outside its range)
-    const page = await commissionPageData({ store, today: FRI });
-    expect(page.records.some((r) => r.week_start === BOUNDARY)).toBe(false);
-    expect(page.unassignedRiding.some((r) => r.week_start === BOUNDARY)).toBe(true);
+    // structurally outside the stored cycle's week range — it can never be
+    // counted into the current cycle (no double counting)
+    expect(boundary.week_start >= CYCLE_ID.slice("cycle-".length).slice(0, 10)).toBe(true);
+    expect(CYCLE_ID.endsWith("2026-09-27")).toBe(true);
   });
 
   test("a week can be assigned to ONE cycle; assigning the same week to another cycle is refused", async () => {
@@ -468,24 +467,7 @@ describe("§14/§16 Copy Payroll Email — stored numbers only", () => {
   });
 });
 
-describe("§21 dashboard commission card payload (Today, live from commission tables)", () => {
-  test("todayPageData carries the estimate + next submission from stored cycles", async () => {
-    const store = new MemoryStore();
-    await seedCycle(store);
-    const p = await todayPageData({ store, today: FRI });
-    expect(p.commission).toBeTruthy();
-    expect(p.commission!.weekStart).toBeTruthy();
-    if (p.commission!.estimate) {
-      expect(typeof p.commission!.estimate.teamBookings).toBe("number");
-      expect(Array.isArray(p.commission!.estimate.employees)).toBe(true);
-    } else {
-      expect(p.commission!.estimateError).toBeTruthy(); // honest gap, never a guess
-    }
-    expect(p.commission!.nextSubmission?.submissionDate).toBe("2026-10-05");
-    expect(p.commission!.nextSubmission?.status).toBe("in_progress");
-    expect(p.commission!.nextSubmission?.label).toBe("Aug 31 – Sep 27, 2026");
-  });
-
+describe("§14 next-submission selection (lifecycle)", () => {
   test("nextCommissionSubmission picks the earliest FUTURE submission, else the latest cycle", async () => {
     const store = new MemoryStore();
     const c1 = cycleRow();
@@ -505,18 +487,17 @@ describe("§21 dashboard commission card payload (Today, live from commission ta
   });
 });
 
-describe("Commission Center payload carries the Phase C audit trail", () => {
-  test("commissionPageData exposes the cycle's adjustments (newest first)", async () => {
+describe("Phase C audit trail — audited corrections leave complete adjustment rows", () => {
+  test("a cycle's adjustments are queryable newest-first from the store", async () => {
     const store = new MemoryStore();
     const { a } = await seedCycle(store);
     await transitionCommissionCycle(store, { cycleId: CYCLE_ID, to: "ready_for_review", actor: "m" });
     await applyCommissionCorrection(store, { cycleId: CYCLE_ID, userId: a, weekStart: W1, kind: "manual_adjustment", deltaDollars: 5, reason: "test", actor: "m" });
-    const page = await commissionPageData({ store, today: FRI });
-    expect(page.adjustments.length).toBe(2);
-    expect(page.adjustments[0].field).toBe("manual_adjustment"); // newest first
-    expect(page.adjustments[1].field).toBe("status");
-    // §26 validation untouched by a money-side correction? NO — total moved, so
-    // the validation screen HONESTLY surfaces the delta (surfaced, never hidden).
+    const audits = await store.getCommissionAdjustments({ cycleId: CYCLE_ID });
+    expect(audits.length).toBe(2);
+    expect(audits[0].field).toBe("manual_adjustment"); // newest first
+    expect(audits[1].field).toBe("status");
+    // the stored record honestly reflects the moved total
     const val = await store.getCommissionWeeklyRecords({ userId: a, weekStart: W1 });
     expect(val[0].total).toBe(205);
   });

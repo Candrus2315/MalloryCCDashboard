@@ -31,7 +31,7 @@ describe("bottom nav tab set", () => {
   });
 
   test("secondary routes stay out of the bar (drawer-only reach path)", () => {
-    const secondary = ["/daily-report", "/weekly", "/commissions", "/performance", "/audit"];
+    const secondary = ["/daily-report", "/weekly", "/performance", "/audit"];
     for (const tab of BOTTOM_NAV_TABS) {
       expect(secondary).not.toContain(tab.to);
     }
@@ -59,8 +59,6 @@ describe("bottom nav active rule (verbatim __root rule)", () => {
     for (const path of [
       "/daily-report",
       "/weekly",
-      "/commissions",
-      "/commissions-validation",
       "/performance",
       "/performance-templates",
       "/audit",

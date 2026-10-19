@@ -7,7 +7,7 @@ import { useAppearance } from "~/components/appearance";
 import { BottomNav } from "~/components/bottom-nav";
 import { getFreshnessData, refreshNow, type FreshnessData } from "~/server/queries";
 
-type NavBadgeKey = "activePips" | "commissionsAwaitingReview";
+type NavBadgeKey = "activePips";
 interface NavItem {
   to: string;
   label: string;
@@ -23,15 +23,10 @@ const NAV: NavItem[] = [
   { to: "/availability", label: "Availability" },
   { to: "/daily-report", label: "Daily Report" },
   { to: "/weekly", label: "Weekly" },
-  // COMMISSION CENTER (owner directive 10/1): payroll workspace — the Center +
-  // §26 Validation live in the section's own tab bar on /commissions*.
-  {
-    to: "/commissions",
-    label: "Commissions",
-    // Wave 1 count badge: cycles sitting in Ready for Review (manager attention).
-    badgeKey: "commissionsAwaitingReview" as const,
-    badgeTitle: "Commission cycles in Ready for Review",
-  },
+  // COMMISSIONS TAB REMOVED (owner directive 2026-10-19 — the owner handles
+  // commissions manually going forward). The Commission Center / §26 Validation
+  // pages, their routes and their nav entry are retired; stored commission
+  // data and the commission engine are untouched.
   // PERFORMANCE MANAGEMENT (owner directive 9/30): manager-only PIP module.
   // The section's six pages (Active/Drafts/Completed/Cancelled/Templates/
   // History) live in the section's own tab bar on /performance*.
