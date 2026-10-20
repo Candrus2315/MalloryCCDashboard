@@ -71,6 +71,33 @@
   --dot-muted: #d6d3d1; /* stone-300 (400 collapsed) */
   --dot-danger: #f87171; /* red-400 */
 
+  /* RETENTION SEMANTIC COLORS (owner directive 2026-10-20, point 8):
+     one color language for the Retention tab — blue = excitement-call
+     workflow · amber = client needs attention · green = saved/recovered ·
+     red = lost/no-show · purple/gray = system review/data issue. Every
+     Retention surface routes through these tokens (the route tripwire
+     forbids raw palette classes there). */
+  --ret-blue-bg: #eff6ff; /* blue-50 */
+  --ret-blue-border: #bfdbfe; /* blue-200 */
+  --ret-blue-fg: #1d4ed8; /* blue-700 */
+  --ret-blue-dot: #3b82f6; /* blue-500 */
+  --ret-amber-bg: #fffbeb; /* amber-50 */
+  --ret-amber-border: #fde68a; /* amber-200 */
+  --ret-amber-fg: #b45309; /* amber-700 */
+  --ret-amber-dot: #f59e0b; /* amber-500 */
+  --ret-green-bg: #ecfdf5; /* emerald-50 */
+  --ret-green-border: #a7f3d0; /* emerald-200 */
+  --ret-green-fg: #047857; /* emerald-700 */
+  --ret-green-dot: #059669; /* emerald-600 */
+  --ret-red-bg: #fef2f2; /* red-50 */
+  --ret-red-border: #fecaca; /* red-200 */
+  --ret-red-fg: #b91c1c; /* red-700 */
+  --ret-red-dot: #f87171; /* red-400 */
+  --ret-purple-bg: #f5f3ff; /* violet-50 */
+  --ret-purple-border: #ddd6fe; /* violet-200 */
+  --ret-purple-fg: #6d28d9; /* violet-700 */
+  --ret-purple-dot: #8b5cf6; /* violet-500 */
+
   /* goal / meter bars */
   --bar-track: #e7e5e4; /* stone-200 */
   --bar-fill: #1c1917; /* stone-900 */
@@ -168,6 +195,29 @@
   --dot-caution: #fbbf24;
   --dot-muted: #57534e;
   --dot-danger: #f87171;
+
+  /* retention semantic colors — dark counterparts (tinted translucents keep
+     the same five-color language legible on the deep canvas) */
+  --ret-blue-bg: rgba(30, 58, 138, 0.35);
+  --ret-blue-border: rgba(96, 165, 250, 0.35);
+  --ret-blue-fg: #93c5fd; /* blue-300 */
+  --ret-blue-dot: #60a5fa; /* blue-400 */
+  --ret-amber-bg: rgba(120, 53, 15, 0.35);
+  --ret-amber-border: rgba(251, 191, 36, 0.35);
+  --ret-amber-fg: #fcd34d; /* amber-300 */
+  --ret-amber-dot: #fbbf24; /* amber-400 */
+  --ret-green-bg: rgba(6, 78, 59, 0.4);
+  --ret-green-border: rgba(52, 211, 153, 0.35);
+  --ret-green-fg: #6ee7b7; /* emerald-300 */
+  --ret-green-dot: #34d399; /* emerald-400 */
+  --ret-red-bg: rgba(127, 29, 29, 0.35);
+  --ret-red-border: rgba(248, 113, 113, 0.35);
+  --ret-red-fg: #fca5a5; /* red-300 */
+  --ret-red-dot: #f87171; /* red-400 */
+  --ret-purple-bg: rgba(76, 29, 149, 0.35);
+  --ret-purple-border: rgba(167, 139, 250, 0.35);
+  --ret-purple-fg: #c4b5fd; /* violet-300 */
+  --ret-purple-dot: #a78bfa; /* violet-400 */
 
   /* bars */
   --bar-track: #2e2a26;

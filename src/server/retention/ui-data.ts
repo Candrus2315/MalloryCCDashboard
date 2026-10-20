@@ -89,6 +89,10 @@ export interface RetentionCard {
   sub: string;
   /** Attention accent (amber dot + consequence sub) — Needs Review + Data Match Exceptions when > 0. */
   attention: boolean;
+  /** Still Unreached only — the window split the TODAY card renders in human language. */
+  split?: { open: number; missed: number };
+  /** No-Shows only — the spoken / not-spoken split the RETENTION IMPACT card renders. */
+  spokenSplit?: { spoken: number; notSpoken: number };
 }
 
 export interface RetentionOverviewData {
@@ -193,6 +197,7 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
       ratio: null,
       sub: `${windowOpenCount} window open · ${unreachedRows.length - windowOpenCount} closed`,
       attention: false,
+      split: { open: windowOpenCount, missed: unreachedRows.length - windowOpenCount },
     },
     { key: "compliance", label: "Contact Compliance %", value: complianceRatio == null ? null : Math.round(complianceRatio * 1000) / 10, ratio: complianceRatio, sub: "spoke with ÷ due", attention: false },
     // Cancellations family: the ledger has no writer yet — null ("—"), never 0.
@@ -200,7 +205,15 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
     { key: "saves", label: "Saves", value: null, ratio: null, sub: "original appointment kept", attention: false },
     { key: "reschedules", label: "Reschedules", value: null, ratio: null, sub: "rebooked within window", attention: false },
     { key: "recovery", label: "Recovery Rate", value: null, ratio: null, sub: "recovered ÷ eligible", attention: false },
-    { key: "no-shows", label: "No-Shows", value: noShowRows.length, ratio: null, sub: `${noShowSpoken} spoken · ${noShowRows.length - noShowSpoken} not spoken`, attention: false },
+    {
+      key: "no-shows",
+      label: "No-Shows",
+      value: noShowRows.length,
+      ratio: null,
+      sub: `${noShowSpoken} spoken · ${noShowRows.length - noShowSpoken} not spoken`,
+      attention: false,
+      spokenSplit: { spoken: noShowSpoken, notSpoken: noShowRows.length - noShowSpoken },
+    },
     { key: "match-exceptions", label: "Data Match Exceptions", value: exceptionsOpen, ratio: null, sub: exceptionsOpen > 0 ? "match unresolved" : "all clear", attention: exceptionsOpen > 0 },
     { key: "needs-review", label: "Needs Review", value: outcomes.filter((o) => o.final_status === "needs_review").length, ratio: null, sub: "", attention: false },
   ];
@@ -270,6 +283,51 @@ export const OUTCOME_FILTER_OPTIONS = [
   "transferred",
   "other",
 ] as const;
+
+// ---- §16 row-universe predicates (ONE source of truth: drill + queue) ----
+
+/** Context the §16 predicates close over (the drill-down and the Needs Attention queue both supply it). */
+export interface KpiUniverseCtx {
+  nowMs: number;
+  /** appointment_datetime as epoch ms (null when the appointment row is missing/unparseable). */
+  apptMsOf: (o: RetentionOutcomeRow) => number | null;
+  /** D10 no-show predicate — only the no-shows kpi consults it. */
+  noShowRow?: (o: RetentionOutcomeRow) => boolean;
+}
+
+/**
+ * Is this eligible outcome in the named kpi's §16 row universe? §16 VERBATIM —
+ * shared by the drill-down and the Needs Attention queue so the two can never
+ * drift (eligibility + range checks stay with the caller).
+ */
+export function inKpiUniverse(o: RetentionOutcomeRow, kpi: RetentionKpiKey, ctx: KpiUniverseCtx): boolean {
+  switch (kpi) {
+    case "clients-due":
+      return true;
+    case "calls-attempted":
+      return o.attempts_count > 0;
+    case "spoken-with":
+      return o.final_status === "verified_spoke_with";
+    case "unreached": {
+      if (!UNREACHED_STATUSES.has(o.final_status)) return false;
+      const ms = ctx.apptMsOf(o);
+      return (ms != null && ms >= ctx.nowMs) || !o.any_answered;
+    }
+    case "compliance":
+      return true; // the ratio's numerator + denominator rows
+    case "no-shows":
+      return ctx.noShowRow ? ctx.noShowRow(o) : false;
+    case "needs-review":
+      return o.final_status === "needs_review";
+    case "active-cancellations":
+    case "saves":
+    case "reschedules":
+    case "recovery":
+      return false; // cancellations ledger unwritten — honest empty
+    default:
+      return false;
+  }
+}
 
 export interface RetentionDrillParams {
   kpi: RetentionKpiKey;
@@ -482,32 +540,7 @@ export async function retentionDrillData(
     if (!o.eligible) return false;
     const rangeOk = params.kpi === "no-shows" ? inRangeByAppt(o) : inRange(o);
     if (!rangeOk) return false;
-    switch (params.kpi) {
-      case "clients-due":
-        return true;
-      case "calls-attempted":
-        return o.attempts_count > 0;
-      case "spoken-with":
-        return o.final_status === "verified_spoke_with";
-      case "unreached": {
-        if (!UNREACHED_STATUSES.has(o.final_status)) return false;
-        const ms = apptMsOf(o);
-        return (ms != null && ms >= nowMs) || !o.any_answered;
-      }
-      case "compliance":
-        return true; // the ratio's numerator + denominator rows
-      case "no-shows":
-        return noShowRow(o);
-      case "needs-review":
-        return o.final_status === "needs_review";
-      case "active-cancellations":
-      case "saves":
-      case "reschedules":
-      case "recovery":
-        return false; // cancellations ledger unwritten — honest empty
-      default:
-        return false;
-    }
+    return inKpiUniverse(o, params.kpi, { nowMs, apptMsOf, noShowRow });
   });
   const matchedCount = base.length;
 
@@ -720,4 +753,217 @@ export function retentionDrillCsv(
     ),
   ];
   return lines.join("\n") + "\n";
+}
+
+// ---- NEEDS ATTENTION queue (owner restructure directive 2026-10-20, point 1) ----
+
+/** Queue segments — proven engine families only; the cancellation slot stays empty until that stage writes its ledger. */
+export type RetentionQueueSegment = "call-due" | "unreached" | "window-missed" | "needs-review" | "cancellation";
+
+export const QUEUE_SEGMENT_LABEL: Record<Exclude<RetentionQueueSegment, "cancellation">, string> = {
+  "call-due": "Excitement call due",
+  unreached: "Still unreached",
+  "window-missed": "Missed call window",
+  "needs-review": "Needs review",
+};
+
+export interface RetentionQueueRow {
+  segment: RetentionQueueSegment;
+  appointmentId: string;
+  acuityId: string | null;
+  internalClientId: string;
+  clientName: string | null;
+  apptIso: string | null;
+  apptDateEt: string | null;
+  apptTimeEt: string | null;
+  dueDate: string;
+  attemptsCount: number;
+  lastCallStatus: string | null;
+  finalStatus: string;
+  /** Human status for the queue's Status column (never the raw enum). */
+  statusLabel: string;
+  /** The queue's Action cell — its verb; the row links to the drill pre-filtered. */
+  actionLabel: string;
+  drillKpi: RetentionKpiKey;
+}
+
+export interface RetentionQueueData {
+  todayEt: string;
+  weekStartEt: string;
+  weekEndEt: string;
+  dueDays: number;
+  ownerName: string | null;
+  rows: RetentionQueueRow[];
+  counts: {
+    callDue: number;
+    unreached: number;
+    windowMissed: number;
+    needsReview: number;
+    /** Always null until the cancellations stage writes its ledger (honest "—", never 0). */
+    cancellations: null;
+  };
+  cancellationsEngineNote: string;
+}
+
+/**
+ * The client-level work queue under the TODAY row (owner restructure point 1):
+ * everything the engine can PROVE needs action today, drawn from the drill-
+ * downs' own row universes via inKpiUniverse (ONE source of truth — the queue
+ * never re-derives §16 math):
+ *   call-due       — current due-week cohort, window still open, not spoken
+ *                    with and not needs-review → "Call".
+ *   unreached      — §16 Still-Unreached universe, window still open, NOT
+ *                    already a call-due row → "Call again".
+ *   window-missed  — §16 Still-Unreached universe, window closed (session
+ *                    passed with zero answered attempts) → "Review".
+ *   needs-review   — the evidence-conflict queue (all stored outcomes) → "Open".
+ *   cancellation    — SLOT ONLY: ret_cancellations has no writer yet; zero
+ *                    rows by construction (CANCELLATIONS_ENGINE_NOTE) — the
+ *                    page renders nothing rather than fake a row.
+ * Disjoint by construction: call-due ids are removed from unreached-open, and
+ * a row is never in two segments. Call-due/unreached/needs-review sort soonest
+ * appointment first; missed windows sort most-recently-missed first (freshest
+ * salvage opportunity on top).
+ */
+export async function retentionNeedsAttention(store: Store, now: () => Date = () => new Date()): Promise<RetentionQueueData> {
+  const nowMs = now().getTime();
+  const todayEt = etDateStrFromInstant(nowMs);
+  const ws = weekStart(todayEt);
+  const we = addDays(ws, 6);
+  const settings = await store.getSettings();
+  const retention = settings.retention ?? {
+    due_days: 7,
+    qualifying_statuses: ["scheduled"],
+    compute_lookback_days: 30,
+    employee_initials: {},
+    max_attempts: null,
+    max_attempt_days: null,
+    max_contact_days: null,
+  };
+  const dueDays = retention.due_days;
+  const [outcomes, attempts, clients, appts, ownerRows] = await Promise.all([
+    store.listRetentionAppointmentOutcomes(),
+    store.listRetentionAttempts(),
+    store.listInternalClients(),
+    store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(todayEt, -(retention.compute_lookback_days + dueDays + 2)))),
+    store.listRetentionOwnerHistory(),
+  ]);
+  const ownerName = currentRetentionOwner(ownerRows, todayEt);
+  const clientById = new Map(clients.map((c) => [c.id, c]));
+  const apptById = new Map(appts.map((a) => [a.id, a]));
+  const apptMsOf = (o: RetentionOutcomeRow): number | null => {
+    const a = apptById.get(o.appointment_id);
+    if (!a) return null;
+    const ms = Date.parse(a.appointment_datetime);
+    return Number.isFinite(ms) ? ms : null;
+  };
+  const ctx: KpiUniverseCtx = { nowMs, apptMsOf };
+
+  const lastCallStatus = (appointmentId: string): string | null => {
+    let latest: RetentionAttemptRow | null = null;
+    for (const a of attempts) {
+      if (a.appointment_id !== appointmentId) continue;
+      if (!latest || a.attempt_at > latest.attempt_at) latest = a;
+    }
+    return latest?.call_status ?? null;
+  };
+
+  const shape = (o: RetentionOutcomeRow, segment: RetentionQueueSegment, statusLabel: string, actionLabel: string, drillKpi: RetentionKpiKey): RetentionQueueRow => {
+    const client = clientById.get(o.internal_client_id) ?? null;
+    const ms = apptMsOf(o);
+    const evAcuity = (o.evidence as { acuity_appointment_id?: unknown }).acuity_appointment_id;
+    return {
+      segment,
+      appointmentId: o.appointment_id,
+      acuityId: typeof evAcuity === "string" ? evAcuity : apptById.get(o.appointment_id)?.acuity_appointment_id ?? null,
+      internalClientId: o.internal_client_id,
+      clientName: client?.display_name ?? null,
+      apptIso: ms == null ? null : new Date(ms).toISOString(),
+      apptDateEt: ms == null ? null : etDateStrFromInstant(ms),
+      apptTimeEt:
+        ms == null
+          ? null
+          : new Intl.DateTimeFormat("en-US", { timeZone: OPERATIONAL_TIMEZONE, hour: "numeric", minute: "2-digit" }).format(new Date(ms)),
+      dueDate: o.contact_due_date,
+      attemptsCount: o.attempts_count,
+      lastCallStatus: lastCallStatus(o.appointment_id),
+      finalStatus: o.final_status,
+      statusLabel,
+      actionLabel,
+      drillKpi,
+    };
+  };
+
+  // Segment 1 — excitement call due: the current due week's open-window
+  // cohort minus spoken-with and needs-review (those have their own homes).
+  const callDue = outcomes.filter((o) => {
+    if (!o.eligible) return false;
+    if (o.contact_due_date < ws || o.contact_due_date > we) return false;
+    if (o.final_status === "verified_spoke_with" || o.final_status === "needs_review") return false;
+    const ms = apptMsOf(o);
+    return ms != null && ms >= nowMs;
+  });
+  const callDueIds = new Set(callDue.map((o) => o.appointment_id));
+
+  // §16 Still-Unreached universe over ALL stored outcomes (the open queue,
+  // not a week slice) — same predicate the drill's unreached kpi uses.
+  const unreachedRows = outcomes.filter((o) => o.eligible && inKpiUniverse(o, "unreached", ctx));
+  const unreachedOpen = unreachedRows.filter((o) => {
+    const ms = apptMsOf(o);
+    return ms != null && ms >= nowMs && !callDueIds.has(o.appointment_id);
+  });
+  const windowMissed = unreachedRows.filter((o) => {
+    const ms = apptMsOf(o);
+    return ms == null || ms < nowMs;
+  });
+
+  // Needs review — ALL stored outcomes (the open queue, like its card).
+  const needsReview = outcomes.filter((o) => o.final_status === "needs_review");
+
+  const rows: RetentionQueueRow[] = [
+    ...callDue.map((o) =>
+      shape(
+        o,
+        "call-due",
+        o.attempts_count === 0 ? "No attempt yet" : FINAL_STATUS_LABEL[o.final_status] ?? o.final_status,
+        "Call",
+        "clients-due",
+      ),
+    ),
+    ...unreachedOpen.map((o) => shape(o, "unreached", "Unreached", "Call again", "unreached")),
+    ...windowMissed.map((o) => shape(o, "window-missed", "Window missed", "Review", "unreached")),
+    ...needsReview.map((o) => shape(o, "needs-review", "Evidence conflict", "Open", "needs-review")),
+  ];
+  const segmentOrder: Record<RetentionQueueSegment, number> = { "call-due": 0, unreached: 1, "window-missed": 2, "needs-review": 3, cancellation: 4 };
+  const byApptAsc = (a: RetentionQueueRow, b: RetentionQueueRow): number => {
+    if (a.apptIso == null || b.apptIso == null) return a.apptIso == null ? 1 : -1;
+    return a.apptIso < b.apptIso ? -1 : a.apptIso > b.apptIso ? 1 : 0;
+  };
+  rows.sort((a, b) => {
+    const seg = segmentOrder[a.segment] - segmentOrder[b.segment];
+    if (seg !== 0) return seg;
+    if (a.segment === "window-missed") {
+      // most recently missed first — the freshest salvage opportunity on top
+      if (a.apptIso == null || b.apptIso == null) return a.apptIso == null ? 1 : -1;
+      return a.apptIso > b.apptIso ? -1 : a.apptIso < b.apptIso ? 1 : 0;
+    }
+    return byApptAsc(a, b);
+  });
+
+  return {
+    todayEt,
+    weekStartEt: ws,
+    weekEndEt: we,
+    dueDays,
+    ownerName,
+    rows,
+    counts: {
+      callDue: callDue.length,
+      unreached: unreachedOpen.length,
+      windowMissed: windowMissed.length,
+      needsReview: needsReview.length,
+      cancellations: null,
+    },
+    cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
+  };
 }
