@@ -215,6 +215,10 @@ const STORE_METHOD_FLAGS = {
   updateRetentionAppointmentOutcome: 1,
   // retention owner history (read-only this stage; plan §12)
   listRetentionOwnerHistory: 1,
+  // stage 3c weekly scorecard (plan §16; append-if-new, stored weeks never rewrite)
+  listRetentionScorecards: 1,
+  getRetentionScorecard: 1,
+  insertRetentionScorecardIfAbsent: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

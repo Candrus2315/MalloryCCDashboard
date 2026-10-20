@@ -56,6 +56,7 @@ import {
 } from "./roster";
 import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
+import { refreshAvailabilityRange } from "./sync/availability-feed";
 import type { AuditOkBody } from "./audit-api";
 import type { RetentionKpiKey, RetentionRange } from "./retention/ui-data";
 import { isSheetMappingMode } from "./sync/sheets-mapping";

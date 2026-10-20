@@ -84,6 +84,18 @@ describe("typecheck tripwire", () => {
         timeout: 120_000,
       });
       const output = `${res.stdout ?? ""}${res.stderr ?? ""}`;
+      // FAIL-LOUD SPAWN GUARD (2026-10-20): a worktree without node_modules
+      // made spawnSync error with EMPTY output — and an empty output parsed
+      // as zero dangling references, i.e. the gate silently passed without
+      // tsc ever running. A broken spawn must fail the gate, never read as
+      // clean. (status !== 0 WITH output is the normal diagnostics path and
+      // is parsed below — only "ran and said nothing" or "could not run"
+      // lands here.)
+      if (res.error || (res.status !== 0 && !output.trim())) {
+        throw new Error(
+          `tsc could not run (status=${String(res.status)}): ${res.error?.message ?? "no output"} — the dangling-reference gate cannot judge without the compiler`,
+        );
+      }
       // STORE-INTERFACE COMPLETENESS (closes the PR#17/18/19 debt): any tsc
       // diagnostic inside src/server/store/satisfies.ts fails the gate. That
       // file carries the compile-time assignability asserts + the

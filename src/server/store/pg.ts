@@ -21,6 +21,7 @@ import type {
   AuditCallRow,
   CallContactBackfillUpdate,
   RetentionAttemptRow, RetentionAttemptWrite, RetentionOutcomeRow, RetentionOutcomeWrite, RetentionOwnerHistoryRow, InternalClientRow,
+  RetentionScorecardRow, RetentionScorecardWrite,
   InternalClientSeedInput,
   ClientMatchLinkRow,
   ClientMatchLinkInput,
