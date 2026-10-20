@@ -1369,6 +1369,12 @@ export class PgStore implements Store {
       conversation_id: r.conversation_id == null ? null : String(r.conversation_id),
       // Resolution provenance (call→contact backfill; null = never backfilled).
       contact_resolution_method: r.contact_resolution_method == null ? null : String(r.contact_resolution_method),
+      // Raw HL direction/status — REQUIRED on CallRow: the retention engine
+      // classifies every attempt from them (stage 3a, D8 + status-primary).
+      // Never omit these from the SELECTs above — a missing column made EVERY
+      // call direction-unknown to the engine (10/20 zero-attempt live-fire).
+      direction: r.direction == null ? null : String(r.direction),
+      call_status: r.call_status == null ? null : String(r.call_status),
     };
   }
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
@@ -1376,7 +1382,7 @@ export class PgStore implements Store {
   }
   private async getCallsBetweenCached(startUtc: string, endUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method, direction, call_status FROM calls WHERE started_at >= ${startUtc} AND started_at < ${endUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
@@ -1384,7 +1390,7 @@ export class PgStore implements Store {
   }
   private async getAllCallsSinceCached(startUtc: string): Promise<CallRow[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method FROM calls WHERE started_at >= ${startUtc}`;
+    const rows = await this.sql`SELECT id, rep_id, contact_id, started_at, duration_seconds, over_two_minutes, external_call_id, provider_rep_external_id, conversation_id, contact_resolution_method, direction, call_status FROM calls WHERE started_at >= ${startUtc}`;
     return rows.map((r) => this.callRow(r as Record<string, unknown>));
   }
   async getAuditCalls(startUtc: string, endUtc: string, repSpec: string | null, thresholdSeconds: number): Promise<AuditCallRow[]> {

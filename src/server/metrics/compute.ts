@@ -106,6 +106,20 @@ export interface CallRow {
    * see the resolution provenance without a second query.
    */
   contact_resolution_method?: string | null;
+  /**
+   * Raw HL call direction ("outbound" | "inbound" | null) and call status
+   * ("completed" | "no-answer" | "voicemail" | "busy" | "failed" | "ringing").
+   * OPTIONAL on the type (tests may omit — the engine treats undefined as
+   * null/unknown) but the RETENTION classification matrix (D8 direction rule
+   * + status-primary evidence) reads them from every store read path, so the
+   * stores MUST carry them: getCallsBetween/getAllCallsSince SELECT them and
+   * both call mappers map them (pg callRow + memory normalization). A read
+   * path that drops them makes EVERY call direction-unknown to the engine —
+   * the 10/20 live-fire zero-attempt outage — pinned by
+   * retention-callfields.test.ts.
+   */
+  direction?: string | null;
+  call_status?: string | null;
 }
 
 export interface AppointmentRow {

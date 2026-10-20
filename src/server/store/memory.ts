@@ -373,7 +373,11 @@ export class MemoryStore implements Store {
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
     return [...this.calls.values()]
       .filter((c) => c.started_at >= startUtc && c.started_at < endUtc)
-      .map(({ provider: _p, ...rest }) => rest); // external_call_id now CARRIED (attribution engine reads it)
+      // external_call_id now CARRIED (attribution engine reads it);
+      // direction/call_status normalized to always-present (null when absent)
+      // — REQUIRED parity with the pg callRow mapper: the retention
+      // classification reads them from every store read path (stage 3a).
+      .map(({ provider: _p, ...rest }) => ({ direction: rest.direction ?? null, call_status: rest.call_status ?? null, ...rest }))
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
     return this.getCallsBetween(startUtc, "9999-12-31");
