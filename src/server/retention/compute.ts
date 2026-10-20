@@ -387,7 +387,7 @@ export async function computeRetention(
       (cur.direction ?? null) === (w.direction ?? null) &&
       cur.attempt_class === w.attemptClass &&
       cur.attribution === w.attribution &&
-      JSON.stringify(cur.evidence) === JSON.stringify(w.evidence);
+      canonicalJson(cur.evidence) === canonicalJson(w.evidence);
     if (same) attemptsUnchanged += 1;
     else
       attemptsToUpdate.push({
@@ -432,7 +432,7 @@ export async function computeRetention(
       cur.any_answered === w.anyAnswered &&
       cur.final_status === w.finalStatus &&
       (cur.needs_review_reason ?? null) === (w.needsReviewReason ?? null) &&
-      JSON.stringify(cur.evidence) === JSON.stringify(w.evidence);
+      canonicalJson(cur.evidence) === canonicalJson(w.evidence);
     if (same) outcomesUnchanged += 1;
     else outcomesToUpdate.push(w);
   }
@@ -467,4 +467,22 @@ function sameInstant(a: string | null, b: string | null): boolean {
   const da = Date.parse(a);
   const db = Date.parse(b);
   return Number.isFinite(da) && Number.isFinite(db) && da === db;
+}
+
+/**
+ * Key-order-insensitive JSON comparison — the pg-jsonb shape. Postgres jsonb
+ * does NOT preserve object key order (keys sort by length, then bytewise), so
+ * a stored evidence blob NEVER stringifies equal to the freshly built desired
+ * object even when the content is identical: the live-fire re-run of
+ * 2026-10-20 rewrote every row on every pass (139/139 attempts, 239/239
+ * outcomes "updated", unchanged 0) while the MemoryStore suite stayed green
+ * (JS objects preserve insertion order). Canonical form sorts object keys
+ * recursively on BOTH sides; array order is preserved (jsonb keeps it too).
+ */
+function canonicalJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  const obj = v as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(",")}}`;
 }

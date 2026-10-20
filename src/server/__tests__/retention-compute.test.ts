@@ -133,6 +133,52 @@ describe("computeRetention — cohort, classification, idempotence", () => {
     expect(stripIds(await s.store.listRetentionAppointmentOutcomes())).toEqual(stripIds(outcomes1));
   });
 
+  test("re-run writes nothing when stored evidence keys arrive in pg-jsonb order (jsonb does not preserve key order — live-fire 2026-10-20 regression)", async () => {
+    const s = await seed();
+    await computeRetention(s.store, { now: NOW });
+    // Simulate exactly what pg jsonb does to the evidence blob on write:
+    // rebuild every object level with keys sorted by (length, bytewise) —
+    // a DIFFERENT key order than the desired build, same content. The old
+    // JSON.stringify equality rewrote every row on every pass (139/139
+    // attempts, 239/239 outcomes "updated", unchanged 0 on the live DB).
+    const jsonbShuffle = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(jsonbShuffle);
+      if (v !== null && typeof v === "object") {
+        const src = v as Record<string, unknown>;
+        const out: Record<string, unknown> = {};
+        for (const k of Object.keys(src).sort((a, b) => (a.length !== b.length ? a.length - b.length : a < b ? -1 : 1))) out[k] = jsonbShuffle(src[k]);
+        return out;
+      }
+      return v;
+    };
+    for (const r of await s.store.listRetentionAttempts()) {
+      await s.store.updateRetentionAttempt(r.id, { evidence: jsonbShuffle(r.evidence) as Record<string, unknown> });
+    }
+    for (const r of await s.store.listRetentionAppointmentOutcomes()) {
+      await s.store.updateRetentionAppointmentOutcome({
+        appointmentId: r.appointment_id,
+        internalClientId: r.internal_client_id,
+        contactDueDate: r.contact_due_date,
+        eligible: r.eligible,
+        eligibilityBasis: r.eligibility_basis,
+        attemptsCount: r.attempts_count,
+        firstAttemptAtIso: r.first_attempt_at,
+        lastAttemptAtIso: r.last_attempt_at,
+        anyAnswered: r.any_answered,
+        finalStatus: r.final_status,
+        evidence: jsonbShuffle(r.evidence) as Record<string, unknown>,
+        needsReviewReason: r.needs_review_reason,
+      });
+    }
+    const r2 = await computeRetention(s.store, { now: NOW });
+    expect(r2.attemptsInserted).toBe(0);
+    expect(r2.attemptsUpdated).toBe(0); // content identical, key order different → UNCHANGED
+    expect(r2.attemptsUnchanged).toBe(2);
+    expect(r2.outcomesInserted).toBe(0);
+    expect(r2.outcomesUpdated).toBe(0);
+    expect(r2.outcomesUnchanged).toBe(2);
+  });
+
   test("attempt rows carry the full audit snapshot (employee roster-independent, D8 evidence, transcript null)", async () => {
     const s = await seed();
     await computeRetention(s.store, { now: NOW });
