@@ -188,6 +188,22 @@ const STORE_METHOD_FLAGS = {
   // availability catalog cache (availability rebuild PR-3, 2026-10-07)
   putAvailabilityCatalog: 1,
   getAvailabilityCatalog: 1,
+  // retention identity chain (stage 2, owner-approved D1–D14 2026-10-19)
+  getInternalClientBySeedKey: 1,
+  insertInternalClient: 1,
+  getInternalClientsByIds: 1,
+  listInternalClients: 1,
+  insertClientMatchLinkIfAbsent: 1,
+  getClientMatchLink: 1,
+  getClientMatchLinksByInternalClient: 1,
+  countClientMatchLinks: 1,
+  insertDataMatchExceptionIfAbsent: 1,
+  getDataMatchExceptions: 1,
+  countDataMatchExceptions: 1,
+  resolveDataMatchException: 1,
+  getInternalClientForAppointment: 1,
+  getInternalClientsForContactExternalIds: 1,
+  getInternalClientsForCallIds: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */
