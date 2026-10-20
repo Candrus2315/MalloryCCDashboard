@@ -45,6 +45,46 @@ export function activeRepIds(users: { id: string; is_active: boolean }[]): Set<s
   return new Set(users.filter((u) => u.is_active).map((u) => u.id));
 }
 
+// ---------- HISTORICAL REPS (owner directive 2026-10-20) ----------
+//
+// A DEPARTED rep (removed from active_roster → users.is_active=false by the
+// sync) keeps their HISTORICAL contribution on the reporting surfaces: the
+// owner explicitly ordered Laura Rivera's bookings/calls/leads restored to
+// Weekly + Reps ("add back whatever you took out"). Reporting eligibility is
+// therefore ACTIVE ROSTER ∪ HISTORICAL REPS, computed with the SAME name+email
+// match rule as the active roster. The union is QUERY-TIME only: it never
+// flips users.is_active (the sync's is_active write keeps using the ACTIVE
+// roster alone) and never feeds the operational surfaces (Today, Daily
+// Report, lead assignment/cohort logic, the attribution engine's write path).
+
+/**
+ * Internal ids of the users matching the historical roster — INDEPENDENT of
+ * is_active (a historical rep is precisely an inactive user whose rows must
+ * still report). Empty historical list → empty set (bit-identical to today).
+ */
+export function historicalRepIds(
+  users: { id: string; name?: string | null; email?: string | null }[],
+  historical: RosterEntry[],
+): Set<string> {
+  if (historical.length === 0) return new Set();
+  return new Set(users.filter((u) => isRosterUser(u.name, u.email, historical)).map((u) => u.id));
+}
+
+/**
+ * The REPORTING rep list: active-roster users PLUS users matching a
+ * historical_reps entry (even though is_active=false) — the roster the
+ * Weekly/Reps reporting surfaces render rows for. With an empty historical
+ * list this is exactly the active users (same rows, same order as the input
+ * filter — bit-identical to today's getUsers()-driven lists).
+ */
+export function reportingRepUsers<U extends { id: string; is_active: boolean; name?: string | null; email?: string | null }>(
+  allUsers: U[],
+  historical: RosterEntry[],
+): U[] {
+  if (historical.length === 0) return allUsers.filter((u) => u.is_active);
+  return allUsers.filter((u) => u.is_active || isRosterUser(u.name, u.email, historical));
+}
+
 /**
  * Keep only calls whose rep is an active-roster member. Team call metrics must
  * reflect ONLY the CC team: calls from excluded users (and unlinked calls with
@@ -106,6 +146,26 @@ export function eligibleRepId(
   const prov = call.provider_rep_external_id ?? null;
   if (prov && elig.mapping.has(prov)) return elig.mapping.get(prov)!;
   return null;
+}
+
+/**
+ * REPORTING eligibility (Weekly + Reps surfaces): the ACTIVE roster ∪ the
+ * HISTORICAL reps. Built on buildRosterEligibility so the rep_mappings
+ * behavior CANNOT drift: a mapping still only lands when it points at an
+ * ACTIVE roster rep — a mapping pointing at a historical (non-active) rep
+ * stays inert exactly as today. With an empty historical list the returned
+ * eligibility is DEEP-IDENTICAL to buildRosterEligibility's (test-pinned).
+ */
+export function buildReportingEligibility(
+  users: { id: string; is_active: boolean; name?: string | null; email?: string | null }[],
+  settings: { historical_reps?: RosterEntry[]; rep_mappings?: RepMapping[] },
+): RosterEligibility {
+  const base = buildRosterEligibility(users, settings.rep_mappings ?? []);
+  const hist = historicalRepIds(users, settings.historical_reps ?? []);
+  if (hist.size === 0) return base;
+  const activeIds = new Set(base.activeIds);
+  for (const id of hist) activeIds.add(id);
+  return { activeIds, mapping: base.mapping };
 }
 
 /**

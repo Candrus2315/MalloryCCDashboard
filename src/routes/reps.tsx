@@ -102,6 +102,10 @@ function RepsPage() {
   const router = useRouter();
   const search = Route.useSearch();
   const d = data.detail;
+  // HISTORICAL REP (owner directive 2026-10-20): the selected rep is a departed
+  // rep kept on the reporting surfaces — the detail header shows a Past-rep
+  // chip so her historical numbers are never read as current output.
+  const selectedRepHistorical = data.repList.find((r) => r.isSelected)?.historical ?? false;
 
   const [customFrom, setCustomFrom] = useState(search.from ?? "");
   const [customTo, setCustomTo] = useState(search.to ?? "");
@@ -483,6 +487,14 @@ function RepsPage() {
                     >
                       {r.name}
                     </span>
+                    {/* HISTORICAL REP (owner directive 2026-10-20): a departed rep
+                        whose historical numbers stay here — visibly a PAST rep so
+                        nobody reads her as a current booker. */}
+                    {r.historical ? (
+                      <span className="shrink-0 rounded-full border border-(--table-border-weak) px-1.5 text-[10px] font-medium uppercase tracking-wide text-(--text-muted)">
+                        Past rep
+                      </span>
+                    ) : null}
                   </span>
                   <span
                     className={
@@ -576,6 +588,9 @@ function RepsPage() {
                 {d.rep.name} — {RANGE_LABELS[data.range.mode]} performance
                 {data.selectedOperatingState === "not-yet-active" && (
                   <StatusChip kind="neutral" label="Not Yet Active" />
+                )}
+                {selectedRepHistorical && (
+                  <StatusChip kind="neutral" label="Past rep — historical numbers" />
                 )}
               </p>
             </div>

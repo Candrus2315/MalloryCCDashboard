@@ -96,7 +96,7 @@ import {
 import { deriveDatesToPush, pushRangeLabel, type AvailabilityPushRow } from "./availability-push";
 import { availabilityPushCopy, type AvailabilityCopyDay } from "../components/availability-copy";
 import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assigned-by-day";
-import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "./roster";
+import { applyAttributionEligibility, applyRosterEligibility, buildReportingEligibility, buildRosterEligibility, historicalRepIds, reportingRepUsers } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
 import { serializableConnections, syncStaleWarnings, type PageMeta, type RepsSearchParams, type RepStripRow, type TeamSearchParams } from "./queries";
 
@@ -197,7 +197,14 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     // eligibility is computed from the mapping at QUERY TIME; source records
     // stay immutable. With no mappings this is the verified roster filter.
     const thresholdSeconds = settings.meaningful_call_threshold_seconds;
-    const eligibility = buildRosterEligibility(allUsers, settings.rep_mappings ?? []);
+    // HISTORICAL REPS (owner directive 2026-10-20): REPORTING eligibility is
+    // ACTIVE ROSTER ∪ HISTORICAL REPS — a departed rep's calls/bookings stay
+    // in the per-rep summaries and team totals while is_active stays false.
+    // Mappings keep the buildRosterEligibility rule (active-rep targets only),
+    // so a mapping pointing at a historical rep stays inert. Empty list ⇒
+    // deep-identical to the previous buildRosterEligibility(allUsers) call.
+    const eligibility = buildReportingEligibility(allUsers, settings);
+    const historicalIds = historicalRepIds(allUsers, settings.historical_reps ?? []);
     const rosterCalls = applyRosterEligibility(calls, eligibility);
     const rosterLookBackCalls = applyRosterEligibility(lookBackCalls, eligibility);
     // Bookings inherit query-time eligibility via the underlying call.
@@ -217,7 +224,14 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       thresholdSeconds,
     });
 
-    const reps = users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date }));
+    // The REPORTING rep list: active roster ∪ historical reps (see above).
+    // reportingRepUsers returns the SAME rows/order as the previous
+    // users.map(...) when historical_reps is empty.
+    const reps = reportingRepUsers(allUsers, settings.historical_reps ?? []).map((u) => ({
+      id: u.id,
+      name: u.name,
+      call_start_date: u.call_start_date,
+    }));
 
     const summaries = repRangeSummaries({
       reps,
@@ -318,6 +332,10 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
           totalCalls: s?.totalCalls ?? 0,
           callsOverThreshold: s?.callsOverThreshold ?? 0,
           isSelected: r.id === rep?.id,
+          // PAST marker (owner directive: nobody reads her as a current booker).
+          // Requires is_active=false too — an ACTIVE rep listed in
+          // historical_reps by mistake is never rendered as "past".
+          historical: historicalIds.has(r.id) && !r.is_active,
           operatingState: repOperatingState(r.call_start_date, today),
           callStartDate: r.call_start_date ?? null,
         };
@@ -1608,7 +1626,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const leadsWeek = leadsSeries.filter((l) => l.source_date >= lwMon && l.source_date <= lwSun);
 
   const nameById = new Map(allUsers.map((u) => [u.id, u.name]));
-  const rosterIds = rosterUsers.map((u) => u.id);
+  // HISTORICAL REPS (owner directive 2026-10-20): the Weekly report's rep rows
+  // cover ACTIVE ROSTER ∪ HISTORICAL REPS, so a departed rep's attributed wins
+  // keep their row (and future weeks reproduce pre-removal output exactly).
+  // Empty historical_reps ⇒ identical rosterIds (bit-identical to today).
+  const rosterIds = [...rosterUsers.map((u) => u.id), ...historicalRepIds(allUsers, settings.historical_reps ?? [])];
 
   // ---- LAST WEEK: bookings ----
   const lwDates = dateRange(lwMon, lwSun);
