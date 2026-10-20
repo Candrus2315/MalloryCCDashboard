@@ -1767,6 +1767,8 @@ export interface Store {
   getInternalClientsByIds(ids: string[]): Promise<InternalClientRow[]>;
   /** Every client (the matcher's candidate universe; production volumes are small — seeded clients only). */
   listInternalClients(): Promise<InternalClientRow[]>;
+  /** Every link row (bulk prefetch for the backfill applier's read decisions). */
+  listClientMatchLinks(): Promise<ClientMatchLinkRow[]>;
   /** STICKY link writer: insert-if-absent on (provider, entity, external_id); existing rows are returned UNCHANGED with created=false. */
   insertClientMatchLinkIfAbsent(link: ClientMatchLinkInput): Promise<{ link: ClientMatchLinkRow; created: boolean }>;
   getClientMatchLink(provider: string, entity: string, externalId: string): Promise<ClientMatchLinkRow | null>;

@@ -1718,6 +1718,10 @@ export class MemoryStore implements Store {
       .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : 1))
       .map((r) => ({ ...r }));
   }
+  async listClientMatchLinks(): Promise<ClientMatchLinkRow[]> {
+    await this.ensureSchema();
+    return [...this.clientMatchLinks.values()].map((r) => ({ ...r }));
+  }
   async insertClientMatchLinkIfAbsent(link: ClientMatchLinkInput): Promise<{ link: ClientMatchLinkRow; created: boolean }> {
     await this.ensureSchema();
     const key = `${link.provider}:${link.entity}:${link.externalId}`;

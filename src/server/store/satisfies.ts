@@ -193,6 +193,7 @@ const STORE_METHOD_FLAGS = {
   insertInternalClient: 1,
   getInternalClientsByIds: 1,
   listInternalClients: 1,
+  listClientMatchLinks: 1,
   insertClientMatchLinkIfAbsent: 1,
   getClientMatchLink: 1,
   getClientMatchLinksByInternalClient: 1,

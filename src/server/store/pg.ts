@@ -3667,6 +3667,11 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
     const rows = await this.sql`SELECT * FROM internal_clients ORDER BY created_at, id`;
     return rows.map((r) => this.internalClientRow(r as Record<string, unknown>));
   }
+  async listClientMatchLinks(): Promise<ClientMatchLinkRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT * FROM client_match_links ORDER BY provider, entity, external_id`;
+    return rows.map((r) => this.clientMatchLinkRow(r as Record<string, unknown>));
+  }
   async insertClientMatchLinkIfAbsent(link: ClientMatchLinkInput): Promise<{ link: ClientMatchLinkRow; created: boolean }> {
     await this.ensureSchema();
     const rows = await this.sql`
