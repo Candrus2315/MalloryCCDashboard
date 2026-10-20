@@ -213,6 +213,8 @@ const STORE_METHOD_FLAGS = {
   listRetentionAppointmentOutcomes: 1,
   insertRetentionAppointmentOutcomes: 1,
   updateRetentionAppointmentOutcome: 1,
+  // retention owner history (read-only this stage; plan §12)
+  listRetentionOwnerHistory: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

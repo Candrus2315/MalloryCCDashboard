@@ -57,6 +57,7 @@ import {
 import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
 import type { AuditOkBody } from "./audit-api";
+import type { RetentionKpiKey, RetentionRange } from "./retention/ui-data";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
 import { normalizeHistoricalReps, normalizeRepMappings, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, type AppSettings, type RepMapping, type RosterEntry, type SyncRunRow } from "./store/types";
 
@@ -1308,3 +1309,45 @@ export const refreshAvailabilityFeed = createServerFn({ method: "POST" })
   });
 /** WEEKLY REPORT page — last completed week + MTD (page-data.ts weeklyPageData, PageDeps test seam). */
 export const getWeeklyData = createServerFn().handler(() => withDbRetry(() => weeklyPageData()));
+
+/** RETENTION TAB (stage 3b) — the 12-card KPI band + scorecard EmptyState inputs. Read-only over ret_*. */
+export const getRetentionPageData = createServerFn().handler(() =>
+  withDbRetry(async () => {
+    const ui = await import("./retention/ui-data");
+    return ui.retentionOverview(await getStore());
+  }),
+);
+
+/**
+ * RETENTION DRILL-DOWN (stage 3b) — one shared list driven by ?kpi= + filters
+ * (UI spec §3). METHOD = POST (availability precedent: TanStack Start 1.158
+ * drops GET server-fn payloads in both transports; POST delivers reliably).
+ */
+export interface RetentionDrillSearch {
+  kpi?: string;
+  range?: string;
+  classification?: string;
+  outcome?: string;
+  employee?: string;
+  exc?: string;
+}
+export const getRetentionDrillData = createServerFn({ method: "POST" })
+  .validator((input: unknown) => (input ?? {}) as RetentionDrillSearch)
+  .handler(async ({ data }) =>
+    withDbRetry(async () => {
+      const ui = await import("./retention/ui-data");
+      const kpi: RetentionKpiKey = ui.RETENTION_KPIS.some((k) => k.key === data?.kpi) ? (data!.kpi as RetentionKpiKey) : "clients-due";
+      const range: RetentionRange = ui.RETENTION_RANGES.some((r) => r.value === data?.range) ? (data!.range as RetentionRange) : "all";
+      return ui.retentionDrillData(
+        await getStore(),
+        {
+          kpi,
+          range,
+          classification: data?.classification ?? "all",
+          outcome: data?.outcome ?? "all",
+          employee: data?.employee ?? "all",
+          exc: data?.exc === "resolved" || data?.exc === "dismissed" ? data.exc : "open",
+        },
+      );
+    }),
+  );

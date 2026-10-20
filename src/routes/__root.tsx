@@ -37,6 +37,12 @@ const NAV: NavItem[] = [
     badgeKey: "activePips" as const,
     badgeTitle: "Active (issued) PIPs",
   },
+  // RETENTION (owner spec rev 53; UI spec §1): management-only contact/
+  // cancellation tracking, placed immediately after Performance. Mobile reach
+  // = the MobileNav drawer (auto-includes NAV entries); Retention never joins
+  // the owner's picked-5 BottomNav. Phase B (deferred): nav count badge for
+  // open Data Match Exceptions (badgeKey "openMatchExceptions").
+  { to: "/retention", label: "Retention" },
   { to: "/settings", label: "Settings" },
   { to: "/audit", label: "Audit" },
 ];

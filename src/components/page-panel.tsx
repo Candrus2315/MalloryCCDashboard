@@ -47,3 +47,22 @@ export function RatioBar({
     </div>
   );
 }
+
+/**
+ * Null renders "—" in stone-300 (never 0) per spec §5 polish. Hoisted with
+ * KpiMid (its only consumers were Today's strips; Retention reuses both).
+ */
+export function num(v: string) {
+  return v === "—" ? <span className="text-(--text-faint)">—</span> : v;
+}
+
+/** Secondary KPI cell (spec §3.2): same stack at text-3xl. No comparisons. Hoisted from index.tsx (Retention tab reuses it; don't copy). */
+export function KpiMid({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+  return (
+    <div>
+      <p className="kpi-label">{label}</p>
+      <p className="kpi-mid mt-2">{num(String(value))}</p>
+      {sub && <p className="kpi-sub mt-1.5">{sub}</p>}
+    </div>
+  );
+}
