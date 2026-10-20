@@ -92,6 +92,12 @@ export type FinalContactStatus =
  * an owner ruling).
  */
 export const ZERO_ATTEMPTS_FINAL_STATUS: FinalContactStatus = "attempted_unclear";
+/**
+ * The §16 Still-Unreached status set ({no_answer, attempted_unclear}) — the
+ * scorecard (stage 3c) and the KPI band (ui-data) share this vocabulary via
+ * the classification module that owns the final-status scale.
+ */
+export const UNREACHED_FINAL_STATUSES: ReadonlySet<string> = new Set(["no_answer", "attempted_unclear"]);
 
 /** Probe §4: the messages payload carries no transcripts (basis string stored verbatim in evidence). */
 export const TRANSCRIPT_AVAILABILITY_BASIS =

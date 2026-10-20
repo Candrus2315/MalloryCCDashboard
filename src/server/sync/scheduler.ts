@@ -39,6 +39,11 @@ import { attributionTick, type AttributionTickResult } from "./attribution-tick"
 import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
 import { commissionCloseTick, type CommissionCloseResult } from "../commission/close";
 import { retentionTick, type RetentionTickResult } from "../retention/tick";
+import {
+  ensureRetentionScorecardBootBackfill,
+  retentionScorecardTick,
+  type RetentionScorecardTickResult,
+} from "../retention/scorecard-tick";
 import type { LiveSheetsAdapter } from "./sheets-live";
 import { availabilityFeedTick, type AvailabilityFeedResult } from "./availability-feed";
 import {
@@ -256,6 +261,10 @@ export interface SchedulerTickResult {
   commission?: CommissionCloseResult;
   /** Independent retention attempt/outcome recompute piggy-backed on the same tick (never fails the tick; throttled). */
   retention?: RetentionTickResult;
+  /** Independent weekly scorecard compute (Monday ≥06:00 ET; never fails the tick). */
+  scorecard?: RetentionScorecardTickResult;
+  /** Boot backfill of the most recent missing scorecard week (one bounded attempt per process). */
+  scorecardBoot?: RetentionScorecardTickResult;
   /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
   reaped?: number;
 }
@@ -716,7 +725,31 @@ export async function schedulerTick(options?: {
   } catch (e) {
     retention = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
-  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, reaped };
+  // RETENTION WEEKLY SCORECARD (stage 3c, owner build order): Monday ≥06:00 ET
+  // compute of the prior completed Mon–Sun ET week + the once-per-process boot
+  // backfill of the most recent missing week (one bounded attempt). Same
+  // piggy-back contract as the retention compute above: own guards, own
+  // sync_runs rows ("retention-scorecard"), never fails the tick.
+  let scorecard: RetentionScorecardTickResult | undefined;
+  try {
+    scorecard = await retentionScorecardTick({
+      store: options?.store,
+      now: options?.now,
+      trigger: options?.trigger,
+    });
+  } catch (e) {
+    scorecard = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  let scorecardBoot: RetentionScorecardTickResult | undefined;
+  try {
+    scorecardBoot = await ensureRetentionScorecardBootBackfill({
+      store: options?.store,
+      now: options?.now,
+    });
+  } catch (e) {
+    scorecardBoot = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, scorecard, scorecardBoot, reaped };
 }
 
 // ---------- the always-on loop ----------

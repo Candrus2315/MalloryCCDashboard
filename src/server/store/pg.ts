@@ -21,6 +21,7 @@ import type {
   AuditCallRow,
   CallContactBackfillUpdate,
   RetentionAttemptRow, RetentionAttemptWrite, RetentionOutcomeRow, RetentionOutcomeWrite, RetentionOwnerHistoryRow, InternalClientRow,
+  RetentionScorecardRow, RetentionScorecardWrite,
   InternalClientSeedInput,
   ClientMatchLinkRow,
   ClientMatchLinkInput,
@@ -871,6 +872,35 @@ const DDL: string[] = [
     effective_start date NOT NULL,
     effective_end date
   )`,
+  `CREATE TABLE IF NOT EXISTS ret_scorecards (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    week_start date NOT NULL UNIQUE,
+    week_end date NOT NULL,
+    due_days integer NOT NULL,
+    owner_user_id uuid REFERENCES users(id),
+    owner_name text,
+    owner_initials text,
+    eligible integer NOT NULL,
+    called integer NOT NULL,
+    spoken_with integer NOT NULL,
+    unreached integer NOT NULL,
+    compliance_appointment double precision,
+    compliance_attempt double precision,
+    cancellations_worked integer,
+    saves integer,
+    reschedules integer,
+    recoveries integer,
+    recovery_rate double precision,
+    no_shows integer,
+    no_shows_spoken integer,
+    no_shows_not_spoken integer,
+    transfers integer,
+    needs_review integer NOT NULL,
+    match_exceptions integer NOT NULL,
+    computed_at timestamptz NOT NULL DEFAULT now(),
+    compute_version text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS ret_scorecards_week_idx ON ret_scorecards (week_start DESC)`,
   `CREATE INDEX IF NOT EXISTS ret_attempts_appt_idx ON retention_attempts (appointment_id)`,
   `CREATE INDEX IF NOT EXISTS ret_attempts_client_idx ON retention_attempts (internal_client_id, attempt_at)`,
   `CREATE INDEX IF NOT EXISTS ret_outcomes_status_idx ON retention_appointment_outcomes (final_status, contact_due_date)`
@@ -3964,6 +3994,63 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
         needs_review_reason = ${row.needsReviewReason},
         computed_at = now()
       WHERE appointment_id = ${row.appointmentId}::uuid`;
+  }
+
+  // ---- RETENTION SCORECARDS (stage 3c; plan §16) — append-if-new storage ----
+  // A stored week is NEVER rewritten: the only write is an ON CONFLICT DO
+  // NOTHING insert; there is no update path. Reads are uncached (same doctrine
+  // as the outcome reads — the 20s TTL cache is bypassed, so a just-written
+  // Monday row is visible to the very next read).
+  async listRetentionScorecards(): Promise<RetentionScorecardRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, week_start, week_end, due_days, owner_user_id::text AS owner_user_id, owner_name, owner_initials, eligible, called, spoken_with, unreached, compliance_appointment, compliance_attempt, cancellations_worked, saves, reschedules, recoveries, recovery_rate, no_shows, no_shows_spoken, no_shows_not_spoken, transfers, needs_review, match_exceptions, computed_at, compute_version FROM ret_scorecards ORDER BY week_start DESC`;
+    return rows.map((r) => this.retentionScorecardRow(r as Record<string, unknown>));
+  }
+  async getRetentionScorecard(weekStart: string): Promise<RetentionScorecardRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, week_start, week_end, due_days, owner_user_id::text AS owner_user_id, owner_name, owner_initials, eligible, called, spoken_with, unreached, compliance_appointment, compliance_attempt, cancellations_worked, saves, reschedules, recoveries, recovery_rate, no_shows, no_shows_spoken, no_shows_not_spoken, transfers, needs_review, match_exceptions, computed_at, compute_version FROM ret_scorecards WHERE week_start = ${weekStart}::date LIMIT 1`;
+    return rows.length ? this.retentionScorecardRow(rows[0] as Record<string, unknown>) : null;
+  }
+  async insertRetentionScorecardIfAbsent(row: RetentionScorecardWrite): Promise<{ created: boolean; row: RetentionScorecardRow | null }> {
+    await this.ensureSchema();
+    const out = await this.sql`
+      INSERT INTO ret_scorecards (week_start, week_end, due_days, owner_user_id, owner_name, owner_initials, eligible, called, spoken_with, unreached, compliance_appointment, compliance_attempt, cancellations_worked, saves, reschedules, recoveries, recovery_rate, no_shows, no_shows_spoken, no_shows_not_spoken, transfers, needs_review, match_exceptions, compute_version)
+      VALUES (${row.weekStart}::date, ${row.weekEnd}::date, ${row.dueDays}, ${row.ownerUserId}::uuid, ${row.ownerName}, ${row.ownerInitials}, ${row.eligible}, ${row.called}, ${row.spokenWith}, ${row.unreached}, ${row.complianceAppointment}, ${row.complianceAttempt}, ${row.cancellationsWorked}, ${row.saves}, ${row.reschedules}, ${row.recoveries}, ${row.recoveryRate}, ${row.noShows}, ${row.noShowsSpoken}, ${row.noShowsNotSpoken}, ${row.transfers}, ${row.needsReview}, ${row.matchExceptions}, ${row.computeVersion})
+      ON CONFLICT (week_start) DO NOTHING
+      RETURNING id`;
+    // Both paths read the stored row back — the winner's row for created=true,
+    // the pre-existing row for created=false (concurrent appliers race-safe).
+    return { created: out.length > 0, row: await this.getRetentionScorecard(row.weekStart) };
+  }
+  private retentionScorecardRow(r: Record<string, unknown>): RetentionScorecardRow {
+    return {
+      id: String(r.id),
+      week_start: normalizePgBusinessDate(r.week_start) ?? String(r.week_start),
+      week_end: normalizePgBusinessDate(r.week_end) ?? String(r.week_end),
+      due_days: Number(r.due_days ?? 7),
+      owner_user_id: r.owner_user_id == null ? null : String(r.owner_user_id),
+      owner_name: r.owner_name == null ? null : String(r.owner_name),
+      owner_initials: r.owner_initials == null ? null : String(r.owner_initials),
+      eligible: Number(r.eligible ?? 0),
+      called: Number(r.called ?? 0),
+      spoken_with: Number(r.spoken_with ?? 0),
+      unreached: Number(r.unreached ?? 0),
+      compliance_appointment: r.compliance_appointment == null ? null : Number(r.compliance_appointment),
+      compliance_attempt: r.compliance_attempt == null ? null : Number(r.compliance_attempt),
+      cancellations_worked: r.cancellations_worked == null ? null : Number(r.cancellations_worked),
+      saves: r.saves == null ? null : Number(r.saves),
+      reschedules: r.reschedules == null ? null : Number(r.reschedules),
+      recoveries: r.recoveries == null ? null : Number(r.recoveries),
+      recovery_rate: r.recovery_rate == null ? null : Number(r.recovery_rate),
+      no_shows: r.no_shows == null ? null : Number(r.no_shows),
+      no_shows_spoken: r.no_shows_spoken == null ? null : Number(r.no_shows_spoken),
+      no_shows_not_spoken: r.no_shows_not_spoken == null ? null : Number(r.no_shows_not_spoken),
+      transfers: r.transfers == null ? null : Number(r.transfers),
+      needs_review: Number(r.needs_review ?? 0),
+      match_exceptions: Number(r.match_exceptions ?? 0),
+      computed_at: new Date(r.computed_at as string).toISOString(),
+      compute_version: String(r.compute_version),
+    };
   }
   async dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void> {
     await this.ensureSchema();

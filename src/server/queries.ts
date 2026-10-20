@@ -56,6 +56,7 @@ import {
 } from "./roster";
 import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
+import { refreshAvailabilityRange } from "./sync/availability-feed";
 import type { AuditOkBody } from "./audit-api";
 import type { RetentionKpiKey, RetentionRange } from "./retention/ui-data";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
@@ -1314,7 +1315,9 @@ export const getWeeklyData = createServerFn().handler(() => withDbRetry(() => we
 export const getRetentionPageData = createServerFn().handler(() =>
   withDbRetry(async () => {
     const ui = await import("./retention/ui-data");
-    return ui.retentionOverview(await getStore());
+    const store = await getStore();
+    const [overview, scorecards] = await Promise.all([ui.retentionOverview(store), store.listRetentionScorecards()]);
+    return { ...overview, scorecards };
   }),
 );
 
