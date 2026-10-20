@@ -967,6 +967,25 @@ export function resolvePoolOptions(profile?: PoolProfile): { profile: PoolProfil
   return { profile: p, ...POOL_PROFILES[p] };
 }
 
+
+/** pg-shape guard: an evidence cell can arrive as a JSON-encoded STRING (TEXT-typed
+ * column, or a double-encoded jsonb value from an earlier write). Consumers always
+ * get the OBJECT; parse here, never guess. Non-JSON strings become {raw: <text>}. */
+function parseEvidenceCell(v: unknown): Record<string, unknown> {
+  if (v == null) return {};
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : { raw: v };
+    } catch {
+      return { raw: v };
+    }
+  }
+  return v as Record<string, unknown>;
+}
+
 export class PgStore implements Store {
   /** The pips column-list fragment (per-instance; see module-level comment). */
   private get pipCols() {
@@ -3845,7 +3864,7 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
       duration_seconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
       direction: r.direction == null ? null : String(r.direction),
       attempt_class: String(r.attempt_class),
-      evidence: (r.evidence ?? {}) as Record<string, unknown>,
+      evidence: parseEvidenceCell(r.evidence),
       attribution: String(r.attribution),
     };
   }
@@ -3909,7 +3928,7 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
       last_attempt_at: r.last_attempt_at == null ? null : new Date(r.last_attempt_at as string).toISOString(),
       any_answered: r.any_answered === true,
       final_status: String(r.final_status),
-      evidence: (r.evidence ?? {}) as Record<string, unknown>,
+      evidence: parseEvidenceCell(r.evidence),
       needs_review_reason: r.needs_review_reason == null ? null : String(r.needs_review_reason),
       computed_at: new Date(r.computed_at as string).toISOString(),
     };
