@@ -1436,6 +1436,77 @@ export interface RetentionOutcomeWrite {
 }
 
 /**
+ * One stored weekly scorecard row (ret_scorecards; stage 3c, plan §16).
+ * APPEND-IF-NEW: one row per scored Mon–Sun ET week (UNIQUE week_start),
+ * written ONCE — a stored week is NEVER rewritten (owner rule "past weeks
+ * render byte-identically forever"). The cancellation-family cells
+ * The cancellation-family cells, the no-show split and transfers are null
+ * until their ledgers gain writers — null is "not computed", never a
+ * fabricated 0.
+ */
+export interface RetentionScorecardRow {
+  id: string;
+  /** Monday ET of the scored week (YYYY-MM-DD calendar string). */
+  week_start: string;
+  /** Sunday ET of the scored week. */
+  week_end: string;
+  due_days: number;
+  /** The Retention Owner of the scored week, resolved from retention_owner_history at compute time (never hard-coded). */
+  owner_user_id: string | null;
+  owner_name: string | null;
+  owner_initials: string | null;
+  eligible: number;
+  /** Attempt-flavor numerator: cohort appointments with ≥1 in-window attempt (§16). */
+  called: number;
+  spoken_with: number;
+  unreached: number;
+  /** spoken_with / eligible — null when eligible = 0 (never a fabricated ratio). */
+  compliance_appointment: number | null;
+  /** called / eligible — null when eligible = 0. */
+  compliance_attempt: number | null;
+  cancellations_worked: number | null;
+  saves: number | null;
+  reschedules: number | null;
+  recoveries: number | null;
+  recovery_rate: number | null;
+  no_shows: number | null;
+  no_shows_spoken: number | null;
+  no_shows_not_spoken: number | null;
+  transfers: number | null;
+  needs_review: number;
+  /** Open data-match-exceptions snapshot at compute time. */
+  match_exceptions: number;
+  computed_at: string;
+  compute_version: string;
+}
+export interface RetentionScorecardWrite {
+  weekStart: string;
+  weekEnd: string;
+  dueDays: number;
+  ownerUserId: string | null;
+  ownerName: string | null;
+  ownerInitials: string | null;
+  eligible: number;
+  called: number;
+  spokenWith: number;
+  unreached: number;
+  complianceAppointment: number | null;
+  complianceAttempt: number | null;
+  cancellationsWorked: number | null;
+  saves: number | null;
+  reschedules: number | null;
+  recoveries: number | null;
+  recoveryRate: number | null;
+  noShows: number | null;
+  noShowsSpoken: number | null;
+  noShowsNotSpoken: number | null;
+  transfers: number | null;
+  needsReview: number;
+  matchExceptions: number;
+  computeVersion: string;
+}
+
+/**
  * Retention Owner role history (plan §12; retention_owner_history table,
  * §13 DDL). Configurable role record — never hard-coded; a scored week is
  * attributed to whoever owned the role at the time. READ-ONLY in this stage:
@@ -1995,6 +2066,10 @@ export interface Store {
   insertRetentionAppointmentOutcomes(rows: RetentionOutcomeWrite[]): Promise<number>;
   /** Content update of ONE existing outcome row (recomputed verdict); computed_at is set by the store. */
   updateRetentionAppointmentOutcome(row: RetentionOutcomeWrite): Promise<void>;
+  /** Weekly scorecards (stage 3c): append-if-new storage — a stored week is never rewritten. */
+  listRetentionScorecards(): Promise<RetentionScorecardRow[]>;
+  getRetentionScorecard(weekStart: string): Promise<RetentionScorecardRow | null>;
+  insertRetentionScorecardIfAbsent(row: RetentionScorecardWrite): Promise<{ created: boolean; row: RetentionScorecardRow | null }>;
   /** Management close of an exception WITHOUT a link write (audited via manual_overrides, like resolve). */
   dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void>;
 

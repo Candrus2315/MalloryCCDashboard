@@ -32,6 +32,7 @@ import type {
   RetentionOutcomeRow,
   RetentionOutcomeWrite,
   RetentionOwnerHistoryRow,
+  RetentionScorecardRow,
   ConnectionRow,
   ContactExternalIdRow,
   ContactIdentityRow,
@@ -2029,5 +2030,54 @@ export class MemoryStore implements Store {
   /** Test/seed helper — MemoryStore only, never part of the Store interface. */
   seedRetentionOwnerHistory(rows: Omit<RetentionOwnerHistoryRow, "id">[]): void {
     for (const r of rows) this.retentionOwnerHistory.push({ id: this.nextId("rowner"), ...r });
+  }
+
+  // ---- RETENTION SCORECARDS (stage 3c) — append-if-new; never rewritten ----
+  private retentionScorecards = new Map<string, RetentionScorecardRow>();
+  async listRetentionScorecards(): Promise<RetentionScorecardRow[]> {
+    await this.ensureSchema();
+    return [...this.retentionScorecards.values()]
+      .map((r) => JSON.parse(JSON.stringify(r)) as RetentionScorecardRow)
+      .sort((a, b) => (a.week_start > b.week_start ? -1 : a.week_start < b.week_start ? 1 : 0));
+  }
+  async getRetentionScorecard(weekStart: string): Promise<RetentionScorecardRow | null> {
+    await this.ensureSchema();
+    const cur = this.retentionScorecards.get(weekStart);
+    return cur ? (JSON.parse(JSON.stringify(cur)) as RetentionScorecardRow) : null;
+  }
+  async insertRetentionScorecardIfAbsent(row: RetentionScorecardWrite): Promise<{ created: boolean; row: RetentionScorecardRow | null }> {
+    await this.ensureSchema();
+    const cur = this.retentionScorecards.get(row.weekStart);
+    if (cur) return { created: false, row: JSON.parse(JSON.stringify(cur)) as RetentionScorecardRow };
+    const stored: RetentionScorecardRow = {
+      id: this.nextId("rscore"),
+      week_start: row.weekStart,
+      week_end: row.weekEnd,
+      due_days: row.dueDays,
+      owner_user_id: row.ownerUserId,
+      owner_name: row.ownerName,
+      owner_initials: row.ownerInitials,
+      eligible: row.eligible,
+      called: row.called,
+      spoken_with: row.spokenWith,
+      unreached: row.unreached,
+      compliance_appointment: row.complianceAppointment,
+      compliance_attempt: row.complianceAttempt,
+      cancellations_worked: row.cancellationsWorked,
+      saves: row.saves,
+      reschedules: row.reschedules,
+      recoveries: row.recoveries,
+      recovery_rate: row.recoveryRate,
+      no_shows: row.noShows,
+      no_shows_spoken: row.noShowsSpoken,
+      no_shows_not_spoken: row.noShowsNotSpoken,
+      transfers: row.transfers,
+      needs_review: row.needsReview,
+      match_exceptions: row.matchExceptions,
+      computed_at: new Date().toISOString(),
+      compute_version: row.computeVersion,
+    };
+    this.retentionScorecards.set(row.weekStart, stored);
+    return { created: true, row: JSON.parse(JSON.stringify(stored)) as RetentionScorecardRow };
   }
 }
