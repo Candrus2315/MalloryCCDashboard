@@ -57,8 +57,11 @@ describe("retention routes", () => {
     const page = readFileSync(new URL("../../routes/retention.tsx", import.meta.url), "utf8");
     const drill = readFileSync(new URL("../../routes/retention-drill.tsx", import.meta.url), "utf8");
     for (const src of [page, drill]) {
-      // every color routes through a --token (the bg-(--token) shorthand)
-      expect(src).not.toMatch(/(?:bg|text|border)-[#rgb(]/); // no raw colors — tokens only
+      // every color routes through a --token (the bg-(--token) shorthand).
+      // Match the real raw-color vectors — arbitrary hex (bg-[#f00]), rgb()/rgba(),
+      // and Tailwind palette names (text-red-400) — NOT the letters r/g/b (which
+      // false-positived on "text-right") and NOT the "(" of the token shorthand.
+      expect(src).not.toMatch(/(?:bg|text|border)-(?:\[#|rgba?\(|(?:red|blue|green|yellow|amber|emerald|slate|gray|grey|zinc|neutral|stone|orange|lime|teal|cyan|sky|indigo|violet|purple|fuchsia|pink|rose)\b)/); // no raw colors — tokens only
     }
     expect(drill).toContain("retention-"); // csv filename prefix
     expect(drill).toContain("min-w-[1080px]"); // table floor per spec §3
