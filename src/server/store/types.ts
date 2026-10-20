@@ -378,14 +378,13 @@ export const DEFAULT_ACTIVE_ROSTER: RosterEntry[] = [
 
 /**
  * Sanitize a stored roster: keep entries with a non-empty name and at least
- * one non-empty email; fall back to the default five when nothing valid
- * remains (the dashboard never runs with an EMPTY roster — that would zero
- * every rep surface; edit entries instead of deleting them all).
+ * one non-empty email. Shared by BOTH roster lists — the ACTIVE roster
+ * (normalizeRoster) and the HISTORICAL reps (normalizeHistoricalReps); they
+ * differ only in the empty-input fallback.
  */
-export function normalizeRoster(raw: unknown): RosterEntry[] {
-  const fallback = (): RosterEntry[] => JSON.parse(JSON.stringify(DEFAULT_ACTIVE_ROSTER));
-  if (!Array.isArray(raw)) return fallback();
+function sanitizeRosterEntries(raw: unknown): RosterEntry[] {
   const out: RosterEntry[] = [];
+  if (!Array.isArray(raw)) return out;
   for (const item of raw) {
     const r = (item ?? {}) as Partial<RosterEntry> & { email?: unknown };
     const name = typeof r.name === "string" ? r.name.trim() : "";
@@ -395,7 +394,31 @@ export function normalizeRoster(raw: unknown): RosterEntry[] {
       .map((e) => e.trim());
     if (name && emails.length) out.push({ name, emails });
   }
+  return out;
+}
+
+/**
+ * Sanitize a stored roster: keep entries with a non-empty name and at least
+ * one non-empty email; fall back to the default five when nothing valid
+ * remains (the dashboard never runs with an EMPTY roster — that would zero
+ * every rep surface; edit entries instead of deleting them all).
+ */
+export function normalizeRoster(raw: unknown): RosterEntry[] {
+  const fallback = (): RosterEntry[] => JSON.parse(JSON.stringify(DEFAULT_ACTIVE_ROSTER));
+  const out = sanitizeRosterEntries(raw);
   return out.length > 0 ? out : fallback();
+}
+
+/**
+ * HISTORICAL REPS (owner directive 2026-10-20): departed CC reps whose
+ * HISTORICAL contribution stays on the reporting surfaces (Weekly + Reps)
+ * while they remain OFF the active team. Same entry shape and match rule as
+ * the active roster; the EMPTY list is valid (no departed reps preserved) and
+ * behaves bit-identically to before the field existed — unlike the active
+ * roster, an empty historical list never falls back to the default five.
+ */
+export function normalizeHistoricalReps(raw: unknown): RosterEntry[] {
+  return sanitizeRosterEntries(raw);
 }
 
 /**
@@ -438,6 +461,19 @@ export interface AppSettings {
    * appears on rep surfaces or in team rollups. See src/server/roster.ts.
    */
   active_roster: RosterEntry[];
+  /**
+   * OWNER DIRECTIVE 2026-10-20 ("add back whatever you took out — I think it
+   * was Laura's bookings"): departed reps whose HISTORICAL contribution stays
+   * on the REPORTING surfaces (Weekly page incl. By-Rep + per-day grid + CC
+   * Report copy text; Reps page incl. per-rep history and team totals) while
+   * they remain OFF the active team. Match rule is the active roster's
+   * (name + email, case-insensitive — src/server/roster.ts). Empty list =
+   * no departed reps preserved, bit-identical to before this field existed.
+   * OPERATIONAL SURFACES (Today, Daily Report, lead assignment/cohort logic,
+   * the sync's is_active write, the attribution engine's write path) stay
+   * ACTIVE-ROSTER-ONLY — a historical entry never re-activates anyone.
+   */
+  historical_reps: RosterEntry[];
   /**
    * Owner-managed HL-user → CC-rep roster mappings (Settings → Roster
    * Mapping). When a non-roster HighLevel user is mapped here, ALL historical
@@ -597,6 +633,7 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
     ...r,
     highlevel_sync_interval_seconds: clampNumber(r.highlevel_sync_interval_seconds, base.highlevel_sync_interval_seconds, 30, 3600),
     active_roster: normalizeRoster(r.active_roster ?? base.active_roster),
+    historical_reps: normalizeHistoricalReps(r.historical_reps ?? base.historical_reps),
     rep_mappings: normalizeRepMappings(r.rep_mappings ?? base.rep_mappings),
     studio: { ...base.studio, ...(r.studio ?? {}) },
     sheets: {
@@ -614,6 +651,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   attribution_window_hours: 24,
   timezone: "America/New_York",
   active_roster: DEFAULT_ACTIVE_ROSTER,
+  historical_reps: [],
   rep_mappings: [],
   studio: {
     appointment_duration_min: 60,

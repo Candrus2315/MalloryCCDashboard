@@ -58,7 +58,7 @@ import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
 import type { AuditOkBody } from "./audit-api";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
-import { normalizeRepMappings, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, type AppSettings, type RepMapping, type SyncRunRow } from "./store/types";
+import { normalizeHistoricalReps, normalizeRepMappings, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, type AppSettings, type RepMapping, type RosterEntry, type SyncRunRow } from "./store/types";
 
 export interface PageMeta {
   mode: "postgres" | "memory";
@@ -428,6 +428,52 @@ export const saveRepMappings = createServerFn({ method: "POST" })
       }
     }
     return { ok: true, count: mappings.length };
+  });
+
+/**
+ * HISTORICAL REPS (owner directive 2026-10-20): the Settings API for the
+ * departed-rep list whose historical contribution stays on the reporting
+ * surfaces (Weekly + Reps) while they remain off the active team. Same entry
+ * shape as the active roster (normalizeHistoricalReps); replaces the whole
+ * list. Every add/remove is audited (manual_overrides, entity_type
+ * "historical_rep") so the Audit page shows who preserved whom, when.
+ */
+export const saveHistoricalReps = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as { reps: RosterEntry[] })
+  .handler(async ({ data }) => {
+    const store = await getStore();
+    const reps = normalizeHistoricalReps(data?.reps ?? []);
+    const prev = (await store.getSettings()).historical_reps ?? [];
+    await store.saveSettings({ historical_reps: reps }, SETTINGS_OWNER_ACTOR);
+    // audit trail: every added/removed NAME, never raw call data
+    const keyOf = (r: RosterEntry) => `${r.name.toLowerCase()}|${r.emails.map((e) => e.toLowerCase()).sort().join(",")}`;
+    const prevKeys = new Set(prev.map(keyOf));
+    const nextKeys = new Set(reps.map(keyOf));
+    for (const r of reps) {
+      if (!prevKeys.has(keyOf(r))) {
+        await store.insertManualOverride({
+          entity_type: "historical_rep",
+          entity_id: r.name,
+          field: "historical_reps",
+          previous_value: null,
+          new_value: r.emails.join(", "),
+          changed_by: SETTINGS_OWNER_ACTOR,
+        });
+      }
+    }
+    for (const p of prev) {
+      if (!nextKeys.has(keyOf(p))) {
+        await store.insertManualOverride({
+          entity_type: "historical_rep",
+          entity_id: p.name,
+          field: "historical_reps",
+          previous_value: p.emails.join(", "),
+          new_value: "removed",
+          changed_by: SETTINGS_OWNER_ACTOR,
+        });
+      }
+    }
+    return { ok: true, count: reps.length };
   });
 
 /** Rep activation dates (call_start_date) — Settings editor, audited per rep. */
@@ -1193,6 +1239,14 @@ export interface RepStripRow {
   goal: RepGoalInfo | null;
   /** "not-yet-active" reps show only the Not Yet Active chip; attention rules skip them. */
   operatingState: "active" | "not-yet-active";
+  /**
+   * HISTORICAL REP (owner directive 2026-10-20): true when the rep matches a
+   * settings.historical_reps entry — a DEPARTED rep whose historical numbers
+   * stay on the reporting surfaces while they are off the active team. The
+   * strip renders a "Past rep" chip so nobody reads her as a current booker.
+   * Always false with an empty historical_reps (bit-identical to today).
+   */
+  historical: boolean;
   callStartDate: string | null;
 }
 
