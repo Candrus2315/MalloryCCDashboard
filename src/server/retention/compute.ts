@@ -480,9 +480,16 @@ function sameInstant(a: string | null, b: string | null): boolean {
  * recursively on BOTH sides; array order is preserved (jsonb keeps it too).
  */
 function canonicalJson(v: unknown): string {
+  // Date (or any toJSON) would render via JSON.stringify on write — mirror it.
+  if (v instanceof Date) return JSON.stringify(v.toISOString());
   if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);
-  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (Array.isArray(v)) return `[${v.map((e) => canonicalJson(e ?? null)).join(",")}]`;
   const obj = v as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
+  // JSON.stringify DROPS keys whose value is undefined — the stored (jsonb)
+  // row therefore lacks them; the canonical form must too, or a desired
+  // object with an undefined-valued key never equals its own stored image
+  // (the run-3 field-diff proof: every stored field SAME, comparator still
+  // "updated").
+  const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort();
   return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(",")}}`;
 }
