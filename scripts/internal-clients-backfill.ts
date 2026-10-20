@@ -42,6 +42,28 @@ if (store.mode !== "postgres") {
 
 // Read-only gather client (separate from the store pool; small max).
 const ro = postgres(url, { max: 2, idle_timeout: 5, connect_timeout: 30 });
+// Dedicated session-level lock holder (advisory locks are per-connection, so
+// it must not share ro's pool, which can round-robin across connections).
+const locker = postgres(url, { max: 1, idle_timeout: 5, connect_timeout: 30 });
+
+// SINGLE-APPLIER GUARD (2026-10-20 outage): a backfill launched by a previous
+// session survived its terminal and raced the next run — two appliers on the
+// same tables produced a check-then-act unique-violation crash (and a stuck
+// sync_runs row). The applier is now conflict-safe, but concurrent runs are
+// still pointless and wasteful: fail honest and tell the operator to retry.
+const BACKFILL_ADVISORY_LOCK_ID = 7263542;
+const lockRows = await locker`SELECT pg_try_advisory_lock(${BACKFILL_ADVISORY_LOCK_ID}) AS ok`;
+const gotLock = Boolean((lockRows[0] as { ok: boolean })?.ok);
+if (!gotLock) {
+  console.error("ANOTHER_BACKFILL_RUNNING: pg advisory lock " + BACKFILL_ADVISORY_LOCK_ID + " is held — refusing to run concurrently; retry when the other run finishes");
+  await locker.end({ timeout: 2 }).catch(() => undefined);
+  await ro.end({ timeout: 2 }).catch(() => undefined);
+  process.exit(3);
+}
+const releaseLock = async () => {
+  await locker`SELECT pg_advisory_unlock(${BACKFILL_ADVISORY_LOCK_ID})`.catch(() => undefined);
+  await locker.end({ timeout: 2 }).catch(() => undefined);
+};
 
 const runId = await store.insertSyncRun("retention-identity-backfill");
 
@@ -127,6 +149,7 @@ try {
 } catch (e) {
   const msg = e instanceof Error ? e.message : String(e);
   await store.finishSyncRun(runId, "error", 0, msg);
+  await releaseLock();
   await ro.end({ timeout: 2 }).catch(() => undefined);
   throw e;
 }
@@ -168,6 +191,7 @@ const summary = {
 };
 await store.finishSyncRun(runId, "success", run1.clientsCreated + run1.contactLinksCreated + run1.appointmentLinksCreated + run1.fallbackLinksCreated + run1.exceptionsCreated, null);
 writeFileSync(OUT_JSON, JSON.stringify(summary, null, 1));
+await releaseLock();
 await ro.end({ timeout: 2 }).catch(() => undefined);
 console.log(JSON.stringify(summary, null, 1));
 if (!byteIdentical || !run2Clean) {

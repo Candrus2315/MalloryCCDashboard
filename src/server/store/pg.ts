@@ -3637,11 +3637,24 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
   }
   async insertInternalClient(input: InternalClientSeedInput): Promise<InternalClientRow> {
     await this.ensureSchema();
+    // 2026-10-20 outage root-cause fix: two appliers (or a re-run against
+    // partially-applied state) racing on the same seed_key collided with
+    // internal_clients_seed_key_key. Resolve the existing row instead — a
+    // duplicate insert OBSERVES the winner, it never throws and never mutates.
+    if (input.seedKey) {
+      const existing = await this.getInternalClientBySeedKey(input.seedKey);
+      if (existing) return existing;
+    }
     const rows = await this.sql`
       INSERT INTO internal_clients (seed_key, display_name, normalized_phone, normalized_email, ghl_contact_external_id, match_state)
       VALUES (${input.seedKey ?? null}, ${input.displayName ?? null}, ${input.normalizedPhone ?? null}, ${input.normalizedEmail ?? null}, ${input.ghlContactExternalId ?? null}, ${input.matchState ?? "auto_matched"})
+      ON CONFLICT (seed_key) DO NOTHING
       RETURNING *`;
-    return this.internalClientRow(rows[0] as Record<string, unknown>);
+    if (rows.length) return this.internalClientRow(rows[0] as Record<string, unknown>);
+    // Lost the check-then-act race to a concurrent applier: return its row.
+    const raced = input.seedKey ? await this.getInternalClientBySeedKey(input.seedKey) : null;
+    if (raced) return raced;
+    throw new Error("insertInternalClient: conflict reported but row not readable");
   }
   async getInternalClientsByIds(ids: string[]): Promise<InternalClientRow[]> {
     await this.ensureSchema();

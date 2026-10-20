@@ -168,6 +168,43 @@ describe("applyInternalClientBackfill", () => {
     expect(after.exceptionCount).toBe(before.exceptionCount);
   });
 
+  test("REGRESSION 2026-10-20 concurrent-applier outage: duplicate seed_key insert returns the existing row, never collides", async () => {
+    // Live-fire root cause: a background backfill from a previous session
+    // survived its terminal; the next run's check-then-act insert collided
+    // with internal_clients_seed_key_key (pg) and crashed mid-backfill. The
+    // store contract is now "duplicate insert observes the winner": same row,
+    // same id, no mutation — in BOTH stores (pg enforces it via ON CONFLICT
+    // (seed_key) DO NOTHING + read-back; memory mirrors it here).
+    const store = new MemoryStore();
+    const first = await store.insertInternalClient({
+      seedKey: "hl-contact:dFPSvHcdgEiEjWAl03Bl",
+      displayName: "Original",
+      normalizedPhone: "6035551212",
+      ghlContactExternalId: "dFPSvHcdgEiEjWAl03Bl",
+    });
+    const second = await store.insertInternalClient({
+      seedKey: "hl-contact:dFPSvHcdgEiEjWAl03Bl",
+      displayName: "Racer",
+      normalizedPhone: "6035551212",
+      ghlContactExternalId: "dFPSvHcdgEiEjWAl03Bl",
+    });
+    expect(second.id).toBe(first.id);
+    expect(second.display_name).toBe("Original"); // winner's data, not the racer's
+    expect(second.seed_key).toBe("hl-contact:dFPSvHcdgEiEjWAl03Bl");
+    expect((await store.listInternalClients()).length).toBe(1);
+    // And the applier converges: ensureClientForContact resolves the same id.
+    const r = await applyInternalClientBackfill(store, {
+      appointments: [
+        { acuityAppointmentId: "RA1", status: "scheduled", clientName: "Race Victim", contactExternalId: "dFPSvHcdgEiEjWAl03Bl" },
+      ],
+      contacts: [],
+      callsWithoutClient: [],
+    });
+    const link = await store.getClientMatchLink("acuity", "appointment", "RA1");
+    expect(link?.internal_client_id).toBe(first.id);
+    expect(r.clientsCreated).toBe(0); // observed, not duplicated
+  });
+
   test("ambiguous phone → exception; manual resolve is sticky and never re-matched", async () => {
     const store = new MemoryStore();
     // Two clients already share a phone (the one live-zero case the matcher must still guard).

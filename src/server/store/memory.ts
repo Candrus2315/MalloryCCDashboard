@@ -1687,6 +1687,11 @@ export class MemoryStore implements Store {
   }
   async insertInternalClient(input: InternalClientSeedInput): Promise<InternalClientRow> {
     await this.ensureSchema();
+    // Idempotence contract (mirrors pg.ts, 2026-10-20 outage fix): a duplicate
+    // seed_key insert OBSERVES the existing row — same id, no mutation, no
+    // silent replacement. Re-runs and concurrent appliers converge, never fork.
+    const existing = input.seedKey ? this.internalClients.get(input.seedKey) : undefined;
+    if (existing) return { ...existing };
     const now = new Date().toISOString();
     const row: InternalClientRow = {
       id: this.nextId("ic"),
