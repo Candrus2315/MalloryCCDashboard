@@ -1171,6 +1171,96 @@ export interface AvailabilityCatalogInput {
   types: Array<{ appointment_type_id: string; name: string; calendar_ids: string[]; duration_minutes: number | null }>;
 }
 
+// ---- RETENTION IDENTITY CHAIN (stage 2; owner-approved D1–D14, 2026-10-19) ----
+// Canonical client-identity layer: one internal client per real-world client,
+// sticky per-system member links, and a Data Match Exceptions queue. Built
+// additively per IMPLEMENTATION-PLAN.md §13 (retention/ dir); nothing here
+// reuses or repurposes an existing column. Uniqueness lives on the LINK table
+// (provider, entity, external_id) — phone/email are NOT unique on the client
+// row (a couple may share a landline).
+
+/** Canonical internal client (plan §7). seed_key makes backfill re-runs byte-identical (deviation from the §13 sketch: deterministic idempotence key + evidence/dedupe columns — noted in the plan deviation log). */
+export interface InternalClientRow {
+  id: string;
+  /** Deterministic seed key ('hl-contact:<external_id>') or null for manual-only clients. */
+  seed_key: string | null;
+  display_name: string | null;
+  /** 10-digit NANP comparison value (normalizeUSPhone) — never a sole identity guarantee. */
+  normalized_phone: string | null;
+  /** normalizeEmail value — never a sole identity guarantee. */
+  normalized_email: string | null;
+  /** The GHL contact of record (1:1 today; re-pointable only by an audited manual resolve). */
+  ghl_contact_external_id: string | null;
+  /** auto_matched | manual_resolved | exception */
+  match_state: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InternalClientSeedInput {
+  seedKey?: string | null;
+  displayName?: string | null;
+  normalizedPhone?: string | null;
+  normalizedEmail?: string | null;
+  ghlContactExternalId?: string | null;
+  /** auto_matched | manual_resolved | exception (default auto_matched). */
+  matchState?: string;
+}
+
+/** One sticky member link: every system entity points at EXACTLY ONE internal client, ever (UNIQUE provider+entity+external_id). Manual resolves persist — auto passes never overwrite an existing link. */
+export interface ClientMatchLinkRow {
+  internal_client_id: string;
+  provider: string; // 'highlevel' | 'acuity'
+  entity: string; // 'contact' | 'appointment'
+  external_id: string;
+  /** exact_id | phone_email | phone | email | phone_name | manual */
+  match_method: string;
+  /** exact | high | medium | manual */
+  confidence: string | null;
+  /** Source ids that justified the link (auditability: every link preserves why). */
+  evidence: Record<string, unknown> | null;
+  /** 'auto' | 'manual:<who>' */
+  resolved_by: string;
+  resolved_at: string;
+}
+
+export interface ClientMatchLinkInput {
+  internalClientId: string;
+  provider: string;
+  entity: string;
+  externalId: string;
+  matchMethod: string;
+  confidence?: string | null;
+  evidence?: Record<string, unknown> | null;
+  resolvedBy?: string;
+}
+
+/** Data Match Exceptions queue row (plan §7). dedupe_key (deviation: added for idempotent re-runs) prevents duplicate open rows. */
+export interface DataMatchExceptionRow {
+  id: string;
+  /** ambiguous_id | ambiguous_phone | ambiguous_email | ambiguous_name | name_only | no_identity */
+  kind: string;
+  dedupe_key: string;
+  /** Full candidate list + evidence (ids, names, phones, emails, tiers). */
+  payload: Record<string, unknown>;
+  /** The appointment/call/contact that triggered it. */
+  context: Record<string, unknown> | null;
+  /** open | resolved | dismissed */
+  status: string;
+  resolved_internal_client_id: string | null;
+  resolved_method: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  first_seen_at: string;
+}
+
+export interface DataMatchExceptionInput {
+  kind: string;
+  dedupeKey: string;
+  payload: Record<string, unknown>;
+  context?: Record<string, unknown> | null;
+}
+
 export interface Store {
   mode: "postgres" | "memory";
   ensureSchema(): Promise<void>;
@@ -1660,4 +1750,40 @@ export interface Store {
   putAvailabilityCatalog(catalog: AvailabilityCatalogInput, runId: string, fetchedAt?: string): Promise<void>;
   /** The cached catalog; empty arrays when no feed run has populated it yet. */
   getAvailabilityCatalog(): Promise<{ calendars: AvailabilityCalendarRow[]; types: AvailabilityTypeRow[] }>;
+
+  // ---- RETENTION IDENTITY CHAIN (stage 2; plan §7; owner-approved D1–D14) ----
+  // Idempotence contract shared by BOTH stores: clients are addressed by a
+  // deterministic seed_key; link inserts are if-absent on the
+  // (provider, entity, external_id) UNIQUE and NEVER update an existing row
+  // (manual resolves are sticky — auto passes cannot override them); manual
+  // resolveDataMatchException is the ONLY writer allowed to move a link, and
+  // it stamps match_method='manual' + an audit trail. Exception inserts are
+  // if-absent on dedupe_key. Re-running the backfill therefore mutates
+  // nothing (the byte-identical gate criterion).
+  /** Deterministic lookup by seed key ('hl-contact:<external_id>'). */
+  getInternalClientBySeedKey(seedKey: string): Promise<InternalClientRow | null>;
+  /** Insert one client; returns the row with its store-canonical id. Callers look up by seed key first. */
+  insertInternalClient(input: InternalClientSeedInput): Promise<InternalClientRow>;
+  getInternalClientsByIds(ids: string[]): Promise<InternalClientRow[]>;
+  /** Every client (the matcher's candidate universe; production volumes are small — seeded clients only). */
+  listInternalClients(): Promise<InternalClientRow[]>;
+  /** Every link row (bulk prefetch for the backfill applier's read decisions). */
+  listClientMatchLinks(): Promise<ClientMatchLinkRow[]>;
+  /** STICKY link writer: insert-if-absent on (provider, entity, external_id); existing rows are returned UNCHANGED with created=false. */
+  insertClientMatchLinkIfAbsent(link: ClientMatchLinkInput): Promise<{ link: ClientMatchLinkRow; created: boolean }>;
+  getClientMatchLink(provider: string, entity: string, externalId: string): Promise<ClientMatchLinkRow | null>;
+  getClientMatchLinksByInternalClient(internalClientId: string): Promise<ClientMatchLinkRow[]>;
+  countClientMatchLinks(): Promise<number>;
+  /** Dedupe on dedupe_key while open; an existing row is returned UNCHANGED with created=false. */
+  insertDataMatchExceptionIfAbsent(input: DataMatchExceptionInput): Promise<{ exception: DataMatchExceptionRow; created: boolean }>;
+  getDataMatchExceptions(opts?: { status?: string }): Promise<DataMatchExceptionRow[]>;
+  countDataMatchExceptions(status?: string): Promise<number>;
+  /** Manual resolution (management action; audited): resolves the exception AND writes/overrides the member link with match_method='manual' — the one writer allowed to move a link. */
+  resolveDataMatchException(id: string, resolve: { internalClientId: string; method?: string; resolvedBy: string }): Promise<void>;
+  /** Appointment → internal client (via the sticky acuity/appointment link). */
+  getInternalClientForAppointment(acuityAppointmentId: string): Promise<InternalClientRow | null>;
+  /** GHL contact external ids → internal clients (the call→client resolver core: call.contact_id → contacts.external_id → this). */
+  getInternalClientsForContactExternalIds(externalIds: string[]): Promise<{ external_id: string; client: InternalClientRow | null }[]>;
+  /** Call ids → internal client (join through contacts + the highlevel/contact link); null when the call has no resolvable client. */
+  getInternalClientsForCallIds(callIds: string[]): Promise<{ call_id: string; internal_client_id: string | null }[]>;
 }

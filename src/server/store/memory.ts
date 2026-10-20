@@ -21,6 +21,12 @@ import type {
   AppSettings,
   AuditCallRow,
   CallContactBackfillUpdate,
+  InternalClientRow,
+  InternalClientSeedInput,
+  ClientMatchLinkRow,
+  ClientMatchLinkInput,
+  DataMatchExceptionRow,
+  DataMatchExceptionInput,
   ConnectionRow,
   ContactExternalIdRow,
   ContactIdentityRow,
@@ -118,6 +124,12 @@ export class MemoryStore implements Store {
   private harvestConvs = new Map<string, HarvestConvRow & { visited: boolean; calls_found: number; messages_scanned: number }>();
   private opportunities = new Map<string, OpportunityRow>(); // keyed by provider:external_id
   private appointments = new Map<string, ApptExt>(); // keyed by acuity_appointment_id
+  // RETENTION IDENTITY CHAIN (stage 2): canonical clients keyed by seed_key
+  // (or internal id for manual-only clients); links keyed provider:entity:external_id
+  // (the sticky one-client-per-entity invariant); exceptions keyed dedupe_key.
+  private internalClients = new Map<string, InternalClientRow>();
+  private clientMatchLinks = new Map<string, ClientMatchLinkRow>();
+  private dataMatchExceptions = new Map<string, DataMatchExceptionRow>();
   private attributions = new Map<string, AttributionRow>(); // keyed by appointment_id
   private leads = new Map<string, LeadExt>(); // keyed by sheet:source_id
   private availabilityRules: AvailabilityRule[] = [];
@@ -1661,5 +1673,203 @@ export class MemoryStore implements Store {
     if (filter?.userId) rows = rows.filter((r) => r.user_id === filter.userId);
     if (filter?.targetId) rows = rows.filter((r) => r.target_id === filter.targetId);
     return rows.sort((a, b) => (a.changed_at < b.changed_at ? 1 : -1)).map((r) => ({ ...r }));
+  }
+
+  // ---- RETENTION IDENTITY CHAIN (stage 2; plan §7; owner-approved D1–D14) ----
+  // Mirrors pg.ts EXACTLY (same idempotence contract): clients by deterministic
+  // seed_key; links if-absent on the sticky key and NEVER updated by auto
+  // passes; resolveDataMatchException is the only writer that may move a link
+  // (match_method='manual' + audit trail); exceptions if-absent on dedupe_key.
+  async getInternalClientBySeedKey(seedKey: string): Promise<InternalClientRow | null> {
+    await this.ensureSchema();
+    const row = this.internalClients.get(seedKey);
+    return row ? { ...row } : null;
+  }
+  async insertInternalClient(input: InternalClientSeedInput): Promise<InternalClientRow> {
+    await this.ensureSchema();
+    // Idempotence contract (mirrors pg.ts, 2026-10-20 outage fix): a duplicate
+    // seed_key insert OBSERVES the existing row — same id, no mutation, no
+    // silent replacement. Re-runs and concurrent appliers converge, never fork.
+    const existing = input.seedKey ? this.internalClients.get(input.seedKey) : undefined;
+    if (existing) return { ...existing };
+    const now = new Date().toISOString();
+    const row: InternalClientRow = {
+      id: this.nextId("ic"),
+      seed_key: input.seedKey ?? null,
+      display_name: input.displayName ?? null,
+      normalized_phone: input.normalizedPhone ?? null,
+      normalized_email: input.normalizedEmail ?? null,
+      ghl_contact_external_id: input.ghlContactExternalId ?? null,
+      match_state: input.matchState ?? "auto_matched",
+      created_at: now,
+      updated_at: now,
+    };
+    this.internalClients.set(input.seedKey ?? row.id, row);
+    return { ...row };
+  }
+  async getInternalClientsByIds(ids: string[]): Promise<InternalClientRow[]> {
+    await this.ensureSchema();
+    const set = new Set(ids);
+    return [...this.internalClients.values()].filter((r) => set.has(r.id)).map((r) => ({ ...r }));
+  }
+  async listInternalClients(): Promise<InternalClientRow[]> {
+    await this.ensureSchema();
+    return [...this.internalClients.values()]
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : 1))
+      .map((r) => ({ ...r }));
+  }
+  async listClientMatchLinks(): Promise<ClientMatchLinkRow[]> {
+    await this.ensureSchema();
+    return [...this.clientMatchLinks.values()].map((r) => ({ ...r }));
+  }
+  async insertClientMatchLinkIfAbsent(link: ClientMatchLinkInput): Promise<{ link: ClientMatchLinkRow; created: boolean }> {
+    await this.ensureSchema();
+    const key = `${link.provider}:${link.entity}:${link.externalId}`;
+    const existing = this.clientMatchLinks.get(key);
+    if (existing) return { link: { ...existing }, created: false }; // sticky: never overwritten by auto passes
+    const row: ClientMatchLinkRow = {
+      internal_client_id: link.internalClientId,
+      provider: link.provider,
+      entity: link.entity,
+      external_id: link.externalId,
+      match_method: link.matchMethod,
+      confidence: link.confidence ?? null,
+      evidence: link.evidence ?? null,
+      resolved_by: link.resolvedBy ?? "auto",
+      resolved_at: new Date().toISOString(),
+    };
+    this.clientMatchLinks.set(key, row);
+    return { link: { ...row }, created: true };
+  }
+  async getClientMatchLink(provider: string, entity: string, externalId: string): Promise<ClientMatchLinkRow | null> {
+    await this.ensureSchema();
+    const row = this.clientMatchLinks.get(`${provider}:${entity}:${externalId}`);
+    return row ? { ...row } : null;
+  }
+  async getClientMatchLinksByInternalClient(internalClientId: string): Promise<ClientMatchLinkRow[]> {
+    await this.ensureSchema();
+    return [...this.clientMatchLinks.values()]
+      .filter((r) => r.internal_client_id === internalClientId)
+      .sort((a, b) => `${a.provider}:${a.entity}:${a.external_id}`.localeCompare(`${b.provider}:${b.entity}:${b.external_id}`))
+      .map((r) => ({ ...r }));
+  }
+  async countClientMatchLinks(): Promise<number> {
+    await this.ensureSchema();
+    return this.clientMatchLinks.size;
+  }
+  async insertDataMatchExceptionIfAbsent(input: DataMatchExceptionInput): Promise<{ exception: DataMatchExceptionRow; created: boolean }> {
+    await this.ensureSchema();
+    const existing = this.dataMatchExceptions.get(input.dedupeKey);
+    if (existing) return { exception: { ...existing }, created: false };
+    const row: DataMatchExceptionRow = {
+      id: this.nextId("dme"),
+      kind: input.kind,
+      dedupe_key: input.dedupeKey,
+      payload: JSON.parse(JSON.stringify(input.payload)) as Record<string, unknown>,
+      context: input.context ? (JSON.parse(JSON.stringify(input.context)) as Record<string, unknown>) : null,
+      status: "open",
+      resolved_internal_client_id: null,
+      resolved_method: null,
+      resolved_by: null,
+      resolved_at: null,
+      first_seen_at: new Date().toISOString(),
+    };
+    this.dataMatchExceptions.set(input.dedupeKey, row);
+    return { exception: { ...row }, created: true };
+  }
+  async getDataMatchExceptions(opts?: { status?: string }): Promise<DataMatchExceptionRow[]> {
+    await this.ensureSchema();
+    return [...this.dataMatchExceptions.values()]
+      .filter((r) => !opts?.status || r.status === opts.status)
+      .sort((a, b) => (a.first_seen_at < b.first_seen_at ? 1 : a.first_seen_at > b.first_seen_at ? -1 : a.id < b.id ? -1 : 1))
+      .map((r) => ({ ...r }));
+  }
+  async countDataMatchExceptions(status?: string): Promise<number> {
+    await this.ensureSchema();
+    return [...this.dataMatchExceptions.values()].filter((r) => !status || r.status === status).length;
+  }
+  async resolveDataMatchException(id: string, resolve: { internalClientId: string; method?: string; resolvedBy: string }): Promise<void> {
+    await this.ensureSchema();
+    const exc = [...this.dataMatchExceptions.values()].find((r) => r.id === id);
+    if (!exc) throw new Error(`resolveDataMatchException: unknown exception ${id}`);
+    // Mirror pg.ts: the manual resolve writes/overrides the member link for the
+    // exception's subject (dedupe key encodes provider/entity/external id).
+    const key = exc.dedupe_key;
+    let provider: string | null = null;
+    let entity: string | null = null;
+    let externalId: string | null = null;
+    if (key.startsWith("appt-identity:")) {
+      provider = "acuity";
+      entity = "appointment";
+      externalId = key.slice("appt-identity:".length);
+    } else if (key.startsWith("contact-identity:hl:")) {
+      provider = "highlevel";
+      entity = "contact";
+      externalId = key.slice("contact-identity:hl:".length);
+    }
+    if (provider && entity && externalId) {
+      await this.insertClientMatchLinkIfAbsent({
+        internalClientId: resolve.internalClientId,
+        provider,
+        entity,
+        externalId,
+        matchMethod: resolve.method ?? "manual",
+        confidence: "manual",
+        resolvedBy: "manual:" + resolve.resolvedBy,
+        evidence: { basis: "manual_resolve", exception_id: exc.id, previous_kind: exc.kind },
+      });
+      // manual resolve MAY move an auto link — deliberate override, audited:
+      const linkKey = `${provider}:${entity}:${externalId}`;
+      const link = this.clientMatchLinks.get(linkKey);
+      if (link && (link.match_method !== "manual" || link.internal_client_id !== resolve.internalClientId)) {
+        this.clientMatchLinks.set(linkKey, {
+          ...link,
+          internal_client_id: resolve.internalClientId,
+          match_method: resolve.method ?? "manual",
+          confidence: "manual",
+          evidence: { basis: "manual_resolve", exception_id: exc.id, previous_kind: exc.kind },
+          resolved_by: "manual:" + resolve.resolvedBy,
+          resolved_at: new Date().toISOString(),
+        });
+      }
+      const client = [...this.internalClients.values()].find((c) => c.id === resolve.internalClientId);
+      if (client) {
+        this.internalClients.set(client.seed_key ?? client.id, { ...client, match_state: "manual_resolved", updated_at: new Date().toISOString() });
+      }
+    }
+    this.dataMatchExceptions.set(exc.dedupe_key, { ...exc, status: "resolved", resolved_internal_client_id: resolve.internalClientId, resolved_method: resolve.method ?? "manual", resolved_by: resolve.resolvedBy, resolved_at: new Date().toISOString() });
+    await this.insertManualOverride({
+      entity_type: "data_match_exception",
+      entity_id: exc.id,
+      field: "resolved_internal_client_id",
+      previous_value: null,
+      new_value: resolve.internalClientId,
+      changed_by: `manual:${resolve.resolvedBy} kind=${exc.kind} dedupe=${exc.dedupe_key} provider=${provider ?? "?"} entity=${entity ?? "?"} external=${externalId ?? "?"}`,
+    });
+  }
+  async getInternalClientForAppointment(acuityAppointmentId: string): Promise<InternalClientRow | null> {
+    await this.ensureSchema();
+    const link = this.clientMatchLinks.get(`acuity:appointment:${acuityAppointmentId}`);
+    if (!link) return null;
+    const client = [...this.internalClients.values()].find((c) => c.id === link.internal_client_id);
+    return client ? { ...client } : null;
+  }
+  async getInternalClientsForContactExternalIds(externalIds: string[]): Promise<{ external_id: string; client: InternalClientRow | null }[]> {
+    await this.ensureSchema();
+    return externalIds.map((external_id) => {
+      const link = this.clientMatchLinks.get(`highlevel:contact:${external_id}`);
+      if (!link) return { external_id, client: null };
+      const client = [...this.internalClients.values()].find((c) => c.id === link.internal_client_id);
+      return { external_id, client: client ? { ...client } : null };
+    });
+  }
+  async getInternalClientsForCallIds(callIds: string[]): Promise<{ call_id: string; internal_client_id: string | null }[]> {
+    await this.ensureSchema();
+    return callIds.map((call_id) => {
+      const call = [...this.calls.values()].find((c) => c.id === call_id);
+      const contact = call?.contact_id ? this.contacts.get(call.contact_id) : undefined;
+      const link = contact ? this.clientMatchLinks.get(`highlevel:contact:${contact.external_id}`) : undefined;
+      return { call_id, internal_client_id: link?.internal_client_id ?? null };
+    });
   }
 }

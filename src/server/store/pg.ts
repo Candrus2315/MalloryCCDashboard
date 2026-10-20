@@ -20,6 +20,12 @@ import type {
   ContactIdentityRow,
   AuditCallRow,
   CallContactBackfillUpdate,
+  InternalClientRow,
+  InternalClientSeedInput,
+  ClientMatchLinkRow,
+  ClientMatchLinkInput,
+  DataMatchExceptionRow,
+  DataMatchExceptionInput,
   ConnectionRow,
   ContactExternalIdRow,
   ContactRow,
@@ -748,7 +754,126 @@ const DDL: string[] = [
     duration_minutes int,
     fetched_at timestamptz NOT NULL,
     run_id uuid NOT NULL
-  )`
+  )`,
+  // ---- RETENTION IDENTITY CHAIN (stage 2; owner-approved D1–D14, 2026-10-19) ----
+  // Additive-only per IMPLEMENTATION-PLAN.md §13: canonical internal clients,
+  // sticky per-system member links, Data Match Exceptions queue, plus the
+  // attempt-evidence tables the next stage's ledger/outcomes jobs write.
+  // Nothing here ALTERs an existing table; uniqueness lives on the LINK table.
+  // Deviations from the §13 sketch (needed for re-run idempotence + the
+  // owner's "every link records evidence" requirement): internal_clients
+  // gains a deterministic seed_key UNIQUE; client_match_links gains an
+  // evidence jsonb; data_match_exceptions gains a dedupe_key UNIQUE.
+  `CREATE TABLE IF NOT EXISTS internal_clients (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    seed_key text UNIQUE,
+    display_name text,
+    normalized_phone text,
+    normalized_email text,
+    ghl_contact_external_id text,
+    match_state text NOT NULL DEFAULT 'auto_matched',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS internal_clients_phone_idx ON internal_clients (normalized_phone)`,
+  `CREATE INDEX IF NOT EXISTS internal_clients_email_idx ON internal_clients (normalized_email)`,
+  `CREATE TABLE IF NOT EXISTS client_match_links (
+    internal_client_id uuid NOT NULL REFERENCES internal_clients(id),
+    provider text NOT NULL,
+    entity text NOT NULL,
+    external_id text NOT NULL,
+    match_method text NOT NULL,
+    confidence text,
+    evidence jsonb,
+    resolved_by text NOT NULL DEFAULT 'auto',
+    resolved_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (provider, entity, external_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS client_match_links_client_idx ON client_match_links (internal_client_id)`,
+  `CREATE INDEX IF NOT EXISTS client_match_links_ext_idx ON client_match_links (provider, entity, external_id)`,
+  `CREATE TABLE IF NOT EXISTS data_match_exceptions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind text NOT NULL,
+    dedupe_key text NOT NULL UNIQUE,
+    payload jsonb NOT NULL,
+    context jsonb,
+    status text NOT NULL DEFAULT 'open',
+    resolved_internal_client_id uuid REFERENCES internal_clients(id),
+    resolved_method text,
+    resolved_by text,
+    resolved_at timestamptz,
+    first_seen_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE TABLE IF NOT EXISTS retention_attempts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    internal_client_id uuid NOT NULL REFERENCES internal_clients(id),
+    appointment_id uuid REFERENCES appointments(id),
+    call_id uuid REFERENCES calls(id),
+    source text NOT NULL,
+    external_message_id text NOT NULL,
+    employee_user_id uuid REFERENCES users(id),
+    employee_external_id text,
+    attempt_at timestamptz NOT NULL,
+    call_status text,
+    duration_seconds int,
+    direction text,
+    attempt_class text NOT NULL,
+    evidence jsonb NOT NULL,
+    attribution text NOT NULL DEFAULT 'window',
+    UNIQUE (source, external_message_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS retention_appointment_outcomes (
+    appointment_id uuid PRIMARY KEY REFERENCES appointments(id),
+    internal_client_id uuid NOT NULL,
+    contact_due_date date NOT NULL,
+    eligible boolean NOT NULL,
+    eligibility_basis text,
+    attempts_count int NOT NULL DEFAULT 0,
+    first_attempt_at timestamptz,
+    last_attempt_at timestamptz,
+    any_answered boolean NOT NULL DEFAULT false,
+    final_status text NOT NULL,
+    evidence jsonb NOT NULL,
+    needs_review_reason text,
+    computed_at timestamptz NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS retention_cancellations (
+    appointment_id uuid PRIMARY KEY REFERENCES appointments(id),
+    internal_client_id uuid,
+    ghl_contact_external_id text,
+    cancelled_at timestamptz,
+    attempts_count int DEFAULT 0,
+    any_answered boolean DEFAULT false,
+    final_contact_status text,
+    outcome text NOT NULL DEFAULT 'pending',
+    successor_appointment_id uuid,
+    recovered boolean NOT NULL DEFAULT false,
+    recovered_at timestamptz,
+    manual_overrides jsonb,
+    notes jsonb
+  )`,
+  `CREATE TABLE IF NOT EXISTS retention_transfers (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    appointment_id uuid REFERENCES appointments(id),
+    handler_user_id uuid REFERENCES users(id),
+    original_booker text,
+    reason text,
+    outcome text,
+    detected_at timestamptz NOT NULL DEFAULT now(),
+    details jsonb
+  )`,
+  `CREATE TABLE IF NOT EXISTS retention_owner_history (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_user_id uuid NOT NULL REFERENCES users(id),
+    name text,
+    initials text,
+    active boolean NOT NULL DEFAULT true,
+    effective_start date NOT NULL,
+    effective_end date
+  )`,
+  `CREATE INDEX IF NOT EXISTS ret_attempts_appt_idx ON retention_attempts (appointment_id)`,
+  `CREATE INDEX IF NOT EXISTS ret_attempts_client_idx ON retention_attempts (internal_client_id, attempt_at)`,
+  `CREATE INDEX IF NOT EXISTS ret_outcomes_status_idx ON retention_appointment_outcomes (final_status, contact_due_date)`
 ];
 
 /**
@@ -3456,5 +3581,234 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
         changed_at: new Date(base.changed_at as string).toISOString(),
       };
     });
+  }
+
+  // ---- RETENTION IDENTITY CHAIN (stage 2; plan §7; owner-approved D1–D14) ----
+  // Idempotence contract (see types.ts): clients by deterministic seed_key,
+  // links if-absent on the UNIQUE and NEVER updated by auto passes, manual
+  // resolve is the only writer that may move a link (and it stamps
+  // match_method='manual' + writes the audit trail), exceptions if-absent on
+  // dedupe_key. A re-run of the backfill observes but never mutates.
+  private internalClientRow(r: Record<string, unknown>): InternalClientRow {
+    return {
+      id: String(r.id),
+      seed_key: r.seed_key == null ? null : String(r.seed_key),
+      display_name: r.display_name == null ? null : String(r.display_name),
+      normalized_phone: r.normalized_phone == null ? null : String(r.normalized_phone),
+      normalized_email: r.normalized_email == null ? null : String(r.normalized_email),
+      ghl_contact_external_id: r.ghl_contact_external_id == null ? null : String(r.ghl_contact_external_id),
+      match_state: String(r.match_state ?? "auto_matched"),
+      created_at: new Date(r.created_at as string).toISOString(),
+      updated_at: new Date(r.updated_at as string).toISOString(),
+    };
+  }
+  private clientMatchLinkRow(r: Record<string, unknown>): ClientMatchLinkRow {
+    return {
+      internal_client_id: String(r.internal_client_id),
+      provider: String(r.provider),
+      entity: String(r.entity),
+      external_id: String(r.external_id),
+      match_method: String(r.match_method),
+      confidence: r.confidence == null ? null : String(r.confidence),
+      evidence: (r.evidence ?? null) as Record<string, unknown> | null,
+      resolved_by: String(r.resolved_by ?? "auto"),
+      resolved_at: new Date(r.resolved_at as string).toISOString(),
+    };
+  }
+  private dataMatchExceptionRow(r: Record<string, unknown>): DataMatchExceptionRow {
+    return {
+      id: String(r.id),
+      kind: String(r.kind),
+      dedupe_key: String(r.dedupe_key),
+      payload: (r.payload ?? {}) as Record<string, unknown>,
+      context: (r.context ?? null) as Record<string, unknown> | null,
+      status: String(r.status ?? "open"),
+      resolved_internal_client_id: r.resolved_internal_client_id == null ? null : String(r.resolved_internal_client_id),
+      resolved_method: r.resolved_method == null ? null : String(r.resolved_method),
+      resolved_by: r.resolved_by == null ? null : String(r.resolved_by),
+      resolved_at: r.resolved_at == null ? null : new Date(r.resolved_at as string).toISOString(),
+      first_seen_at: new Date(r.first_seen_at as string).toISOString(),
+    };
+  }
+  async getInternalClientBySeedKey(seedKey: string): Promise<InternalClientRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT * FROM internal_clients WHERE seed_key = ${seedKey} LIMIT 1`;
+    return rows.length ? this.internalClientRow(rows[0] as Record<string, unknown>) : null;
+  }
+  async insertInternalClient(input: InternalClientSeedInput): Promise<InternalClientRow> {
+    await this.ensureSchema();
+    // 2026-10-20 outage root-cause fix: two appliers (or a re-run against
+    // partially-applied state) racing on the same seed_key collided with
+    // internal_clients_seed_key_key. Resolve the existing row instead — a
+    // duplicate insert OBSERVES the winner, it never throws and never mutates.
+    if (input.seedKey) {
+      const existing = await this.getInternalClientBySeedKey(input.seedKey);
+      if (existing) return existing;
+    }
+    const rows = await this.sql`
+      INSERT INTO internal_clients (seed_key, display_name, normalized_phone, normalized_email, ghl_contact_external_id, match_state)
+      VALUES (${input.seedKey ?? null}, ${input.displayName ?? null}, ${input.normalizedPhone ?? null}, ${input.normalizedEmail ?? null}, ${input.ghlContactExternalId ?? null}, ${input.matchState ?? "auto_matched"})
+      ON CONFLICT (seed_key) DO NOTHING
+      RETURNING *`;
+    if (rows.length) return this.internalClientRow(rows[0] as Record<string, unknown>);
+    // Lost the check-then-act race to a concurrent applier: return its row.
+    const raced = input.seedKey ? await this.getInternalClientBySeedKey(input.seedKey) : null;
+    if (raced) return raced;
+    throw new Error("insertInternalClient: conflict reported but row not readable");
+  }
+  async getInternalClientsByIds(ids: string[]): Promise<InternalClientRow[]> {
+    await this.ensureSchema();
+    if (!ids.length) return [];
+    const rows = await this.sql`SELECT * FROM internal_clients WHERE id = ANY(${ids}::uuid[])`;
+    return rows.map((r) => this.internalClientRow(r as Record<string, unknown>));
+  }
+  async listInternalClients(): Promise<InternalClientRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT * FROM internal_clients ORDER BY created_at, id`;
+    return rows.map((r) => this.internalClientRow(r as Record<string, unknown>));
+  }
+  async listClientMatchLinks(): Promise<ClientMatchLinkRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT * FROM client_match_links ORDER BY provider, entity, external_id`;
+    return rows.map((r) => this.clientMatchLinkRow(r as Record<string, unknown>));
+  }
+  async insertClientMatchLinkIfAbsent(link: ClientMatchLinkInput): Promise<{ link: ClientMatchLinkRow; created: boolean }> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      INSERT INTO client_match_links (internal_client_id, provider, entity, external_id, match_method, confidence, evidence, resolved_by)
+      VALUES (${link.internalClientId}::uuid, ${link.provider}, ${link.entity}, ${link.externalId}, ${link.matchMethod}, ${link.confidence ?? null}, ${link.evidence ? JSON.stringify(link.evidence) : null}::jsonb, ${link.resolvedBy ?? "auto"})
+      ON CONFLICT (provider, entity, external_id) DO NOTHING
+      RETURNING *`;
+    if (rows.length) return { link: this.clientMatchLinkRow(rows[0] as Record<string, unknown>), created: true };
+    const existing = await this.getClientMatchLink(link.provider, link.entity, link.externalId);
+    if (!existing) throw new Error("insertClientMatchLinkIfAbsent: conflict reported but row not readable");
+    return { link: existing, created: false };
+  }
+  async getClientMatchLink(provider: string, entity: string, externalId: string): Promise<ClientMatchLinkRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT * FROM client_match_links WHERE provider = ${provider} AND entity = ${entity} AND external_id = ${externalId} LIMIT 1`;
+    return rows.length ? this.clientMatchLinkRow(rows[0] as Record<string, unknown>) : null;
+  }
+  async getClientMatchLinksByInternalClient(internalClientId: string): Promise<ClientMatchLinkRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT * FROM client_match_links WHERE internal_client_id = ${internalClientId}::uuid ORDER BY provider, entity, external_id`;
+    return rows.map((r) => this.clientMatchLinkRow(r as Record<string, unknown>));
+  }
+  async countClientMatchLinks(): Promise<number> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT count(*)::int AS n FROM client_match_links`;
+    return Number(rows[0]?.n ?? 0);
+  }
+  async insertDataMatchExceptionIfAbsent(input: DataMatchExceptionInput): Promise<{ exception: DataMatchExceptionRow; created: boolean }> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      INSERT INTO data_match_exceptions (kind, dedupe_key, payload, context)
+      VALUES (${input.kind}, ${input.dedupeKey}, ${JSON.stringify(input.payload)}::jsonb, ${input.context ? JSON.stringify(input.context) : null}::jsonb)
+      ON CONFLICT (dedupe_key) DO NOTHING
+      RETURNING *`;
+    if (rows.length) return { exception: this.dataMatchExceptionRow(rows[0] as Record<string, unknown>), created: true };
+    const existing = await this.sql`SELECT * FROM data_match_exceptions WHERE dedupe_key = ${input.dedupeKey} LIMIT 1`;
+    if (!existing.length) throw new Error("insertDataMatchExceptionIfAbsent: conflict reported but row not readable");
+    return { exception: this.dataMatchExceptionRow(existing[0] as Record<string, unknown>), created: false };
+  }
+  async getDataMatchExceptions(opts?: { status?: string }): Promise<DataMatchExceptionRow[]> {
+    await this.ensureSchema();
+    const rows = opts?.status
+      ? await this.sql`SELECT * FROM data_match_exceptions WHERE status = ${opts.status} ORDER BY first_seen_at DESC, id`
+      : await this.sql`SELECT * FROM data_match_exceptions ORDER BY first_seen_at DESC, id`;
+    return rows.map((r) => this.dataMatchExceptionRow(r as Record<string, unknown>));
+  }
+  async countDataMatchExceptions(status?: string): Promise<number> {
+    await this.ensureSchema();
+    const rows = status
+      ? await this.sql`SELECT count(*)::int AS n FROM data_match_exceptions WHERE status = ${status}`
+      : await this.sql`SELECT count(*)::int AS n FROM data_match_exceptions`;
+    return Number(rows[0]?.n ?? 0);
+  }
+  async resolveDataMatchException(id: string, resolve: { internalClientId: string; method?: string; resolvedBy: string }): Promise<void> {
+    await this.ensureSchema();
+    const cur = await this.sql`SELECT * FROM data_match_exceptions WHERE id = ${id}::uuid LIMIT 1`;
+    if (!cur.length) throw new Error(`resolveDataMatchException: unknown exception ${id}`);
+    const exc = this.dataMatchExceptionRow(cur[0] as Record<string, unknown>);
+    // The manual resolve is the ONE writer allowed to move a link. Write the
+    // member link for the exception's subject entity (dedupe key encodes it),
+    // stamped manual + audit trail, then close the exception.
+    const key = exc.dedupe_key;
+    let provider: string | null = null;
+    let entity: string | null = null;
+    let externalId: string | null = null;
+    if (key.startsWith("appt-identity:")) {
+      provider = "acuity";
+      entity = "appointment";
+      externalId = key.slice("appt-identity:".length);
+    } else if (key.startsWith("contact-identity:hl:")) {
+      provider = "highlevel";
+      entity = "contact";
+      externalId = key.slice("contact-identity:hl:".length);
+    }
+    await this.sql`
+      INSERT INTO client_match_links (internal_client_id, provider, entity, external_id, match_method, confidence, evidence, resolved_by)
+      VALUES (${resolve.internalClientId}::uuid, ${provider}, ${entity}, ${externalId}, ${resolve.method ?? "manual"}, 'manual',
+              ${JSON.stringify({ basis: "manual_resolve", exception_id: exc.id, previous_kind: exc.kind })}::jsonb, ${"manual:" + resolve.resolvedBy})
+      ON CONFLICT (provider, entity, external_id) DO UPDATE
+        SET internal_client_id = EXCLUDED.internal_client_id,
+            match_method = 'manual',
+            confidence = 'manual',
+            evidence = EXCLUDED.evidence,
+            resolved_by = EXCLUDED.resolved_by,
+            resolved_at = now()`;
+    await this.sql`UPDATE internal_clients SET match_state = 'manual_resolved', updated_at = now() WHERE id = ${resolve.internalClientId}::uuid`;
+    await this.sql`
+      UPDATE data_match_exceptions
+      SET status = 'resolved', resolved_internal_client_id = ${resolve.internalClientId}::uuid,
+          resolved_method = ${resolve.method ?? "manual"}, resolved_by = ${resolve.resolvedBy}, resolved_at = now()
+      WHERE id = ${id}::uuid`;
+    // Audit trail (reliability program: every manual write is audited) — via
+    // the existing manual_overrides sink (its schema has no reason/details
+    // columns, so the context rides in changed_by, which the override log
+    // renders verbatim).
+    await this.insertManualOverride({
+      entity_type: "data_match_exception",
+      entity_id: exc.id,
+      field: "resolved_internal_client_id",
+      previous_value: null,
+      new_value: resolve.internalClientId,
+      changed_by: `manual:${resolve.resolvedBy} kind=${exc.kind} dedupe=${exc.dedupe_key} provider=${provider ?? "?"} entity=${entity ?? "?"} external=${externalId ?? "?"}`,
+    });
+  }
+  async getInternalClientForAppointment(acuityAppointmentId: string): Promise<InternalClientRow | null> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT ic.* FROM internal_clients ic
+      JOIN client_match_links l ON l.internal_client_id = ic.id
+      WHERE l.provider = 'acuity' AND l.entity = 'appointment' AND l.external_id = ${acuityAppointmentId}
+      LIMIT 1`;
+    return rows.length ? this.internalClientRow(rows[0] as Record<string, unknown>) : null;
+  }
+  async getInternalClientsForContactExternalIds(externalIds: string[]): Promise<{ external_id: string; client: InternalClientRow | null }[]> {
+    await this.ensureSchema();
+    if (!externalIds.length) return [];
+    const rows = await this.sql`
+      SELECT e.external_id, ic.id, ic.seed_key, ic.display_name, ic.normalized_phone, ic.normalized_email, ic.ghl_contact_external_id, ic.match_state, ic.created_at, ic.updated_at
+      FROM (SELECT unnest(${externalIds}::text[]) AS external_id) e
+      LEFT JOIN client_match_links l ON l.provider = 'highlevel' AND l.entity = 'contact' AND l.external_id = e.external_id
+      LEFT JOIN internal_clients ic ON ic.id = l.internal_client_id`;
+    const byExt = new Map<string, InternalClientRow | null>();
+    for (const r of rows as Record<string, unknown>[]) {
+      byExt.set(String(r.external_id), r.id == null ? null : this.internalClientRow(r));
+    }
+    return externalIds.map((external_id) => ({ external_id, client: byExt.get(external_id) ?? null }));
+  }
+  async getInternalClientsForCallIds(callIds: string[]): Promise<{ call_id: string; internal_client_id: string | null }[]> {
+    await this.ensureSchema();
+    if (!callIds.length) return [];
+    const rows = await this.sql`
+      SELECT c.id::text AS call_id, l.internal_client_id::text AS internal_client_id
+      FROM (SELECT unnest(${callIds}::uuid[]) AS id) q
+      JOIN calls c ON c.id = q.id
+      LEFT JOIN contacts ct ON ct.id = c.contact_id
+      LEFT JOIN client_match_links l ON l.provider = 'highlevel' AND l.entity = 'contact' AND l.external_id = ct.external_id`;
+    const byCall = new Map<string, string | null>(rows.map((r) => [String((r as Record<string, unknown>).call_id), (r as Record<string, unknown>).internal_client_id == null ? null : String((r as Record<string, unknown>).internal_client_id)]));
+    return callIds.map((call_id) => ({ call_id, internal_client_id: byCall.get(call_id) ?? null }));
   }
 }
