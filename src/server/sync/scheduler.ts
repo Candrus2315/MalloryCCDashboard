@@ -38,6 +38,7 @@ import { availabilityTick, type AvailabilityTickResult } from "./acuity-live";
 import { attributionTick, type AttributionTickResult } from "./attribution-tick";
 import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
 import { commissionCloseTick, type CommissionCloseResult } from "../commission/close";
+import { retentionTick, type RetentionTickResult } from "../retention/tick";
 import type { LiveSheetsAdapter } from "./sheets-live";
 import { availabilityFeedTick, type AvailabilityFeedResult } from "./availability-feed";
 import {
@@ -182,7 +183,7 @@ export { STALE_RUN_REAP_MINUTES } from "../store/types";
 // "acuity_availability" rides the machinery too (2026-10-07: a hung feed run
 // blocked every background tick for its 12h window — the provider was missing
 // from this set so the reaper never closed its rows).
-const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity", "attribution", "acuity_availability"]);
+const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity", "attribution", "acuity_availability", "retention"]);
 
 /**
  * Mark every "running" sync_runs row of a bounded provider that is older than
@@ -253,6 +254,8 @@ export interface SchedulerTickResult {
   availabilityFeed?: AvailabilityFeedResult;
   /** Independent commission weekly close piggy-backed on the same tick (never fails the tick; throttled). */
   commission?: CommissionCloseResult;
+  /** Independent retention attempt/outcome recompute piggy-backed on the same tick (never fails the tick; throttled). */
+  retention?: RetentionTickResult;
   /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
   reaped?: number;
 }
@@ -699,7 +702,21 @@ export async function schedulerTick(options?: {
       commission = { outcome: "error", weeksConsidered: 0, recordsWritten: 0, weeksClosed: [], error: e instanceof Error ? e.message : String(e) };
     }
   }
-  return { ...base, availability, attribution, sheets, availabilityFeed, commission, reaped };
+  // RETENTION COMPUTE (stage 3a, owner build order): attempt ledger +
+  // successful-contact classification, idempotent diff-writes. Same
+  // piggy-back contract as the others: own guards (running guard, 5-min
+  // throttle), own sync_runs audit rows, never fails the tick.
+  let retention: RetentionTickResult | undefined;
+  try {
+    retention = await retentionTick({
+      store: options?.store,
+      now: options?.now,
+      trigger: options?.trigger,
+    });
+  } catch (e) {
+    retention = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, reaped };
 }
 
 // ---------- the always-on loop ----------

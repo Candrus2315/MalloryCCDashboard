@@ -27,6 +27,10 @@ import type {
   ClientMatchLinkInput,
   DataMatchExceptionRow,
   DataMatchExceptionInput,
+  RetentionAttemptRow,
+  RetentionAttemptWrite,
+  RetentionOutcomeRow,
+  RetentionOutcomeWrite,
   ConnectionRow,
   ContactExternalIdRow,
   ContactIdentityRow,
@@ -369,7 +373,11 @@ export class MemoryStore implements Store {
   async getCallsBetween(startUtc: string, endUtc: string): Promise<CallRow[]> {
     return [...this.calls.values()]
       .filter((c) => c.started_at >= startUtc && c.started_at < endUtc)
-      .map(({ provider: _p, ...rest }) => rest); // external_call_id now CARRIED (attribution engine reads it)
+      // external_call_id now CARRIED (attribution engine reads it);
+      // direction/call_status normalized to always-present (null when absent)
+      // — REQUIRED parity with the pg callRow mapper: the retention
+      // classification reads them from every store read path (stage 3a).
+      .map(({ provider: _p, ...rest }) => ({ direction: rest.direction ?? null, call_status: rest.call_status ?? null, ...rest }))
   }
   async getAllCallsSince(startUtc: string): Promise<CallRow[]> {
     return this.getCallsBetween(startUtc, "9999-12-31");
@@ -1792,6 +1800,9 @@ export class MemoryStore implements Store {
     await this.ensureSchema();
     const exc = [...this.dataMatchExceptions.values()].find((r) => r.id === id);
     if (!exc) throw new Error(`resolveDataMatchException: unknown exception ${id}`);
+    // WRITE-ONCE (stage 3a): a resolved/dismissed exception is final — its
+    // sticky manual link stays and can never be re-resolved or re-pointed.
+    if (exc.status !== "open") throw new Error(`resolveDataMatchException: exception ${id} is already ${exc.status} — write-once, refused`);
     // Mirror pg.ts: the manual resolve writes/overrides the member link for the
     // exception's subject (dedupe key encodes provider/entity/external id).
     const key = exc.dedupe_key;
@@ -1871,5 +1882,134 @@ export class MemoryStore implements Store {
       const link = contact ? this.clientMatchLinks.get(`highlevel:contact:${contact.external_id}`) : undefined;
       return { call_id, internal_client_id: link?.internal_client_id ?? null };
     });
+  }
+
+  // ---- RETENTION ATTEMPT LEDGER + OUTCOMES (stage 3a; plan §9/§13) ----
+  // Mirrors pg.ts semantics: bulk reads, content-diffed writes from the core,
+  // per-attempt rows never merged, updates only as honest re-observations.
+  private retentionAttempts = new Map<string, RetentionAttemptRow>();
+  private retentionOutcomes = new Map<string, RetentionOutcomeRow>();
+  async listRetentionAttempts(): Promise<RetentionAttemptRow[]> {
+    await this.ensureSchema();
+    return [...this.retentionAttempts.values()]
+      .sort((a, b) => (a.attempt_at < b.attempt_at ? -1 : a.attempt_at > b.attempt_at ? 1 : a.external_message_id < b.external_message_id ? -1 : 1))
+      .map((r) => JSON.parse(JSON.stringify(r)) as RetentionAttemptRow);
+  }
+  async insertRetentionAttempts(rows: RetentionAttemptWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      const key = `${r.source}:${r.externalMessageId}`;
+      if (this.retentionAttempts.has(key)) continue; // race loser skipped (UNIQUE safety net)
+      const row: RetentionAttemptRow = {
+        id: this.nextId("ratt"),
+        internal_client_id: r.internalClientId,
+        appointment_id: r.appointmentId,
+        call_id: r.callId,
+        source: r.source,
+        external_message_id: r.externalMessageId,
+        employee_user_id: r.employeeUserId,
+        employee_external_id: r.employeeExternalId,
+        attempt_at: r.attemptAtIso,
+        call_status: r.callStatus,
+        duration_seconds: r.durationSeconds,
+        direction: r.direction,
+        attempt_class: r.attemptClass,
+        evidence: JSON.parse(JSON.stringify(r.evidence)) as Record<string, unknown>,
+        attribution: r.attribution,
+      };
+      this.retentionAttempts.set(key, row);
+      created += 1;
+    }
+    return created;
+  }
+  async updateRetentionAttempt(id: string, patch: Partial<Omit<RetentionAttemptWrite, "source" | "externalMessageId">>): Promise<void> {
+    await this.ensureSchema();
+    const row = [...this.retentionAttempts.values()].find((r) => r.id === id);
+    if (!row) throw new Error(`updateRetentionAttempt: unknown attempt ${id}`);
+    if (patch.internalClientId != null) row.internal_client_id = patch.internalClientId;
+    if (patch.appointmentId !== undefined) row.appointment_id = patch.appointmentId;
+    if (patch.callId !== undefined) row.call_id = patch.callId;
+    if (patch.employeeUserId !== undefined) row.employee_user_id = patch.employeeUserId;
+    if (patch.employeeExternalId !== undefined) row.employee_external_id = patch.employeeExternalId;
+    if (patch.attemptAtIso) row.attempt_at = patch.attemptAtIso;
+    if (patch.callStatus !== undefined) row.call_status = patch.callStatus;
+    if (patch.durationSeconds !== undefined) row.duration_seconds = patch.durationSeconds;
+    if (patch.direction !== undefined) row.direction = patch.direction;
+    if (patch.attemptClass) row.attempt_class = patch.attemptClass;
+    if (patch.attribution) row.attribution = patch.attribution;
+    if (patch.evidence !== undefined) row.evidence = JSON.parse(JSON.stringify(patch.evidence)) as Record<string, unknown>;
+  }
+  async listRetentionAppointmentOutcomes(): Promise<RetentionOutcomeRow[]> {
+    await this.ensureSchema();
+    return [...this.retentionOutcomes.values()]
+      .sort((a, b) => (a.contact_due_date < b.contact_due_date ? -1 : a.contact_due_date > b.contact_due_date ? 1 : a.appointment_id < b.appointment_id ? -1 : 1))
+      .map((r) => JSON.parse(JSON.stringify(r)) as RetentionOutcomeRow);
+  }
+  async insertRetentionAppointmentOutcomes(rows: RetentionOutcomeWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      if (this.retentionOutcomes.has(r.appointmentId)) continue;
+      this.retentionOutcomes.set(r.appointmentId, {
+        appointment_id: r.appointmentId,
+        internal_client_id: r.internalClientId,
+        contact_due_date: r.contactDueDate,
+        eligible: r.eligible,
+        eligibility_basis: r.eligibilityBasis,
+        attempts_count: r.attemptsCount,
+        first_attempt_at: r.firstAttemptAtIso,
+        last_attempt_at: r.lastAttemptAtIso,
+        any_answered: r.anyAnswered,
+        final_status: r.finalStatus,
+        evidence: JSON.parse(JSON.stringify(r.evidence)) as Record<string, unknown>,
+        needs_review_reason: r.needsReviewReason,
+        computed_at: new Date().toISOString(),
+      });
+      created += 1;
+    }
+    return created;
+  }
+  async updateRetentionAppointmentOutcome(row: RetentionOutcomeWrite): Promise<void> {
+    await this.ensureSchema();
+    const cur = this.retentionOutcomes.get(row.appointmentId);
+    if (!cur) throw new Error(`updateRetentionAppointmentOutcome: unknown appointment ${row.appointmentId}`);
+    this.retentionOutcomes.set(row.appointmentId, {
+      appointment_id: row.appointmentId,
+      internal_client_id: row.internalClientId,
+      contact_due_date: row.contactDueDate,
+      eligible: row.eligible,
+      eligibility_basis: row.eligibilityBasis,
+      attempts_count: row.attemptsCount,
+      first_attempt_at: row.firstAttemptAtIso,
+      last_attempt_at: row.lastAttemptAtIso,
+      any_answered: row.anyAnswered,
+      final_status: row.finalStatus,
+      evidence: JSON.parse(JSON.stringify(row.evidence)) as Record<string, unknown>,
+      needs_review_reason: row.needsReviewReason,
+      computed_at: new Date().toISOString(),
+    });
+  }
+  async dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void> {
+    await this.ensureSchema();
+    const exc = [...this.dataMatchExceptions.values()].find((r) => r.id === id);
+    if (!exc) throw new Error(`dismissDataMatchException: unknown exception ${id}`);
+    if (exc.status === "open") {
+      this.dataMatchExceptions.set(exc.dedupe_key, {
+        ...exc,
+        status: "dismissed",
+        resolved_method: "dismissed",
+        resolved_by: opts.resolvedBy,
+        resolved_at: new Date().toISOString(),
+      });
+      await this.insertManualOverride({
+        entity_type: "data_match_exception",
+        entity_id: exc.id,
+        field: "status",
+        previous_value: "open",
+        new_value: "dismissed",
+        changed_by: `manual:${opts.resolvedBy} kind=${exc.kind} dedupe=${exc.dedupe_key}`,
+      });
+    }
   }
 }

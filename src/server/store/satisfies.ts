@@ -205,6 +205,14 @@ const STORE_METHOD_FLAGS = {
   getInternalClientForAppointment: 1,
   getInternalClientsForContactExternalIds: 1,
   getInternalClientsForCallIds: 1,
+  dismissDataMatchException: 1,
+  // stage 3a retention ledger + outcomes (plan §9/§13)
+  listRetentionAttempts: 1,
+  insertRetentionAttempts: 1,
+  updateRetentionAttempt: 1,
+  listRetentionAppointmentOutcomes: 1,
+  insertRetentionAppointmentOutcomes: 1,
+  updateRetentionAppointmentOutcome: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

@@ -497,6 +497,65 @@ export interface AppSettings {
     calendars_included: string[];
     types_included: string[];
   };
+  /**
+   * RETENTION MODULE business rules (owner spec: rules live in Settings, not
+   * code). Stage 3a consumes due_days + qualifying_statuses + the compute
+   * lookback; the full Settings surface is the next delegation — these keys
+   * exist now so the compute job reads live values, with owner-ratified
+   * defaults below when unset.
+   */
+  retention?: RetentionSettings;
+}
+
+/** Owner-ratified retention defaults (D1–D14 approved 2026-10-19; plan §12/§13). */
+export interface RetentionSettings {
+  /** contact_due_date = appointment ET date − due_days (calendar; default 7). */
+  due_days: number;
+  /** Appointment statuses that enter the contact funnel (default scheduled). */
+  qualifying_statuses: string[];
+  /** D13 backfill/compute scope in due-date days behind today (default 30 — the call-sync window). */
+  compute_lookback_days: number;
+  /** Initials → documenter map for SWC/LVM note lines (D4: owner-supplied; unmapped initials always flagged). */
+  employee_initials: Record<string, string>;
+  /** Filled when compute_lookback_days is unset. */
+  max_attempts: number | null;
+  max_attempt_days: number | null;
+  max_contact_days: number | null;
+}
+
+export const DEFAULT_RETENTION_SETTINGS: RetentionSettings = {
+  due_days: 7,
+  qualifying_statuses: ["scheduled"],
+  compute_lookback_days: 30,
+  employee_initials: {},
+  max_attempts: null,
+  max_attempt_days: null,
+  max_contact_days: null,
+};
+
+export function normalizeRetentionSettings(raw: unknown): RetentionSettings {
+  const base = { ...DEFAULT_RETENTION_SETTINGS };
+  const r = (raw ?? {}) as Partial<RetentionSettings>;
+  const int = (v: unknown, fallback: number, min: number, max: number): number => {
+    const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : fallback;
+    return Math.min(max, Math.max(min, n));
+  };
+  const statuses = Array.isArray(r.qualifying_statuses) ? r.qualifying_statuses.filter((s): s is string => typeof s === "string" && s.length > 0) : base.qualifying_statuses;
+  const initials: Record<string, string> = {};
+  if (r.employee_initials && typeof r.employee_initials === "object") {
+    for (const [k, v] of Object.entries(r.employee_initials as Record<string, unknown>)) {
+      if (typeof v === "string" && v.length > 0) initials[k.toUpperCase().slice(0, 5)] = v;
+    }
+  }
+  return {
+    due_days: int(r.due_days, base.due_days, 0, 60),
+    qualifying_statuses: statuses.length ? statuses : base.qualifying_statuses,
+    compute_lookback_days: int(r.compute_lookback_days, base.compute_lookback_days, 1, 365),
+    employee_initials: initials,
+    max_attempts: typeof r.max_attempts === "number" && Number.isFinite(r.max_attempts) && r.max_attempts > 0 ? Math.round(r.max_attempts) : null,
+    max_attempt_days: typeof r.max_attempt_days === "number" && Number.isFinite(r.max_attempt_days) && r.max_attempt_days > 0 ? Math.round(r.max_attempt_days) : null,
+    max_contact_days: typeof r.max_contact_days === "number" && Number.isFinite(r.max_contact_days) && r.max_contact_days > 0 ? Math.round(r.max_contact_days) : null,
+  };
 }
 
 /**
@@ -641,6 +700,7 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
       animalia: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.animalia ?? base.sheets.animalia, DEFAULT_SHEET_IDS.animalia),
     },
     acuity: { ...base.acuity, ...(r.acuity ?? {}) },
+    retention: normalizeRetentionSettings(r.retention ?? base.retention),
   };
   return merged;
 }
@@ -1299,6 +1359,82 @@ export interface DataMatchExceptionInput {
   context?: Record<string, unknown> | null;
 }
 
+// ---- RETENTION ATTEMPT LEDGER + OUTCOMES (stage 3a; plan §9/§13) ----
+// Additive tables that already exist in the §13 DDL sweep (pg.ts); the write
+// API lands here. IDEMPOTENCE CONTRACT (both stores): the compute core diffs
+// desired rows against the stored rows and writes only genuine inserts +
+// content changes — a recompute with unchanged inputs writes NOTHING
+// (byte-identical re-run). Per-attempt rows are never merged: every distinct
+// call keeps its own row; the ONLY update a row ever receives is an honest
+// re-observation of the SAME call (e.g. `ringing` → terminal status on a
+// later pass, §9 rule 7), never a merge of another call.
+/** One per-attempt row (retention_attempts). (source, external_message_id) is the idempotence key. */
+export interface RetentionAttemptRow {
+  id: string;
+  internal_client_id: string;
+  /** Null when unattributed (plan §8 edge cases) — the row stays visible in the client timeline. */
+  appointment_id: string | null;
+  call_id: string | null;
+  /** 'calls' (the normalized calls table) — harvest-ledger rows would carry 'harvest_calls'. */
+  source: string;
+  external_message_id: string;
+  employee_user_id: string | null;
+  employee_external_id: string | null;
+  attempt_at: string;
+  call_status: string | null;
+  duration_seconds: number | null;
+  direction: string | null;
+  attempt_class: string;
+  evidence: Record<string, unknown>;
+  attribution: string;
+}
+export interface RetentionAttemptWrite {
+  internalClientId: string;
+  appointmentId: string | null;
+  callId: string | null;
+  source: string;
+  externalMessageId: string;
+  employeeUserId: string | null;
+  employeeExternalId: string | null;
+  attemptAtIso: string;
+  callStatus: string | null;
+  durationSeconds: number | null;
+  direction: string | null;
+  attemptClass: string;
+  evidence: Record<string, unknown>;
+  attribution: string;
+}
+/** One per-appointment outcome row (retention_appointment_outcomes; PK appointment_id). */
+export interface RetentionOutcomeRow {
+  appointment_id: string;
+  internal_client_id: string;
+  contact_due_date: string;
+  eligible: boolean;
+  eligibility_basis: string | null;
+  attempts_count: number;
+  first_attempt_at: string | null;
+  last_attempt_at: string | null;
+  any_answered: boolean;
+  final_status: string;
+  evidence: Record<string, unknown>;
+  needs_review_reason: string | null;
+  computed_at: string;
+}
+export interface RetentionOutcomeWrite {
+  appointmentId: string;
+  internalClientId: string;
+  contactDueDate: string;
+  eligible: boolean;
+  eligibilityBasis: string;
+  attemptsCount: number;
+  firstAttemptAtIso: string | null;
+  lastAttemptAtIso: string | null;
+  anyAnswered: boolean;
+  finalStatus: string;
+  evidence: Record<string, unknown>;
+  needsReviewReason: string | null;
+}
+
 export interface Store {
   mode: "postgres" | "memory";
   ensureSchema(): Promise<void>;
@@ -1824,4 +1960,23 @@ export interface Store {
   getInternalClientsForContactExternalIds(externalIds: string[]): Promise<{ external_id: string; client: InternalClientRow | null }[]>;
   /** Call ids → internal client (join through contacts + the highlevel/contact link); null when the call has no resolvable client. */
   getInternalClientsForCallIds(callIds: string[]): Promise<{ call_id: string; internal_client_id: string | null }[]>;
+
+  // ---- RETENTION ATTEMPT LEDGER + OUTCOMES (stage 3a; plan §9/§13) ----
+  // Write API for the computation job. All reads are bulk (production volumes
+  // are small — the 7-day excitement cohort only); all writes are content-
+  // diffed by the CALLER (compute.ts) so an unchanged recompute writes nothing.
+  /** Every attempt row (bulk read for the diff + tests). */
+  listRetentionAttempts(): Promise<RetentionAttemptRow[]>;
+  /** Batch insert of NEW attempt rows only (the core pre-dedupes). Returns the number actually inserted. */
+  insertRetentionAttempts(rows: RetentionAttemptWrite[]): Promise<number>;
+  /** Honest re-observation of ONE existing attempt row (same call — e.g. ringing → terminal); every field supplied is written. */
+  updateRetentionAttempt(id: string, patch: Partial<Omit<RetentionAttemptWrite, "source" | "externalMessageId">>): Promise<void>;
+  /** Every outcome row (bulk read for the diff + tests). */
+  listRetentionAppointmentOutcomes(): Promise<RetentionOutcomeRow[]>;
+  /** Batch insert of NEW outcome rows only (the core pre-dedupes). Returns the number actually inserted. */
+  insertRetentionAppointmentOutcomes(rows: RetentionOutcomeWrite[]): Promise<number>;
+  /** Content update of ONE existing outcome row (recomputed verdict); computed_at is set by the store. */
+  updateRetentionAppointmentOutcome(row: RetentionOutcomeWrite): Promise<void>;
+  /** Management close of an exception WITHOUT a link write (audited via manual_overrides, like resolve). */
+  dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void>;
 }
