@@ -1316,8 +1316,14 @@ export const getRetentionPageData = createServerFn().handler(() =>
   withDbRetry(async () => {
     const ui = await import("./retention/ui-data");
     const store = await getStore();
-    const [overview, scorecards] = await Promise.all([ui.retentionOverview(store), store.listRetentionScorecards()]);
-    return { ...overview, scorecards };
+    // ONE loader for the page: overview cards + Needs Attention queue (both
+    // read the same ret_* tables via ui-data) + the stored scorecards.
+    const [overview, queue, scorecards] = await Promise.all([
+      ui.retentionOverview(store),
+      ui.retentionNeedsAttention(store),
+      store.listRetentionScorecards(),
+    ]);
+    return { ...overview, queue, scorecards };
   }),
 );
 
