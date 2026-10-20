@@ -20,7 +20,7 @@ import type {
   ContactIdentityRow,
   AuditCallRow,
   CallContactBackfillUpdate,
-  InternalClientRow,
+  RetentionAttemptRow, RetentionAttemptWrite, RetentionOutcomeRow, RetentionOutcomeWrite, InternalClientRow,
   InternalClientSeedInput,
   ClientMatchLinkRow,
   ClientMatchLinkInput,
@@ -3730,6 +3730,9 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
     const cur = await this.sql`SELECT * FROM data_match_exceptions WHERE id = ${id}::uuid LIMIT 1`;
     if (!cur.length) throw new Error(`resolveDataMatchException: unknown exception ${id}`);
     const exc = this.dataMatchExceptionRow(cur[0] as Record<string, unknown>);
+    // WRITE-ONCE (stage 3a): a resolved/dismissed exception is final — its
+    // sticky manual link stays and can never be re-resolved or re-pointed.
+    if (exc.status !== "open") throw new Error(`resolveDataMatchException: exception ${id} is already ${exc.status} — write-once, refused`);
     // The manual resolve is the ONE writer allowed to move a link. Write the
     // member link for the exception's subject entity (dedupe key encodes it),
     // stamped manual + audit trail, then close the exception.
@@ -3810,5 +3813,141 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
       LEFT JOIN client_match_links l ON l.provider = 'highlevel' AND l.entity = 'contact' AND l.external_id = ct.external_id`;
     const byCall = new Map<string, string | null>(rows.map((r) => [String((r as Record<string, unknown>).call_id), (r as Record<string, unknown>).internal_client_id == null ? null : String((r as Record<string, unknown>).internal_client_id)]));
     return callIds.map((call_id) => ({ call_id, internal_client_id: byCall.get(call_id) ?? null }));
+  }
+
+  // ---- RETENTION ATTEMPT LEDGER + OUTCOMES (stage 3a; plan §9/§13) ----
+  // Reads are bulk; the compute core diffs content and writes only inserts +
+  // genuine changes, so an unchanged recompute touches nothing (the tables
+  // carry no updated_at — untouched rows stay byte-identical by construction).
+  async listRetentionAttempts(): Promise<RetentionAttemptRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT id::text AS id, internal_client_id::text AS internal_client_id, appointment_id::text AS appointment_id, call_id::text AS call_id, source, external_message_id, employee_user_id::text AS employee_user_id, employee_external_id, attempt_at, call_status, duration_seconds, direction, attempt_class, evidence, attribution FROM retention_attempts ORDER BY attempt_at, external_message_id`;
+    return rows.map((r) => this.retentionAttemptRow(r as Record<string, unknown>));
+  }
+  private retentionAttemptRow(r: Record<string, unknown>): RetentionAttemptRow {
+    return {
+      id: String(r.id),
+      internal_client_id: String(r.internal_client_id),
+      appointment_id: r.appointment_id == null ? null : String(r.appointment_id),
+      call_id: r.call_id == null ? null : String(r.call_id),
+      source: String(r.source),
+      external_message_id: String(r.external_message_id),
+      employee_user_id: r.employee_user_id == null ? null : String(r.employee_user_id),
+      employee_external_id: r.employee_external_id == null ? null : String(r.employee_external_id),
+      attempt_at: new Date(r.attempt_at as string).toISOString(),
+      call_status: r.call_status == null ? null : String(r.call_status),
+      duration_seconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
+      direction: r.direction == null ? null : String(r.direction),
+      attempt_class: String(r.attempt_class),
+      evidence: (r.evidence ?? {}) as Record<string, unknown>,
+      attribution: String(r.attribution),
+    };
+  }
+  async insertRetentionAttempts(rows: RetentionAttemptWrite[]): Promise<number> {
+    await this.ensureSchema();
+    if (!rows.length) return 0;
+    // Batch insert; the UNIQUE (source, external_message_id) is the safety net
+    // behind the core's pre-dedupe — a race loser is SKIPPED (never doubled),
+    // and the returned count lets the caller detect the drift honestly.
+    const values = rows.map((r) => this.sql`${r.internalClientId}::uuid, ${r.appointmentId}::uuid, ${r.callId}::uuid, ${r.source}, ${r.externalMessageId}, ${r.employeeUserId}::uuid, ${r.employeeExternalId}, ${r.attemptAtIso}::timestamptz, ${r.callStatus}, ${r.durationSeconds}, ${r.direction}, ${r.attemptClass}, ${JSON.stringify(r.evidence)}::jsonb, ${r.attribution}`);
+    const out = await this.sql`
+      INSERT INTO retention_attempts (internal_client_id, appointment_id, call_id, source, external_message_id, employee_user_id, employee_external_id, attempt_at, call_status, duration_seconds, direction, attempt_class, evidence, attribution)
+      VALUES ${this.sql.join(values, this.sql`, `)}
+      ON CONFLICT (source, external_message_id) DO NOTHING
+      RETURNING id`;
+    return out.length;
+  }
+  async updateRetentionAttempt(id: string, patch: Partial<Omit<RetentionAttemptWrite, "source" | "externalMessageId">>): Promise<void> {
+    await this.ensureSchema();
+    // Honest re-observation of the SAME call: every supplied field is written
+    // (the core only calls this when content actually changed). COALESCE keeps
+    // fields the caller did not supply.
+    await this.sql`
+      UPDATE retention_attempts SET
+        internal_client_id = COALESCE(${patch.internalClientId ?? null}::uuid, internal_client_id),
+        appointment_id = COALESCE(${patch.appointmentId ?? null}::uuid, appointment_id),
+        call_id = COALESCE(${patch.callId ?? null}::uuid, call_id),
+        employee_user_id = COALESCE(${patch.employeeUserId ?? null}::uuid, employee_user_id),
+        employee_external_id = COALESCE(${patch.employeeExternalId ?? null}, employee_external_id),
+        attempt_at = COALESCE(${patch.attemptAtIso ?? null}::timestamptz, attempt_at),
+        call_status = COALESCE(${patch.callStatus ?? null}, call_status),
+        duration_seconds = COALESCE(${patch.durationSeconds ?? null}, duration_seconds),
+        direction = COALESCE(${patch.direction ?? null}, direction),
+        attempt_class = COALESCE(${patch.attemptClass ?? null}, attempt_class),
+        attribution = COALESCE(${patch.attribution ?? null}, attribution)
+      WHERE id = ${id}::uuid`;
+    if (patch.evidence !== undefined) {
+      await this.sql`UPDATE retention_attempts SET evidence = ${JSON.stringify(patch.evidence)}::jsonb WHERE id = ${id}::uuid`;
+    }
+  }
+  async listRetentionAppointmentOutcomes(): Promise<RetentionOutcomeRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT appointment_id::text AS appointment_id, internal_client_id::text AS internal_client_id, contact_due_date, eligible, eligibility_basis, attempts_count, first_attempt_at, last_attempt_at, any_answered, final_status, evidence, needs_review_reason, computed_at FROM retention_appointment_outcomes ORDER BY contact_due_date, appointment_id`;
+    return rows.map((r) => this.retentionOutcomeRow(r as Record<string, unknown>));
+  }
+  private retentionOutcomeRow(r: Record<string, unknown>): RetentionOutcomeRow {
+    return {
+      appointment_id: String(r.appointment_id),
+      internal_client_id: String(r.internal_client_id),
+      contact_due_date: normDate(r.contact_due_date),
+      eligible: r.eligible === true,
+      eligibility_basis: r.eligibility_basis == null ? null : String(r.eligibility_basis),
+      attempts_count: Number(r.attempts_count ?? 0),
+      first_attempt_at: r.first_attempt_at == null ? null : new Date(r.first_attempt_at as string).toISOString(),
+      last_attempt_at: r.last_attempt_at == null ? null : new Date(r.last_attempt_at as string).toISOString(),
+      any_answered: r.any_answered === true,
+      final_status: String(r.final_status),
+      evidence: (r.evidence ?? {}) as Record<string, unknown>,
+      needs_review_reason: r.needs_review_reason == null ? null : String(r.needs_review_reason),
+      computed_at: new Date(r.computed_at as string).toISOString(),
+    };
+  }
+  async insertRetentionAppointmentOutcomes(rows: RetentionOutcomeWrite[]): Promise<number> {
+    await this.ensureSchema();
+    if (!rows.length) return 0;
+    const values = rows.map((r) => this.sql`${r.appointmentId}::uuid, ${r.internalClientId}::uuid, ${r.contactDueDate}::date, ${r.eligible}, ${r.eligibilityBasis}, ${r.attemptsCount}, ${r.firstAttemptAtIso}::timestamptz, ${r.lastAttemptAtIso}::timestamptz, ${r.anyAnswered}, ${r.finalStatus}, ${JSON.stringify(r.evidence)}::jsonb, ${r.needsReviewReason}`);
+    const out = await this.sql`
+      INSERT INTO retention_appointment_outcomes (appointment_id, internal_client_id, contact_due_date, eligible, eligibility_basis, attempts_count, first_attempt_at, last_attempt_at, any_answered, final_status, evidence, needs_review_reason, computed_at)
+      VALUES ${this.sql.join(values, this.sql`, `)}
+      ON CONFLICT (appointment_id) DO NOTHING
+      RETURNING appointment_id`;
+    return out.length;
+  }
+  async updateRetentionAppointmentOutcome(row: RetentionOutcomeWrite): Promise<void> {
+    await this.ensureSchema();
+    await this.sql`
+      UPDATE retention_appointment_outcomes SET
+        internal_client_id = ${row.internalClientId}::uuid,
+        contact_due_date = ${row.contactDueDate}::date,
+        eligible = ${row.eligible},
+        eligibility_basis = ${row.eligibilityBasis},
+        attempts_count = ${row.attemptsCount},
+        first_attempt_at = ${row.firstAttemptAtIso}::timestamptz,
+        last_attempt_at = ${row.lastAttemptAtIso}::timestamptz,
+        any_answered = ${row.anyAnswered},
+        final_status = ${row.finalStatus},
+        evidence = ${JSON.stringify(row.evidence)}::jsonb,
+        needs_review_reason = ${row.needsReviewReason},
+        computed_at = now()
+      WHERE appointment_id = ${row.appointmentId}::uuid`;
+  }
+  async dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void> {
+    await this.ensureSchema();
+    const cur = await this.sql`SELECT * FROM data_match_exceptions WHERE id = ${id}::uuid LIMIT 1`;
+    if (!cur.length) throw new Error(`dismissDataMatchException: unknown exception ${id}`);
+    const exc = this.dataMatchExceptionRow(cur[0] as Record<string, unknown>);
+    await this.sql`
+      UPDATE data_match_exceptions
+      SET status = 'dismissed', resolved_method = 'dismissed', resolved_by = ${opts.resolvedBy}, resolved_at = now()
+      WHERE id = ${id}::uuid AND status = 'open'`;
+    // Audit trail — same manual_overrides sink resolveDataMatchException uses.
+    await this.insertManualOverride({
+      entity_type: "data_match_exception",
+      entity_id: exc.id,
+      field: "status",
+      previous_value: "open",
+      new_value: "dismissed",
+      changed_by: `manual:${opts.resolvedBy} kind=${exc.kind} dedupe=${exc.dedupe_key}`,
+    });
   }
 }

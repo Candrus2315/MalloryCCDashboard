@@ -35,6 +35,54 @@ function auditApiDevPlugin(): Plugin {
           }
         })();
       });
+      // RETENTION DATA MATCH EXCEPTIONS API (stage 3a) — dev mirror of the
+      // serve.ts endpoint (same handler core): GET list + POST resolve /
+      // resolve_new / dismiss (audited, sticky, never re-matched).
+      server.middlewares.use("/api/retention-exceptions", (req, res) => {
+        void (async () => {
+          try {
+            const { getStore } = await import("./src/server/store");
+            const { handleExceptionsQuery, handleExceptionAction } = await import("./src/server/retention/exceptions-api");
+            const store = await getStore();
+            if (req.method === "POST") {
+              const chunks: Buffer[] = [];
+              for await (const chunk of req) chunks.push(chunk as Buffer);
+              let parsed: Record<string, unknown> = {};
+              try {
+                parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as Record<string, unknown>;
+              } catch {
+                res.statusCode = 400;
+                res.setHeader("content-type", "application/json; charset=utf-8");
+                res.end(JSON.stringify({ error: "invalid JSON body" }));
+                return;
+              }
+              const str = (k: string) => (typeof parsed[k] === "string" ? (parsed[k] as string) : undefined);
+              const out = await handleExceptionAction(store, {
+                action: str("action") ?? "",
+                id: str("id"),
+                internalClientId: str("internalClientId"),
+                displayName: str("displayName"),
+                phone: str("phone"),
+                email: str("email"),
+                resolvedBy: str("resolvedBy"),
+              });
+              res.statusCode = out.status;
+              res.setHeader("content-type", "application/json; charset=utf-8");
+              res.end(JSON.stringify(out.body));
+              return;
+            }
+            const url = new URL(req.url ?? "/", "http://localhost");
+            const out = await handleExceptionsQuery(store, { status: url.searchParams.get("status") });
+            res.statusCode = out.status;
+            res.setHeader("content-type", "application/json; charset=utf-8");
+            res.end(JSON.stringify(out.body));
+          } catch (e) {
+            res.statusCode = 500;
+            res.setHeader("content-type", "application/json; charset=utf-8");
+            res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+          }
+        })();
+      });
     },
   };
 }

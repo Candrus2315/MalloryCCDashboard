@@ -134,6 +134,39 @@ for (let attempt = 1; ; attempt++) {
             headers: { "content-type": "application/json; charset=utf-8" },
           });
         }
+        // RETENTION DATA MATCH EXCEPTIONS API (stage 3a) — management-only
+        // queue + manual-resolve actions (audited, sticky, never re-matched).
+        // Same passphrase gate as every other route.
+        if (pathname === "/api/retention-exceptions") {
+          const { resolveGate } = await import("./src/server/auth");
+          const gate = await resolveGate(req);
+          if (gate.kind !== "allow") return gate.response;
+          const { getStore } = await import("./src/server/store");
+          const { handleExceptionsQuery, handleExceptionAction } = await import("./src/server/retention/exceptions-api");
+          const store = await getStore();
+          if (req.method === "POST") {
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = (await req.json()) as Record<string, unknown>;
+            } catch {
+              return new Response(JSON.stringify({ error: "invalid JSON body" }), { status: 400, headers: { "content-type": "application/json; charset=utf-8" } });
+            }
+            const str = (k: string) => (typeof parsed[k] === "string" ? (parsed[k] as string) : undefined);
+            const out = await handleExceptionAction(store, {
+              action: str("action") ?? "",
+              id: str("id"),
+              internalClientId: str("internalClientId"),
+              displayName: str("displayName"),
+              phone: str("phone"),
+              email: str("email"),
+              resolvedBy: str("resolvedBy"),
+            });
+            return new Response(JSON.stringify(out.body), { status: out.status, headers: { "content-type": "application/json; charset=utf-8" } });
+          }
+          const url = new URL(req.url);
+          const out = await handleExceptionsQuery(store, { status: url.searchParams.get("status") });
+          return new Response(JSON.stringify(out.body), { status: out.status, headers: { "content-type": "application/json; charset=utf-8" } });
+        }
         if (pathname !== "/") {
           const file = Bun.file(CLIENT_DIR + pathname);
           if (await file.exists()) return new Response(file);
