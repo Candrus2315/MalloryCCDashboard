@@ -229,7 +229,7 @@ describe("computeAndStoreWeeklyScorecard — §16 formulas", () => {
     expect(w.eligible).toBe(0);
     expect(w.complianceAppointment).toBeNull();
     expect(w.complianceAttempt).toBeNull();
-    expect(w.match_exceptions).toBe(2);
+    expect(w.matchExceptions).toBe(2);
   });
 });
 
