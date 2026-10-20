@@ -1314,7 +1314,9 @@ export const getWeeklyData = createServerFn().handler(() => withDbRetry(() => we
 export const getRetentionPageData = createServerFn().handler(() =>
   withDbRetry(async () => {
     const ui = await import("./retention/ui-data");
-    return ui.retentionOverview(await getStore());
+    const store = await getStore();
+    const [overview, scorecards] = await Promise.all([ui.retentionOverview(store), store.listRetentionScorecards()]);
+    return { ...overview, scorecards };
   }),
 );
 

@@ -68,3 +68,14 @@ describe("retention routes", () => {
     expect(drill).toContain("md:hidden"); // mobile card list pairing
   });
 });
+
+describe("retention route ?week= (stage 3c scorecard select)", () => {
+  const vs = (RetentionRoute as unknown as { options: { validateSearch: (s: Record<string, unknown>) => Record<string, unknown> } }).options
+    .validateSearch;
+  test("week param: a YYYY-MM-DD shape passes through; anything else drops to undefined", () => {
+    expect(vs({}).week).toBeUndefined();
+    expect(vs({ week: "2026-10-19" }).week).toBe("2026-10-19");
+    expect(vs({ week: "not-a-date" }).week).toBeUndefined();
+    expect(vs({ week: 42 }).week).toBeUndefined();
+  });
+});
