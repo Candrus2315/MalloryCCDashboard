@@ -78,7 +78,7 @@ try {
       WHERE a.client_phone IS NOT NULL AND ic.normalized_phone IS NOT NULL
     )
     SELECT count(*)::int AS compared,
-           count(*) FILTER (WHERE regexp_replace(regexp_replace(client_phone, '[^0-9]', '', 'g'), '^1([0-9]{10})$', '\1') <> cpn)::int AS mismatches
+           count(*) FILTER (WHERE CASE WHEN length(regexp_replace(client_phone, '[^0-9]', '', 'g')) = 11 AND regexp_replace(client_phone, '[^0-9]', '', 'g') LIKE '1%' THEN right(regexp_replace(client_phone, '[^0-9]', '', 'g'), 10) ELSE regexp_replace(client_phone, '[^0-9]', '', 'g') END <> cpn)::int AS mismatches
     FROM m`;
   const pct = (resolved: number, total: number) => (total === 0 ? null : (100 * resolved) / total);
 
