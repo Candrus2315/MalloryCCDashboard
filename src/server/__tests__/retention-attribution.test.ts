@@ -7,6 +7,7 @@ import {
   attributeCall,
   attributionWindow,
   contactDueDate,
+  groupAppointmentsByClient,
   qualifyingAppointmentsByDueDate,
   type ApptForAttribution,
   type CallForAttribution,
@@ -111,5 +112,50 @@ describe("attributeCall — window / nearest-future / unattributed", () => {
   test("D11: failed calls still attribute as attempts (evidence comes later, at classification)", () => {
     const out = attributeCall(call("2026-10-19T18:00:00Z", "outbound", "failed"), windows, { dueDays: DUE_DAYS });
     expect(out).toMatchObject({ appointmentId: "appt-1", attribution: "window" });
+  });
+});
+
+describe("§8 candidate universe: CLIENT-mediated (groupAppointmentsByClient — 2026-10-20 gate fix)", () => {
+  const call = (iso: string, direction = "outbound", status = "completed"): CallForAttribution => ({
+    callId: "c1",
+    startedAtIso: iso,
+    direction,
+    callStatus: status,
+  });
+
+  test("windows are keyed by INTERNAL CLIENT — a call via any contact linked to the same client attributes (exact contact-id equality would miss it)", () => {
+    // The 10/26 10:00 ET appointment belongs to client-A. The call went to a
+    // DIFFERENT GHL contact row of the same human (duplicate/household
+    // contact); the chain maps that contact to client-A too. Plan §8:
+    // internal_client_of(C.contact) = client — NOT C.contact_id = A.contact_id.
+    const byClient = groupAppointmentsByClient(
+      [{ appointmentId: "appt-1", acuityAppointmentId: "1790095979", appointmentDatetimeIso: "2026-10-26T14:00:00Z", internalClientId: "client-A" }],
+      DUE_DAYS,
+    );
+    expect([...byClient.keys()]).toEqual(["client-A"]);
+    const clientOfCallContact = new Map([["CT-duplicate", "client-A"]]);
+    const infos = clientOfCallContact.get("CT-duplicate") ? byClient.get("client-A")! : [];
+    const out = attributeCall(call("2026-10-19T18:00:00Z"), infos, { dueDays: DUE_DAYS, directions: ["outbound", "inbound"] });
+    expect(out).toMatchObject({ appointmentId: "appt-1", attribution: "window" });
+    expect(out.evidence.rule).toBe("single_window");
+    // A call whose contact has NO client link → no candidates → unattributed (visible, never guessed).
+    const noInfos = clientOfCallContact.get("CT-unknown") ? byClient.get("client-A")! : [];
+    expect(attributeCall(call("2026-10-19T18:00:00Z"), noInfos, { dueDays: DUE_DAYS }).appointmentId).toBeNull();
+  });
+
+  test("directions option widens D8 for the attribution-correctness proof; the default stays outbound-only for attempts", () => {
+    const byClient = groupAppointmentsByClient(
+      [{ appointmentId: "appt-1", appointmentDatetimeIso: "2026-10-26T14:00:00Z", internalClientId: "client-A" }],
+      DUE_DAYS,
+    );
+    const infos = byClient.get("client-A")!;
+    const inbound = call("2026-10-19T18:00:00Z", "inbound");
+    expect(attributeCall(inbound, infos, { dueDays: DUE_DAYS }).appointmentId).toBeNull(); // D8 attempt filter unchanged
+    expect(attributeCall(inbound, infos, { dueDays: DUE_DAYS, directions: ["outbound", "inbound"] })).toMatchObject({ appointmentId: "appt-1", attribution: "window" });
+  });
+
+  test("bad-datetime rows never invent a window", () => {
+    const byClient = groupAppointmentsByClient([{ appointmentId: "x", appointmentDatetimeIso: "not-a-date", internalClientId: "c" }], DUE_DAYS);
+    expect(byClient.size).toBe(0); // no entry at all — call sites see ?? [] → no candidates
   });
 });

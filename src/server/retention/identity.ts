@@ -30,14 +30,15 @@ import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 export type MatchMethod = "exact_id" | "phone_email" | "phone" | "email" | "phone_name" | "manual";
 export type MatchConfidence = "exact" | "high" | "medium" | "manual";
 
-/** Exception kinds (plan §7; 'ambiguous_id'/'ambiguous_name' are honest extensions for ambiguity at the id/name tiers — plan lists only the phone/email ambiguity kinds). */
+/** Exception kinds (plan §7; 'ambiguous_id'/'ambiguous_name' are honest extensions for ambiguity at the id/name tiers — plan lists only the phone/email ambiguity kinds). 'phone_mismatch' (2026-10-20) = the appointment→client link came from the explicit cross-system id, but the appointment's typed client_phone disagrees with the linked client's normalized phone (typos / household bookings) — identity NOT thereby wrong, conflict surfaced for review, never guessed. */
 export type MatchExceptionKind =
   | "ambiguous_id"
   | "ambiguous_phone"
   | "ambiguous_email"
   | "ambiguous_name"
   | "name_only"
-  | "no_identity";
+  | "no_identity"
+  | "phone_mismatch";
 
 /** One existing internal client offered as a match candidate. */
 export interface IdentityCandidate {

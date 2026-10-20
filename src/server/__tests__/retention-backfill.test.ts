@@ -235,4 +235,34 @@ describe("applyInternalClientBackfill", () => {
     const overrides = await store.getManualOverrides(10);
     expect(overrides.some((o) => o.entity_type === "data_match_exception" && o.entity_id === exc!.id)).toBe(true);
   });
+
+  test("pass E: appointment phone ≠ linked client phone → phone_mismatch exception (never silent); format-equivalent phones → none; re-run writes nothing", async () => {
+    const store = new MemoryStore();
+    // The contact's phone is the client's canonical phone; three appointments
+    // type it differently in Acuity.
+    const input: BackfillInput = {
+      appointments: [
+        { acuityAppointmentId: "PM1", status: "scheduled", clientName: "Typo Client", clientPhone: "2076509000", clientEmail: null, contactExternalId: "PC1" }, // differs → exception
+        { acuityAppointmentId: "PM2", status: "scheduled", clientName: "Exact Client", clientPhone: "(207) 650-0458", clientEmail: null, contactExternalId: "PC1" }, // formatted, same number
+        { acuityAppointmentId: "PM3", status: "scheduled", clientName: "Exact Client 2", clientPhone: "+1 207 650 0458", clientEmail: null, contactExternalId: "PC1" }, // E.164, same number
+      ],
+      contacts: [{ externalId: "PC1", name: "Typo Client", phone: "2076500458", email: null, hasRecentCall: false }],
+      callsWithoutClient: [],
+    };
+    const r1 = await applyInternalClientBackfill(store, input);
+    expect(r1.phonePairsCompared).toBe(3);
+    expect(r1.phoneMismatchExceptionsCreated).toBe(1);
+    const exc = (await store.getDataMatchExceptions({ status: "open" })).find((e) => e.dedupe_key === "phone-mismatch:PM1");
+    expect(exc?.kind).toBe("phone_mismatch");
+    expect(exc?.payload).toMatchObject({ subject: { acuity_appointment_id: "PM1", appointment_phone_digits: "2076509000" }, client: { normalized_phone: "2076500458" } });
+    // Format-equivalent phones never flag: normalization makes (207) 650-0458 / +1 207 650 0458 / 2076500458 the same number.
+    const all = await store.getDataMatchExceptions();
+    expect(all.filter((e) => e.dedupe_key === "phone-mismatch:PM2" || e.dedupe_key === "phone-mismatch:PM3")).toHaveLength(0);
+    // Re-run observes only — the byte-identical idempotence contract holds.
+    const r2 = await applyInternalClientBackfill(store, input);
+    expect(r2.phonePairsCompared).toBe(3);
+    expect(r2.phoneMismatchExceptionsCreated).toBe(0);
+    expect(r2.exceptionsCreated).toBe(0);
+    expect((await store.getDataMatchExceptions()).filter((e) => e.kind === "phone_mismatch")).toHaveLength(1);
+  });
 });

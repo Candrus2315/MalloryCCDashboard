@@ -96,6 +96,10 @@ export interface BackfillResult {
   fallbackAppointments: number;
   recentCallContacts: number;
   orphanCalls: number;
+  /** Pass E audit: appointment↔client phone pairs actually compared (both sides defined). */
+  phonePairsCompared: number;
+  /** Pass E: NEW phone_mismatch exception rows written this run (0 on re-runs). */
+  phoneMismatchExceptionsCreated: number;
 }
 
 const CLIENT_SEED_PREFIX = "hl-contact:";
@@ -147,6 +151,8 @@ export async function applyInternalClientBackfill(store: Store, input: BackfillI
     fallbackAppointments: 0,
     recentCallContacts: 0,
     orphanCalls: input.callsWithoutClient.length,
+    phonePairsCompared: 0,
+    phoneMismatchExceptionsCreated: 0,
   };
 
   // ---- bulk read prefetch (pure observation; updated as this run writes) ----
@@ -193,15 +199,16 @@ export async function applyInternalClientBackfill(store: Store, input: BackfillI
     return created.id;
   };
 
-  /** If-absent exception write with prefetch dedupe; counts only genuinely new rows. */
+  /** If-absent exception write with prefetch dedupe; counts only genuinely new rows. Returns true when a NEW row was written. */
   const ensureException = async (
     dedupeKey: string,
     input_: Parameters<Store["insertDataMatchExceptionIfAbsent"]>[0],
-  ): Promise<void> => {
-    if (pf.exceptionByDedupe.has(dedupeKey)) return;
+  ): Promise<boolean> => {
+    if (pf.exceptionByDedupe.has(dedupeKey)) return false;
     const exc = await store.insertDataMatchExceptionIfAbsent(input_);
     pf.exceptionByDedupe.add(dedupeKey);
     if (exc.created) result.exceptionsCreated += 1;
+    return exc.created;
   };
 
   // ---- pass A: appointments with a resolved contact (exact_id chain) ----
@@ -447,6 +454,51 @@ export async function applyInternalClientBackfill(store: Store, input: BackfillI
         duration_seconds: call.durationSeconds,
       },
     });
+  });
+
+  // ---- pass E: appointment↔client phone consistency (2026-10-20 gate finding) ----
+  // The chain matches appointments to clients by the EXPLICIT cross-system id
+  // (appointments.contact_id → contacts — the owner's highest-priority
+  // method), so the identity is not thereby wrong when the appointment's
+  // typed client_phone disagrees with the linked client's normalized phone
+  // (typos, household bookings). Per the owner's evidence rules a conflicting
+  // signal is never guessed away and never silently dropped: every mismatch
+  // becomes a `phone_mismatch` Data Match Exception for management review.
+  // Idempotent per-appointment dedupe key; a re-run only observes.
+  await mapChunk(input.appointments, async (appt) => {
+    const digits = normalizeUSPhone(appt.clientPhone ?? null);
+    if (!digits) return;
+    const link = pf.linkByKey.get(linkKey("acuity", "appointment", appt.acuityAppointmentId));
+    if (!link) return; // unresolved appointment (no client link) → nothing to compare
+    const client = pf.clientById.get(link.internal_client_id);
+    if (!client || !client.normalized_phone) return;
+    result.phonePairsCompared += 1;
+    if (client.normalized_phone === digits) return;
+    const created = await ensureException(`phone-mismatch:${appt.acuityAppointmentId}`, {
+      kind: "phone_mismatch",
+      dedupeKey: `phone-mismatch:${appt.acuityAppointmentId}`,
+      payload: {
+        subject: {
+          source: "acuity_appointment",
+          acuity_appointment_id: appt.acuityAppointmentId,
+          client_name: appt.clientName ?? null,
+          appointment_phone_digits: digits,
+        },
+        client: {
+          internal_client_id: client.id,
+          display_name: client.display_name,
+          normalized_phone: client.normalized_phone,
+        },
+        link_match_method: link.match_method,
+      },
+      context: {
+        stage: "backfill",
+        source_table: "appointments",
+        appointment_status: appt.status,
+        trigger: "phone_consistency_check",
+      },
+    });
+    if (created) result.phoneMismatchExceptionsCreated += 1;
   });
 
   return result;

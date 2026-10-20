@@ -184,3 +184,40 @@ function toCandidate(a: AppointmentDueInfo) {
     windowEndMs: a.windowEndMs,
   };
 }
+
+/**
+ * Build the §8 attribution candidate universe keyed by INTERNAL CLIENT from
+ * raw rows (gate/backfill shape). The universe is CLIENT-mediated —
+ * internal_client_of(call contact) = internal_client_of(appointment) — NOT
+ * raw contact-id equality: a call to a duplicate/household contact of the
+ * same human must still reach that human's canonical client through the
+ * chain (2026-10-20 gate fix; plan §8 pseudocode `internal_client_of(C.contact) = client`).
+ * Bad-datetime rows are skipped (never invent a window), exactly like
+ * qualifyingAppointmentsByDueDate.
+ */
+export function groupAppointmentsByClient(
+  rows: { appointmentId: string; acuityAppointmentId?: string | null; appointmentDatetimeIso: string; internalClientId: string }[],
+  dueDays: number,
+): Map<string, AppointmentDueInfo[]> {
+  const out = new Map<string, AppointmentDueInfo[]>();
+  for (const r of rows) {
+    const ms = Date.parse(r.appointmentDatetimeIso);
+    if (!Number.isFinite(ms)) continue;
+    const w = attributionWindow(r.appointmentDatetimeIso, dueDays);
+    const info: AppointmentDueInfo = {
+      appointment: {
+        appointmentId: r.appointmentId,
+        acuityAppointmentId: r.acuityAppointmentId ?? null,
+        appointmentDatetimeIso: r.appointmentDatetimeIso,
+        status: "scheduled",
+      },
+      contactDueDate: contactDueDate(r.appointmentDatetimeIso, dueDays),
+      windowStartMs: w.startMs,
+      windowEndMs: w.endMs,
+    };
+    const key = String(r.internalClientId);
+    if (!out.has(key)) out.set(key, []);
+    out.get(key)!.push(info);
+  }
+  return out;
+}

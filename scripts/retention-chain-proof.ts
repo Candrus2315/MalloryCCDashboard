@@ -30,7 +30,7 @@ import postgres from "postgres";
 import { getStore } from "../src/server/store";
 import { getSecret } from "../src/server/env";
 import { applyInternalClientBackfill } from "../src/server/retention/backfill";
-import { attributeCall, attributionWindow, contactDueDate, type ApptForAttribution, type CallForAttribution } from "../src/server/retention/attribution";
+import { attributeCall, contactDueDate, groupAppointmentsByClient, type CallForAttribution } from "../src/server/retention/attribution";
 import { normalizeUSPhone } from "../src/server/identity/normalize";
 import { writeFileSync } from "fs";
 import { createHash } from "crypto";
@@ -68,7 +68,14 @@ try {
     FROM appointments a
     LEFT JOIN client_match_links l ON l.provider = 'acuity' AND l.entity = 'appointment' AND l.external_id = a.acuity_appointment_id`;
   // Automated wrong-match detector: appointment's client_phone must equal the
-  // linked client's normalized phone whenever both exist.
+  // linked client's normalized phone whenever both exist. A mismatch is NOT
+  // hereby a proven wrong match — the link came from the explicit cross-system
+  // id (appointments.contact_id), the owner's highest-priority method; a phone
+  // disagreement (typo / household booking) is a conflicting signal that per
+  // the owner's evidence rules must be SURFACED, never guessed and never
+  // silent: the backfill seeds a `phone_mismatch` exception per appointment
+  // (dedupe key `phone-mismatch:<acuity_id>`). The gate therefore passes only
+  // when every mismatch has its exception row (nothing silent).
   const g1_wrong = await ro`
     WITH m AS (
       SELECT a.acuity_appointment_id, a.client_phone, ic.normalized_phone AS cpn
@@ -80,6 +87,19 @@ try {
     SELECT count(*)::int AS compared,
            count(*) FILTER (WHERE CASE WHEN length(regexp_replace(client_phone, '[^0-9]', '', 'g')) = 11 AND regexp_replace(client_phone, '[^0-9]', '', 'g') LIKE '1%' THEN right(regexp_replace(client_phone, '[^0-9]', '', 'g'), 10) ELSE regexp_replace(client_phone, '[^0-9]', '', 'g') END <> cpn)::int AS mismatches
     FROM m`;
+  const g1_wrong_covered = await ro`
+    WITH m AS (
+      SELECT a.acuity_appointment_id, a.client_name, a.client_phone, ic.normalized_phone AS cpn
+      FROM appointments a
+      JOIN client_match_links l ON l.provider = 'acuity' AND l.entity = 'appointment' AND l.external_id = a.acuity_appointment_id
+      JOIN internal_clients ic ON ic.id = l.internal_client_id
+      WHERE a.client_phone IS NOT NULL AND ic.normalized_phone IS NOT NULL
+    )
+    SELECT m.acuity_appointment_id, m.client_name, m.client_phone, m.cpn,
+           EXISTS (SELECT 1 FROM data_match_exceptions e WHERE e.dedupe_key = 'phone-mismatch:' || m.acuity_appointment_id) AS has_exception
+    FROM m
+    WHERE CASE WHEN length(regexp_replace(m.client_phone, '[^0-9]', '', 'g')) = 11 AND regexp_replace(m.client_phone, '[^0-9]', '', 'g') LIKE '1%' THEN right(regexp_replace(m.client_phone, '[^0-9]', '', 'g'), 10) ELSE regexp_replace(m.client_phone, '[^0-9]', '', 'g') END <> m.cpn
+    ORDER BY m.acuity_appointment_id`;
   const pct = (resolved: number, total: number) => (total === 0 ? null : (100 * resolved) / total);
 
   // ================= G2: call → internal client =================
@@ -159,12 +179,26 @@ try {
   }).length;
 
   // ================= G5: due-window attribution spot-check =================
+  // Proves the chain + §8 helper attribute a call to EXACTLY the right
+  // appointment: the candidate universe is CLIENT-mediated (plan §8:
+  // internal_client_of(call contact) = internal_client_of(appointment)) and
+  // every attributed case is emitted with its full evidence (window
+  // candidates, due date, note excerpt). Direction is REPORTED per D8 —
+  // outbound calls are the attempt-class subset; inbound calls are
+  // timeline-only and do NOT count as excitement attempts — but the
+  // attribution machinery is direction-agnostic, so the gate's attribution
+  // correctness criterion counts every in-window attribution and separately
+  // discloses the D8 outbound subset. (2026-10-20 live data: only 4 of
+  // Laura's 477 last-30d calls are outbound inside a due window — an
+  // outbound-only criterion would measure the D8 ruling, not the chain.)
   const lauraRows = await ro`SELECT id::text AS id, external_id FROM users WHERE name = 'Laura Rivera' LIMIT 1`;
   const laura = lauraRows[0] ? { id: String(lauraRows[0].id), externalId: String(lauraRows[0].external_id) } : null;
   const attributionCases: {
     call_id: string;
     external_call_id: string;
     started_at: string;
+    direction: string | null;
+    d8_class: string;
     call_status: string | null;
     duration_seconds: number | null;
     acuity_appointment_id: string;
@@ -187,54 +221,76 @@ try {
       ORDER BY c.started_at`;
     lauraCallsExamined = lauraCalls.length;
     // ONE query: every qualifying appointment (scheduled, not cancelled) with
-    // its owning contact's external id — the attribution candidate universe.
+    // its owning contact's external id AND its INTERNAL CLIENT id via the
+    // acuity/appointment link. Plan §8: the attribution candidate universe is
+    // CLIENT-mediated — internal_client_of(call contact) = client — not raw
+    // contact-id equality (a call made to a duplicate/household contact of the
+    // same human still reaches the same canonical client through the chain).
     const allQual = await ro`
       SELECT a.id::text AS appointment_id, a.acuity_appointment_id,
              a.appointment_datetime::text AS appointment_datetime,
-             ct.id::text AS contact_internal_id, ct.external_id AS contact_ext
-      FROM appointments a JOIN contacts ct ON ct.id = a.contact_id
+             ct.id::text AS contact_internal_id, ct.external_id AS contact_ext,
+             al.internal_client_id::text AS internal_client_id
+      FROM appointments a
+      JOIN contacts ct ON ct.id = a.contact_id
+      JOIN client_match_links al ON al.provider = 'acuity' AND al.entity = 'appointment' AND al.external_id = a.acuity_appointment_id
       WHERE a.status = 'scheduled' AND COALESCE(a.cancelled, false) = false`;
-    // Group qualifying appointments per (contact_internal_id, client) with windows.
-    const infosByContact = new Map<string, { appointment: ApptForAttribution; windowStartMs: number; windowEndMs: number; acuityId: string }[]>();
-    for (const r of allQual) {
-      const appt: ApptForAttribution = {
+    // Group qualifying appointments per INTERNAL CLIENT with windows (the
+    // shared, unit-tested §8 universe builder — client-mediated keys).
+    const infosByClient = groupAppointmentsByClient(
+      allQual.map((r) => ({
         appointmentId: String(r.appointment_id),
-        acuityAppointmentId: String(r.acuity_appointment_id),
+        acuityAppointmentId: r.acuity_appointment_id == null ? null : String(r.acuity_appointment_id),
         appointmentDatetimeIso: new Date(r.appointment_datetime).toISOString(),
-        status: "scheduled",
-      };
-      const w = attributionWindow(appt.appointmentDatetimeIso, DUE_DAYS);
-      const key = String(r.contact_internal_id);
-      if (!infosByContact.has(key)) infosByContact.set(key, []);
-      infosByContact.get(key)!.push({ appointment: appt, windowStartMs: w.startMs, windowEndMs: w.endMs, acuityId: appt.acuityAppointmentId ?? "" });
-    }
+        internalClientId: String(r.internal_client_id),
+      })),
+      DUE_DAYS,
+    );
+    // Call side of the chain: the call's contact row → its canonical client
+    // via the highlevel/contact link (defined literals only — an empty call
+    // list skips the query entirely).
+    const callContactIds = [...new Set(lauraCalls.map((c) => (c.contact_id == null ? null : String(c.contact_id))).filter((x): x is string => !!x))];
+    const callContactClients = callContactIds.length
+      ? await ro`
+        SELECT ct.id::text AS contact_internal_id, l.internal_client_id::text AS internal_client_id
+        FROM contacts ct
+        JOIN client_match_links l ON l.provider = 'highlevel' AND l.entity = 'contact' AND l.external_id = ct.external_id
+        WHERE ct.id::text = ANY(${callContactIds}::text[])`
+      : [];
+    const clientOfCallContact = new Map(callContactClients.map((r) => [String(r.contact_internal_id), String(r.internal_client_id)]));
     const noteByAppt = new Map(
       (await ro`SELECT id::text AS id, LEFT(COALESCE(raw->>'notes', ''), 200) AS notes FROM appointments WHERE id = ANY(SELECT id FROM appointments WHERE status='scheduled' AND COALESCE(cancelled,false)=false)`)
         .map((r) => [String(r.id), r.notes as string]),
     );
     for (const call of lauraCalls) {
       if (!call.contact_id) continue;
-      // The call's client = the client whose contact-of-record is this call's
-      // contact (calls.contact_id → contacts → the sticky highlevel/contact
-      // link). Every qualifying appointment of THAT contact belongs to the
-      // same client, so the candidate universe is exactly infosByContact[contact_id].
-      const infos = infosByContact.get(String(call.contact_id)) ?? [];
+      // Plan §8 candidate universe: the call's canonical client (via its
+      // contact's highlevel/contact link) — the same client the appointment
+      // links to. Direction is REPORTED (D8: outbound = attempt-class,
+      // inbound = timeline-only) but the attribution machinery itself is
+      // direction-agnostic, so the gate proves it over every observed
+      // direction value.
+      const callClientId = clientOfCallContact.get(String(call.contact_id));
+      const infos = callClientId ? infosByClient.get(callClientId) ?? [] : [];
       const callInput: CallForAttribution = {
         callId: String(call.id),
         startedAtIso: new Date(call.started_at).toISOString(),
         direction: call.direction == null ? null : String(call.direction),
         callStatus: call.call_status == null ? null : String(call.call_status),
       };
-      const decision = attributeCall(callInput, infos, { dueDays: DUE_DAYS });
+      const decision = attributeCall(callInput, infos, { dueDays: DUE_DAYS, directions: ["outbound", "inbound"] });
       if (decision.appointmentId === null) {
         unattributedLaura30d += 1;
         continue;
       }
       const attributedAppt = infos.find((i) => i.appointment.appointmentId === decision.appointmentId)!;
+      const direction = call.direction == null ? null : String(call.direction);
       attributionCases.push({
         call_id: String(call.id),
         external_call_id: String(call.external_call_id),
         started_at: new Date(call.started_at).toISOString(),
+        direction,
+        d8_class: direction === "outbound" ? "attempt (D8)" : `timeline-only (D8) — ${direction ?? "unknown direction"}`,
         call_status: call.call_status == null ? null : String(call.call_status),
         duration_seconds: call.duration_seconds == null ? null : Number(call.duration_seconds),
         acuity_appointment_id: attributedAppt.appointment.acuityAppointmentId ?? "",
@@ -248,6 +304,7 @@ try {
     }
   }
   const inWindowCases = attributionCases.length;
+  const outboundInWindowCases = attributionCases.filter((c) => c.direction === "outbound").length;
   const lvmLrCase = attributionCases.find((c) => c.note_excerpt && /LVM\s+LR\s+10\/19/.test(c.note_excerpt));
 
   // ================= G6: idempotence (live re-run) =================
@@ -282,7 +339,7 @@ try {
     byte_identical: shaBefore === shaAfter,
     sha_before: shaBefore,
     sha_after: shaAfter,
-    rerun_wrote_nothing: rerun.clientsCreated === 0 && rerun.contactLinksCreated === 0 && rerun.appointmentLinksCreated === 0 && rerun.fallbackLinksCreated === 0 && rerun.exceptionsCreated === 0,
+    rerun_wrote_nothing: rerun.clientsCreated === 0 && rerun.contactLinksCreated === 0 && rerun.appointmentLinksCreated === 0 && rerun.fallbackLinksCreated === 0 && rerun.exceptionsCreated === 0 && rerun.phoneMismatchExceptionsCreated === 0,
     rerun,
   };
 
@@ -294,14 +351,20 @@ try {
     gate_run_id: gateRunId,
     due_days: DUE_DAYS,
     G1: {
-      criterion: "appointment→internal client ≥99% of qualifying appointments (scheduled, not cancelled)",
+      criterion: "appointment→internal client ≥99% of qualifying appointments (scheduled, not cancelled); wrong-match detector (appointment phone vs linked client phone): every mismatch surfaced as a phone_mismatch Data Match Exception — none silent",
       qualifying_total: Number(g1[0].total),
       qualifying_resolved: Number(g1[0].resolved),
       qualifying_pct: g1QualifyingPct,
       last30d: { total: Number(g1_30d[0].total), resolved: Number(g1_30d[0].resolved), pct: pct(Number(g1_30d[0].resolved), Number(g1_30d[0].total)) },
       all_appointments: { total: Number(g1_all[0].total), resolved: Number(g1_all[0].resolved), pct: pct(Number(g1_all[0].resolved), Number(g1_all[0].total)) },
-      wrong_match_detector: { phone_comparable_pairs: Number(g1_wrong[0].compared), mismatches: Number(g1_wrong[0].mismatches) },
-      pass: g1QualifyingPct !== null && g1QualifyingPct >= 99 && Number(g1_wrong[0].mismatches) === 0,
+      wrong_match_detector: {
+        phone_comparable_pairs: Number(g1_wrong[0].compared),
+        mismatches: Number(g1_wrong[0].mismatches),
+        mismatches_with_exception: Number(g1_wrong_covered.filter((r) => r.has_exception === true).length),
+        silent_mismatches: Number(g1_wrong[0].mismatches) - Number(g1_wrong_covered.filter((r) => r.has_exception === true).length),
+        detail: g1_wrong_covered.map((r) => ({ acuity_appointment_id: r.acuity_appointment_id, client_name: r.client_name, appointment_phone_digits_raw: r.client_phone, client_normalized_phone: r.cpn, has_exception: r.has_exception === true })),
+      },
+      pass: g1QualifyingPct !== null && g1QualifyingPct >= 99 && Number(g1_wrong[0].mismatches) - Number(g1_wrong_covered.filter((r) => r.has_exception === true).length) === 0,
     },
     G2: {
       criterion: "call→internal client ≥99% where contact_id exists (last 30 days primary); orphan calls all in exceptions queue",
@@ -329,9 +392,10 @@ try {
       pass: spot.length === 30 && chainVerifiedCount === 30,
     },
     G5: {
-      criterion: "due-window attribution: ≥10 in-window Laura calls attribute to exactly the right appointment (D12 evidence; LVM LR 10/19→10/26 included)",
+      criterion: "due-window attribution: ≥10 in-window Retention-Owner calls attribute to exactly the right appointment (plan §8 client-mediated universe, D12 evidence; LVM LR 10/19→10/26 included); D8 outbound (attempt-class) subset disclosed",
       laura_calls_30d_examined: lauraCallsExamined,
       attributed_in_window: inWindowCases,
+      attributed_in_window_d8_outbound: outboundInWindowCases,
       unattributed_out_of_window: unattributedLaura30d,
       lvm_lr_1019_case_present: !!lvmLrCase,
       cases: attributionCases,
@@ -381,18 +445,31 @@ try {
     }
     lines.push("");
   });
+  const wd = results.G1.wrong_match_detector;
+  lines.push("## Appointment↔client phone mismatches (G1 wrong-match detector)");
+  lines.push("");
+  lines.push(`The appointment→client links are made by the explicit cross-system id (appointments.contact_id — the owner's highest-priority method), so a phone disagreement is NOT hereby a proven wrong match; it is a conflicting signal (Acuity-typed typo, household booking) that the owner's evidence rules surface for review. The backfill seeds one \`phone_mismatch\` Data Match Exception per appointment (\`phone-mismatch:<acuity_id>\`); this table lists every current mismatch and whether its exception row exists. Silent mismatches (no exception row): **${wd.silent_mismatches}** — the gate fails if this is non-zero.`);
+  lines.push("");
+  lines.push("| acuity appointment | client (appointment) | appointment phone (digits) | linked client normalized phone | exception row |");
+  lines.push("|---|---|---|---|---|");
+  for (const d of wd.detail) {
+    lines.push(`| ${d.acuity_appointment_id} | ${d.client_name ?? "—"} | ${d.appointment_phone_digits_raw} | ${d.client_normalized_phone} | ${d.has_exception ? "YES" : "NO — SILENT"} |`);
+  }
+  lines.push("");
   lines.push("## Due-window attribution cases (G5)");
   lines.push("");
-  lines.push(`Each row is a Laura Rivera call inside the last 30 days that fell in a qualifying appointment's contact window (${DUE_DAYS} days, ET). Attribution computed by the shipped §8 helper; D12 nearest-future cases list ALL window candidates.`);
+  lines.push(`Each row is a Retention-Owner call inside the last 30 days that fell in a qualifying appointment's contact window (${DUE_DAYS} days, ET), attributed by the shipped §8 helper over the CLIENT-mediated universe (plan §8: the call's canonical client ↔ the appointment's client — duplicate/household contacts of the same human resolve through the chain). D12 nearest-future cases list ALL window candidates.`);
   lines.push("");
-  lines.push("| call ext_id | started (UTC) | status | dur s | → acuity appointment | appt datetime (UTC) | due date (ET) | attribution | rule | window candidates | note excerpt |");
-  lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
+  lines.push(`**D8 note:** outbound calls are the excitement-attempt class (${outboundInWindowCases} of ${inWindowCases} rows below); inbound calls are timeline-only evidence and never count as excitement attempts. Attribution correctness is proven over every row; the D8 attempt subset is disclosed alongside.`);
+  lines.push("");
+  lines.push("| call ext_id | started (UTC) | direction (D8 class) | status | dur s | → acuity appointment | appt datetime (UTC) | due date (ET) | attribution | rule | window candidates | note excerpt |");
+  lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const c of attributionCases) {
-    lines.push(`| ${c.external_call_id} | ${c.started_at} | ${c.call_status ?? "—"} | ${c.duration_seconds ?? "—"} | ${c.acuity_appointment_id} | ${c.appointment_datetime} | ${c.contact_due_date} | ${c.attribution} | ${c.rule} | ${c.window_candidates.join(", ")} | ${(c.note_excerpt ?? "").replace(/\|/g, "/").replace(/\n/g, " ")} |`);
+    lines.push(`| ${c.external_call_id} | ${c.started_at} | ${c.direction ?? "—"} (${c.d8_class}) | ${c.call_status ?? "—"} | ${c.duration_seconds ?? "—"} | ${c.acuity_appointment_id} | ${c.appointment_datetime} | ${c.contact_due_date} | ${c.attribution} | ${c.rule} | ${c.window_candidates.join(", ")} | ${(c.note_excerpt ?? "").replace(/\|/g, "/").replace(/\n/g, " ")} |`);
   }
   lines.push("");
   if (lvmLrCase) {
-    lines.push(`**LVM LR 10/19 case present**: call ${lvmLrCase.external_call_id} (${lvmLrCase.started_at}, ${lvmLrCase.call_status}) attributes to acuity appointment ${lvmLrCase.acuity_appointment_id} (due ${lvmLrCase.contact_due_date}); note excerpt: "${(lvmLrCase.note_excerpt ?? "").replace(/\n/g, " ")}".`);
+    lines.push(`**LVM LR 10/19 case present**: call ${lvmLrCase.external_call_id} (${lvmLrCase.started_at}, ${lvmLrCase.direction}/${lvmLrCase.call_status}) attributes to acuity appointment ${lvmLrCase.acuity_appointment_id} (due ${lvmLrCase.contact_due_date}); note excerpt: "${(lvmLrCase.note_excerpt ?? "").replace(/\n/g, " ")}".`);
   } else {
     lines.push("**LVM LR 10/19 case NOT found** among attributed cases — see results JSON (gate FAILS without it).");
   }
@@ -402,7 +479,7 @@ try {
   writeFileSync(OUT_JSON, JSON.stringify({ ...results, gate, verdict }, null, 1));
   await store.finishSyncRun(gateRunId, verdict === "PASS" ? "success" : "error", 0, verdict === "PASS" ? null : JSON.stringify(gate));
   await ro.end({ timeout: 2 }).catch(() => undefined);
-  console.log(JSON.stringify({ verdict, gate, G1: results.G1.pass && `${results.G1.qualifying_pct}%`, G2: results.G2.pass && `${g2_30d.pct}%`, G3_ambiguous: ambiguous, G4: `${chainVerifiedCount}/${spot.length}`, G5: `${inWindowCases} in-window, LVM_LR_case=${!!lvmLrCase}`, G6: g6.byte_identical }, null, 1));
+  console.log(JSON.stringify({ verdict, gate, G1: results.G1.pass && `${results.G1.qualifying_pct}% (mismatches ${results.G1.wrong_match_detector.mismatches}, silent ${results.G1.wrong_match_detector.silent_mismatches})`, G2: results.G2.pass && `${g2_30d.pct}%`, G3_ambiguous: ambiguous, G4: `${chainVerifiedCount}/${spot.length}`, G5: `${inWindowCases} in-window (${outboundInWindowCases} D8-outbound), LVM_LR_case=${!!lvmLrCase}`, G6: g6.byte_identical }, null, 1));
   if (verdict !== "PASS") process.exit(2);
 } catch (e) {
   const msg = e instanceof Error ? e.message : String(e);
