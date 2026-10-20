@@ -20,7 +20,7 @@ import type {
   ContactIdentityRow,
   AuditCallRow,
   CallContactBackfillUpdate,
-  RetentionAttemptRow, RetentionAttemptWrite, RetentionOutcomeRow, RetentionOutcomeWrite, InternalClientRow,
+  RetentionAttemptRow, RetentionAttemptWrite, RetentionOutcomeRow, RetentionOutcomeWrite, RetentionOwnerHistoryRow, InternalClientRow,
   InternalClientSeedInput,
   ClientMatchLinkRow,
   ClientMatchLinkInput,
@@ -3982,6 +3982,31 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
       previous_value: "open",
       new_value: "dismissed",
       changed_by: `manual:${opts.resolvedBy} kind=${exc.kind} dedupe=${exc.dedupe_key}`,
+    });
+  }
+
+  // ---- RETENTION OWNER HISTORY (read-only this stage; plan §12) ----
+  // The Settings delegation adds the writer; the UI reads the role record so
+  // scope lines and employee defaults resolve the moment it exists. Cache-
+  // wrapped like every other bulk read (bumped by any write).
+  async listRetentionOwnerHistory(): Promise<RetentionOwnerHistoryRow[]> {
+    await this.ensureSchema();
+    return this.cache.wrap("listRetentionOwnerHistory", async () => {
+      const rows = await this.sql`SELECT id::text AS id, employee_user_id::text AS employee_user_id, name, initials, active, effective_start, effective_end FROM retention_owner_history ORDER BY effective_start, id`;
+      return rows.map((r) => {
+        const row = r as Record<string, unknown>;
+        return {
+          id: String(row.id),
+          employee_user_id: String(row.employee_user_id),
+          name: row.name == null ? null : String(row.name),
+          initials: row.initials == null ? null : String(row.initials),
+          active: row.active === true,
+          // pg `date` cells arrive as JS Dates (postgres.js) — YYYY-MM-DD.
+          effective_start: new Date(row.effective_start as unknown as string).toISOString().slice(0, 10),
+          effective_end:
+            row.effective_end == null ? null : new Date(row.effective_end as unknown as string).toISOString().slice(0, 10),
+        };
+      });
     });
   }
 }

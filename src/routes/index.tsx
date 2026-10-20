@@ -8,7 +8,7 @@ import { InfoTip } from "~/components/InfoTip";
 import { StatusChip } from "~/components/StatusChip";
 // Harmonization Wave 1: Today composes the SAME page primitives as Daily
 // Report / Weekly (Panel / Eyebrow / RatioBar).
-import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
+import { Eyebrow, KpiMid, num, Panel, RatioBar } from "~/components/page-panel";
 import {
   attentionNotes,
   availabilityStatusView,
@@ -42,10 +42,7 @@ function mins(seconds: number | null): string {
 function shortWeekday(dateStr: string): string {
   return formatDateHuman(dateStr).split(",")[0];
 }
-/** Null renders "—" in stone-300 (never 0) per spec §5 polish. */
-function num(v: string) {
-  return v === "—" ? <span className="text-(--text-faint)">—</span> : v;
-}
+/** Null renders "—" in stone-300 (never 0) per spec §5 polish. Hoisted to page-panel (shared with Retention). */
 
 type SortKey =
   | "name"
@@ -805,13 +802,3 @@ function RepDetailPanel({
   );
 }
 
-/** Secondary KPI cell (spec §3.2): same stack at text-3xl. No comparisons. */
-function KpiMid({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return (
-    <div>
-      <p className="kpi-label">{label}</p>
-      <p className="kpi-mid mt-2">{num(String(value))}</p>
-      {sub && <p className="kpi-sub mt-1.5">{sub}</p>}
-    </div>
-  );
-}

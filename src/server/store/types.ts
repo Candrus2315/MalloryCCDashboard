@@ -1435,6 +1435,24 @@ export interface RetentionOutcomeWrite {
   needsReviewReason: string | null;
 }
 
+/**
+ * Retention Owner role history (plan §12; retention_owner_history table,
+ * §13 DDL). Configurable role record — never hard-coded; a scored week is
+ * attributed to whoever owned the role at the time. READ-ONLY in this stage:
+ * the Settings surface (build-sequence step 4) adds the writer; the UI reads
+ * it so the drill scope line + employee filter light up the moment it exists.
+ */
+export interface RetentionOwnerHistoryRow {
+  id: string;
+  employee_user_id: string;
+  name: string | null;
+  initials: string | null;
+  active: boolean;
+  /** ET calendar dates. */
+  effective_start: string;
+  effective_end: string | null;
+}
+
 export interface Store {
   mode: "postgres" | "memory";
   ensureSchema(): Promise<void>;
@@ -1979,4 +1997,8 @@ export interface Store {
   updateRetentionAppointmentOutcome(row: RetentionOutcomeWrite): Promise<void>;
   /** Management close of an exception WITHOUT a link write (audited via manual_overrides, like resolve). */
   dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void>;
+
+  // ---- RETENTION OWNER HISTORY (read-only this stage; plan §12) ----
+  /** Every role-history row, effective_start ascending (the Settings writer lands in the Settings delegation). */
+  listRetentionOwnerHistory(): Promise<RetentionOwnerHistoryRow[]>;
 }

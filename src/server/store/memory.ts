@@ -31,6 +31,7 @@ import type {
   RetentionAttemptWrite,
   RetentionOutcomeRow,
   RetentionOutcomeWrite,
+  RetentionOwnerHistoryRow,
   ConnectionRow,
   ContactExternalIdRow,
   ContactIdentityRow,
@@ -2011,5 +2012,22 @@ export class MemoryStore implements Store {
         changed_by: `manual:${opts.resolvedBy} kind=${exc.kind} dedupe=${exc.dedupe_key}`,
       });
     }
+  }
+
+  // ---- RETENTION OWNER HISTORY (read-only interface method; plan §12) ----
+  // The Store interface is read-only in this stage — the Settings delegation
+  // adds the writer. seedRetentionOwnerHistory is a MemoryStore-only test
+  // helper (NOT part of the Store interface) so tests can populate the role
+  // record without inventing a writer prematurely.
+  private retentionOwnerHistory: RetentionOwnerHistoryRow[] = [];
+  async listRetentionOwnerHistory(): Promise<RetentionOwnerHistoryRow[]> {
+    await this.ensureSchema();
+    return this.retentionOwnerHistory
+      .map((r) => JSON.parse(JSON.stringify(r)) as RetentionOwnerHistoryRow)
+      .sort((a, b) => (a.effective_start < b.effective_start ? -1 : a.effective_start > b.effective_start ? 1 : a.id < b.id ? -1 : 1));
+  }
+  /** Test/seed helper — MemoryStore only, never part of the Store interface. */
+  seedRetentionOwnerHistory(rows: Omit<RetentionOwnerHistoryRow, "id">[]): void {
+    for (const r of rows) this.retentionOwnerHistory.push({ id: this.nextId("rowner"), ...r });
   }
 }
