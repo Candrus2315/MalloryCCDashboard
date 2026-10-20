@@ -3845,17 +3845,21 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
   }
   async insertRetentionAttempts(rows: RetentionAttemptWrite[]): Promise<number> {
     await this.ensureSchema();
-    if (!rows.length) return 0;
-    // Batch insert; the UNIQUE (source, external_message_id) is the safety net
-    // behind the core's pre-dedupe — a race loser is SKIPPED (never doubled),
-    // and the returned count lets the caller detect the drift honestly.
-    const values = rows.map((r) => this.sql`${r.internalClientId}::uuid, ${r.appointmentId}::uuid, ${r.callId}::uuid, ${r.source}, ${r.externalMessageId}, ${r.employeeUserId}::uuid, ${r.employeeExternalId}, ${r.attemptAtIso}::timestamptz, ${r.callStatus}, ${r.durationSeconds}, ${r.direction}, ${r.attemptClass}, ${JSON.stringify(r.evidence)}::jsonb, ${r.attribution}`);
-    const out = await this.sql`
-      INSERT INTO retention_attempts (internal_client_id, appointment_id, call_id, source, external_message_id, employee_user_id, employee_external_id, attempt_at, call_status, duration_seconds, direction, attempt_class, evidence, attribution)
-      VALUES ${this.sql.join(values, this.sql`, `)}
-      ON CONFLICT (source, external_message_id) DO NOTHING
-      RETURNING id`;
-    return out.length;
+    // Per-row insert (the repo's proven upsertCalls pattern; volumes are tiny
+    // — the 7-day excitement cohort only). The UNIQUE
+    // (source, external_message_id) is the safety net behind the core's
+    // pre-dedupe — a race loser is SKIPPED (never doubled), and the returned
+    // count lets the caller detect the drift honestly.
+    let created = 0;
+    for (const r of rows) {
+      const out = await this.sql`
+        INSERT INTO retention_attempts (internal_client_id, appointment_id, call_id, source, external_message_id, employee_user_id, employee_external_id, attempt_at, call_status, duration_seconds, direction, attempt_class, evidence, attribution)
+        VALUES (${r.internalClientId}::uuid, ${r.appointmentId}::uuid, ${r.callId}::uuid, ${r.source}, ${r.externalMessageId}, ${r.employeeUserId}::uuid, ${r.employeeExternalId}, ${r.attemptAtIso}::timestamptz, ${r.callStatus}, ${r.durationSeconds}, ${r.direction}, ${r.attemptClass}, ${JSON.stringify(r.evidence)}::jsonb, ${r.attribution})
+        ON CONFLICT (source, external_message_id) DO NOTHING
+        RETURNING id`;
+      created += out.length;
+    }
+    return created;
   }
   async updateRetentionAttempt(id: string, patch: Partial<Omit<RetentionAttemptWrite, "source" | "externalMessageId">>): Promise<void> {
     await this.ensureSchema();
@@ -3889,7 +3893,9 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
     return {
       appointment_id: String(r.appointment_id),
       internal_client_id: String(r.internal_client_id),
-      contact_due_date: normDate(r.contact_due_date),
+      // pg `date` cells arrive as JS Date objects (postgres.js) — the metrics
+      // layer compares YYYY-MM-DD calendar strings (S7c convention).
+      contact_due_date: new Date(r.contact_due_date as unknown as string).toISOString().slice(0, 10),
       eligible: r.eligible === true,
       eligibility_basis: r.eligibility_basis == null ? null : String(r.eligibility_basis),
       attempts_count: Number(r.attempts_count ?? 0),
@@ -3904,14 +3910,17 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
   }
   async insertRetentionAppointmentOutcomes(rows: RetentionOutcomeWrite[]): Promise<number> {
     await this.ensureSchema();
-    if (!rows.length) return 0;
-    const values = rows.map((r) => this.sql`${r.appointmentId}::uuid, ${r.internalClientId}::uuid, ${r.contactDueDate}::date, ${r.eligible}, ${r.eligibilityBasis}, ${r.attemptsCount}, ${r.firstAttemptAtIso}::timestamptz, ${r.lastAttemptAtIso}::timestamptz, ${r.anyAnswered}, ${r.finalStatus}, ${JSON.stringify(r.evidence)}::jsonb, ${r.needsReviewReason}`);
-    const out = await this.sql`
-      INSERT INTO retention_appointment_outcomes (appointment_id, internal_client_id, contact_due_date, eligible, eligibility_basis, attempts_count, first_attempt_at, last_attempt_at, any_answered, final_status, evidence, needs_review_reason, computed_at)
-      VALUES ${this.sql.join(values, this.sql`, `)}
-      ON CONFLICT (appointment_id) DO NOTHING
-      RETURNING appointment_id`;
-    return out.length;
+    // Per-row insert (same pattern as insertRetentionAttempts).
+    let created = 0;
+    for (const r of rows) {
+      const out = await this.sql`
+        INSERT INTO retention_appointment_outcomes (appointment_id, internal_client_id, contact_due_date, eligible, eligibility_basis, attempts_count, first_attempt_at, last_attempt_at, any_answered, final_status, evidence, needs_review_reason, computed_at)
+        VALUES (${r.appointmentId}::uuid, ${r.internalClientId}::uuid, ${r.contactDueDate}::date, ${r.eligible}, ${r.eligibilityBasis}, ${r.attemptsCount}, ${r.firstAttemptAtIso}::timestamptz, ${r.lastAttemptAtIso}::timestamptz, ${r.anyAnswered}, ${r.finalStatus}, ${JSON.stringify(r.evidence)}::jsonb, ${r.needsReviewReason}, now())
+        ON CONFLICT (appointment_id) DO NOTHING
+        RETURNING appointment_id`;
+      created += out.length;
+    }
+    return created;
   }
   async updateRetentionAppointmentOutcome(row: RetentionOutcomeWrite): Promise<void> {
     await this.ensureSchema();

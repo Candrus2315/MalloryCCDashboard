@@ -13,7 +13,7 @@ import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
 import { computeRetention } from "../retention/compute";
 import { applyInternalClientBackfill } from "../retention/backfill";
-import { retentionTick } from "../retention/tick";
+import { resetRetentionThrottle, retentionTick } from "../retention/tick";
 
 // Fixed clock: 2026-10-20 ET → cohort = due dates [2026-09-20 .. 2026-10-20];
 // a 10/26 session has due date 10/19 — in cohort (the live LVM LR 10/19→10/26 shape).
@@ -309,14 +309,16 @@ describe("computeRetention — cohort, classification, idempotence", () => {
 describe("retentionTick — scheduler contract", () => {
   test("runs the compute, records its own sync_runs row, throttles background re-runs, never throws", async () => {
     const s = await seed();
+    resetRetentionThrottle(); // module-global throttle: other files' ticks must not leak into this test
     const t1 = await retentionTick({ store: s.store, now: NOW, trigger: "manual" });
     expect(t1.outcome).toBe("synced");
     const runs = await s.store.getSyncRuns(10);
     const mine = runs.filter((r) => r.provider === "retention");
     expect(mine.length).toBe(1);
     expect(mine[0]!.status).toBe("success");
+    resetRetentionThrottle(); // manual t1 stamped nothing; a clean background start
     const t2 = await retentionTick({ store: s.store, now: NOW, trigger: "background" });
-    expect(t2.outcome).toBe("synced"); // manual t1 was not a background tick — throttle applies from background runs only? No: t1 manual set nothing; t2 background runs
+    expect(t2.outcome).toBe("synced"); // first background run after the reset executes
     const t3 = await retentionTick({ store: s.store, now: NOW, trigger: "background" });
     expect(t3.outcome).toBe("skipped");
     expect((t3 as { reason: string }).reason).toBe("recent-tick");
