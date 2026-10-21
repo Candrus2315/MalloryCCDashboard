@@ -498,6 +498,19 @@ export interface AppSettings {
     types_included: string[];
   };
   /**
+   * UNATTRIBUTED QUEUE DECLUTTER (owner request 2026-10-21: "can i get a clear
+   * all button for the Unattributed Bookings in settings or collapse all the
+   * olds so all i see is the new one that come in? Most of those are way
+   * before i started to work here."). `dismissedBefore` is the ISO instant the
+   * "Clear old entries" action wrote: queue rows with created_at AT or BEFORE
+   * it collapse behind a one-line banner on the Settings page (a client-local
+   * Show-all reveals them; Undo resets the marker). DISPLAY-LAYER ONLY —
+   * nothing is ever deleted, the queue payload and every KPI keep counting all
+   * rows, and the write is audited like every manual action on the page.
+   * Null/absent (the default) = no marker, the queue renders exactly as before.
+   */
+  unattributedQueue?: { dismissedBefore: string | null };
+  /**
    * RETENTION MODULE business rules (owner spec: rules live in Settings, not
    * code). Stage 3a consumes due_days + qualifying_statuses + the compute
    * lookback; the full Settings surface is the next delegation — these keys
@@ -679,6 +692,18 @@ function normalizeSheetConfig(raw: unknown, fallbackId: string): SheetConfig {
 }
 
 /**
+ * Unattributed-queue declutter marker (owner request 2026-10-21). Fail-honest
+ * normalization: only a parsable ISO instant survives — a garbage/absent value
+ * reads as NO marker, so a corrupted key can never hide the whole queue.
+ */
+export function normalizeUnattributedQueueSettings(raw: unknown): { dismissedBefore: string | null } {
+  const dismissed = (raw as { dismissedBefore?: unknown } | null | undefined)?.dismissedBefore;
+  return typeof dismissed === "string" && Number.isFinite(Date.parse(dismissed))
+    ? { dismissedBefore: dismissed }
+    : { dismissedBefore: null };
+}
+
+/**
  * Deep-merge stored settings with the current defaults so settings saved
  * before a newer field existed (e.g. sheets.<sheet>.mode) still see that
  * default. Used by BOTH stores on read.
@@ -703,6 +728,7 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
       animalia: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.animalia ?? base.sheets.animalia, DEFAULT_SHEET_IDS.animalia),
     },
     acuity: { ...base.acuity, ...(r.acuity ?? {}) },
+    unattributedQueue: normalizeUnattributedQueueSettings(r.unattributedQueue ?? base.unattributedQueue),
     retention: normalizeRetentionSettings(r.retention ?? base.retention),
   };
   return merged;
@@ -716,6 +742,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   active_roster: DEFAULT_ACTIVE_ROSTER,
   historical_reps: [],
   rep_mappings: [],
+  unattributedQueue: { dismissedBefore: null },
   studio: {
     appointment_duration_min: 60,
     // TWO-BLOCK DAILY SCHEDULE (owner directive 2026-09-27, supersedes the
