@@ -78,6 +78,31 @@ describe("stale-run reaper scans by status, not recency window", () => {
     expect(runs.find((r) => r.id === zombieId)!.status).toBe("running");
     expect(runs.find((r) => r.id === backfillId)!.status).toBe("running");
   });
+
+  test("retention-family writers ARE reapable (2026-10-21: two retention-identity-backfill rows sat 'running' 31h — the writers were missing from REAPABLE_SYNC_PROVIDERS)", async () => {
+    const store = new MemoryStore();
+    const backfillZombie = await store.insertSyncRun("retention-identity-backfill");
+    const cancellationsZombie = await store.insertSyncRun("retention-cancellations");
+    const scorecardZombie = await store.insertSyncRun("retention-scorecard");
+    // The live incident: 31 HOURS past start (boot backfills finish in minutes —
+    // anything past the 15-min window is a dead process, not a long one).
+    const started31hAgo = new Date(Date.now() - 31 * 3_600_000).toISOString();
+    for (const id of [backfillZombie, cancellationsZombie, scorecardZombie]) {
+      syncRunsOf(store).find((r) => r.id === id)!.started_at = started31hAgo;
+    }
+    const freshSameProvider = await store.insertSyncRun("retention-identity-backfill"); // live run — untouched
+
+    expect(await reapStaleSyncRuns(store)).toBe(3);
+
+    const runs = await store.getSyncRuns(10);
+    for (const id of [backfillZombie, cancellationsZombie, scorecardZombie]) {
+      const z = runs.find((r) => r.id === id)!;
+      expect(z.status).toBe("error");
+      expect(z.error).toContain("stale");
+      expect(z.error).toContain("stale-run reaper");
+    }
+    expect(runs.find((r) => r.id === freshSameProvider)!.status).toBe("running");
+  });
 });
 
 describe("getRunningSyncRun freshness bound", () => {
