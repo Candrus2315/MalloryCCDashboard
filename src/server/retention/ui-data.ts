@@ -213,9 +213,35 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
       sub: "awaiting outcome",
       attention: cancellationRows.some((r) => r.outcome === "pending"),
     },
-    { key: "saves", label: "Saves", value: null, ratio: null, sub: "original appointment kept", attention: false },
-    { key: "reschedules", label: "Reschedules", value: null, ratio: null, sub: "rebooked within window", attention: false },
-    { key: "recovery", label: "Recovery Rate", value: null, ratio: null, sub: "recovered ÷ eligible", attention: false },
+    {
+      key: "saves",
+      label: "Saves",
+      value: cancellationRows.filter((r) => r.outcome === "saved_original").length,
+      ratio: null,
+      sub: "original appointment kept",
+      attention: false,
+    },
+    {
+      key: "reschedules",
+      label: "Reschedules",
+      value: cancellationRows.filter((r) => r.outcome === "rescheduled").length,
+      ratio: null,
+      sub: "rebooked within window",
+      attention: false,
+    },
+    {
+      // §16: (Saves + Reschedules) / count(eligible cancellations: internal
+      // client resolved) — the eligible denominator IS the ledger (the engine
+      // only writes rows with a resolved client; unlinked cancellations are
+      // counted honestly by the engine and exception-queued). null ("—")
+      // while no eligible rows exist — never a fabricated 0%/100%.
+      key: "recovery",
+      label: "Recovery Rate",
+      value: cancellationRows.filter((r) => r.recovered).length,
+      ratio: cancellationRows.length > 0 ? cancellationRows.filter((r) => r.recovered).length / cancellationRows.length : null,
+      sub: cancellationRows.length > 0 ? `of ${cancellationRows.length} tracked cancellations` : "recovered ÷ eligible",
+      attention: false,
+    },
     {
       key: "no-shows",
       label: "No-Shows",

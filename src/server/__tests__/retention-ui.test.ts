@@ -182,15 +182,16 @@ describe("retentionOverview (the 12-card band, §16)", () => {
     expect(o.computedAtIso).toBeTruthy();
   });
 
-  test("stage 4a: Active Cancellations reads the written ledger (0 is a fact; Saves/Reschedules/Recovery still unwritten)", async () => {
+  test("stage 4a: the written ledger counts as facts (empty ledger → 0s; recovery rate — until an eligible row exists)", async () => {
     const s = await seed();
     const o = await retentionOverview(s.store, NOW);
     const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
     expect(byKey["active-cancellations"]!.value).toBe(0); // written ledger, empty → an honest 0, never "—" and never a fabricated count
     expect(byKey["active-cancellations"]!.attention).toBe(false);
-    for (const k of ["saves", "reschedules", "recovery"]) {
-      expect(byKey[k]!.value).toBeNull(); // slots filled by the next stage-4a wiring commit
-    }
+    expect(byKey["saves"]!.value).toBe(0);
+    expect(byKey["reschedules"]!.value).toBe(0);
+    expect(byKey["recovery"]!.value).toBe(0);
+    expect(byKey["recovery"]!.ratio).toBeNull(); // no eligible denominator → "—", never a fabricated 0%/100%
     expect(CANCELLATIONS_ENGINE_NOTE).toContain("never 0");
     expect(CANCELLATIONS_ENGINE_NOTE).toContain("stage 4a");
   });
@@ -231,6 +232,11 @@ describe("retentionOverview (the 12-card band, §16)", () => {
     const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
     expect(byKey["active-cancellations"]!.value).toBe(1); // §16: count(outcome = 'pending') — the saved row is NOT active
     expect(byKey["active-cancellations"]!.attention).toBe(true); // a client is waiting
+    expect(byKey["saves"]!.value).toBe(1); // the saved_original row
+    expect(byKey["reschedules"]!.value).toBe(0);
+    expect(byKey["recovery"]!.value).toBe(1); // recovered = saved_original ∪ rescheduled
+    expect(byKey["recovery"]!.ratio).toBeCloseTo(1 / 2); // (saves+reschedules) ÷ 2 tracked cancellations
+    expect(byKey["recovery"]!.sub).toBe("of 2 tracked cancellations");
   });
 
   test("no-shows count by APPOINTMENT date (D10 proxy) with spoken split", async () => {
