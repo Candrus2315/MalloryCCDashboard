@@ -111,7 +111,8 @@ export function deriveCancellationOutcome(input: {
   /** The cancelled session's own instant — a candidate re-booked at it means the ORIGINAL appointment, kept (saved_original). */
   cancelledSessionMs: number | null;
 }): CancellationDerivation {
-  const { cancelledAtMs, rescheduleDays, nowMs, attemptsCount, anyAnswered, candidates, cancelledSessionMs } = input;
+  const { cancelledAtMs, rescheduleDays, nowMs, attemptsCount, anyAnswered, cancelledSessionMs } = input;
+  const candidates = input.candidates ?? []; // defensive: derivation stays total over a missing list
   const windowEndMs = cancelledAtMs + rescheduleDays * 24 * 3_600_000;
   const windowElapsed = windowEndMs <= nowMs;
 
