@@ -29,6 +29,98 @@ import { addDays, etDateStrFromInstant, etDayStartUtc, weekStart, OPERATIONAL_TI
 import type { NoteEvidence } from "./classify";
 import { RECOVERED_OUTCOMES } from "./cancellations";
 
+// ---- Retention data-start boundary (owner directive 10/21) ----
+
+/**
+ * OWNER DIRECTIVE 10/21: "Laura just started this position Mon Oct 19th —
+ * i dont need any data before the week of the 12th of Oct for the retention
+ * tab." Retention DISPLAY surfaces — the 12-card overview, the Needs
+ * Attention queue, the drill-downs, the Data Match Exceptions workspace and
+ * the scorecard display — show nothing from before the week of Monday
+ * 2026-10-12 ET. An appointment whose ET calendar date is >= 2026-10-12 is in
+ * scope; anything earlier is pre-tenure noise (Laura started 10/19).
+ *
+ * DISPLAY-LAYER FILTER ONLY: no stored row is deleted, rewritten, or
+ * backfilled, and no writer changes — attempt outcomes, the cancellations
+ * ledger and the scorecard storage keep observing everything and the audit
+ * trail stays complete (the departed-rep-history pattern: preserved, not
+ * shown). A future Settings surface can override this by replacing this one
+ * constant; every loader reads the boundary through the helpers below.
+ */
+export const RETENTION_DATA_START_ET = etDayStartUtc("2026-10-12"); // the ET instant of Mon 2026-10-12 00:00
+/** The boundary's ET calendar date, derived FROM the constant (single source of truth). */
+export const RETENTION_DATA_START_DATE_ET = etDateStrFromInstant(Date.parse(RETENTION_DATA_START_ET));
+
+/**
+ * Is this appointment in retention-DISPLAY scope (owner directive 10/21)?
+ * Keys on the appointment's ET calendar date — exactly the directive's
+ * wording ("before the week of the 12th of Oct"), inclusive at the boundary
+ * (Mon Oct 12 00:00 ET counts). An appointment whose instant cannot be
+ * derived is NOT provably in scope and is excluded — nothing is guessed into
+ * the owner's view (fail-honest; in practice the loaders' fetch floor always
+ * covers the appointment of every stored outcome/ledger row).
+ */
+export function inRetentionDataScope(apptMs: number | null | undefined): boolean {
+  if (apptMs == null || !Number.isFinite(apptMs)) return false;
+  return etDateStrFromInstant(apptMs) >= RETENTION_DATA_START_DATE_ET;
+}
+
+/**
+ * Is a stored scorecard week in DISPLAY scope? Stored weeks before the
+ * boundary stay in the DB untouched (append-if-new, never rewritten) but are
+ * not shown — the departed-rep-history pattern: preserved, not shown.
+ */
+export function inRetentionScorecardScope(weekStartEt: string): boolean {
+  return weekStartEt >= RETENTION_DATA_START_DATE_ET;
+}
+
+/**
+ * The triggering instant of a Data Match Exception, when derivable:
+ *  - appointment-anchored rows (appt-identity / phone-mismatch): the
+ *    appointment datetime via payload.subject.acuity_appointment_id, resolved
+ *    through the appointments the caller already loaded (acuity id → ms);
+ *  - call-anchored rows (call-identity): context.started_at;
+ *  - contact-identity rows carry NO derivable date anywhere → null.
+ * An exception with NO derivable trigger is NOT treated as pre-cutoff (its
+ * date cannot prove it pre-tenure) — it stays visible for management; the
+ * boundary hides only what it can PROVE is pre-cutoff. (Production probe
+ * 10/21: all 53 live exceptions are undatable — the workspace is unchanged
+ * in practice; this guard exists for future anchored rows.)
+ */
+export function exceptionTriggerMs(
+  e: { payload: Record<string, unknown>; context: Record<string, unknown> | null },
+  apptMsByAcuityId: Map<string, number>,
+): number | null {
+  const subject = (e.payload as { subject?: { acuity_appointment_id?: unknown } }).subject;
+  if (subject && typeof subject.acuity_appointment_id === "string") return apptMsByAcuityId.get(subject.acuity_appointment_id) ?? null;
+  const startedAt = (e.context as { started_at?: unknown } | null)?.started_at;
+  if (typeof startedAt === "string") {
+    const ms = Date.parse(startedAt);
+    if (Number.isFinite(ms)) return ms;
+  }
+  return null;
+}
+
+/** Scope one Data Match Exception row for DISPLAY (owner directive 10/21 — see RETENTION_DATA_START_ET). */
+export function inRetentionExceptionScope(
+  e: { payload: Record<string, unknown>; context: Record<string, unknown> | null },
+  apptMsByAcuityId: Map<string, number>,
+): boolean {
+  const ms = exceptionTriggerMs(e, apptMsByAcuityId);
+  return ms == null ? true : inRetentionDataScope(ms);
+}
+
+/** acuity appointment id → appointment_datetime epoch ms (exception scoping's anchor map). */
+function apptMsByAcuityIdOf(appts: { acuity_appointment_id: string | null; appointment_datetime: string }[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const a of appts) {
+    if (a.acuity_appointment_id == null) continue;
+    const ms = Date.parse(a.appointment_datetime);
+    if (Number.isFinite(ms)) m.set(a.acuity_appointment_id, ms);
+  }
+  return m;
+}
+
 // ---- KPI catalog (labels verbatim from the owner list; UI spec §2) ----
 
 export type RetentionKpiKey =
@@ -126,19 +218,14 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
     max_contact_days: null,
   };
   const dueDays = retention.due_days;
-  const [outcomes, attempts, exceptionsOpen, ownerRows, cancellationRows] = await Promise.all([
+  const [outcomes, attempts, openExceptions, ownerRows, allCancellations] = await Promise.all([
     store.listRetentionAppointmentOutcomes(),
     store.listRetentionAttempts(),
-    store.countDataMatchExceptions("open"),
+    store.getDataMatchExceptions({ status: "open" }),
     store.listRetentionOwnerHistory(),
     store.listRetentionCancellations(),
   ]);
   const ownerName = currentRetentionOwner(ownerRows, todayEt);
-
-  // Current-week due cohort ("as of now" R — UI spec §2: cards summarize the
-  // current week's due cohort and all open queues).
-  const cohort = outcomes.filter((o) => o.eligible && o.contact_due_date >= ws && o.contact_due_date <= we);
-  const cohortIds = new Set(cohort.map((o) => o.appointment_id));
 
   // Appointment rows: needed for the D10 no-show proxy + the still-open window
   // test (both read appointment_datetime / CURRENT status). Same fetch floor
@@ -146,12 +233,26 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
   const floorIso = etDayStartUtc(addDays(todayEt, -(retention.compute_lookback_days + dueDays + 2)));
   const appts = await store.getAppointmentsWithClientsSince(floorIso);
   const apptById = new Map(appts.map((a) => [a.id, a]));
-  const apptMs = (o: RetentionOutcomeRow): number | null => {
-    const a = apptById.get(o.appointment_id);
+  const apptIdMs = (appointmentId: string): number | null => {
+    const a = apptById.get(appointmentId);
     if (!a) return null;
     const ms = Date.parse(a.appointment_datetime);
     return Number.isFinite(ms) ? ms : null;
   };
+  const apptMs = (o: RetentionOutcomeRow): number | null => apptIdMs(o.appointment_id);
+
+  // OWNER DIRECTIVE 10/21 — the display-layer boundary (RETENTION_DATA_START_ET):
+  // no pre-cutoff appointment may contribute to any card. The writers keep
+  // observing everything; this only narrows what the loaders RETURN.
+  const cancellationRows = allCancellations.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id)));
+  const exceptionsOpen = openExceptions.filter((e) => inRetentionExceptionScope(e, apptMsByAcuityIdOf(appts))).length;
+
+  // Current-week due cohort ("as of now" R — UI spec §2: cards summarize the
+  // current week's due cohort and all open queues).
+  const cohort = outcomes.filter(
+    (o) => o.eligible && o.contact_due_date >= ws && o.contact_due_date <= we && inRetentionDataScope(apptMs(o)),
+  );
+  const cohortIds = new Set(cohort.map((o) => o.appointment_id));
 
   const spokenCount = cohort.filter((o) => o.final_status === "verified_spoke_with").length;
   const unreachedRows = cohort.filter((o) => {
@@ -175,6 +276,7 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
   };
   const noShowRows = outcomes.filter((o) => {
     if (!o.eligible) return false;
+    if (!inRetentionDataScope(apptMs(o))) return false; // owner directive 10/21 — display boundary
     const d = apptDateEtOf(o);
     if (d == null || d < ws || d > we) return false;
     const a = apptById.get(o.appointment_id);
@@ -257,10 +359,13 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
       spokenSplit: { spoken: noShowSpoken, notSpoken: noShowRows.length - noShowSpoken },
     },
     { key: "match-exceptions", label: "Data Match Exceptions", value: exceptionsOpen, ratio: null, sub: exceptionsOpen > 0 ? "match unresolved" : "all clear", attention: exceptionsOpen > 0 },
-    { key: "needs-review", label: "Needs Review", value: outcomes.filter((o) => o.final_status === "needs_review").length, ratio: null, sub: "", attention: false },
+    // Needs Review — the open evidence-conflict queue; pre-cutoff rows are
+    // hidden from DISPLAY (owner directive 10/21) but stay stored.
+    { key: "needs-review", label: "Needs Review", value: outcomes.filter((o) => o.final_status === "needs_review" && inRetentionDataScope(apptMs(o))).length, ratio: null, sub: "", attention: false },
   ];
   // Needs Review card: attention accent + consequence sub when > 0 (computed
-  // over ALL stored outcomes — an open queue, not a week-scoped count).
+  // over the DISPLAY-scoped stored outcomes — an open queue, not a
+  // week-scoped count; pre-cutoff rows hidden per owner directive 10/21).
   const needsReviewOpen = cards[11]!.value ?? 0;
   cards[11]!.attention = needsReviewOpen > 0;
   cards[11]!.sub = needsReviewOpen > 0 ? "evidence conflicts" : "all clear";
@@ -509,14 +614,32 @@ export async function retentionDrillData(
   };
   const range = rangeBounds(params.range);
 
-  // ---- match-exceptions mode: the shipped queue API verbatim (reuse mandate) ----
+  // ---- match-exceptions mode: the shipped queue API verbatim (reuse mandate),
+  // ---- narrowed to the display boundary (owner directive 10/21): rows whose
+  // ---- triggering appointment/call is PROVABLY pre-cutoff are hidden from the
+  // ---- workspace (stored rows untouched; undatable rows stay — nothing is
+  // ---- guessed pre-tenure). Calling with no status returns ALL rows with the
+  // ---- shipped candidate/resolved expansions; counts are re-derived from the
+  // ---- scoped rows so the header chips can never drift from the table.
   if (params.kpi === "match-exceptions") {
     const { handleExceptionsQuery } = await import("./exceptions-api");
-    const res = await handleExceptionsQuery(store, { status: params.exc });
+    const [res, appts] = await Promise.all([
+      handleExceptionsQuery(store, { status: null }),
+      store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(todayEt, -(retention.compute_lookback_days + dueDays + 2)))),
+    ]);
     const body = res.body as {
       counts: { open: number; resolved: number; dismissed: number; total: number };
       exceptions: (DataMatchExceptionRow & { candidates_expanded: (InternalClientRow | null)[]; resolved_client: InternalClientRow | null })[];
     };
+    const excAnchorMs = apptMsByAcuityIdOf(appts);
+    const scoped = body.exceptions.filter((e) => inRetentionExceptionScope(e, excAnchorMs));
+    const scopedCounts = {
+      open: scoped.filter((e) => e.status === "open").length,
+      resolved: scoped.filter((e) => e.status === "resolved").length,
+      dismissed: scoped.filter((e) => e.status === "dismissed").length,
+      total: scoped.length,
+    };
+    const scopedRows = scoped.filter((e) => e.status === params.exc);
     return {
       kpi: params.kpi,
       kpiLabel: RETENTION_KPI_LABEL[params.kpi],
@@ -529,10 +652,10 @@ export async function retentionDrillData(
       ownerName,
       dueDaysSetting: dueDays,
       rows: [],
-      matchedCount: body.counts[params.exc],
+      matchedCount: scopedCounts[params.exc],
       employees: [],
       emptyReason: params.exc === "open" ? "No Data Match Exceptions — every client matched on explicit ID, phone, or email." : null,
-      exceptions: { counts: body.counts, rows: body.exceptions },
+      exceptions: { counts: scopedCounts, rows: scopedRows },
       cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
     };
   }
@@ -605,6 +728,7 @@ export async function retentionDrillData(
   };
   const base = outcomes.filter((o) => {
     if (!o.eligible) return false;
+    if (!inRetentionDataScope(apptMsOf(o))) return false; // owner directive 10/21 — display boundary (pre-cutoff rows stay stored, not shown)
     const rangeOk = params.kpi === "no-shows" ? inRangeByAppt(o) : inRange(o);
     if (!rangeOk) return false;
     return inKpiUniverse(o, params.kpi, { nowMs, apptMsOf, noShowRow });
@@ -958,13 +1082,18 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   const ownerName = currentRetentionOwner(ownerRows, todayEt);
   const clientById = new Map(clients.map((c) => [c.id, c]));
   const apptById = new Map(appts.map((a) => [a.id, a]));
-  const apptMsOf = (o: RetentionOutcomeRow): number | null => {
-    const a = apptById.get(o.appointment_id);
+  const apptIdMs = (appointmentId: string): number | null => {
+    const a = apptById.get(appointmentId);
     if (!a) return null;
     const ms = Date.parse(a.appointment_datetime);
     return Number.isFinite(ms) ? ms : null;
   };
+  const apptMsOf = (o: RetentionOutcomeRow): number | null => apptIdMs(o.appointment_id);
   const ctx: KpiUniverseCtx = { nowMs, apptMsOf };
+
+  // OWNER DIRECTIVE 10/21 — every queue segment is DISPLAY-scoped: no
+  // pre-cutoff appointment may surface as a chip count or a row. Stored rows
+  // stay untouched (the writers keep observing everything).
 
   const lastCallStatus = (appointmentId: string): string | null => {
     let latest: RetentionAttemptRow | null = null;
@@ -1023,6 +1152,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   // cohort minus spoken-with and needs-review (those have their own homes).
   const callDue = outcomes.filter((o) => {
     if (!o.eligible) return false;
+    if (!inRetentionDataScope(apptMsOf(o))) return false; // owner directive 10/21 — display boundary
     if (o.contact_due_date < ws || o.contact_due_date > we) return false;
     if (o.final_status === "verified_spoke_with" || o.final_status === "needs_review") return false;
     const ms = apptMsOf(o);
@@ -1031,8 +1161,9 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   const callDueIds = new Set(callDue.map((o) => o.appointment_id));
 
   // §16 Still-Unreached universe over ALL stored outcomes (the open queue,
-  // not a week slice) — same predicate the drill's unreached kpi uses.
-  const unreachedRows = outcomes.filter((o) => o.eligible && inKpiUniverse(o, "unreached", ctx));
+  // not a week slice) — same predicate the drill's unreached kpi uses;
+  // pre-cutoff rows hidden from DISPLAY (owner directive 10/21).
+  const unreachedRows = outcomes.filter((o) => o.eligible && inRetentionDataScope(apptMsOf(o)) && inKpiUniverse(o, "unreached", ctx));
   const unreachedOpen = unreachedRows.filter((o) => {
     const ms = apptMsOf(o);
     return ms != null && ms >= nowMs && !callDueIds.has(o.appointment_id);
@@ -1042,8 +1173,9 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     return ms == null || ms < nowMs;
   });
 
-  // Needs review — ALL stored outcomes (the open queue, like its card).
-  const needsReview = outcomes.filter((o) => o.final_status === "needs_review");
+  // Needs review — ALL stored outcomes in DISPLAY scope (the open queue, like
+  // its card); pre-cutoff rows stay stored, not shown (owner directive 10/21).
+  const needsReview = outcomes.filter((o) => o.final_status === "needs_review" && inRetentionDataScope(apptMsOf(o)));
 
   // Cancellations — the §16 Active-Cancellations universe over the WRITTEN
   // ledger (stage 4a), through inCancellationUniverse: the SAME predicate the
@@ -1051,7 +1183,12 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   // recovered/confirmed/unable rows have outcomes and are not queue work.
   // The engine only writes resolved-client rows (unlinked ones are exception-
   // queued); the null-client guard is defensive honesty, never a drop.
-  const cancellations = cancellationRows.filter((r) => r.internal_client_id != null && inCancellationUniverse(r, "active-cancellations"));
+  const cancellations = cancellationRows.filter(
+    (r) =>
+      r.internal_client_id != null &&
+      inRetentionDataScope(apptIdMs(r.appointment_id)) && // owner directive 10/21 — pre-cutoff cancellations stay stored, not shown
+      inCancellationUniverse(r, "active-cancellations"),
+  );
   const cancellationQueueRow = (r: RetentionCancellationRow): RetentionQueueRow => {
     const client = clientById.get(r.internal_client_id!) ?? null;
     const appt = apptById.get(r.appointment_id) ?? null;
@@ -1134,8 +1271,10 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
 
   // D3 — recovered-this-week count, derived ONLY (no writes): recovered rows
   // of the written ledger whose recovered_at lands in the current Mon–Sun ET
-  // week. The SAME §16 predicate the Recovery card counts.
+  // week AND whose cancelled appointment is in DISPLAY scope (owner directive
+  // 10/21). The SAME §16 predicate the Recovery card counts.
   const recoveredThisWeek = cancellationRows.filter((r) => {
+    if (!inRetentionDataScope(apptIdMs(r.appointment_id))) return false; // owner directive 10/21 — display boundary
     if (!inCancellationUniverse(r, "recovery") || r.recovered_at == null) return false;
     const ms = Date.parse(r.recovered_at);
     if (!Number.isFinite(ms)) return false;

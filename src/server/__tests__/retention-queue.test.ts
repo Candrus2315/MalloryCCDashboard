@@ -331,7 +331,9 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
 
   test("D2: window-missed rows keep most-recently-missed first inside rank 4", async () => {
     const s = await seed();
-    // Henry Wells: session 10/06 (older miss than Dan's 10/13), one no-answer.
+    // Henry Wells: session Mon Oct 12 14:00 ET (2026-10-12T18:00:00Z) — EXACTLY
+    // at the retention data-start boundary (owner directive 10/21), so IN
+    // scope — one no-answer, an older miss than Dan's 10/13.
     await s.store.upsertContacts([
       { id: "", provider: "highlevel", external_id: "CT8", name: "Henry Wells", phone: "9175550155", email: "henry@other.org", assigned_rep_id: null, created_at: NOW().toISOString() },
     ] as never);
@@ -344,7 +346,7 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
         calendar_id: "1335091",
         calendar_name: "MALLORY PORTRAITS",
         appointment_type: "Portrait Session",
-        appointment_datetime: "2026-10-06T18:00:00Z",
+        appointment_datetime: "2026-10-12T18:00:00Z",
         created_at: "2026-10-01T18:00:00Z",
         status: "scheduled",
         cancelled: false,
@@ -354,7 +356,7 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     const h = await s.store.insertInternalClient({ seedKey: "hl-contact:CT8", displayName: "Henry Wells", normalizedPhone: "9175550155", normalizedEmail: "henry@other.org", ghlContactExternalId: "CT8" });
     await s.store.insertClientMatchLinkIfAbsent({ internalClientId: h.id, provider: "acuity", entity: "appointment", externalId: "A8", matchMethod: "exact_id", confidence: "exact" });
     await s.store.upsertCalls([
-      { provider: "highlevel", external_call_id: "MSG8", rep_id: null, contact_id: ct8, started_at: "2026-10-01T14:00:00Z", duration_seconds: 0, over_two_minutes: false, direction: "outbound", call_status: "no-answer", provider_rep_external_id: null },
+      { provider: "highlevel", external_call_id: "MSG8", rep_id: null, contact_id: ct8, started_at: "2026-10-06T14:00:00Z", duration_seconds: 0, over_two_minutes: false, direction: "outbound", call_status: "no-answer", provider_rep_external_id: null },
     ] as never);
     expect((await computeRetention(s.store, { now: NOW })).outcome).toBe("synced");
 

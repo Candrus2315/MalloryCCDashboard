@@ -13,11 +13,16 @@ import { MemoryStore } from "../store/memory";
 import { computeRetention } from "../retention/compute";
 import {
   retentionOverview,
+  retentionNeedsAttention,
   retentionDrillData,
   deriveSignalCells,
   retentionDrillCsv,
   currentRetentionOwner,
   CANCELLATIONS_ENGINE_NOTE,
+  RETENTION_DATA_START_ET,
+  RETENTION_DATA_START_DATE_ET,
+  inRetentionDataScope,
+  inRetentionScorecardScope,
   type RetentionDrillParams,
 } from "../retention/ui-data";
 
@@ -428,5 +433,184 @@ describe("retention owner history (read-only store method)", () => {
     // The drill scope line + employee default light up from the same read.
     const d = await retentionDrillData(s.store, params({ kpi: "clients-due" }), NOW);
     expect(d.ownerName).toBe("Laura Rivera");
+  });
+});
+
+// ---- Retention data-start boundary (OWNER DIRECTIVE 10/21: "Laura just
+// started this position Mon Oct 19th — i dont need any data before the week
+// of the 12th of Oct for the retention tab") — a DISPLAY-layer filter only:
+// stored rows and writers stay untouched; the loaders return nothing from
+// before the week of Mon 2026-10-12 ET. ----
+describe("retention data-start boundary (owner directive 10/21)", () => {
+  const BOUNDARY = "2026-10-12T04:00:00.000Z"; // Mon Oct 12 00:00 ET (EDT) — in scope (toISOString format)
+  const ONE_DAY_EARLIER = "2026-10-11T04:00:00.000Z"; // Sun Oct 11 00:00 ET — out of scope
+  const PRE_CUTOFF_APPT = "2026-10-08T14:00:00Z"; // Thu Oct 8 10:00 ET — out of scope
+
+  /** One more client + appointment (+ optional in-window no-answer call), computed. */
+  async function addPastClient(
+    store: MemoryStore,
+    o: { ext: string; name: string; phone: string; acuityId: string; datetime: string; notes: string | null; callAt: string | null },
+  ): Promise<string> {
+    await store.upsertContacts([
+      { id: "", provider: "highlevel", external_id: o.ext, name: o.name, phone: o.phone, email: `${o.ext.toLowerCase()}@other.org`, assigned_rep_id: null, created_at: NOW().toISOString() },
+    ] as never);
+    const contactId = (await store.getContacts()).find((c) => c.external_id === o.ext)!.id;
+    await store.upsertAppointments([
+      {
+        id: "",
+        acuity_appointment_id: o.acuityId,
+        contact_id: contactId,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Portrait Session",
+        appointment_datetime: o.datetime,
+        created_at: "2026-10-16T18:00:00Z",
+        status: "scheduled",
+        cancelled: false,
+        raw: o.notes == null ? null : { notes: o.notes },
+      },
+    ] as never);
+    const client = await store.insertInternalClient({ seedKey: `hl-contact:${o.ext}`, displayName: o.name, normalizedPhone: o.phone, normalizedEmail: `${o.ext.toLowerCase()}@other.org`, ghlContactExternalId: o.ext });
+    await store.insertClientMatchLinkIfAbsent({ internalClientId: client.id, provider: "highlevel", entity: "contact", externalId: o.ext, matchMethod: "exact_id", confidence: "exact" });
+    await store.insertClientMatchLinkIfAbsent({ internalClientId: client.id, provider: "acuity", entity: "appointment", externalId: o.acuityId, matchMethod: "exact_id", confidence: "exact" });
+    if (o.callAt) {
+      await store.upsertCalls([
+        { provider: "highlevel", external_call_id: `MSG-${o.ext}`, rep_id: null, contact_id: contactId, started_at: o.callAt, duration_seconds: 0, over_two_minutes: false, direction: "outbound", call_status: "no-answer", provider_rep_external_id: null },
+      ] as never);
+    }
+    expect((await computeRetention(store, { now: NOW })).outcome).toBe("synced");
+    return client.id;
+  }
+
+  test("constant: the ET instant of Mon 2026-10-12 00:00; helpers include the boundary date and exclude one day earlier", () => {
+    expect(new Date(RETENTION_DATA_START_ET).toISOString()).toBe(BOUNDARY);
+    expect(RETENTION_DATA_START_DATE_ET).toBe("2026-10-12");
+    expect(inRetentionDataScope(Date.parse(BOUNDARY))).toBe(true); // exactly Mon Oct 12 00:00 ET → INCLUDED
+    expect(inRetentionDataScope(Date.parse(ONE_DAY_EARLIER))).toBe(false); // one day earlier → EXCLUDED
+    expect(inRetentionDataScope(null)).toBe(false); // undatable → not provably in scope, excluded (fail-honest)
+    expect(inRetentionDataScope(Number.NaN)).toBe(false);
+    expect(inRetentionScorecardScope("2026-10-12")).toBe(true); // the boundary week's scorecard — shown
+    expect(inRetentionScorecardScope("2026-10-05")).toBe(false); // the week before — stored, not shown
+    expect(inRetentionScorecardScope("2026-10-19")).toBe(true);
+  });
+
+  test("overview + queue + drill: a pre-cutoff needs-review outcome is hidden (and the loaders write nothing)", async () => {
+    const s = await seed();
+    await addPastClient(s.store, { ext: "CT9", name: "Zed Past", phone: "9175550131", acuityId: "P9", datetime: PRE_CUTOFF_APPT, notes: "SWC LR 10/08/26 intake done", callAt: "2026-10-03T14:00:00Z" });
+    const stored = await s.store.listRetentionAppointmentOutcomes();
+    const zedStored = stored.find((o) => (o.evidence as { acuity_appointment_id?: unknown }).acuity_appointment_id === "P9");
+    expect(zedStored).toBeDefined(); // the row IS stored (writers keep observing)
+    expect(zedStored!.final_status).toBe("needs_review");
+
+    const o = await retentionOverview(s.store, NOW);
+    const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
+    expect(byKey["needs-review"]!.value).toBe(1); // A2 only — Zed (Oct 8) is pre-cutoff, hidden from DISPLAY
+
+    const q = await retentionNeedsAttention(s.store, NOW);
+    expect(q.counts.needsReview).toBe(1);
+    expect(q.rows.some((r) => r.clientName === "Zed Past")).toBe(false); // no ghost in any chip or row
+
+    const d = await retentionDrillData(s.store, params({ kpi: "needs-review", range: "all" }), NOW);
+    expect(d.matchedCount).toBe(1);
+    expect(d.rows.map((r) => r.clientName)).toEqual(["Bob Roe"]);
+
+    const after = (await s.store.listRetentionAppointmentOutcomes()).length;
+    await retentionOverview(s.store, NOW);
+    await retentionNeedsAttention(s.store, NOW);
+    await retentionDrillData(s.store, params({ kpi: "needs-review", range: "all" }), NOW);
+    await retentionDrillData(s.store, params({ kpi: "match-exceptions", exc: "open" }), NOW);
+    expect((await s.store.listRetentionAppointmentOutcomes()).length).toBe(after); // display-layer only — no writes
+    expect((await s.store.listRetentionAppointmentOutcomes()).find((o2) => (o2.evidence as { acuity_appointment_id?: unknown }).acuity_appointment_id === "P9")).toBeDefined(); // still stored
+  });
+
+  test("a row exactly at Mon Oct 12 00:00 ET is INCLUDED (overview card, queue segment, drill row)", async () => {
+    const s = await seed();
+    await addPastClient(s.store, { ext: "CT10", name: "Ann Edge", phone: "9175550132", acuityId: "B10", datetime: BOUNDARY, notes: "SWC LR 10/12/26 intake done", callAt: "2026-10-07T14:00:00Z" });
+
+    const o = await retentionOverview(s.store, NOW);
+    const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
+    expect(byKey["needs-review"]!.value).toBe(2); // A2 (10/24) + Ann (exactly at the boundary)
+
+    const q = await retentionNeedsAttention(s.store, NOW);
+    expect(q.counts.needsReview).toBe(2);
+    expect(q.rows.some((r) => r.clientName === "Ann Edge" && r.segment === "needs-review")).toBe(true);
+
+    const d = await retentionDrillData(s.store, params({ kpi: "needs-review", range: "all" }), NOW);
+    expect(d.rows.map((r) => r.clientName)).toEqual(["Bob Roe", "Ann Edge"]); // most recent due date first
+  });
+
+  test("pre-cutoff unreached/window-missed rows are hidden from the drill universe and the queue", async () => {
+    const s = await seed();
+    await addPastClient(s.store, { ext: "CT11", name: "Vic Ghost", phone: "9175550133", acuityId: "P11", datetime: ONE_DAY_EARLIER, notes: null, callAt: "2026-10-06T15:00:00Z" });
+
+    const unreachedAll = await retentionDrillData(s.store, params({ kpi: "unreached", range: "all" }), NOW);
+    expect(unreachedAll.rows.map((r) => r.clientName)).toEqual(["Cara Lee", "Dan Fox"]); // Vic (Oct 11) excluded
+
+    const q = await retentionNeedsAttention(s.store, NOW);
+    expect(q.counts.windowMissed).toBe(1); // Dan only
+    expect(q.rows.some((r) => r.clientName === "Vic Ghost")).toBe(false);
+  });
+
+  test("pre-cutoff cancellations ledger rows: hidden from every card and queue chip, still stored", async () => {
+    const s = await seed();
+    await addPastClient(s.store, { ext: "CT12", name: "Pat Old", phone: "9175550134", acuityId: "P12", datetime: PRE_CUTOFF_APPT, notes: null, callAt: null });
+    const appts = await s.store.getAppointmentsWithClientsSince("2026-09-01T00:00:00Z");
+    await s.store.insertRetentionCancellations([
+      {
+        appointmentId: appts.find((a) => a.acuity_appointment_id === "P12")!.id, // Oct 8 — pre-cutoff
+        internalClientId: (await s.store.listInternalClients()).find((c) => c.display_name === "Pat Old")!.id,
+        ghlContactExternalId: "CT12",
+        cancelledAtIso: "2026-10-05T14:00:00Z",
+        attemptsCount: 1,
+        anyAnswered: false,
+        finalContactStatus: "voicemail",
+        outcome: "pending",
+        successorAppointmentId: null,
+        recovered: false,
+        recoveredAtIso: null,
+        notes: {},
+      },
+      {
+        appointmentId: appts.find((a) => a.acuity_appointment_id === "A1")!.id, // Oct 26 — in scope
+        internalClientId: s.clientIds.CT1,
+        ghlContactExternalId: "CT1",
+        cancelledAtIso: "2026-10-15T14:00:00Z",
+        attemptsCount: 1,
+        anyAnswered: false,
+        finalContactStatus: "voicemail",
+        outcome: "pending",
+        successorAppointmentId: null,
+        recovered: false,
+        recoveredAtIso: null,
+        notes: {},
+      },
+    ]);
+
+    const o = await retentionOverview(s.store, NOW);
+    const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
+    expect(byKey["active-cancellations"]!.value).toBe(1); // only the in-scope pending row
+    expect(byKey["active-cancellations"]!.attention).toBe(true);
+    expect(byKey["recovery"]!.sub).toBe("of 1 tracked cancellations"); // the DISPLAY denominator is scoped too
+
+    const q = await retentionNeedsAttention(s.store, NOW);
+    expect(q.counts.cancellations).toBe(1);
+    expect(q.rows.filter((r) => r.segment === "cancellation").map((r) => r.clientName)).toEqual(["Jane Doe"]);
+
+    expect((await s.store.listRetentionCancellations()).length).toBe(2); // both stored — display-layer only
+  });
+
+  test("match-exceptions workspace: provably pre-cutoff anchors hidden; boundary-anchored and undatable rows stay", async () => {
+    const s = await seed();
+    await addPastClient(s.store, { ext: "CT9", name: "Zed Past", phone: "9175550131", acuityId: "P9", datetime: PRE_CUTOFF_APPT, notes: null, callAt: null });
+    await addPastClient(s.store, { ext: "CT10", name: "Ann Edge", phone: "9175550132", acuityId: "B10", datetime: BOUNDARY, notes: null, callAt: null });
+    await s.store.insertDataMatchExceptionIfAbsent({ kind: "ambiguous_name", dedupeKey: "appt-identity:P9", payload: { subject: { source: "acuity_appointment", acuity_appointment_id: "P9" } }, context: null });
+    await s.store.insertDataMatchExceptionIfAbsent({ kind: "ambiguous_name", dedupeKey: "appt-identity:B10", payload: { subject: { source: "acuity_appointment", acuity_appointment_id: "B10" } }, context: null });
+    await s.store.insertDataMatchExceptionIfAbsent({ kind: "name_only", dedupeKey: "contact-identity:hl:UNDATED", payload: { subject: { name: "No date anywhere" } }, context: null });
+
+    const d = await retentionDrillData(s.store, params({ kpi: "match-exceptions", exc: "open" }), NOW);
+    expect(d.matchedCount).toBe(2); // P9 (Oct 8 appointment) hidden — provably pre-cutoff
+    expect(d.exceptions!.counts).toEqual({ open: 2, resolved: 0, dismissed: 0, total: 2 });
+    expect(d.exceptions!.rows.map((r) => r.dedupe_key).sort()).toEqual(["appt-identity:B10", "contact-identity:hl:UNDATED"]);
+    expect((await s.store.getDataMatchExceptions()).length).toBe(3); // all three stored — display-layer only
   });
 });

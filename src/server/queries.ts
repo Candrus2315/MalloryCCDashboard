@@ -1323,7 +1323,11 @@ export const getRetentionPageData = createServerFn().handler(() =>
       ui.retentionNeedsAttention(store),
       store.listRetentionScorecards(),
     ]);
-    return { ...overview, queue, scorecards };
+    // OWNER DIRECTIVE 10/21 — scorecard DISPLAY scope: stored weeks before the
+    // data-start boundary (week of Mon 2026-10-12 ET) stay in the DB untouched
+    // (append-if-new, never rewritten) but are not shown — the departed-rep-
+    // history pattern: preserved, not shown.
+    return { ...overview, queue, scorecards: scorecards.filter((r) => ui.inRetentionScorecardScope(r.week_start)) };
   }),
 );
 
