@@ -20,7 +20,9 @@ import {
   rosterPanelVisibleRows,
   sectionMeta,
   sectionNumber,
+  splitRowsByMarker,
   unassignable,
+  unattributedHiddenBannerLabel,
   leadPickerOptionLabel,
 } from "../settings-views";
 
@@ -402,5 +404,97 @@ describe("providerLatestRunView", () => {
   test("a null clock (SSR, pre-hydration) never reads as running", () => {
     const view = providerLatestRunView(connection, [], { started_at: "2026-10-09 20:39:30.000+00" }, null);
     expect(view.label).toBe("connected"); // falls through to the connection fallback
+  });
+});
+// ---------- 7b — unattributed queue declutter (owner request 2026-10-21) ----------
+
+const MARKER = "2026-10-21T16:00:00.000Z";
+const SPLIT_ROWS = [
+  { id: "new-1", created_at: "2026-10-21T18:00:00.000Z" },
+  { id: "boundary", created_at: "2026-10-21T16:00:00.000Z" }, // AT the marker → OLD side
+  { id: "old-1", created_at: "2026-10-19T09:00:00.000Z" },
+  { id: "unparsable", created_at: "not-a-date" }, // fail-honest → OLD side
+];
+
+describe("splitRowsByMarker — the unattributed queue's display split", () => {
+  test("no marker: everything visible, nothing hidden — the exact pre-feature view", () => {
+    const s = splitRowsByMarker(SPLIT_ROWS, null);
+    expect(s.visible).toEqual(SPLIT_ROWS);
+    expect(s.hidden).toEqual([]);
+    expect(s.hiddenCount).toBe(0);
+    expect(s.collapsed).toBe(false);
+    const sUndef = splitRowsByMarker(SPLIT_ROWS, undefined);
+    expect(sUndef.visible).toEqual(SPLIT_ROWS);
+  });
+
+  test("strictly-after is visible; AT the marker is OLD (boundary-inclusive on the old side)", () => {
+    const s = splitRowsByMarker(SPLIT_ROWS, MARKER);
+    expect(s.visible.map((r) => r.id)).toEqual(["new-1"]);
+    expect(s.hidden.map((r) => r.id)).toEqual(["boundary", "old-1", "unparsable"]);
+    expect(s.hiddenCount).toBe(3);
+    expect(s.collapsed).toBe(true);
+    // 1ms after the marker is visible (the marker instant itself is not).
+    const edge = splitRowsByMarker([{ id: "edge", created_at: "2026-10-21T16:00:00.001Z" }], MARKER);
+    expect(edge.visible.map((r) => r.id)).toEqual(["edge"]);
+    expect(edge.hiddenCount).toBe(0);
+  });
+
+  test("unparsable created_at is treated as OLD (fail-honest: hides under the cleared banner, never pollutes the new view)", () => {
+    const s = splitRowsByMarker(SPLIT_ROWS, MARKER);
+    expect(s.hidden.some((r) => r.id === "unparsable")).toBe(true);
+    // Show all always reveals it: hidden is part of the payload, never lost.
+    expect(s.visible.concat(s.hidden)).toEqual(SPLIT_ROWS);
+  });
+
+  test("a garbage marker never hides anything (fail-honest full queue)", () => {
+    const s = splitRowsByMarker(SPLIT_ROWS, "garbage-marker");
+    expect(s.visible).toEqual(SPLIT_ROWS);
+    expect(s.hiddenCount).toBe(0);
+    expect(s.collapsed).toBe(false);
+  });
+
+  test("empty queue stays collapsed:false with no rows on either side", () => {
+    const s = splitRowsByMarker([], MARKER);
+    expect(s.visible).toEqual([]);
+    expect(s.hiddenCount).toBe(0);
+    expect(s.collapsed).toBe(false);
+  });
+
+  test("pure: the input rows are never mutated and side order follows input order", () => {
+    const rows = SPLIT_ROWS.map((r) => ({ ...r }));
+    splitRowsByMarker(rows, MARKER);
+    expect(rows).toEqual(SPLIT_ROWS);
+  });
+});
+
+describe("unattributedHiddenBannerLabel — collapsed-history banner copy", () => {
+  test("plural + singular, ET cleared stamp (Oct 21 is EDT: 18:04Z → 2:04 PM)", () => {
+    expect(unattributedHiddenBannerLabel(3, "2026-10-21T18:04:00Z")).toBe("3 older entries hidden (cleared Oct 21, 2:04 PM)");
+    expect(unattributedHiddenBannerLabel(1, "2026-10-21T18:04:00Z")).toBe("1 older entry hidden (cleared Oct 21, 2:04 PM)");
+  });
+  test("an unparsable marker degrades to the raw string, never a fabricated date", () => {
+    expect(unattributedHiddenBannerLabel(2, "broken")).toBe("2 older entries hidden (cleared broken)");
+  });
+});
+
+describe("presentation invariant — the declutter is DISPLAY-LAYER only", () => {
+  test("the top counts (queueReasonBreakdown) keep counting ALL rows, marker or not", () => {
+    const rows = [
+      { created_at: "2026-10-21T18:00:00.000Z", reason: "no-qualifying-call", reason_code: "no-window-interaction" },
+      { created_at: "2026-10-20T10:00:00.000Z", reason: "no-qualifying-call", reason_code: "no-matching-contact" },
+      { created_at: "2026-10-12T10:00:00.000Z", reason: "no-qualifying-call", reason_code: "no-window-interaction" },
+      { created_at: "2026-10-01T10:00:00.000Z", reason: "ambiguous", reason_code: null },
+      { created_at: "2026-09-15T10:00:00.000Z", reason: "no-qualifying-call", reason_code: "no-contact-identity" },
+    ];
+    const all = queueReasonBreakdown(rows);
+    const s = splitRowsByMarker(rows, "2026-10-15T00:00:00.000Z");
+    expect(s.visible).toHaveLength(2);
+    expect(s.hiddenCount).toBe(3);
+    // The page renders the breakdown of the FULL queue — never the visible
+    // side alone. Feeding it visible+hidden (or the full set) is identical.
+    expect(queueReasonBreakdown(s.visible.concat(s.hidden))).toEqual(all);
+    // And the visible-only breakdown would genuinely differ on this fixture —
+    // proving the invariant is load-bearing, not vacuous.
+    expect(queueReasonBreakdown(s.visible)).not.toEqual(all);
   });
 });

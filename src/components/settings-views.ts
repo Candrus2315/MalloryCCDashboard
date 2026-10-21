@@ -9,7 +9,8 @@
  * payload as-is (demo stays demo, errors stay visible), never prettified.
  */
 import { lastSyncLabel } from "./availability-views";
-import { formatDateShort } from "~/server/date-logic";
+import { etSyncStamp, formatDateShort } from "~/server/date-logic";
+import { formatInt } from "~/server/metrics/report-text";
 // Pure shared constants + parse helper (types.ts is client-safe — settings.tsx
 // already value-imports DEFAULT_COLUMN_MAPPING from it).
 import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "~/server/store/types";
@@ -375,4 +376,68 @@ export function queueReasonBreakdown(rows: { reason: string | null; reason_code?
  */
 export function rosterPanelVisibleRows<T extends { callCount: number }>(rows: T[], showAll: boolean): T[] {
   return showAll ? rows : rows.filter((u) => u.callCount > 0);
+}
+
+// ---------- 7b — Unattributed queue declutter (owner request 2026-10-21) ----------
+/**
+ * "can i get a clear all button for the Unattributed Bookings in settings or
+ * collapse all the olds so all i see is the new one that come in? Most of
+ * those are way before i started to work here." — the persisted marker
+ * (app_settings → unattributedQueue.dismissedBefore, set by the audited
+ * "Clear old entries" action) splits the queue DISPLAY: rows created strictly
+ * AFTER the marker are the default list (new arrivals always show); rows
+ * created AT or BEFORE it (boundary-inclusive on the OLD side) collapse behind
+ * a one-line banner. A row whose created_at cannot be parsed is treated as OLD
+ * (fail-honest: it hides under the cleared banner instead of polluting the
+ * new view, and Show all always reveals it). Pure display-layer split — the
+ * caller passes the SAME rows the server sent; nothing is removed from the
+ * payload, the top counts (queueReasonBreakdown) keep reading ALL rows, and
+ * visible ∪ hidden always equals the input (no row is ever created or lost).
+ */
+export interface UnattributedQueueSplit<T> {
+  /** New arrivals — created_at strictly AFTER the marker. The default list. */
+  visible: T[];
+  /** Cleared history — created_at AT or BEFORE the marker (unparsable counts as old). */
+  hidden: T[];
+  /** hidden.length — the banner's "N older entries hidden". */
+  hiddenCount: number;
+  /** True when a live marker actually hides at least one row. */
+  collapsed: boolean;
+}
+
+export function splitRowsByMarker<T extends { created_at: string }>(rows: T[], marker: string | null | undefined): UnattributedQueueSplit<T> {
+  if (!marker) {
+    return { visible: [...rows], hidden: [], hiddenCount: 0, collapsed: false };
+  }
+  const markerMs = Date.parse(marker);
+  // A garbage marker can never hide anything (fail-honest: full queue, exactly
+  // the pre-marker view).
+  if (!Number.isFinite(markerMs)) {
+    return { visible: [...rows], hidden: [], hiddenCount: 0, collapsed: false };
+  }
+  const visible: T[] = [];
+  const hidden: T[] = [];
+  for (const r of rows) {
+    const t = Date.parse(r.created_at);
+    (Number.isFinite(t) && t > markerMs ? visible : hidden).push(r);
+  }
+  return { visible, hidden, hiddenCount: hidden.length, collapsed: hidden.length > 0 };
+}
+
+/**
+ * The collapsed banner's stamp: "cleared Oct 21, 2:05 PM" — ET via the shared
+ * sync-stamp formatter so SSR and client agree and the convention matches the
+ * rest of the Settings page.
+ */
+export function unattributedClearedLabel(marker: string): string {
+  return `cleared ${etSyncStamp(marker)}`;
+}
+
+/**
+ * One-line banner copy for the collapsed history:
+ * "3 older entries hidden (cleared Oct 21, 2:05 PM)". Singular-safe.
+ */
+export function unattributedHiddenBannerLabel(hiddenCount: number, marker: string): string {
+  const n = formatInt(hiddenCount);
+  return hiddenCount === 1 ? `${n} older entry hidden (${unattributedClearedLabel(marker)})` : `${n} older entries hidden (${unattributedClearedLabel(marker)})`;
 }
