@@ -22,7 +22,9 @@ import {
   rosterPanelVisibleRows,
   sectionMeta,
   sectionNumber,
+  splitRowsByMarker,
   unassignable,
+  unattributedHiddenBannerLabel,
 } from "~/components/settings-views";
 import { bookingSplitLine } from "~/components/team-views";
 import { etSyncStamp, formatDateShort } from "~/server/date-logic";
@@ -46,6 +48,7 @@ import {
   saveWeekGoal,
   setLeadCount,
   setLeadWorkDate,
+  setUnattributedQueueDismissal,
   syncNow,
   unassignAttribution,
 } from "~/server/queries";
@@ -84,6 +87,10 @@ function SettingsPage() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // Unattributed-queue declutter (owner request 2026-10-21): Show-all is a
+  // CLIENT-LOCAL toggle (like the Roster Mapping show-all) — the server always
+  // sends the full queue; the marker alone decides the default view.
+  const [queueShowAll, setQueueShowAll] = useState(false);
 
   const run = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -98,6 +105,15 @@ function SettingsPage() {
       setBusy(false);
     }
   };
+
+  // UNATTRIBUTED QUEUE DECLUTTER (owner request 2026-10-21): the persisted
+  // marker splits the queue's DISPLAY only. The payload always carries every
+  // row; queueReasonBreakdown below keeps reading ALL rows (truthful backlog —
+  // never the filtered view). Show all is the client-local escape hatch; Undo
+  // resets the persisted marker via the audited server action.
+  const queueMarker = data.unattributedQueueDismissedBefore ?? null;
+  const queueSplit = splitRowsByMarker(data.unattributed, queueMarker);
+  const queueRows = (queueShowAll ? data.unattributed : queueSplit.visible).slice(0, 12);
 
   return (
     <div className="space-y-4">
@@ -272,7 +288,25 @@ function SettingsPage() {
             state, never folded into Unattributed. The queue itself (assign /
             unassign) behaves exactly as before. */}
         <div className="space-y-3">
-          <h3 className="section-heading">Unattributed Bookings</h3>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <h3 className="section-heading">Unattributed Bookings</h3>
+            {/* Owner request 2026-10-21 — the declutter affordance: hide the
+                backlog so only NEW arrivals show. Persisted marker (display
+                layer only — nothing is deleted), audited like every action on
+                this page. Hidden once a marker exists; the banner's Undo below
+                is the reset. */}
+            {data.unattributed.length > 0 && !queueMarker && (
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                disabled={busy}
+                data-testid="queue-clear-old"
+                onClick={() => run("Older entries hidden — every new booking will still appear here", () => setUnattributedQueueDismissal({ data: { dismissed: true } }))}
+              >
+                Clear old entries
+              </button>
+            )}
+          </div>
           <div className="card card-nest space-y-2">
             <p className="kpi-label" data-testid="booking-attribution-split">
               {bookingSplitLine(data.attributionSplit)}
@@ -283,7 +317,8 @@ function SettingsPage() {
             </p>
             {/* S4b: grouped count summary — one bucket per honest no-rep
                 category (booking_attributions.reason_code), Ambiguous shown as
-                its own identity-conflict group, never folded in. */}
+                its own identity-conflict group, never folded in. Counts ALL
+                rows — the declutter never filters the truth, only the list. */}
             {data.unattributed.length > 0 && (
               <p className="kpi-label" data-testid="queue-reason-breakdown">
                 {queueReasonBreakdown(data.unattributed)
@@ -291,15 +326,44 @@ function SettingsPage() {
                   .join(" · ")}
               </p>
             )}
+            {/* Collapsed history (marker set + at least one old row): the
+                one-line banner. Show all / Hide is CLIENT-LOCAL (the server
+                payload is always full); Undo clears the persisted marker. */}
+            {queueSplit.collapsed && queueMarker && (
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-lg border border-(--card-border) bg-(--surface-hover) px-3 py-2 text-[12px] text-(--text-muted)" data-testid="queue-cleared-banner">
+                <span>
+                  {unattributedHiddenBannerLabel(queueSplit.hiddenCount, queueMarker)} — the counts above still include everything; nothing is deleted.
+                </span>
+                <span className="flex shrink-0 items-center gap-3">
+                  <button type="button" className="text-(--text-primary) underline underline-offset-2" data-testid="queue-show-all" onClick={() => setQueueShowAll((v) => !v)}>
+                    {queueShowAll ? "Hide" : "Show all"}
+                  </button>
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-(--text-primary)"
+                    disabled={busy}
+                    data-testid="queue-undo-clear"
+                    onClick={() => run("Older entries restored to the queue", () => setUnattributedQueueDismissal({ data: { dismissed: false } }))}
+                  >
+                    Undo
+                  </button>
+                </span>
+              </div>
+            )}
             {data.unattributed.length === 0 ? (
               <p className="text-[13px] text-(--text-muted)">Every active booking is attributed.</p>
+            ) : queueRows.length === 0 ? (
+              // Marker set and every entry is old: the banner above names the
+              // count — this line keeps the empty list honest instead of
+              // silently rendering nothing.
+              <p className="text-[13px] text-(--text-muted)">No new arrivals yet — new bookings appear here as they come in.</p>
             ) : (
               <>
                 {/* Phones: one decision card per booking — the 8-column table
                     is unreadable at 375px, so every field and control stacks
                     full-width with the same wording and the same handlers. */}
                 <div className="space-y-3 md:hidden">
-                  {data.unattributed.slice(0, 12).map((u) => (
+                  {queueRows.map((u) => (
                     <UnattributedCard key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} />
                   ))}
                 </div>
@@ -319,7 +383,7 @@ function SettingsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.unattributed.slice(0, 12).map((u) => (
+                      {queueRows.map((u) => (
                         <UnattributedRow key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} />
                       ))}
                     </tbody>

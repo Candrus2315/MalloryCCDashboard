@@ -233,6 +233,10 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     runningSyncRuns: runningRuns,
     overrides,
     unattributed,
+    // Unattributed-queue declutter marker (owner request 2026-10-21) — the
+    // display-only "cleared before" instant the queue's default view splits
+    // on. The payload's unattributed rows above stay FULL (every row, always).
+    unattributedQueueDismissedBefore: settings.unattributedQueue?.dismissedBefore ?? null,
     attributionSplit,
     observedCounts,
     leadAdjustments,
@@ -910,6 +914,53 @@ export const assignAttribution = createServerFn({ method: "POST" })
 export const unassignAttribution = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { appointmentId: string })
   .handler(async ({ data }) => unassignAttributionCore(await getStore(), String(data.appointmentId)));
+
+/**
+ * UNATTRIBUTED QUEUE DECLUTTER (owner request 2026-10-21: "can i get a clear
+ * all button for the Unattributed Bookings in settings or collapse all the
+ * olds so all i see is the new one that come in? Most of those are way before
+ * i started to work here."). Writes the DISPLAY-ONLY marker
+ * app_settings → unattributedQueue.dismissedBefore:
+ *  - dismissed=true ("Clear old entries"): marker := NOW — queue rows created
+ *    at or before it collapse behind a one-line banner; every booking created
+ *    afterwards (a new arrival) always shows.
+ *  - dismissed=false (the banner's Undo): marker := null — the queue renders
+ *    exactly as before the clear.
+ * NOTHING is deleted: appointment rows, booking_attributions, the queue
+ * payload and every KPI stay byte-identical — the split is display-layer only
+ * (settings-views splitRowsByMarker). Audited like every manual action on
+ * this page: one manual_override row records the marker value set/cleared.
+ */
+export interface SetUnattributedQueueDismissalInput {
+  /** true = Clear old entries (marker := now); false = Undo/reset (marker := null). */
+  dismissed: boolean;
+}
+
+/** Core of the setUnattributedQueueDismissal server fn (test seam — no TanStack runtime). */
+export async function setUnattributedQueueDismissalCore(
+  store: Store,
+  input: SetUnattributedQueueDismissalInput,
+): Promise<{ dismissedBefore: string | null }> {
+  const dismissed = Boolean(input.dismissed);
+  const previous = (await store.getSettings()).unattributedQueue?.dismissedBefore ?? null;
+  const next = dismissed ? new Date().toISOString() : null;
+  await store.saveSettings({ unattributedQueue: { dismissedBefore: next } }, SETTINGS_OWNER_ACTOR);
+  await store.insertManualOverride({
+    entity_type: "app_settings",
+    entity_id: "unattributed_queue",
+    field: "dismissed_before",
+    previous_value: previous ?? "(none)",
+    new_value: next ?? "(cleared)",
+    changed_by: SETTINGS_OWNER_ACTOR,
+  });
+  return { dismissedBefore: next };
+}
+
+export const setUnattributedQueueDismissal = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as SetUnattributedQueueDismissalInput)
+  .handler(async ({ data }) =>
+    setUnattributedQueueDismissalCore(await getStore(), { dismissed: Boolean(data?.dismissed) }),
+  );
 
 /** Manual lead work-date correction. */
 export const setLeadWorkDate = createServerFn({ method: "POST" })
