@@ -1,13 +1,17 @@
 /**
  * NEEDS ATTENTION QUEUE tests (owner restructure directive 2026-10-20, point
- * 1) — the client-level work queue under the TODAY row, MemoryStore end-to-
- * end with deterministic fixtures: segment membership (call-due / unreached /
- * window-missed / needs-review / cancellation), disjointness, the §16
- * ONE-SOURCE-OF-TRUTH cross-check against the drill-down's own unreached
- * universe, human status labels, ordering, and the empty-store shape. The
- * cancellations segment reads the WRITTEN ret_cancellations ledger (stage 4a)
- * through the same inCancellationUniverse predicate the Active Cancellations
- * card counts — a written-ledger 0 is a fact, never faked.
+ * 1 + UX overhaul spec §3 D1/D2/D3/D6) — the client-level work queue under
+ * the overview row, MemoryStore end-to-end with deterministic fixtures:
+ * segment membership (call-due / unreached / window-missed / needs-review /
+ * cancellation), disjointness, the §16 ONE-SOURCE-OF-TRUTH cross-check
+ * against the drill-down's own unreached universe, human status labels, the
+ * OWNER URGENCY ordering (1 cancellation · 2 call-due/unreached · 4
+ * window-missed · 5 needs-review), the D1 last-contact field, the D2
+ * window-closes derivations (loader clock, never client render time), the D3
+ * recovered-this-week ledger count, and the empty-store shape. The
+ * cancellations segment reads the WRITTEN ret_cancellations ledger (stage
+ * 4a) through the same inCancellationUniverse predicate the Active
+ * Cancellations card counts — a written-ledger 0 is a fact, never faked.
  */
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
@@ -158,17 +162,14 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     expect([...queueUnreachedIds, ...queueCallDueUnreachedIds].sort()).toEqual(drillIds);
   });
 
-  test("ordering: call-due soonest appointment first; missed windows most-recently-missed first", async () => {
+  test("ordering = the owner's urgency sort: rank 1/2/4/5, soonest appointment first inside call work", async () => {
     const s = await seed();
     const q = await retentionNeedsAttention(s.store, NOW);
     const segments = q.rows.map((r) => r.segment);
-    // group order: call-due block, unreached block, window-missed block, needs-review block
-    expect(segments).toEqual([
-      "call-due",
-      "call-due",
-      "window-missed",
-      "needs-review",
-    ]);
+    // rank 2 (call work) · rank 4 (salvage) · rank 5 (records) — the same
+    // fixture order the old segment-block sort produced, now via priority.
+    expect(segments).toEqual(["call-due", "call-due", "window-missed", "needs-review"]);
+    expect(q.rows.map((r) => r.priority)).toEqual([2, 2, 4, 5]);
     const callDueClients = q.rows.filter((r) => r.segment === "call-due").map((r) => r.clientName);
     expect(callDueClients).toEqual(["Jane Doe", "Cara Lee"]); // appt 10/26 < 10/27
   });
@@ -252,8 +253,10 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     // disjointness holds with the new segment present
     const ids = q.rows.map((r) => r.appointmentId);
     expect(new Set(ids).size).toBe(ids.length);
-    // ordering: cancellation rows sort last (after needs-review), soonest first
-    expect(q.rows[q.rows.length - 1]!.segment).toBe("cancellation");
+    // ordering: a pending cancellation is rank 1 (save now) — the FIRST work
+    expect(q.rows[0]!.segment).toBe("cancellation");
+    expect(q.rows[0]!.priority).toBe(1);
+    expect(q.rows.every((r, i) => i === 0 || r.priority > 1)).toBe(true);
   });
 
   test("rows carry the drill-link fields (client, appointment ET, due date, acuity id)", async () => {
@@ -267,11 +270,204 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     expect(jane.internalClientId).toBe(s.clients.CT1);
   });
 
+  test("D1: lastAttemptAt surfaces the outcome row's last contact (— none yet stays null)", async () => {
+    const s = await seed();
+    const q = await retentionNeedsAttention(s.store, NOW);
+    const jane = q.rows.find((r) => r.clientName === "Jane Doe")!;
+    expect(jane.lastAttemptAt).toBe("2026-10-19T15:00:00Z"); // MSG1 voicemail
+    const cara = q.rows.find((r) => r.clientName === "Cara Lee")!;
+    expect(cara.lastAttemptAt).toBeNull(); // zero attempts — "— none yet" is a proven fact
+  });
+
+  test("D2: windowCloses derives at load for open call work (null for closed windows + records)", async () => {
+    const s = await seed();
+    const q = await retentionNeedsAttention(s.store, NOW);
+    const jane = q.rows.find((r) => r.clientName === "Jane Doe")!; // call-due, window open
+    expect(jane.windowCloses).toBe(jane.apptIso);
+    expect(jane.windowClosing).toBe(false); // appt 10/26 ≠ today (10/20 ET)
+    const dan = q.rows.find((r) => r.clientName === "Dan Fox")!; // window-missed
+    expect(dan.windowCloses).toBeNull();
+    expect(dan.windowClosing).toBe(false);
+    const bob = q.rows.find((r) => r.clientName === "Bob Roe")!; // needs-review
+    expect(bob.windowCloses).toBeNull();
+  });
+
+  test("D2: a window closing TODAY flags windowClosing and sorts to the top of the call work", async () => {
+    const s = await seed();
+    // Grace Hill: session TODAY at 16:00 ET (20:00Z), zero attempts, due
+    // window already open (appt − 7 = 10/13) → call-due, window closes today.
+    await s.store.upsertContacts([
+      { id: "", provider: "highlevel", external_id: "CT7", name: "Grace Hill", phone: "9175550166", email: "grace@other.org", assigned_rep_id: null, created_at: NOW().toISOString() },
+    ] as never);
+    const ct7 = (await s.store.getContacts()).find((c) => c.external_id === "CT7")!.id;
+    await s.store.upsertAppointments([
+      {
+        id: "",
+        acuity_appointment_id: "A7",
+        contact_id: ct7,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Portrait Session",
+        appointment_datetime: "2026-10-20T20:00:00Z",
+        created_at: "2026-10-16T18:00:00Z",
+        status: "scheduled",
+        cancelled: false,
+        raw: null,
+      },
+    ] as never);
+    const g = await s.store.insertInternalClient({ seedKey: "hl-contact:CT7", displayName: "Grace Hill", normalizedPhone: "9175550166", normalizedEmail: "grace@other.org", ghlContactExternalId: "CT7" });
+    await s.store.insertClientMatchLinkIfAbsent({ internalClientId: g.id, provider: "acuity", entity: "appointment", externalId: "A7", matchMethod: "exact_id", confidence: "exact" });
+    expect((await computeRetention(s.store, { now: NOW })).outcome).toBe("synced");
+
+    const q = await retentionNeedsAttention(s.store, NOW);
+    const grace = q.rows.find((r) => r.clientName === "Grace Hill")!;
+    expect(grace.segment).toBe("unreached"); // due last week (10/13) so NOT the excitement cohort — but the window is open, so still rank-2 call work
+    expect(grace.windowClosing).toBe(true);
+    expect(grace.windowCloses).toBe("2026-10-20T20:00:00.000Z");
+    expect(grace.priority).toBe(2);
+    // soonest appointment first inside rank 2 — today's closing window leads
+    expect(q.rows.filter((r) => r.priority === 2)[0]!.clientName).toBe("Grace Hill");
+  });
+
+  test("D2: window-missed rows keep most-recently-missed first inside rank 4", async () => {
+    const s = await seed();
+    // Henry Wells: session 10/06 (older miss than Dan's 10/13), one no-answer.
+    await s.store.upsertContacts([
+      { id: "", provider: "highlevel", external_id: "CT8", name: "Henry Wells", phone: "9175550155", email: "henry@other.org", assigned_rep_id: null, created_at: NOW().toISOString() },
+    ] as never);
+    const ct8 = (await s.store.getContacts()).find((c) => c.external_id === "CT8")!.id;
+    await s.store.upsertAppointments([
+      {
+        id: "",
+        acuity_appointment_id: "A8",
+        contact_id: ct8,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Portrait Session",
+        appointment_datetime: "2026-10-06T18:00:00Z",
+        created_at: "2026-10-01T18:00:00Z",
+        status: "scheduled",
+        cancelled: false,
+        raw: null,
+      },
+    ] as never);
+    const h = await s.store.insertInternalClient({ seedKey: "hl-contact:CT8", displayName: "Henry Wells", normalizedPhone: "9175550155", normalizedEmail: "henry@other.org", ghlContactExternalId: "CT8" });
+    await s.store.insertClientMatchLinkIfAbsent({ internalClientId: h.id, provider: "acuity", entity: "appointment", externalId: "A8", matchMethod: "exact_id", confidence: "exact" });
+    await s.store.upsertCalls([
+      { provider: "highlevel", external_call_id: "MSG8", rep_id: null, contact_id: ct8, started_at: "2026-10-01T14:00:00Z", duration_seconds: 0, over_two_minutes: false, direction: "outbound", call_status: "no-answer", provider_rep_external_id: null },
+    ] as never);
+    expect((await computeRetention(s.store, { now: NOW })).outcome).toBe("synced");
+
+    const q = await retentionNeedsAttention(s.store, NOW);
+    expect(q.rows.filter((r) => r.segment === "window-missed").map((r) => r.clientName)).toEqual([
+      "Dan Fox", // 10/13 — the freshest salvage opportunity on top
+      "Henry Wells", // 10/06
+    ]);
+    expect(q.rows.filter((r) => r.segment === "window-missed").every((r) => r.priority === 4)).toBe(true);
+  });
+
+  test("D3: cancellationsRecoveredThisWeek counts ledger recoveries inside the current Mon–Sun ET week (derived only)", async () => {
+    const s = await seed();
+    const q = await retentionNeedsAttention(s.store, NOW);
+    expect(q.cancellationsRecoveredThisWeek).toBe(0); // written ledger, empty → an honest 0
+
+    await s.store.insertRetentionCancellations([
+      {
+        appointmentId: (await s.store.getAppointmentsWithClientsSince("2026-09-01T00:00:00Z")).find((a) => a.acuity_appointment_id === "A1")!.id,
+        internalClientId: s.clients.CT1,
+        ghlContactExternalId: "CT1",
+        cancelledAtIso: "2026-10-15T14:00:00Z",
+        attemptsCount: 1,
+        anyAnswered: false,
+        finalContactStatus: "voicemail",
+        outcome: "rescheduled",
+        successorAppointmentId: null,
+        recovered: true,
+        recoveredAtIso: "2026-10-21T10:00:00Z", // inside 10/19–25
+        notes: {},
+      },
+      {
+        appointmentId: "",
+        internalClientId: s.clients.CT2,
+        ghlContactExternalId: "CT2",
+        cancelledAtIso: "2026-10-02T14:00:00Z",
+        attemptsCount: 0,
+        anyAnswered: false,
+        finalContactStatus: null,
+        outcome: "saved_original",
+        successorAppointmentId: null,
+        recovered: true,
+        recoveredAtIso: "2026-10-10T10:00:00Z", // LAST week — excluded
+        notes: {},
+      },
+      {
+        appointmentId: "",
+        internalClientId: s.clients.CT3,
+        ghlContactExternalId: "CT3",
+        cancelledAtIso: "2026-10-16T14:00:00Z",
+        attemptsCount: 0,
+        anyAnswered: false,
+        finalContactStatus: null,
+        outcome: "pending",
+        successorAppointmentId: null,
+        recovered: false,
+        recoveredAtIso: null, // not recovered — excluded by the §16 predicate
+        notes: {},
+      },
+    ]);
+    const q2 = await retentionNeedsAttention(s.store, NOW);
+    expect(q2.cancellationsRecoveredThisWeek).toBe(1); // only the in-week recovery
+  });
+
+  test("D1: cancellation rows surface the attempt-ledger last contact (never a gap)", async () => {
+    const s = await seed();
+    await s.store.upsertAppointments([
+      {
+        id: "",
+        acuity_appointment_id: "A5",
+        contact_id: (await s.store.getContacts()).find((c) => c.external_id === "CT5")!.id,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Portrait Session",
+        appointment_datetime: "2026-11-02T18:00:00Z",
+        created_at: "2026-10-14T18:00:00Z",
+        status: "scheduled",
+        cancelled: true,
+        cancelled_at: "2026-10-15T14:00:00Z",
+        raw: null,
+      },
+    ] as never);
+    const appts = await s.store.getAppointmentsWithClientsSince("2026-09-01T00:00:00Z");
+    const a5 = appts.find((a) => a.acuity_appointment_id === "A5")!;
+    await s.store.insertRetentionCancellations([
+      {
+        appointmentId: a5.id,
+        internalClientId: s.clients.CT5,
+        ghlContactExternalId: "CT5",
+        cancelledAtIso: "2026-10-15T14:00:00Z",
+        attemptsCount: 0,
+        anyAnswered: false,
+        finalContactStatus: null,
+        outcome: "pending",
+        successorAppointmentId: null,
+        recovered: false,
+        recoveredAtIso: null,
+        notes: {},
+      },
+    ]);
+    const q = await retentionNeedsAttention(s.store, NOW);
+    const eve = q.rows.find((r) => r.clientName === "Eve Ray")!;
+    expect(eve.segment).toBe("cancellation");
+    expect(eve.lastAttemptAt).toBeNull(); // zero attempts — honestly "— none yet"
+    expect(eve.priority).toBe(1);
+  });
+
   test("empty store → empty queue, zero counts (all facts, never fabricated)", async () => {
     const store = new MemoryStore();
     const q = await retentionNeedsAttention(store, NOW);
     expect(q.rows).toEqual([]);
     expect(q.counts).toEqual({ callDue: 0, unreached: 0, windowMissed: 0, needsReview: 0, cancellations: 0 });
+    expect(q.cancellationsRecoveredThisWeek).toBe(0);
     expect(q.dueDays).toBe(7);
   });
 });

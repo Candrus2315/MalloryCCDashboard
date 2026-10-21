@@ -853,7 +853,34 @@ export interface RetentionQueueRow {
   /** The queue's Action cell — its verb; the row links to the drill pre-filtered. */
   actionLabel: string;
   drillKpi: RetentionKpiKey;
+  /** D1 — last contact instant (outcome last_attempt_at; ledger rows derive it from the same attempt ledger). Null renders "— none yet". */
+  lastAttemptAt: string | null;
+  /** D2 — when the call window closes (appointment instant; call-due / unreached-open only; derived at load). */
+  windowCloses: string | null;
+  /** D2 — window closes TODAY (ET), derived at load; drives the priority chip's caution dot. */
+  windowClosing: boolean;
+  /** D6 — the owner's urgency rank; the loader sorts by it. */
+  priority: RetentionPriority;
 }
+
+/** D6 — the owner's urgency ladder (spec §5.3): 1 save now / 2 call / 4 salvage / 5 records. Ranks 3 (no-show follow-up) and reschedule-pending are RESERVED until their stages ship. */
+export type RetentionPriority = 1 | 2 | 4 | 5;
+
+export const RETENTION_PRIORITY_LABEL: Record<RetentionPriority, string> = {
+  1: "Save now",
+  2: "Call",
+  4: "Salvage",
+  5: "Records",
+};
+
+/** Segment -> urgency rank (reserved ranks absent). */
+const QUEUE_PRIORITY: Record<RetentionQueueSegment, RetentionPriority> = {
+  cancellation: 1,
+  "call-due": 2,
+  unreached: 2,
+  "window-missed": 4,
+  "needs-review": 5,
+};
 
 export interface RetentionQueueData {
   todayEt: string;
@@ -870,6 +897,8 @@ export interface RetentionQueueData {
     /** The §16 Active-Cancellations universe over the written ledger (stage 4a) — a real 0 is a fact. */
     cancellations: number;
   };
+  /** D3 — ledger rows via inCancellationUniverse(r, "recovery") with recovered_at in the current Mon–Sun ET week. Derived only; the ledger stays write-once. */
+  cancellationsRecoveredThisWeek: number;
   cancellationsEngineNote: string;
 }
 
@@ -892,9 +921,15 @@ export interface RetentionQueueData {
  *                     contact funnel, so these rows can never also be
  *                     call-due/unreached/needs-review rows) → "Save".
  * Disjoint by construction: call-due ids are removed from unreached-open, and
- * a row is never in two segments. Call-due/unreached/needs-review/cancellation
- * sort soonest appointment first; missed windows sort most-recently-missed
- * first (freshest salvage opportunity on top).
+ * a row is never in two segments.
+ *
+ * ORDER = the owner's urgency sort (UX spec §5.3, replaces the old segment-
+ * block order): 1 cancellation (save now) · 2 call-due then unreached-open
+ * (soonest appointment first; window-closing rows flagged) · 4 window-missed
+ * (most-recently-missed first — freshest salvage on top) · 5 needs-review.
+ * Ranks 3 (no-show follow-up) and reschedule-pending slot in when their
+ * stages land. Every row carries its rank (row.priority) so the page renders
+ * the Priority column from the SAME derivation it sorts by.
  */
 export async function retentionNeedsAttention(store: Store, now: () => Date = () => new Date()): Promise<RetentionQueueData> {
   const nowMs = now().getTime();
@@ -939,13 +974,31 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     }
     return latest?.call_status ?? null;
   };
+  // D1 — the same scan, surfacing WHEN the last contact happened (the outcome
+  // rows carry it as last_attempt_at; ledger rows derive it from the SAME
+  // attempt ledger so "— none yet" is always a proven fact, never a gap).
+  const lastAttemptAtOf = (appointmentId: string): string | null => {
+    let latest: RetentionAttemptRow | null = null;
+    for (const a of attempts) {
+      if (a.appointment_id !== appointmentId) continue;
+      if (!latest || a.attempt_at > latest.attempt_at) latest = a;
+    }
+    return latest?.attempt_at ?? null;
+  };
 
   const shape = (o: RetentionOutcomeRow, segment: RetentionQueueSegment, statusLabel: string, actionLabel: string, drillKpi: RetentionKpiKey): RetentionQueueRow => {
     const client = clientById.get(o.internal_client_id) ?? null;
     const ms = apptMsOf(o);
     const evAcuity = (o.evidence as { acuity_appointment_id?: unknown }).acuity_appointment_id;
+    // D2 — the window-closes instant is DERIVED AT LOAD (pure, from the
+    // appointment row), never from a client clock at render time.
+    const windowCloses = segment === "call-due" || segment === "unreached" ? (ms == null ? null : new Date(ms).toISOString()) : null;
     return {
       segment,
+      priority: QUEUE_PRIORITY[segment],
+      windowCloses,
+      windowClosing: windowCloses != null && ms != null && etDateStrFromInstant(ms) === todayEt,
+      lastAttemptAt: o.last_attempt_at,
       appointmentId: o.appointment_id,
       acuityId: typeof evAcuity === "string" ? evAcuity : apptById.get(o.appointment_id)?.acuity_appointment_id ?? null,
       internalClientId: o.internal_client_id,
@@ -1007,6 +1060,10 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     const evAcuity = (r.notes as { acuity_appointment_id?: unknown } | null)?.acuity_appointment_id;
     return {
       segment: "cancellation",
+      priority: QUEUE_PRIORITY.cancellation,
+      lastAttemptAt: lastAttemptAtOf(r.appointment_id),
+      windowCloses: null, // the ledger tracks the reschedule window; the appointment cell renders "cancelled <date>"
+      windowClosing: false,
       appointmentId: r.appointment_id,
       acuityId: appt?.acuity_appointment_id ?? (typeof evAcuity === "string" ? evAcuity : null),
       internalClientId: r.internal_client_id!,
@@ -1043,21 +1100,48 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     ...needsReview.map((o) => shape(o, "needs-review", "Evidence conflict", "Open", "needs-review")),
     ...cancellations.map(cancellationQueueRow),
   ];
-  const segmentOrder: Record<RetentionQueueSegment, number> = { "call-due": 0, unreached: 1, "window-missed": 2, "needs-review": 3, cancellation: 4 };
   const byApptAsc = (a: RetentionQueueRow, b: RetentionQueueRow): number => {
     if (a.apptIso == null || b.apptIso == null) return a.apptIso == null ? 1 : -1;
     return a.apptIso < b.apptIso ? -1 : a.apptIso > b.apptIso ? 1 : 0;
   };
+  // Equal-rank tiebreak inside rank 2: call-due before unreached at the same
+  // instant (the newer work first), then client name for full determinism.
+  const SEGMENT_TIEBREAK: Record<RetentionQueueSegment, number> = {
+    cancellation: 0,
+    "call-due": 0,
+    unreached: 1,
+    "window-missed": 0,
+    "needs-review": 0,
+  };
+  // D6 — the owner's urgency sort: 1 cancellation · 2 call-due then
+  // unreached-open (soonest appointment first) · 4 window-missed (most
+  // recently missed first) · 5 needs-review. Ranks 3/4-reschedule slot in
+  // with their pipeline stages (nothing renders for them today).
   rows.sort((a, b) => {
-    const seg = segmentOrder[a.segment] - segmentOrder[b.segment];
-    if (seg !== 0) return seg;
-    if (a.segment === "window-missed") {
+    const pr = a.priority - b.priority;
+    if (pr !== 0) return pr;
+    if (a.segment === "window-missed" && b.segment === "window-missed") {
       // most recently missed first — the freshest salvage opportunity on top
       if (a.apptIso == null || b.apptIso == null) return a.apptIso == null ? 1 : -1;
       return a.apptIso > b.apptIso ? -1 : a.apptIso < b.apptIso ? 1 : 0;
     }
-    return byApptAsc(a, b);
+    const appt = byApptAsc(a, b);
+    if (appt !== 0) return appt;
+    const tie = SEGMENT_TIEBREAK[a.segment] - SEGMENT_TIEBREAK[b.segment];
+    if (tie !== 0) return tie;
+    return (a.clientName ?? "").localeCompare(b.clientName ?? "");
   });
+
+  // D3 — recovered-this-week count, derived ONLY (no writes): recovered rows
+  // of the written ledger whose recovered_at lands in the current Mon–Sun ET
+  // week. The SAME §16 predicate the Recovery card counts.
+  const recoveredThisWeek = cancellationRows.filter((r) => {
+    if (!inCancellationUniverse(r, "recovery") || r.recovered_at == null) return false;
+    const ms = Date.parse(r.recovered_at);
+    if (!Number.isFinite(ms)) return false;
+    const d = etDateStrFromInstant(ms);
+    return d >= ws && d <= we;
+  }).length;
 
   return {
     todayEt,
@@ -1073,6 +1157,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
       needsReview: needsReview.length,
       cancellations: cancellations.length,
     },
+    cancellationsRecoveredThisWeek: recoveredThisWeek,
     cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
   };
 }
