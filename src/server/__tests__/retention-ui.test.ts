@@ -327,13 +327,118 @@ describe("retentionDrillData (one shared drill, ?kpi=)", () => {
     expect(d.rows[0]!.finalStatus).not.toBe("verified_spoke_with");
   });
 
-  test("cancellations-family kpis render an honest empty state", async () => {
+  test("cancellations-family kpis: the written-but-empty ledger is an honest 0 (rows 0, card — rate)", async () => {
     const s = await seed();
     for (const kpi of ["active-cancellations", "saves", "reschedules", "recovery"] as const) {
-      const d = await retentionDrillData(s.store, params({ kpi }), NOW);
+      const d = await retentionDrillData(s.store, params({ kpi, range: "all" }), NOW);
       expect(d.rows).toHaveLength(0);
-      expect(d.emptyReason).toBe(CANCELLATIONS_ENGINE_NOTE);
+      expect(d.matchedCount).toBe(0);
+      expect(d.emptyReason).toBeNull(); // the ledger HAS a writer — a 0 is a fact, not "not computed"
+      expect(d.exceptions).toBeNull();
     }
+    const recovery = await retentionDrillData(s.store, params({ kpi: "recovery", range: "all" }), NOW);
+    expect(recovery.recoveryDenominator).toBe(0); // the null-denominator case — the card's rate stays "—", never a fabricated 0%
+    const o = await retentionOverview(s.store, NOW);
+    const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
+    expect(byKey["recovery"]!.ratio).toBeNull();
+  });
+
+  test("family drills list the ledger rows that MAKE UP their card number (one source of truth)", async () => {
+    const s = await seed();
+    await s.store.insertRetentionCancellations([
+      // Jane (A1) — pending: the Active Cancellations queue
+      { appointmentId: s.apptIds.A1!, internalClientId: s.clientIds.CT1!, ghlContactExternalId: "CT1", cancelledAtIso: "2026-10-15T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: "voicemail", outcome: "pending", successorAppointmentId: null, recovered: false, recoveredAtIso: null, notes: { acuity_appointment_id: "A1" } },
+      // Bob (A2) — saved original: successor re-booked, recovered 10/17
+      { appointmentId: s.apptIds.A2!, internalClientId: s.clientIds.CT2!, ghlContactExternalId: "CT2", cancelledAtIso: "2026-10-16T14:00:00Z", attemptsCount: 1, anyAnswered: true, finalContactStatus: "verified_spoke_with", outcome: "saved_original", successorAppointmentId: s.apptIds.A3!, recovered: true, recoveredAtIso: "2026-10-17T10:00:00Z", notes: {} },
+      // Cara (A3) — rescheduled
+      { appointmentId: s.apptIds.A3!, internalClientId: s.clientIds.CT3!, ghlContactExternalId: "CT3", cancelledAtIso: "2026-10-13T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: "no_answer", outcome: "rescheduled", successorAppointmentId: s.apptIds.A4!, recovered: true, recoveredAtIso: "2026-10-14T10:00:00Z", notes: {} },
+      // Dan (A4) — confirmed cancellation (not recovered)
+      { appointmentId: s.apptIds.A4!, internalClientId: s.clientIds.CT4!, ghlContactExternalId: "CT4", cancelledAtIso: "2026-10-14T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: null, outcome: "confirmed_cancellation", successorAppointmentId: null, recovered: false, recoveredAtIso: null, notes: {} },
+    ]);
+    const o = await retentionOverview(s.store, NOW);
+    const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
+    expect(byKey["active-cancellations"]!.value).toBe(1);
+    expect(byKey["saves"]!.value).toBe(1);
+    expect(byKey["reschedules"]!.value).toBe(1);
+    expect(byKey["recovery"]!.value).toBe(2);
+    expect(byKey["recovery"]!.ratio).toBeCloseTo(2 / 4);
+
+    // Each family drill lists EXACTLY its §16 universe — the same rows the card counts.
+    const active = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "all" }), NOW);
+    expect(active.matchedCount).toBe(1);
+    expect(active.rows.map((r) => r.clientName)).toEqual(["Jane Doe"]);
+    expect(active.rows[0]!.outcome).toBe("pending");
+    expect(active.rows[0]!.finalStatus).toBe("voicemail");
+    expect(active.rows[0]!.dueDate).toBe("2026-10-15"); // the cancelled-at ET date (renders "cancelled Oct 15")
+    expect(active.rows[0]!.lastAttemptAt).toBe("2026-10-19T15:00:00Z"); // the SAME D1 derivation the queue uses
+    expect(active.rows[0]!.attemptsCount).toBe(1); // the ledger's count
+    expect(active.rows[0]!.acuityId).toBe("A1"); // appointment row, ledger-notes fallback not needed
+    expect(active.rows[0]!.cancelledAt).toBe("2026-10-15T14:00:00Z");
+    expect(active.rows[0]!.recoveredAt).toBeNull();
+    expect(active.recoveryDenominator).toBeNull(); // only the recovery drill carries the denominator
+
+    const saves = await retentionDrillData(s.store, params({ kpi: "saves", range: "all" }), NOW);
+    expect(saves.matchedCount).toBe(byKey["saves"]!.value);
+    expect(saves.rows.map((r) => r.clientName)).toEqual(["Bob Roe"]);
+    expect(saves.rows[0]!.outcome).toBe("saved_original");
+    expect(saves.rows[0]!.successorAppointmentId).toBe(s.apptIds.A3);
+    expect(saves.rows[0]!.recoveredAt).toBe("2026-10-17T10:00:00Z");
+
+    const reschedules = await retentionDrillData(s.store, params({ kpi: "reschedules", range: "all" }), NOW);
+    expect(reschedules.matchedCount).toBe(byKey["reschedules"]!.value);
+    expect(reschedules.rows.map((r) => r.clientName)).toEqual(["Cara Lee"]);
+
+    const recovery = await retentionDrillData(s.store, params({ kpi: "recovery", range: "all" }), NOW);
+    expect(recovery.matchedCount).toBe(byKey["recovery"]!.value);
+    expect(recovery.rows.map((r) => r.clientName)).toEqual(["Bob Roe", "Cara Lee"]); // most recent cancellation first
+    expect(recovery.recoveryDenominator).toBe(4); // every tracked cancellation in scope — the card's rate denominator
+  });
+
+  test("family drills narrow by the §16 event date (cancelled_at; recovered_at for recovery) — 'all' reconciles with the card", async () => {
+    const s = await seed();
+    await s.store.insertRetentionCancellations([
+      // cancelled LAST week (week of Oct 12) — pending
+      { appointmentId: s.apptIds.A1!, internalClientId: s.clientIds.CT1!, ghlContactExternalId: "CT1", cancelledAtIso: "2026-10-15T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: "voicemail", outcome: "pending", successorAppointmentId: null, recovered: false, recoveredAtIso: null, notes: {} },
+      // cancelled THIS week (Oct 19–25) — pending
+      { appointmentId: s.apptIds.A3!, internalClientId: s.clientIds.CT3!, ghlContactExternalId: "CT3", cancelledAtIso: "2026-10-21T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: null, outcome: "pending", successorAppointmentId: null, recovered: false, recoveredAtIso: null, notes: {} },
+      // recovered LAST week (recovered_at Oct 17) vs THIS week (recovered_at Oct 20)
+      { appointmentId: s.apptIds.A2!, internalClientId: s.clientIds.CT2!, ghlContactExternalId: "CT2", cancelledAtIso: "2026-10-16T14:00:00Z", attemptsCount: 1, anyAnswered: true, finalContactStatus: null, outcome: "saved_original", successorAppointmentId: null, recovered: true, recoveredAtIso: "2026-10-17T10:00:00Z", notes: {} },
+      { appointmentId: s.apptIds.A4!, internalClientId: s.clientIds.CT4!, ghlContactExternalId: "CT4", cancelledAtIso: "2026-10-18T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: null, outcome: "rescheduled", successorAppointmentId: null, recovered: true, recoveredAtIso: "2026-10-20T10:00:00Z", notes: {} },
+    ]);
+    const activeAll = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "all" }), NOW);
+    expect(activeAll.matchedCount).toBe(2);
+    const activeThisWeek = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "this-week" }), NOW);
+    expect(activeThisWeek.matchedCount).toBe(1); // only Cara (cancelled Oct 21)
+    expect(activeThisWeek.rows.map((r) => r.clientName)).toEqual(["Cara Lee"]);
+
+    // The recovery drill's week anchor is recovered_at — the SAME instant the
+    // queue's "cancellations recovered this week" chip counts (D3).
+    const recoveryAll = await retentionDrillData(s.store, params({ kpi: "recovery", range: "all" }), NOW);
+    expect(recoveryAll.matchedCount).toBe(2);
+    const recoveryThisWeek = await retentionDrillData(s.store, params({ kpi: "recovery", range: "this-week" }), NOW);
+    expect(recoveryThisWeek.matchedCount).toBe(1); // only the reschedule recovered Oct 20
+    expect(recoveryThisWeek.rows.map((r) => r.clientName)).toEqual(["Dan Fox"]);
+    // The denominator is the CARD's (all tracked, range-independent) so the rate stays reconstructable.
+    expect(recoveryThisWeek.recoveryDenominator).toBe(4);
+  });
+
+  test("family drills honor the classification / outcome / employee filters", async () => {
+    const s = await seed();
+    await s.store.insertRetentionCancellations([
+      { appointmentId: s.apptIds.A1!, internalClientId: s.clientIds.CT1!, ghlContactExternalId: "CT1", cancelledAtIso: "2026-10-15T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: "voicemail", outcome: "pending", successorAppointmentId: null, recovered: false, recoveredAtIso: null, notes: {} },
+      { appointmentId: s.apptIds.A2!, internalClientId: s.clientIds.CT2!, ghlContactExternalId: "CT2", cancelledAtIso: "2026-10-16T14:00:00Z", attemptsCount: 1, anyAnswered: true, finalContactStatus: "verified_spoke_with", outcome: "saved_original", successorAppointmentId: null, recovered: true, recoveredAtIso: "2026-10-17T10:00:00Z", notes: {} },
+    ]);
+    const byOutcomeOnActive = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "all", outcome: "saved_original" }), NOW);
+    expect(byOutcomeOnActive.rows).toHaveLength(0); // the active queue is pending-only — a saved filter matches nothing
+    const savesByOutcome = await retentionDrillData(s.store, params({ kpi: "saves", range: "all", outcome: "saved_original" }), NOW);
+    expect(savesByOutcome.rows.map((r) => r.clientName)).toEqual(["Bob Roe"]);
+    const byClassification = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "all", classification: "voicemail" }), NOW);
+    expect(byClassification.rows.map((r) => r.clientName)).toEqual(["Jane Doe"]);
+    const lauraId = (await retentionDrillData(s.store, params({ kpi: "clients-due", range: "all" }), NOW)).employees[0]!.id;
+    const byEmployee = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "all", employee: lauraId }), NOW);
+    expect(byEmployee.rows).toHaveLength(1); // A1's MSG1 attempt was Laura's
+    const byOther = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "all", employee: "someone-else" }), NOW);
+    expect(byOther.rows).toHaveLength(0);
   });
 
   test("outcome filter honestly matches nothing while the ledger is unwritten", async () => {
@@ -595,6 +700,16 @@ describe("retention data-start boundary (owner directive 10/21)", () => {
     const q = await retentionNeedsAttention(s.store, NOW);
     expect(q.counts.cancellations).toBe(1);
     expect(q.rows.filter((r) => r.segment === "cancellation").map((r) => r.clientName)).toEqual(["Jane Doe"]);
+
+    // The four family drills inherit the SAME display scope — the pre-cutoff
+    // ledger row is hidden there too (and the drill count reconciles with the card).
+    const d = await retentionDrillData(s.store, params({ kpi: "active-cancellations", range: "all" }), NOW);
+    expect(d.matchedCount).toBe(1);
+    expect(d.rows.map((r) => r.clientName)).toEqual(["Jane Doe"]); // Pat Old (Oct 8) stays stored but unseen
+    const savesDrill = await retentionDrillData(s.store, params({ kpi: "saves", range: "all" }), NOW);
+    expect(savesDrill.rows).toHaveLength(0); // no in-scope saved rows exist
+    const recoveryDrill = await retentionDrillData(s.store, params({ kpi: "recovery", range: "all" }), NOW);
+    expect(recoveryDrill.recoveryDenominator).toBe(1); // the DISPLAY denominator is scoped too
 
     expect((await s.store.listRetentionCancellations()).length).toBe(2); // both stored — display-layer only
   });

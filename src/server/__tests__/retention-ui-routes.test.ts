@@ -35,6 +35,12 @@ describe("retention routes", () => {
     expect(vs({ kpi: "needs-review" }).range).toBe("all");
     expect(vs({ kpi: "needs-review" }).classification).toBe("needs_review");
     expect(vs({ kpi: "match-exceptions" }).range).toBe("all");
+    // §16 ledger kpis (stage 4a) also default to All open — the cards count the
+    // whole written ledger, so the drill reconciles with the card at default.
+    expect(vs({ kpi: "active-cancellations" }).range).toBe("all");
+    expect(vs({ kpi: "saves" }).range).toBe("all");
+    expect(vs({ kpi: "reschedules" }).range).toBe("all");
+    expect(vs({ kpi: "recovery" }).range).toBe("all");
     // Unknown kpi falls back honestly; explicit params ride through.
     expect(vs({ kpi: "bogus" }).kpi).toBe("clients-due");
     expect(vs({ kpi: "unreached", range: "last-week", employee: "u1", classification: "no_answer", outcome: "pending", exc: "resolved" })).toEqual({

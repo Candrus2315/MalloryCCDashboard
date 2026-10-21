@@ -259,6 +259,45 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     expect(q.rows.every((r, i) => i === 0 || r.priority > 1)).toBe(true);
   });
 
+  test("ONE source of truth: the queue's cancellation segment IS the active-cancellations drill's rows (stage 4a follow-up)", async () => {
+    const s = await seed();
+    await s.store.upsertAppointments([
+      {
+        id: "",
+        acuity_appointment_id: "A5",
+        contact_id: (await s.store.getContacts()).find((c) => c.external_id === "CT5")!.id,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Portrait Session",
+        appointment_datetime: "2026-11-02T18:00:00Z",
+        created_at: "2026-10-14T18:00:00Z",
+        status: "scheduled",
+        cancelled: true,
+        cancelled_at: "2026-10-15T14:00:00Z",
+        raw: null,
+      },
+    ] as never);
+    const appts = await s.store.getAppointmentsWithClientsSince("2026-09-01T00:00:00Z");
+    const a5 = appts.find((a) => a.acuity_appointment_id === "A5")!;
+    await s.store.insertRetentionCancellations([
+      { appointmentId: a5.id, internalClientId: s.clients.CT5, ghlContactExternalId: "CT5", cancelledAtIso: "2026-10-15T14:00:00Z", attemptsCount: 1, anyAnswered: false, finalContactStatus: "voicemail", outcome: "pending", successorAppointmentId: null, recovered: false, recoveredAtIso: null, notes: {} },
+      // a saved row is recovered, NOT queue work — but it IS recovery-drill work
+      { appointmentId: appts.find((a) => a.acuity_appointment_id === "A6")!.id, internalClientId: s.clients.CT6, ghlContactExternalId: "CT6", cancelledAtIso: "2026-10-16T14:00:00Z", attemptsCount: 0, anyAnswered: false, finalContactStatus: null, outcome: "saved_original", successorAppointmentId: null, recovered: true, recoveredAtIso: "2026-10-20T10:00:00Z", notes: {} },
+    ]);
+    const q = await retentionNeedsAttention(s.store, NOW);
+    const drill = await retentionDrillData(s.store, { kpi: "active-cancellations", range: "all", classification: "all", outcome: "all", employee: "all", exc: "open" }, NOW);
+    const queueCancelIds = q.rows.filter((r) => r.segment === "cancellation").map((r) => r.appointmentId).sort();
+    const drillIds = drill.rows.map((r) => r.appointmentId).sort();
+    expect(queueCancelIds).toEqual(drillIds); // the SAME §16 rows, never re-counted
+    expect(drill.matchedCount).toBe(1); // Eve only — the saved row has an outcome
+
+    // D3: the queue's "recovered this week" chip reconciles with the recovery
+    // drill's this-week rows (the drill anchors on recovered_at, like D3).
+    const recoveryThisWeek = await retentionDrillData(s.store, { kpi: "recovery", range: "this-week", classification: "all", outcome: "all", employee: "all", exc: "open" }, NOW);
+    expect(q.cancellationsRecoveredThisWeek).toBe(recoveryThisWeek.rows.length);
+    expect(recoveryThisWeek.rows.map((r) => r.clientName)).toEqual(["Finn Gil"]); // recovered_at Oct 20 — this week
+  });
+
   test("rows carry the drill-link fields (client, appointment ET, due date, acuity id)", async () => {
     const s = await seed();
     const q = await retentionNeedsAttention(s.store, NOW);
