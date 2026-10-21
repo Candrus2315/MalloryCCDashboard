@@ -10,8 +10,10 @@
  * Honesty: transcript column is always "—" (no transcripts exist in the GHL
  * payload — probe verdict 2026-10-19) and keeps its explicit InfoTip; notes
  * render verbatim; classification badges carry text + dot (never color-only);
- * the cancellations-outcome column reads the unwritten ret_cancellations
- * ledger, so it renders "—" and its filter honestly matches nothing yet.
+ * the four cancellations-family drills (stage 4a follow-up) list the
+ * ret_cancellations ledger rows through the SAME §16 predicate the cards
+ * count — the outcome column fills with the ledger's words there and stays
+ * "—" on appointment-funnel drills.
  */
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -29,6 +31,7 @@ import {
   EXCEPTION_KIND_LABEL,
   OUTCOME_FILTER_OPTIONS,
   deriveSignalCells,
+  isCancellationKpi,
   retentionDrillCsv,
   type RetentionKpiKey,
   type RetentionRange,
@@ -40,9 +43,10 @@ const KPI_KEYS = RETENTION_KPIS.map((k) => k.key);
 export const Route = createFileRoute("/retention-drill")({
   validateSearch: (search: Record<string, unknown>) => {
     const kpi: RetentionKpiKey = KPI_KEYS.includes(search.kpi as RetentionKpiKey) ? (search.kpi as RetentionKpiKey) : "clients-due";
-    // Queue KPIs default to All open (the card counts the whole open queue);
-    // week-scoped cohort KPIs default to This week (the card's own window).
-    const defaultRange: RetentionRange = kpi === "needs-review" || kpi === "match-exceptions" ? "all" : "this-week";
+    // Queue + §16 ledger kpis default to All open (the card counts the whole
+    // open queue / written ledger); week-scoped cohort KPIs default to This
+    // week (the card's own window).
+    const defaultRange: RetentionRange = kpi === "needs-review" || kpi === "match-exceptions" || isCancellationKpi(kpi) ? "all" : "this-week";
     const range: RetentionRange = RETENTION_RANGES.some((r) => r.value === search.range) ? (search.range as RetentionRange) : defaultRange;
     const rawClassification = typeof search.classification === "string" ? search.classification : "all";
     return {
@@ -120,6 +124,11 @@ function clamp(s: string): string {
   return s.length > 80 ? `${s.slice(0, 80)}…` : s;
 }
 
+/** §11 outcome words in the UI's human register ("saved_original" → "saved original"). */
+function outcomeLabel(outcome: string | null): string | null {
+  return outcome ? outcome.replace(/_/g, " ") : null;
+}
+
 function RetentionDrillPage() {
   const data = Route.useLoaderData();
   const search = Route.useSearch();
@@ -177,6 +186,13 @@ function RetentionDrillPage() {
     if (data.emptyReason) return <EmptyState title="Nothing computed here yet" hint={data.emptyReason} />;
     if (isExceptions && (data.exceptions?.rows.length ?? 0) === 0)
       return <EmptyState title="No Data Match Exceptions" hint="Every client matched on explicit ID, phone, or email." />;
+    if (!isExceptions && isCancellationKpi(data.kpi) && data.rows.length === 0)
+      return (
+        <EmptyState
+          title="No cancellations in this view"
+          hint="The cancellations ledger is written by the engine, so a written-ledger 0 is a fact — never a fabricated count. Widen the range or clear the filters, or check back after the next cancellations tick."
+        />
+      );
     if (data.rows.length === 0)
       return (
         <EmptyState
@@ -214,6 +230,12 @@ function RetentionDrillPage() {
               <InfoTip
                 label="No-show rule"
                 tip="D10 (owner-ratified proxy): the appointment's start has passed and its status is still scheduled. Split spoken-with (final_status = verified) vs not-spoken. A manual confirm arrives with the Settings surface."
+              />
+            )}
+            {data.kpi === "recovery" && (
+              <InfoTip
+                label="Formula"
+                tip={`(Saves + Reschedules) ÷ every tracked cancellation in display scope — this list is the recovered rows (the numerator); the card's rate divides them by ${data.recoveryDenominator ?? 0} tracked ${(data.recoveryDenominator ?? 0) === 1 ? "cancellation" : "cancellations"} in scope`}
               />
             )}
           </h1>
@@ -263,7 +285,7 @@ function RetentionDrillPage() {
             <span className="mb-1 flex items-center gap-1 font-medium text-(--text-caption)">
               Appointment outcome
               <InfoTip
-                tip="Cancellation-outcome words (saved original, rescheduled, confirmed cancellation, …) live in the cancellations ledger (ret_cancellations, stage 4a). Its rows render on the Retention tab — Today row and Needs Attention queue — until this drill gains its cancellation listing; until then every row renders — and a specific outcome filter matches nothing."
+                tip="Cancellation-outcome words (saved original, rescheduled, confirmed cancellation, …) live in the cancellations ledger (ret_cancellations, stage 4a). The four family drills — Active Cancellations, Saves, Reschedules, Recovery Rate — list those ledger rows, and this filter narrows them. Appointment-funnel drills have no ledger rows, so there the filter honestly matches nothing."
               />
             </span>
             <select
@@ -511,8 +533,25 @@ function CandidateCard({ client }: { client: { display_name: string | null; norm
 }
 
 function RowGroup({ row, open, toggle, todayDue }: { row: RetentionDrillRow; open: boolean; toggle: () => void; todayDue: string | null }) {
-  const overdueUnreached = row.dueDate < (todayDue ?? "") && (row.finalStatus === "no_answer" || row.finalStatus === "attempted_unclear");
-  const signals = useMemo(() => deriveSignalCells({ final_status: row.finalStatus, needs_review_reason: row.needsReviewReason, evidence: row.evidence }), [row]);
+  // The overdue dot is a call-window signal — ledger rows have no call window
+  // (the appointment left the funnel), so they never carry it.
+  const overdueUnreached = row.outcome == null && row.dueDate < (todayDue ?? "") && (row.finalStatus === "no_answer" || row.finalStatus === "attempted_unclear");
+  const outcome = outcomeLabel(row.outcome);
+  const signals = useMemo(
+    () =>
+      deriveSignalCells({
+        final_status: row.finalStatus,
+        needs_review_reason: row.needsReviewReason,
+        // Ledger rows keep the engine's stored evidence verbatim, with the
+        // attempt scan merged in so the four-signal grid reads the REAL
+        // attempt records (never "0 attempts" against a visible ledger).
+        evidence:
+          row.outcome != null
+            ? { ...row.evidence, attempts: row.attempts.map((a) => ({ call_status: a.status, duration_seconds: a.durationSeconds, attempt_class: a.attemptClass })) }
+            : row.evidence,
+      }),
+    [row],
+  );
   const agg = (row.evidence as { aggregation?: { basis?: string[]; note_overlay?: unknown; final_status?: string } }).aggregation;
   const inbound = (row.evidence as { inbound_in_window?: { count?: number } }).inbound_in_window;
   return (
@@ -533,7 +572,13 @@ function RowGroup({ row, open, toggle, todayDue }: { row: RetentionDrillRow; ope
         <td className="py-2 tabular-nums">
           <span className="inline-flex items-center gap-1.5">
             {overdueUnreached && <span className="h-1.5 w-1.5 rounded-full bg-(--dot-caution)" aria-hidden="true" title="Overdue and unreached" />}
-            {formatDateHuman(row.dueDate)}
+            {/* Ledger rows render the write-once cancellation stamp, not a due
+                date (the appointment left the contact funnel). */}
+            {row.outcome != null ? (
+              <span className="text-(--text-muted)">cancelled {row.dueDate ? formatDateHuman(row.dueDate) : "—"}</span>
+            ) : (
+              formatDateHuman(row.dueDate)
+            )}
           </span>
         </td>
         <td className="py-2">
@@ -552,9 +597,15 @@ function RowGroup({ row, open, toggle, todayDue }: { row: RetentionDrillRow; ope
           )}
         </td>
         <td className="py-2">
-          <ClassificationBadge status={row.finalStatus} />
+          {row.outcome != null && row.finalStatus === "none" ? (
+            <span className="text-(--text-muted)">—</span>
+          ) : (
+            <ClassificationBadge status={row.finalStatus} />
+          )}
         </td>
-        <td className="py-2 text-(--text-muted)">—</td>
+        <td className="py-2">
+          {outcome ? <StatusChip kind="neutral" label={outcome} /> : <span className="text-(--text-muted)">—</span>}
+        </td>
         <td className="py-2 text-right">
           <button
             type="button"
@@ -579,7 +630,19 @@ function RowGroup({ row, open, toggle, todayDue }: { row: RetentionDrillRow; ope
 }
 
 function MobileCard({ row, open, toggle }: { row: RetentionDrillRow; open: boolean; toggle: () => void }) {
-  const signals = useMemo(() => deriveSignalCells({ final_status: row.finalStatus, needs_review_reason: row.needsReviewReason, evidence: row.evidence }), [row]);
+  const outcome = outcomeLabel(row.outcome);
+  const signals = useMemo(
+    () =>
+      deriveSignalCells({
+        final_status: row.finalStatus,
+        needs_review_reason: row.needsReviewReason,
+        evidence:
+          row.outcome != null
+            ? { ...row.evidence, attempts: row.attempts.map((a) => ({ call_status: a.status, duration_seconds: a.durationSeconds, attempt_class: a.attemptClass })) }
+            : row.evidence,
+      }),
+    [row],
+  );
   const agg = (row.evidence as { aggregation?: { basis?: string[]; note_overlay?: unknown } }).aggregation;
   const inbound = (row.evidence as { inbound_in_window?: { count?: number } }).inbound_in_window;
   return (
@@ -591,13 +654,21 @@ function MobileCard({ row, open, toggle }: { row: RetentionDrillRow; open: boole
             {row.cancelled && <StatusChip kind="neutral" label="cancelled" />}
           </p>
           <p className="mt-0.5 text-xs tabular-nums text-(--text-caption)">
-            {row.apptDateEt ? `${formatDateHuman(row.apptDateEt)} ${row.apptTimeEt ?? ""}`.trim() : "—"} · due {formatDateHuman(row.dueDate)}
+            {row.apptDateEt ? `${formatDateHuman(row.apptDateEt)} ${row.apptTimeEt ?? ""}`.trim() : "—"} ·{" "}
+            {row.outcome != null ? (
+              <span>cancelled {row.dueDate ? formatDateHuman(row.dueDate) : "—"}</span>
+            ) : (
+              <span>due {formatDateHuman(row.dueDate)}</span>
+            )}
           </p>
           <p className="mt-1 text-xs text-(--text-caption)">
             {row.contactName ? `${row.contactName} · ··${row.contactPhoneLast4 ?? "—"}` : "—"}
           </p>
         </div>
-        <ClassificationBadge status={row.finalStatus} />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {row.outcome != null && row.finalStatus === "none" ? <span className="text-(--text-muted)">—</span> : <ClassificationBadge status={row.finalStatus} />}
+          {outcome && <StatusChip kind="neutral" label={outcome} />}
+        </div>
       </div>
       <p className="mt-2 flex flex-wrap items-center gap-1 text-xs tabular-nums text-(--text-caption)">
         <span className="font-medium text-(--text-body)">{row.attemptsCount} attempts</span>
@@ -756,7 +827,10 @@ function EvidencePanel({
         {ev.window?.rule && <p className="mt-1 text-xs text-(--text-muted)">window rule: {ev.window.rule}</p>}
       </div>
 
-      {/* Full verbatim notes + appointment status/outcome/recovery fields. */}
+      {/* Full verbatim notes + appointment status/outcome/recovery fields.
+          Ledger rows (§16 family) fill the cancellation fields from the
+          ret_cancellations row itself; appointment-funnel rows render the
+          honest — (their appointments are not in the ledger). */}
       <div>
         <p className="kpi-label">Acuity notes (verbatim)</p>
         <p className="mt-1 whitespace-pre-wrap text-(--text-body)">
@@ -764,11 +838,18 @@ function EvidencePanel({
         </p>
         <dl className="mt-2 grid gap-x-6 gap-y-1 text-xs tabular-nums text-(--text-caption) sm:grid-cols-2">
           <div>appointment status: {row.appointmentStatus ?? "—"}</div>
-          <div>appointment outcome: {row.outcome ?? "— ledger rows render in the Needs Attention queue; this drill's cancellation listing arrives with its UI stage"}</div>
-          <div>recovered: — ledger data renders on the Retention tab; this drill's cancellation listing arrives with its UI stage</div>
-          <div>successor appointment: — ledger data renders on the Retention tab; this drill's cancellation listing arrives with its UI stage</div>
+          <div>appointment outcome: {outcomeLabel(row.outcome) ?? "—"}</div>
+          <div>cancelled at: {row.cancelledAt ? fmtEtStamp(row.cancelledAt) : "—"}</div>
+          <div>recovered: {row.recoveredAt ? fmtEtStamp(row.recoveredAt) : "—"}</div>
+          <div>successor appointment: {row.successorAppointmentId ?? "—"}</div>
+          <div>last contact: {row.lastAttemptAt ? fmtEtStamp(row.lastAttemptAt) : "— none yet"}</div>
         </dl>
       </div>
     </div>
   );
+}
+
+/** ET stamp for ledger instants (same format as the attempt table's When column). */
+function fmtEtStamp(iso: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 }

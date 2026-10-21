@@ -162,7 +162,7 @@ export const RETENTION_KPIS: RetentionKpiMeta[] = [
 ];
 
 export const CANCELLATIONS_ENGINE_NOTE =
-  "The cancellations ledger (ret_cancellations) is written by the retention-cancellations engine (stage 4a); its counts fill the Today row, the Needs Attention queue, This Week's Retention Performance and new weekly scorecards. Surfaces a stage does not write yet (the drill-down's cancellation listing, no-shows, transfers) render an honest — (not computed), never 0.";
+  "The cancellations ledger (ret_cancellations) is written by the retention-cancellations engine (stage 4a); its counts fill the Today row, the Needs Attention queue, This Week's Retention Performance and new weekly scorecards, and the four family drill-downs (Active Cancellations, Saves, Reschedules, Recovery Rate) list its rows through the same §16 predicate. Surfaces a stage does not write yet (no-shows, transfers) render an honest — (not computed), never 0.";
 
 export const RETENTION_KPI_LABEL: Record<RetentionKpiKey, string> = Object.fromEntries(
   RETENTION_KPIS.map((k) => [k.key, k.label]),
@@ -479,6 +479,19 @@ export function inKpiUniverse(o: RetentionOutcomeRow, kpi: RetentionKpiKey, ctx:
 /** The §16 cancellations-family kpi keys — the ledger family (ret_cancellations). */
 export type RetentionCancellationKpi = "active-cancellations" | "saves" | "reschedules" | "recovery";
 
+/** The family keys as a list (drill + route defaults iterate over the ONE family definition). */
+export const RETENTION_CANCELLATION_KPIS: readonly RetentionCancellationKpi[] = [
+  "active-cancellations",
+  "saves",
+  "reschedules",
+  "recovery",
+];
+
+/** Type guard: is this drill kpi one of the §16 ledger family (its rows come from ret_cancellations, not the appointment funnel)? */
+export function isCancellationKpi(kpi: RetentionKpiKey): kpi is RetentionCancellationKpi {
+  return (RETENTION_CANCELLATION_KPIS as readonly string[]).includes(kpi);
+}
+
 /**
  * Is this LEDGER row in the named cancellations-family kpi's §16 universe?
  * §16 VERBATIM over ret_cancellations — the ONE source of truth for the
@@ -544,8 +557,14 @@ export interface RetentionDrillRow {
   notes: string | null;
   finalStatus: string;
   needsReviewReason: string | null;
-  /** Cancellation-outcome words — null while the cancellations ledger is unwritten. */
-  outcome: null;
+  /** §11 cancellation-outcome words — null for appointment-funnel rows; ret_cancellations rows carry the ledger's vocabulary. */
+  outcome: string | null;
+  /** Ledger-row fields (§16 family only; null for appointment-funnel rows). */
+  cancelledAt: string | null;
+  recoveredAt: string | null;
+  successorAppointmentId: string | null;
+  /** D1 — last contact instant: outcome rows' stored last_attempt_at; ledger rows derive it from the SAME attempt scan the Needs Attention queue uses. Null renders "— none yet". */
+  lastAttemptAt: string | null;
   matchMethod: string | null;
   contactMatchMethod: string | null;
   evidence: Record<string, unknown>;
@@ -567,6 +586,8 @@ export interface RetentionDrillData {
   matchedCount: number;
   employees: { id: string; name: string }[];
   emptyReason: string | null;
+  /** Recovery Rate only — the §16 rate denominator the CARD divides by (every tracked cancellation in display scope), surfaced so the ratio is reconstructable on-page; null for the other kpis. */
+  recoveryDenominator: number | null;
   /** match-exceptions mode payload (handleExceptionsQuery verbatim). */
   exceptions: {
     counts: { open: number; resolved: number; dismissed: number; total: number };
@@ -656,6 +677,200 @@ export async function retentionDrillData(
       employees: [],
       emptyReason: params.exc === "open" ? "No Data Match Exceptions — every client matched on explicit ID, phone, or email." : null,
       exceptions: { counts: scopedCounts, rows: scopedRows },
+      recoveryDenominator: null,
+      cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
+    };
+  }
+
+  // ---- cancellations-family mode (stage 4a follow-up) — the four §16 ledger
+  // ---- kpis list the ret_cancellations rows that MAKE UP their card number:
+  // ---- the SAME inCancellationUniverse predicate + display scope the cards
+  // ---- and the queue count (ONE source of truth — no second derivation, no
+  // ---- writes). Range narrows on the family's §16 event date: cancelled_at
+  // ---- ET date for active-cancellations/saves/reschedules (the scorecard's
+  // ---- week anchor for the family), recovered_at ET date for recovery (the
+  // ---- D3 "recovered this week" anchor its queue link counts). A row whose
+  // ---- anchor instant cannot be derived is excluded from narrowed ranges
+  // ---- (nothing is guessed) and still shows in the "all" view, like on the
+  // ---- cards. READ-ONLY: every read below is a bulk store read.
+  if (isCancellationKpi(params.kpi)) {
+    const kpi = params.kpi; // narrowed to the §16 family keys — stable inside the callbacks below
+    const [cancellationRows, attempts, clients, links, appts, users] = await Promise.all([
+      store.listRetentionCancellations(),
+      store.listRetentionAttempts(),
+      store.listInternalClients(),
+      store.listClientMatchLinks(),
+      store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(todayEt, -(retention.compute_lookback_days + dueDays + 2)))),
+      store.getUsers(),
+    ]);
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+    const userById = new Map(users.map((u) => [u.id, u]));
+    const apptById = new Map(appts.map((a) => [a.id, a]));
+    const linkByExternal = new Map(links.map((l) => [`${l.provider}:${l.entity}:${l.external_id}`, l]));
+
+    const employeeName = (userId: string | null, externalId: string | null): string => {
+      if (userId && userById.has(userId)) return userById.get(userId)!.name;
+      if (externalId) return userById.get(externalId)?.name ?? `HL user ${externalId}`;
+      return "—";
+    };
+    // Employee filter options: everyone in the attempt ledger, roster-
+    // independent (same derivation as the appointment-anchored mode).
+    const employeeIds = new Set<string>();
+    for (const a of attempts) {
+      if (a.employee_user_id) employeeIds.add(a.employee_user_id);
+      else if (a.employee_external_id) employeeIds.add(a.employee_external_id);
+    }
+    const employees = [...employeeIds].map((id) => ({ id, name: employeeName(userById.has(id) ? id : null, userById.has(id) ? null : id) }));
+
+    const attemptsByAppointment = new Map<string, RetentionAttemptRow[]>();
+    for (const a of attempts) {
+      if (!a.appointment_id) continue;
+      const list = attemptsByAppointment.get(a.appointment_id) ?? [];
+      list.push(a);
+      attemptsByAppointment.set(a.appointment_id, list);
+    }
+    // D1 — the SAME lastAttemptAt derivation the queue's cancellation rows use
+    // (the ledger has no stored stamp; "— none yet" is always a proven fact).
+    const lastAttemptAtOf = (appointmentId: string): string | null => {
+      let latest: RetentionAttemptRow | null = null;
+      for (const a of attempts) {
+        if (a.appointment_id !== appointmentId) continue;
+        if (!latest || a.attempt_at > latest.attempt_at) latest = a;
+      }
+      return latest?.attempt_at ?? null;
+    };
+    const apptIdMs = (appointmentId: string): number | null => {
+      const a = apptById.get(appointmentId);
+      if (!a) return null;
+      const ms = Date.parse(a.appointment_datetime);
+      return Number.isFinite(ms) ? ms : null;
+    };
+    /** The §16 event instant this family kpi's range keys on (see branch header). */
+    const anchorMsOf = (r: RetentionCancellationRow): number | null => {
+      const iso = kpi === "recovery" ? r.recovered_at : r.cancelled_at;
+      if (!iso) return null;
+      const ms = Date.parse(iso);
+      return Number.isFinite(ms) ? ms : null;
+    };
+
+    // The kpi's §16 ledger universe — the SAME predicate + display scope the
+    // cards count (owner directive 10/21 boundary via inRetentionDataScope;
+    // a row whose appointment instant cannot be derived is not provably in
+    // scope and stays hidden — fail-honest, exactly like the cards).
+    const universe = cancellationRows.filter(
+      (r) => inRetentionDataScope(apptIdMs(r.appointment_id)) && inCancellationUniverse(r, kpi),
+    );
+    const base = universe.filter((r) => {
+      if (range.start == null) return true;
+      const ms = anchorMsOf(r);
+      if (ms == null) return false; // unplaceable in a narrowed range — never guessed
+      const d = etDateStrFromInstant(ms);
+      return d >= range.start && d <= (range.end ?? "");
+    });
+    const matchedCount = base.length;
+
+    // Secondary filters — the same three the appointment-anchored mode offers.
+    const classification = params.classification && params.classification !== "all" ? params.classification : null;
+    const filtered = base.filter((r) => {
+      if (classification && r.final_contact_status !== classification) return false;
+      if (params.outcome !== "all" && r.outcome !== params.outcome) return false;
+      if (params.employee !== "all") {
+        const list = attemptsByAppointment.get(r.appointment_id) ?? [];
+        if (!list.some((a) => a.employee_user_id === params.employee || a.employee_external_id === params.employee)) return false;
+      }
+      return true;
+    });
+
+    const rows: RetentionDrillRow[] = filtered.map((r) => {
+      const client = r.internal_client_id ? clientById.get(r.internal_client_id) ?? null : null;
+      const appt = apptById.get(r.appointment_id) ?? null;
+      const apptMs = appt ? Date.parse(appt.appointment_datetime) : NaN;
+      const cancelledMs = r.cancelled_at ? Date.parse(r.cancelled_at) : NaN;
+      const attemptsList = (attemptsByAppointment.get(r.appointment_id) ?? [])
+        .slice()
+        .sort((a, b) => (a.attempt_at < b.attempt_at ? -1 : 1))
+        .map((a) => ({
+          attemptAt: a.attempt_at,
+          employeeName: employeeName(a.employee_user_id, a.employee_external_id),
+          direction: a.direction,
+          status: a.call_status,
+          durationSeconds: a.duration_seconds,
+          attemptClass: a.attempt_class,
+          attribution: a.attribution,
+        }));
+      // The queue's defensive fallback for the acuity id (the engine only
+      // writes resolved-client rows; a missing appointment row still leaves
+      // the ledger's own evidence to anchor identity).
+      const evAcuity = (r.notes as { acuity_appointment_id?: unknown } | null)?.acuity_appointment_id;
+      const acuityId = appt?.acuity_appointment_id ?? (typeof evAcuity === "string" ? evAcuity : null);
+      const apptLink = acuityId ? linkByExternal.get(`acuity:appointment:${acuityId}`) ?? null : null;
+      const contactLink = client?.ghl_contact_external_id ? linkByExternal.get(`highlevel:contact:${client.ghl_contact_external_id}`) ?? null : null;
+      return {
+        appointmentId: r.appointment_id,
+        acuityId,
+        internalClientId: r.internal_client_id ?? "—",
+        clientName: client?.display_name ?? null,
+        apptIso: Number.isFinite(apptMs) ? new Date(apptMs).toISOString() : null,
+        apptDateEt: Number.isFinite(apptMs) ? etDateStrFromInstant(apptMs) : null,
+        apptTimeEt: Number.isFinite(apptMs)
+          ? new Intl.DateTimeFormat("en-US", { timeZone: OPERATIONAL_TIMEZONE, hour: "numeric", minute: "2-digit" }).format(new Date(apptMs))
+          : null,
+        cancelled: true, // a ledger row IS a cancelled appointment (the engine only observes cancellations)
+        appointmentStatus: appt?.status ?? null,
+        // Renders as "cancelled <date>" (the write-once stamp, not a due date —
+        // the appointment left the contact funnel, so no due date exists).
+        dueDate: Number.isFinite(cancelledMs) ? etDateStrFromInstant(cancelledMs) : "",
+        contactName: client?.display_name ?? null,
+        contactPhoneLast4: client?.normalized_phone ? client.normalized_phone.slice(-4) : null,
+        ghlContactId: client?.ghl_contact_external_id ?? null,
+        attemptsCount: r.attempts_count, // the ledger's count — the SAME number the cards and queue carry
+        attempts: attemptsList,
+        lastCallStatus: attemptsList.length ? (attemptsList[attemptsList.length - 1]!.status ?? null) : null,
+        transcriptResult: null,
+        notes: appt?.raw && typeof (appt.raw as { notes?: unknown }).notes === "string" ? ((appt.raw as { notes: string }).notes as string) : null,
+        finalStatus: r.final_contact_status ?? "none", // renders "—" when the cancelled session had no prior outcome
+        needsReviewReason: null,
+        outcome: r.outcome, // §11 outcome words — the ledger column fills at last
+        cancelledAt: r.cancelled_at,
+        recoveredAt: r.recovered_at,
+        successorAppointmentId: r.successor_appointment_id,
+        lastAttemptAt: lastAttemptAtOf(r.appointment_id),
+        matchMethod: apptLink?.match_method ?? null,
+        contactMatchMethod: contactLink?.match_method ?? null,
+        evidence: r.notes ?? {}, // the engine's derivation evidence, verbatim
+      };
+    });
+    rows.sort((a, b) => {
+      const d = a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0;
+      if (d !== 0) return -d; // most recent cancellation first (management reads today's work first)
+      return (a.clientName ?? "").localeCompare(b.clientName ?? "");
+    });
+
+    // Recovery Rate honesty: this drill lists the §16 recovered rows (the
+    // numerator); the CARD's rate divides them by every tracked cancellation
+    // in display scope (range-independent — the card's own denominator).
+    const recoveryDenominator =
+      kpi === "recovery" ? cancellationRows.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id))).length : null;
+
+    return {
+      kpi,
+      kpiLabel: RETENTION_KPI_LABEL[kpi],
+      range: params.range,
+      rangeLabel: range.label,
+      dueDays: range.start == null ? "All stored outcomes" : `${formatShort(range.start)} – ${formatShort(range.end!)}`,
+      rangeStartEt: range.start,
+      rangeEndEt: range.end,
+      todayEt,
+      ownerName,
+      dueDaysSetting: dueDays,
+      rows,
+      matchedCount,
+      employees,
+      // The ledger HAS a writer — a written-ledger 0 is a fact, never "not
+      // computed"; the route renders the family's honest empty state.
+      emptyReason: null,
+      recoveryDenominator,
+      exceptions: null,
       cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
     };
   }
@@ -789,7 +1004,11 @@ export async function retentionDrillData(
       notes: appt?.raw && typeof (appt.raw as { notes?: unknown }).notes === "string" ? ((appt.raw as { notes: string }).notes as string) : null,
       finalStatus: o.final_status,
       needsReviewReason: o.needs_review_reason,
-      outcome: null,
+      outcome: null, // appointment-funnel rows carry no ledger outcome (cancelled appointments leave the contact funnel)
+      cancelledAt: null,
+      recoveredAt: null,
+      successorAppointmentId: null,
+      lastAttemptAt: o.last_attempt_at, // D1 — the outcome row's stored last-contact stamp
       matchMethod: apptLink?.match_method ?? null,
       contactMatchMethod: contactLink?.match_method ?? null,
       evidence: o.evidence,
@@ -801,10 +1020,9 @@ export async function retentionDrillData(
     return (a.clientName ?? "").localeCompare(b.clientName ?? "");
   });
 
-  const emptyReason =
-    params.kpi === "active-cancellations" || params.kpi === "saves" || params.kpi === "reschedules" || params.kpi === "recovery"
-      ? CANCELLATIONS_ENGINE_NOTE
-      : null;
+  // The four §16 ledger kpis never reach this branch (their rows are
+  // ret_cancellations rows, handled above) — no emptyReason here.
+  const emptyReason = null;
 
   return {
     kpi: params.kpi,
@@ -821,6 +1039,7 @@ export async function retentionDrillData(
     matchedCount,
     employees,
     emptyReason,
+    recoveryDenominator: null,
     exceptions: null,
     cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
   };
@@ -930,7 +1149,9 @@ export function retentionDrillCsv(
       [
         r.clientName,
         r.apptIso ? `${r.apptDateEt} ${r.apptTimeEt ?? ""}`.trim() : null,
-        r.dueDate,
+        // Ledger rows have no contact due date (the appointment left the
+        // funnel) — the cell says what the date actually is, never a mislabel.
+        r.outcome != null ? (r.dueDate ? `cancelled ${r.dueDate}` : "cancelled —") : r.dueDate,
         r.contactName ? `${r.contactName} · ··${r.contactPhoneLast4 ?? "—"}` : null,
         String(r.attemptsCount),
         r.lastCallStatus,
