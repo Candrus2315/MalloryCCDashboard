@@ -263,7 +263,7 @@ function RetentionDrillPage() {
             <span className="mb-1 flex items-center gap-1 font-medium text-(--text-caption)">
               Appointment outcome
               <InfoTip
-                tip="Cancellation-outcome words (saved original, rescheduled, confirmed cancellation, …) live in the cancellations ledger, which no stage writes yet — until then every row renders — and any specific outcome filter honestly matches nothing."
+                tip="Cancellation-outcome words (saved original, rescheduled, confirmed cancellation, …) live in the cancellations ledger (ret_cancellations, stage 4a). Its rows render on the Retention tab — Today row and Needs Attention queue — until this drill gains its cancellation listing; until then every row renders — and a specific outcome filter matches nothing."
               />
             </span>
             <select
@@ -764,9 +764,9 @@ function EvidencePanel({
         </p>
         <dl className="mt-2 grid gap-x-6 gap-y-1 text-xs tabular-nums text-(--text-caption) sm:grid-cols-2">
           <div>appointment status: {row.appointmentStatus ?? "—"}</div>
-          <div>appointment outcome: {row.outcome ?? "— (cancellations ledger not yet computed)"}</div>
-          <div>recovered: — (cancellations ledger not yet computed)</div>
-          <div>successor appointment: — (cancellations ledger not yet computed)</div>
+          <div>appointment outcome: {row.outcome ?? "— ledger rows render in the Needs Attention queue; this drill's cancellation listing arrives with its UI stage"}</div>
+          <div>recovered: — ledger data renders on the Retention tab; this drill's cancellation listing arrives with its UI stage</div>
+          <div>successor appointment: — ledger data renders on the Retention tab; this drill's cancellation listing arrives with its UI stage</div>
         </dl>
       </div>
     </div>

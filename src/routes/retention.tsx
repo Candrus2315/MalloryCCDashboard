@@ -190,7 +190,8 @@ function RetentionPage() {
                 {unreached.split ? `${unreached.split.open} still within call window · ${unreached.split.missed} missed call window` : unreached.sub}
               </p>
             </Link>
-            {/* Active Cancellations — amber; the ledger has no writer yet → "—", never 0. */}
+            {/* Active Cancellations — amber; a written-ledger 0 is a fact (the
+                stage-4a engine counts the ret_cancellations ledger). */}
             <Link
               to="/retention-drill"
               search={{ kpi: "active-cancellations" }}
@@ -201,8 +202,10 @@ function RetentionPage() {
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--ret-amber-dot)" aria-hidden="true" />
                 Active Cancellations
               </p>
-              <p className="mt-1.5 text-4xl font-semibold tracking-tight tabular-nums text-(--text-primary)">{num("—")}</p>
-              <p className="kpi-sub mt-1">Awaiting outcome — cancellations tracking arrives with its module</p>
+              <p className="mt-1.5 text-4xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                {cancellations.value == null ? num("—") : num(String(cancellations.value))}
+              </p>
+              <p className="kpi-sub mt-1">{(cancellations.value ?? 0) > 0 ? "Awaiting outcome — these clients can still be saved" : "No cancellations awaiting outcome"}</p>
             </Link>
             {/* Needs Review — purple/gray: system review, not client work. */}
             <Link

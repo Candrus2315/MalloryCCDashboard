@@ -11,10 +11,11 @@
  *
  * HONESTY RULES:
  *  - Cards 6–9 (Active Cancellations, Saves, Reschedules, Recovery Rate) read
- *    ret_cancellations — a ledger NO stage writes yet. They render null ("—"),
- *    never 0: an empty unwritten table is "not computed", not a fact.
+ *    ret_cancellations (stage 4a writer live). A count of 0 over a WRITTEN
+ *    ledger is a fact, not a fabrication; the Recovery RATE stays null ("—")
+ *    while the ledger has no eligible rows (never a fabricated 0%/100%).
  *  - Transfers (no 13th card; scorecard row + InfoTip) come from
- *    ret_transfers — same treatment.
+ *    ret_transfers — still unwritten, same treatment.
  *  - The Weekly Scorecard is NOT computed here (separate later delegation);
  *    the page renders its EmptyState until storage exists.
  *
@@ -68,7 +69,7 @@ export const RETENTION_KPIS: RetentionKpiMeta[] = [
 ];
 
 export const CANCELLATIONS_ENGINE_NOTE =
-  "The cancellations ledger (ret_cancellations) has no writer yet — the cancellations compute lands in a later stage. These cards render an honest — (not computed), never 0.";
+  "The cancellations ledger (ret_cancellations) is written by the retention-cancellations engine (stage 4a); its counts fill the Today row, the Needs Attention queue, This Week's Retention Performance and new weekly scorecards. Surfaces a stage does not write yet (the drill-down's cancellation listing, no-shows, transfers) render an honest — (not computed), never 0.";
 
 export const RETENTION_KPI_LABEL: Record<RetentionKpiKey, string> = Object.fromEntries(
   RETENTION_KPIS.map((k) => [k.key, k.label]),
@@ -124,11 +125,12 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
     max_contact_days: null,
   };
   const dueDays = retention.due_days;
-  const [outcomes, attempts, exceptionsOpen, ownerRows] = await Promise.all([
+  const [outcomes, attempts, exceptionsOpen, ownerRows, cancellationRows] = await Promise.all([
     store.listRetentionAppointmentOutcomes(),
     store.listRetentionAttempts(),
     store.countDataMatchExceptions("open"),
     store.listRetentionOwnerHistory(),
+    store.listRetentionCancellations(),
   ]);
   const ownerName = currentRetentionOwner(ownerRows, todayEt);
 
@@ -200,8 +202,17 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
       split: { open: windowOpenCount, missed: unreachedRows.length - windowOpenCount },
     },
     { key: "compliance", label: "Contact Compliance %", value: complianceRatio == null ? null : Math.round(complianceRatio * 1000) / 10, ratio: complianceRatio, sub: "spoke with ÷ due", attention: false },
-    // Cancellations family: the ledger has no writer yet — null ("—"), never 0.
-    { key: "active-cancellations", label: "Active Cancellations", value: null, ratio: null, sub: "awaiting outcome", attention: false },
+    // Cancellations family — ret_cancellations has a writer (stage 4a): a
+    // written-ledger 0 is a fact (never a fabricated 0); ratios stay null
+    // until their denominators exist.
+    {
+      key: "active-cancellations",
+      label: "Active Cancellations",
+      value: cancellationRows.filter((r) => r.outcome === "pending").length,
+      ratio: null,
+      sub: "awaiting outcome",
+      attention: cancellationRows.some((r) => r.outcome === "pending"),
+    },
     { key: "saves", label: "Saves", value: null, ratio: null, sub: "original appointment kept", attention: false },
     { key: "reschedules", label: "Reschedules", value: null, ratio: null, sub: "rebooked within window", attention: false },
     { key: "recovery", label: "Recovery Rate", value: null, ratio: null, sub: "recovered ÷ eligible", attention: false },
