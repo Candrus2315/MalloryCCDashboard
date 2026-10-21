@@ -77,6 +77,8 @@ import type {
   AvailabilityDiscrepancyRow,
   AvailabilitySlotRow,
   AvailabilitySyncRunRow,
+  RetentionCancellationRow,
+  RetentionCancellationWrite,
 } from "./types";
 import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -1891,6 +1893,7 @@ export class MemoryStore implements Store {
   // per-attempt rows never merged, updates only as honest re-observations.
   private retentionAttempts = new Map<string, RetentionAttemptRow>();
   private retentionOutcomes = new Map<string, RetentionOutcomeRow>();
+  private retentionCancellations = new Map<string, RetentionCancellationRow>();
   async listRetentionAttempts(): Promise<RetentionAttemptRow[]> {
     await this.ensureSchema();
     return [...this.retentionAttempts.values()]
@@ -1991,6 +1994,50 @@ export class MemoryStore implements Store {
       needs_review_reason: row.needsReviewReason,
       computed_at: new Date().toISOString(),
     });
+  }
+  // ---- RETENTION CANCELLATIONS LEDGER (stage 4a; plan §11) ----
+  private retentionCancellationRowFromWrite(w: RetentionCancellationWrite, prev: RetentionCancellationRow | null): RetentionCancellationRow {
+    return {
+      appointment_id: w.appointmentId,
+      internal_client_id: w.internalClientId,
+      ghl_contact_external_id: w.ghlContactExternalId,
+      cancelled_at: w.cancelledAtIso,
+      attempts_count: w.attemptsCount,
+      any_answered: w.anyAnswered,
+      final_contact_status: w.finalContactStatus,
+      outcome: w.outcome,
+      successor_appointment_id: w.successorAppointmentId,
+      recovered: w.recovered,
+      recovered_at: w.recoveredAtIso,
+      // MANAGEMENT EDITS (manual_overrides) are never touched by the automatic
+      // writer — the prev row's overrides ride through untouched.
+      manual_overrides: prev ? prev.manual_overrides : null,
+      notes: JSON.parse(JSON.stringify(w.notes)) as Record<string, unknown>,
+    };
+  }
+  async listRetentionCancellations(): Promise<RetentionCancellationRow[]> {
+    await this.ensureSchema();
+    return [...this.retentionCancellations.values()]
+      .sort((a, b) =>
+        (a.cancelled_at ?? "") < (b.cancelled_at ?? "") ? 1 : (a.cancelled_at ?? "") > (b.cancelled_at ?? "") ? -1 : a.appointment_id < b.appointment_id ? -1 : 1,
+      )
+      .map((r) => JSON.parse(JSON.stringify(r)) as RetentionCancellationRow);
+  }
+  async insertRetentionCancellations(rows: RetentionCancellationWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      if (this.retentionCancellations.has(r.appointmentId)) continue;
+      this.retentionCancellations.set(r.appointmentId, this.retentionCancellationRowFromWrite(r, null));
+      created += 1;
+    }
+    return created;
+  }
+  async updateRetentionCancellation(row: RetentionCancellationWrite): Promise<void> {
+    await this.ensureSchema();
+    const cur = this.retentionCancellations.get(row.appointmentId);
+    if (!cur) throw new Error(`updateRetentionCancellation: unknown appointment ${row.appointmentId}`);
+    this.retentionCancellations.set(row.appointmentId, this.retentionCancellationRowFromWrite(row, cur));
   }
   async dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void> {
     await this.ensureSchema();

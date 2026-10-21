@@ -39,6 +39,7 @@ import { attributionTick, type AttributionTickResult } from "./attribution-tick"
 import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
 import { commissionCloseTick, type CommissionCloseResult } from "../commission/close";
 import { retentionTick, type RetentionTickResult } from "../retention/tick";
+import { retentionCancellationsTick, type RetentionCancellationsTickResult } from "../retention/cancellations-tick";
 import {
   ensureRetentionScorecardBootBackfill,
   retentionScorecardTick,
@@ -265,6 +266,8 @@ export interface SchedulerTickResult {
   scorecard?: RetentionScorecardTickResult;
   /** Boot backfill of the most recent missing scorecard week (one bounded attempt per process). */
   scorecardBoot?: RetentionScorecardTickResult;
+  /** Independent cancellations-ledger recompute piggy-backed on the same tick (never fails the tick; throttled). */
+  cancellations?: RetentionCancellationsTickResult;
   /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
   reaped?: number;
 }
@@ -749,7 +752,22 @@ export async function schedulerTick(options?: {
   } catch (e) {
     scorecardBoot = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
-  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, scorecard, scorecardBoot, reaped };
+  // RETENTION CANCELLATIONS LEDGER (stage 4a, owner build order): the
+  // cancellations/reschedules ledger, idempotent diff-writes. Same piggy-back
+  // contract as the retention + scorecard pieces above: own guards (running
+  // guard, 5-min throttle), own sync_runs rows ("retention-cancellations"),
+  // never fails the tick.
+  let cancellations: RetentionCancellationsTickResult | undefined;
+  try {
+    cancellations = await retentionCancellationsTick({
+      store: options?.store,
+      now: options?.now,
+      trigger: options?.trigger,
+    });
+  } catch (e) {
+    cancellations = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, scorecard, scorecardBoot, cancellations, reaped };
 }
 
 // ---------- the always-on loop ----------

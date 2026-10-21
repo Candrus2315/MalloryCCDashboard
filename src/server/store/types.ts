@@ -521,8 +521,9 @@ export interface RetentionSettings {
   max_attempts: number | null;
   max_attempt_days: number | null;
   max_contact_days: number | null;
+  /** §11 reschedule/save window: days after a cancellation in which a rebooking counts as a recovery (plan §12; default 14). */
+  reschedule_days: number;
 }
-
 export const DEFAULT_RETENTION_SETTINGS: RetentionSettings = {
   due_days: 7,
   qualifying_statuses: ["scheduled"],
@@ -531,6 +532,7 @@ export const DEFAULT_RETENTION_SETTINGS: RetentionSettings = {
   max_attempts: null,
   max_attempt_days: null,
   max_contact_days: null,
+  reschedule_days: 14,
 };
 
 export function normalizeRetentionSettings(raw: unknown): RetentionSettings {
@@ -555,6 +557,7 @@ export function normalizeRetentionSettings(raw: unknown): RetentionSettings {
     max_attempts: typeof r.max_attempts === "number" && Number.isFinite(r.max_attempts) && r.max_attempts > 0 ? Math.round(r.max_attempts) : null,
     max_attempt_days: typeof r.max_attempt_days === "number" && Number.isFinite(r.max_attempt_days) && r.max_attempt_days > 0 ? Math.round(r.max_attempt_days) : null,
     max_contact_days: typeof r.max_contact_days === "number" && Number.isFinite(r.max_contact_days) && r.max_contact_days > 0 ? Math.round(r.max_contact_days) : null,
+    reschedule_days: int(r.reschedule_days, base.reschedule_days, 1, 90),
   };
 }
 
@@ -1436,6 +1439,49 @@ export interface RetentionOutcomeWrite {
 }
 
 /**
+ * One per-cancellation ledger row (retention_cancellations; stage 4a, plan
+ * §11). PK = appointment_id (the cancelled appointment) — one row per
+ * detected cancellation, mirroring the write-once discipline: cancelled_at is
+ * COPIED from appointments.cancelled_at (this system's confirmation stamp —
+ * Acuity exposes no client-side cancellation timestamp) and never moved.
+ * outcome vocabulary (plan §11): saved_original | rescheduled |
+ * confirmed_cancellation | unable_to_reach | pending | transferred | other.
+ * saved_original here means the client re-booked THE SAME session slot after
+ * cancelling (the original appointment, kept — evidence: an actual successor
+ * appointment row at the same instant); transferred/other arrive only with
+ * the management-override stage.
+ */
+export interface RetentionCancellationRow {
+  appointment_id: string;
+  internal_client_id: string | null;
+  ghl_contact_external_id: string | null;
+  cancelled_at: string | null;
+  attempts_count: number;
+  any_answered: boolean;
+  final_contact_status: string | null;
+  outcome: string;
+  successor_appointment_id: string | null;
+  recovered: boolean;
+  recovered_at: string | null;
+  manual_overrides: Record<string, unknown> | null;
+  notes: Record<string, unknown> | null;
+}
+export interface RetentionCancellationWrite {
+  appointmentId: string;
+  internalClientId: string | null;
+  ghlContactExternalId: string | null;
+  cancelledAtIso: string | null;
+  attemptsCount: number;
+  anyAnswered: boolean;
+  finalContactStatus: string | null;
+  outcome: string;
+  successorAppointmentId: string | null;
+  recovered: boolean;
+  recoveredAtIso: string | null;
+  notes: Record<string, unknown>;
+}
+
+/**
  * One stored weekly scorecard row (ret_scorecards; stage 3c, plan §16).
  * APPEND-IF-NEW: one row per scored Mon–Sun ET week (UNIQUE week_start),
  * written ONCE — a stored week is NEVER rewritten (owner rule "past weeks
@@ -2066,6 +2112,16 @@ export interface Store {
   insertRetentionAppointmentOutcomes(rows: RetentionOutcomeWrite[]): Promise<number>;
   /** Content update of ONE existing outcome row (recomputed verdict); computed_at is set by the store. */
   updateRetentionAppointmentOutcome(row: RetentionOutcomeWrite): Promise<void>;
+
+  // ---- RETENTION CANCELLATIONS LEDGER (stage 4a; plan §11) ----
+  // Same discipline as the attempt/outcome ledger: bulk reads, content-diffed
+  // by the CALLER so an unchanged recompute writes nothing.
+  /** Every cancellation ledger row (bulk read for the diff + tests). */
+  listRetentionCancellations(): Promise<RetentionCancellationRow[]>;
+  /** Insert NEW ledger rows only (the engine pre-dedupes by appointment_id). Returns the number actually inserted. */
+  insertRetentionCancellations(rows: RetentionCancellationWrite[]): Promise<number>;
+  /** Content update of ONE existing ledger row (derived outcome advanced); computed stamp rides notes. */
+  updateRetentionCancellation(row: RetentionCancellationWrite): Promise<void>;
   /** Weekly scorecards (stage 3c): append-if-new storage — a stored week is never rewritten. */
   listRetentionScorecards(): Promise<RetentionScorecardRow[]>;
   getRetentionScorecard(weekStart: string): Promise<RetentionScorecardRow | null>;
