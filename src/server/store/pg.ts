@@ -72,6 +72,8 @@ import type {
   AvailabilityDiscrepancyRow,
   AvailabilitySlotRow,
   AvailabilitySyncRunRow,
+  RetentionCancellationRow,
+  RetentionCancellationWrite,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -3993,6 +3995,65 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
         evidence = ${JSON.stringify(row.evidence)}::jsonb,
         needs_review_reason = ${row.needsReviewReason},
         computed_at = now()
+      WHERE appointment_id = ${row.appointmentId}::uuid`;
+  }
+
+  // ---- RETENTION CANCELLATIONS LEDGER (stage 4a; plan §11) ----
+  // One row per detected cancellation (PK appointment_id). Same discipline as
+  // the attempt/outcome ledger: bulk reads; the ENGINE content-diffs so an
+  // unchanged recompute writes nothing. cancelled_at is copied from the
+  // appointments write-once value and NEVER moved by a later sync. The
+  // UPDATE path never touches manual_overrides (management edits survive).
+  async listRetentionCancellations(): Promise<RetentionCancellationRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT appointment_id::text AS appointment_id, internal_client_id::text AS internal_client_id, ghl_contact_external_id, cancelled_at, attempts_count, any_answered, final_contact_status, outcome, successor_appointment_id::text AS successor_appointment_id, recovered, recovered_at, manual_overrides, notes FROM retention_cancellations ORDER BY cancelled_at DESC NULLS LAST, appointment_id`;
+    return rows.map((r) => this.retentionCancellationRow(r as Record<string, unknown>));
+  }
+  private retentionCancellationRow(r: Record<string, unknown>): RetentionCancellationRow {
+    return {
+      appointment_id: String(r.appointment_id),
+      internal_client_id: r.internal_client_id == null ? null : String(r.internal_client_id),
+      ghl_contact_external_id: r.ghl_contact_external_id == null ? null : String(r.ghl_contact_external_id),
+      cancelled_at: r.cancelled_at == null ? null : new Date(r.cancelled_at as string).toISOString(),
+      attempts_count: Number(r.attempts_count ?? 0),
+      any_answered: r.any_answered === true,
+      final_contact_status: r.final_contact_status == null ? null : String(r.final_contact_status),
+      outcome: String(r.outcome ?? "pending"),
+      successor_appointment_id: r.successor_appointment_id == null ? null : String(r.successor_appointment_id),
+      recovered: r.recovered === true,
+      recovered_at: r.recovered_at == null ? null : new Date(r.recovered_at as string).toISOString(),
+      manual_overrides: parseEvidenceCell(r.manual_overrides),
+      notes: parseEvidenceCell(r.notes),
+    };
+  }
+  async insertRetentionCancellations(rows: RetentionCancellationWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      const out = await this.sql`
+        INSERT INTO retention_cancellations (appointment_id, internal_client_id, ghl_contact_external_id, cancelled_at, attempts_count, any_answered, final_contact_status, outcome, successor_appointment_id, recovered, recovered_at, notes)
+        VALUES (${r.appointmentId}::uuid, ${r.internalClientId}::uuid, ${r.ghlContactExternalId}, ${r.cancelledAtIso}::timestamptz, ${r.attemptsCount}, ${r.anyAnswered}, ${r.finalContactStatus}, ${r.outcome}, ${r.successorAppointmentId}::uuid, ${r.recovered}, ${r.recoveredAtIso}::timestamptz, ${JSON.stringify(r.notes)}::jsonb)
+        ON CONFLICT (appointment_id) DO NOTHING
+        RETURNING appointment_id`;
+      created += out.length;
+    }
+    return created;
+  }
+  async updateRetentionCancellation(row: RetentionCancellationWrite): Promise<void> {
+    await this.ensureSchema();
+    await this.sql`
+      UPDATE retention_cancellations SET
+        internal_client_id = ${row.internalClientId}::uuid,
+        ghl_contact_external_id = ${row.ghlContactExternalId},
+        cancelled_at = ${row.cancelledAtIso}::timestamptz,
+        attempts_count = ${row.attemptsCount},
+        any_answered = ${row.anyAnswered},
+        final_contact_status = ${row.finalContactStatus},
+        outcome = ${row.outcome},
+        successor_appointment_id = ${row.successorAppointmentId}::uuid,
+        recovered = ${row.recovered},
+        recovered_at = ${row.recoveredAtIso}::timestamptz,
+        notes = ${JSON.stringify(row.notes)}::jsonb
       WHERE appointment_id = ${row.appointmentId}::uuid`;
   }
 

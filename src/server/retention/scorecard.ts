@@ -8,10 +8,16 @@
  *
  * IN-SCOPE metrics (this stage): eligible, called (≥1 in-window attempt),
  * spoke-with, still unreached, BOTH §16 compliance flavors, Needs Review,
- * Data Match Exceptions. OUT OF SCOPE (null, honest "—"): the cancellation
- * family (cancellations worked, saves, reschedules, recoveries, recovery
- * rate), no-shows and transfers — the ret_cancellations/ret_transfers
- * ledgers have no writer yet (same treatment as the KPI band cards).
+ * Data Match Exceptions — and, since stage 4a, the CANCELLATION FAMILY
+ * (cancellations worked / saves / reschedules / recoveries / recovery rate)
+ * read from the WRITTEN ret_cancellations ledger through the same
+ * §16 inCancellationUniverse predicate the KPI cards and the queue use (ONE
+ * source of truth). A week's cancellation events are scoped to R by
+ * cancelled_at (the week the cancellations happened); the family fills ONLY
+ * when the whole scored week sits inside the ledger's cancelled_at coverage
+ * (weekStart ≥ today − compute_lookback_days) — an uncovered week stores null
+ * ("—") rather than a false zero. Still OUT OF SCOPE (null, honest "—"):
+ * no-shows and transfers — ret_transfers/no-show pipeline have no writer yet.
  *
  * Metric formulas are §16 VERBATIM, mirroring the shipped KPI-band
  * aggregation in ui-data.ts (ONE metrics source of truth — the per-week
@@ -27,6 +33,7 @@
 import type { Store, RetentionOwnerHistoryRow, RetentionScorecardWrite, RetentionOutcomeRow } from "../store/types";
 import { addDays, etDateStrFromInstant, etDayStartUtc, weekStart } from "../date-logic";
 import { UNREACHED_FINAL_STATUSES } from "./classify";
+import { inCancellationUniverse } from "./ui-data";
 
 export const RETENTION_SCORECARD_VERSION = "retention-scorecard v1";
 
@@ -82,11 +89,17 @@ export interface ScorecardComputeInput {
   needsReviewCount: number;
   matchExceptionsOpen: number;
   owner: RetentionOwnerForWeek | null;
+  /**
+   * The cancellations family for R (stage 4a), pre-derived by the caller from
+   * the written ledger; null/absent = the week sits outside the ledger's
+   * cancelled_at coverage — the five cells store null ("—"), never a false 0.
+   */
+  cancellations?: { worked: number; saves: number; reschedules: number; recoveries: number } | null;
 }
 
 /** Pure §16 assembly from pre-computed counts — directly unit-testable. */
 export function buildScorecardWrite(input: ScorecardComputeInput): RetentionScorecardWrite {
-  const { weekStart, weekEnd, dueDays, cohort, calledCount, spokenWithCount, unreachedCount, needsReviewCount, matchExceptionsOpen, owner } = input;
+  const { weekStart, weekEnd, dueDays, cohort, calledCount, spokenWithCount, unreachedCount, needsReviewCount, matchExceptionsOpen, owner, cancellations } = input;
   const eligible = cohort.length;
   return {
     weekStart,
@@ -101,13 +114,14 @@ export function buildScorecardWrite(input: ScorecardComputeInput): RetentionScor
     unreached: unreachedCount,
     complianceAppointment: ratio(spokenWithCount, eligible),
     complianceAttempt: ratio(calledCount, eligible),
-    // Cancellation family + no-shows + transfers: ledgers unwritten in this
-    // stage — stored null, rendered "—" (never 0).
-    cancellationsWorked: null,
-    saves: null,
-    reschedules: null,
-    recoveries: null,
-    recoveryRate: null,
+    // Cancellation family (stage 4a): counts over the written ledger when the
+    // week is covered; recovery rate needs a denominator (worked > 0) — null
+    // otherwise ("—", never a fabricated 0%/100%). Uncovered weeks store null.
+    cancellationsWorked: cancellations?.worked ?? null,
+    saves: cancellations?.saves ?? null,
+    reschedules: cancellations?.reschedules ?? null,
+    recoveries: cancellations?.recoveries ?? null,
+    recoveryRate: cancellations && cancellations.worked > 0 ? cancellations.recoveries / cancellations.worked : null,
     noShows: null,
     noShowsSpoken: null,
     noShowsNotSpoken: null,
@@ -183,11 +197,38 @@ export async function computeAndStoreWeeklyScorecard(
     return windowOpen || !o.any_answered;
   }).length;
 
-  const [ownerRows, matchExceptionsOpen] = await Promise.all([
+  const [ownerRows, matchExceptionsOpen, cancellationRows] = await Promise.all([
     store.listRetentionOwnerHistory(),
     store.countDataMatchExceptions("open"),
+    store.listRetentionCancellations(),
   ]);
   const owner = retentionOwnerForWeek(ownerRows, weekEnd);
+
+  // Cancellation family (stage 4a): the week's cancellation events, scoped to
+  // R by cancelled_at ET date, counted through the SAME §16 predicate the
+  // cards/queue use. COVERAGE GATE: the ledger only contains cancellations
+  // whose cancelled_at sits inside the module's compute_lookback_days window —
+  // a scored week older than that would silently count 0 (a false zero), so
+  // an uncovered week stores null ("—") for the whole family instead.
+  const coverageFloor = addDays(etDateStrFromInstant(nowMs), -retention.compute_lookback_days);
+  const weekCovered = weekStart >= coverageFloor;
+  const weekRows = weekCovered
+    ? cancellationRows.filter((r) => {
+        if (!r.cancelled_at) return false;
+        const ms = Date.parse(r.cancelled_at);
+        if (!Number.isFinite(ms)) return false;
+        const d = etDateStrFromInstant(ms);
+        return d >= weekStart && d <= weekEnd;
+      })
+    : [];
+  const cancellations = weekCovered
+    ? {
+        worked: weekRows.length,
+        saves: weekRows.filter((r) => inCancellationUniverse(r, "saves")).length,
+        reschedules: weekRows.filter((r) => inCancellationUniverse(r, "reschedules")).length,
+        recoveries: weekRows.filter((r) => inCancellationUniverse(r, "recovery")).length,
+      }
+    : null;
 
   const write = buildScorecardWrite({
     weekStart,
@@ -200,6 +241,7 @@ export async function computeAndStoreWeeklyScorecard(
     needsReviewCount,
     matchExceptionsOpen,
     owner,
+    cancellations,
   });
   const { created, row } = await store.insertRetentionScorecardIfAbsent(write);
   if (!created && !row) throw new Error("ret_scorecards insert returned neither created row nor stored row");

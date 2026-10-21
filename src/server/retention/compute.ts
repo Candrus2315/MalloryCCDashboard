@@ -460,8 +460,8 @@ export async function computeRetention(
   };
 }
 
-/** Instant comparison tolerant of precision drift (ms vs µs round-trips). */
-function sameInstant(a: string | null, b: string | null): boolean {
+/** Instant comparison tolerant of precision drift (ms vs µs round-trips). Shared by every ret_* diff writer. */
+export function sameInstant(a: string | null, b: string | null): boolean {
   if ((a ?? null) === (b ?? null)) return true;
   if (a == null || b == null) return false;
   const da = Date.parse(a);
@@ -479,7 +479,7 @@ function sameInstant(a: string | null, b: string | null): boolean {
  * (JS objects preserve insertion order). Canonical form sorts object keys
  * recursively on BOTH sides; array order is preserved (jsonb keeps it too).
  */
-function canonicalJson(v: unknown): string {
+export function canonicalJson(v: unknown): string {
   // Date (or any toJSON) would render via JSON.stringify on write — mirror it.
   if (v instanceof Date) return JSON.stringify(v.toISOString());
   if (v === null || typeof v !== "object") return JSON.stringify(v ?? null);

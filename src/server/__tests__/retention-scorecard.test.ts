@@ -176,11 +176,13 @@ describe("computeAndStoreWeeklyScorecard — §16 formulas", () => {
     expect(r.compliance_attempt).toBeCloseTo(3 / 6, 6);
     expect(r.needs_review).toBe(1); // A5 (SWC note, no call — D5)
     expect(r.match_exceptions).toBe(await s.store.countDataMatchExceptions("open"));
-    // Cancellation family + no-shows + transfers: no writers yet — null, never 0.
-    expect(r.cancellations_worked).toBeNull();
-    expect(r.saves).toBeNull();
-    expect(r.reschedules).toBeNull();
-    expect(r.recoveries).toBeNull();
+    // Cancellation family (stage 4a): the ledger is WRITTEN and the week is
+    // inside its cancelled_at coverage — an empty ledger is an honest 0; the
+    // recovery RATE stays null (no denominator → "—", never a fabricated 0%).
+    expect(r.cancellations_worked).toBe(0);
+    expect(r.saves).toBe(0);
+    expect(r.reschedules).toBe(0);
+    expect(r.recoveries).toBe(0);
     expect(r.recovery_rate).toBeNull();
     expect(r.no_shows).toBeNull();
     expect(r.no_shows_spoken).toBeNull();
@@ -230,6 +232,98 @@ describe("computeAndStoreWeeklyScorecard — §16 formulas", () => {
     expect(w.complianceAppointment).toBeNull();
     expect(w.complianceAttempt).toBeNull();
     expect(w.matchExceptions).toBe(2);
+    // stage 4a default: no cancellations input → the family stores null ("—"), never a false 0.
+    expect(w.cancellationsWorked).toBeNull();
+    expect(w.saves).toBeNull();
+    expect(w.recoveryRate).toBeNull();
+  });
+
+  test("stage 4a: cancellation family fills from the ledger for a COVERED new week (cancelled_at ∈ R; recovery rate with a denominator)", async () => {
+    const s = await seed();
+    await computeRetention(s.store, { now: NOW });
+    // Three in-week cancellation events (cancelled_at 10/19..10/25): one save,
+    // one reschedule, one pending — plus one OUT-of-week event that must not count.
+    const mk = (apptId: string, clientId: string, cancelledAt: string, outcome: string) => {
+      const rec = outcome === "saved_original" || outcome === "rescheduled";
+      return {
+        appointmentId: apptId,
+        internalClientId: clientId,
+        ghlContactExternalId: null,
+        cancelledAtIso: cancelledAt,
+        attemptsCount: 1,
+        anyAnswered: true,
+        finalContactStatus: "verified_spoke_with",
+        outcome,
+        successorAppointmentId: null,
+        recovered: rec,
+        recoveredAtIso: rec ? "2026-10-24T10:00:00Z" : null,
+        notes: {},
+      };
+    };
+    await s.store.insertRetentionCancellations([
+      mk(s.apptIds.A1!, s.clientIds.CT1!, "2026-10-19T14:00:00Z", "saved_original"),
+      mk(s.apptIds.A2!, s.clientIds.CT2!, "2026-10-21T14:00:00Z", "rescheduled"),
+      mk(s.apptIds.A3!, s.clientIds.CT3!, "2026-10-22T14:00:00Z", "pending"),
+      mk(s.apptIds.A6!, s.clientIds.CT6!, "2026-10-27T14:00:00Z", "rescheduled"), // NEXT week's event — excluded
+    ]);
+    const res = await computeAndStoreWeeklyScorecard(s.store, { weekStart: WEEK_START, weekEnd: WEEK_END, now: NOW });
+    expect(res.outcome).toBe("computed");
+    const r = (await s.store.listRetentionScorecards())[0]!;
+    expect(r.cancellations_worked).toBe(3); // the three in-week events (all outcomes are "worked")
+    expect(r.saves).toBe(1);
+    expect(r.reschedules).toBe(1);
+    expect(r.recoveries).toBe(2); // saved_original ∪ rescheduled
+    expect(r.recovery_rate).toBeCloseTo(2 / 3, 6);
+  });
+
+  test("stage 4a: an UNCOVERED week (older than the ledger's lookback) stores null, never a false zero", async () => {
+    const s = await seed();
+    await computeRetention(s.store, { now: NOW });
+    // 2026-08-03 week is ~12 weeks before NOW (2026-10-26) — outside the
+    // 30-day cancelled_at coverage, so counts would silently drop events.
+    const res = await computeAndStoreWeeklyScorecard(s.store, { weekStart: "2026-08-03", weekEnd: "2026-08-09", now: NOW });
+    expect(res.outcome).toBe("computed");
+    const r = (await s.store.listRetentionScorecards()).find((x) => x.week_start === "2026-08-03")!;
+    expect(r.cancellations_worked).toBeNull();
+    expect(r.saves).toBeNull();
+    expect(r.reschedules).toBeNull();
+    expect(r.recoveries).toBeNull();
+    expect(r.recovery_rate).toBeNull();
+  });
+
+  test("stage 4a isolation: a STORED week is never rewritten, even when the ledger changes afterwards", async () => {
+    const s = await seed();
+    await computeRetention(s.store, { now: NOW });
+    const first = await computeAndStoreWeeklyScorecard(s.store, { weekStart: WEEK_START, weekEnd: WEEK_END, now: NOW });
+    expect(first.outcome).toBe("computed");
+    const before = (await s.store.listRetentionScorecards())[0]!;
+    expect(before.cancellations_worked).toBe(0); // empty ledger at compute time — a fact
+
+    // The ledger GAINS rows for that week after the week is stored...
+    await s.store.insertRetentionCancellations([
+      {
+        appointmentId: s.apptIds.A1!,
+        internalClientId: s.clientIds.CT1!,
+        ghlContactExternalId: null,
+        cancelledAtIso: "2026-10-20T14:00:00Z",
+        attemptsCount: 0,
+        anyAnswered: false,
+        finalContactStatus: null,
+        outcome: "saved_original",
+        successorAppointmentId: null,
+        recovered: true,
+        recoveredAtIso: "2026-10-23T10:00:00Z",
+        notes: {},
+      },
+    ]);
+    // ...a recompute is still the append-if-new no-op: same row, counts intact.
+    const again = await computeAndStoreWeeklyScorecard(s.store, { weekStart: WEEK_START, weekEnd: WEEK_END, now: NOW });
+    expect(again.outcome).toBe("already-stored");
+    expect(again.created).toBe(false);
+    const rows = await s.store.listRetentionScorecards();
+    expect(rows.length).toBe(1);
+    expect(JSON.parse(JSON.stringify(rows[0]))).toEqual(JSON.parse(JSON.stringify(before)));
+    expect(rows[0]!.saves).toBe(0); // the stored week keeps its snapshot — past weeks render byte-identically
   });
 });
 

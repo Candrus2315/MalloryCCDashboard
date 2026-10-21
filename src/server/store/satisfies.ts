@@ -219,6 +219,10 @@ const STORE_METHOD_FLAGS = {
   listRetentionScorecards: 1,
   getRetentionScorecard: 1,
   insertRetentionScorecardIfAbsent: 1,
+  // stage 4a cancellations ledger (plan §11)
+  listRetentionCancellations: 1,
+  insertRetentionCancellations: 1,
+  updateRetentionCancellation: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

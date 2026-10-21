@@ -182,14 +182,61 @@ describe("retentionOverview (the 12-card band, §16)", () => {
     expect(o.computedAtIso).toBeTruthy();
   });
 
-  test("cancellations family renders null (never 0) while no stage writes the ledger", async () => {
+  test("stage 4a: the written ledger counts as facts (empty ledger → 0s; recovery rate — until an eligible row exists)", async () => {
     const s = await seed();
     const o = await retentionOverview(s.store, NOW);
     const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
-    for (const k of ["active-cancellations", "saves", "reschedules", "recovery"]) {
-      expect(byKey[k]!.value).toBeNull();
-    }
+    expect(byKey["active-cancellations"]!.value).toBe(0); // written ledger, empty → an honest 0, never "—" and never a fabricated count
+    expect(byKey["active-cancellations"]!.attention).toBe(false);
+    expect(byKey["saves"]!.value).toBe(0);
+    expect(byKey["reschedules"]!.value).toBe(0);
+    expect(byKey["recovery"]!.value).toBe(0);
+    expect(byKey["recovery"]!.ratio).toBeNull(); // no eligible denominator → "—", never a fabricated 0%/100%
     expect(CANCELLATIONS_ENGINE_NOTE).toContain("never 0");
+    expect(CANCELLATIONS_ENGINE_NOTE).toContain("stage 4a");
+  });
+
+  test("stage 4a: pending ledger rows count as Active Cancellations (attention on)", async () => {
+    const s = await seed();
+    await s.store.insertRetentionCancellations([
+      {
+        appointmentId: s.apptIds.A1!,
+        internalClientId: s.clientIds.CT1!,
+        ghlContactExternalId: "CT1",
+        cancelledAtIso: "2026-10-15T14:00:00Z",
+        attemptsCount: 2,
+        anyAnswered: false,
+        finalContactStatus: "voicemail",
+        outcome: "pending",
+        successorAppointmentId: null,
+        recovered: false,
+        recoveredAtIso: null,
+        notes: {},
+      },
+      {
+        appointmentId: s.apptIds.A2!,
+        internalClientId: s.clientIds.CT2!,
+        ghlContactExternalId: "CT2",
+        cancelledAtIso: "2026-10-16T14:00:00Z",
+        attemptsCount: 1,
+        anyAnswered: true,
+        finalContactStatus: "verified_spoke_with",
+        outcome: "saved_original",
+        successorAppointmentId: s.apptIds.A3!,
+        recovered: true,
+        recoveredAtIso: "2026-10-17T10:00:00Z",
+        notes: {},
+      },
+    ]);
+    const o = await retentionOverview(s.store, NOW);
+    const byKey = Object.fromEntries(o.cards.map((c) => [c.key, c]));
+    expect(byKey["active-cancellations"]!.value).toBe(1); // §16: count(outcome = 'pending') — the saved row is NOT active
+    expect(byKey["active-cancellations"]!.attention).toBe(true); // a client is waiting
+    expect(byKey["saves"]!.value).toBe(1); // the saved_original row
+    expect(byKey["reschedules"]!.value).toBe(0);
+    expect(byKey["recovery"]!.value).toBe(1); // recovered = saved_original ∪ rescheduled
+    expect(byKey["recovery"]!.ratio).toBeCloseTo(1 / 2); // (saves+reschedules) ÷ 2 tracked cancellations
+    expect(byKey["recovery"]!.sub).toBe("of 2 tracked cancellations");
   });
 
   test("no-shows count by APPOINTMENT date (D10 proxy) with spoken split", async () => {
