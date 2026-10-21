@@ -1,9 +1,15 @@
 /**
- * ROUTE-LEVEL SMOKE (stage 3b) — the two Retention routes mount with valid
- * route ids, the drill's validateSearch maps every ?kpi=/filter param
- * (including the kpi-aware range default and the locked Needs Review
- * classification), and the nav array carries Retention immediately after
- * Performance (owner spec: nav near Performance; no BottomNav change).
+ * ROUTE-LEVEL SMOKE (stage 3b + UX overhaul spec §5.3/§6) — the two Retention
+ * routes mount with valid route ids, the drill's validateSearch maps every
+ * ?kpi=/filter param (including the kpi-aware range default and the locked
+ * Needs Review classification), the PAGE's validateSearch validates ?week=
+ * AND ?queue= (unknown values fall back to all; the reserved no-show/
+ * reschedule stages fall back too), and the nav array carries Retention
+ * immediately after Performance. The markup pins below hold the UX overhaul
+ * contract: overview + demoted secondary row, stage cards, the ONE unified
+ * queue with its seven columns and urgency order, side-by-side
+ * Performance/Impact, the wired scorecard cells, and the quiet Data Quality
+ * strip.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -80,18 +86,43 @@ describe("retention route ?week= (stage 3c scorecard select)", () => {
   });
 });
 
-describe("retention page RESTRUCTURE (owner directive 2026-10-20)", () => {
+describe("retention route ?queue= (UX overhaul §5.3 — the unified queue's stage filter)", () => {
+  const vs = (RetentionRoute as unknown as { options: { validateSearch: (s: Record<string, unknown>) => Record<string, unknown> } }).options
+    .validateSearch;
+  test("queue param: every ACTIVE chip value passes through", () => {
+    expect(vs({}).queue).toBeUndefined(); // renders as "all"
+    expect(vs({ queue: "all" }).queue).toBe("all");
+    expect(vs({ queue: "excitement" }).queue).toBe("excitement");
+    expect(vs({ queue: "unreached" }).queue).toBe("unreached");
+    expect(vs({ queue: "cancellations" }).queue).toBe("cancellations");
+    expect(vs({ queue: "needs-review" }).queue).toBe("needs-review");
+  });
+  test("unknown values fall back to all (undefined), mirroring the drill's convention", () => {
+    expect(vs({ queue: "bogus" }).queue).toBeUndefined();
+    expect(vs({ queue: 42 }).queue).toBeUndefined();
+  });
+  test("RESERVED stages (no-shows, reschedules) fall back to all until their pipeline stages ship (D4/D5)", () => {
+    expect(vs({ queue: "no-shows" }).queue).toBeUndefined();
+    expect(vs({ queue: "reschedules" }).queue).toBeUndefined();
+  });
+  test("queue and week coexist (the scorecard select preserves the queue filter)", () => {
+    expect(vs({ queue: "unreached", week: "2026-10-19" })).toEqual({ queue: "unreached", week: "2026-10-19" });
+  });
+});
+
+describe("retention page UX OVERHAUL (spec §5, owner directive 2026-10-21)", () => {
   const page = () => readFileSync(new URL("../../routes/retention.tsx", import.meta.url), "utf8");
 
-  test("section order: TODAY → Needs Attention → This Week performance → Retention Impact → Weekly Scorecard → Data Quality", () => {
+  test("§5 order: Overview → Needs Attention → Queue → Performance beside Impact → Scorecard → Data Quality", () => {
     const src = page();
     const order = [
-      'aria-label="Today"',
-      'aria-label="Needs Attention"',
-      'aria-label="This Week\'s Retention Performance"',
-      'aria-label="Retention Impact"',
-      'aria-label="Weekly scorecard"',
-      'aria-label="Data Quality"',
+      `aria-label="Retention Overview"`,
+      `aria-label="Needs Attention"`,
+      `aria-label="Today's Retention Queue"`,
+      `aria-label="This Week's Retention Performance"`,
+      `aria-label="Retention Impact"`,
+      `aria-label="Weekly scorecard"`,
+      `aria-label="Data Quality"`,
     ];
     let last = -1;
     for (const marker of order) {
@@ -101,65 +132,153 @@ describe("retention page RESTRUCTURE (owner directive 2026-10-20)", () => {
     }
   });
 
-  test("TODAY row is action-first with human language and drill links", () => {
+  test("§5.1 Overview: 4 primary cards + the demoted secondary row (no card chrome)", () => {
     const src = page();
     expect(src).toContain("Clients Due");
-    expect(src).toContain("Appointments requiring an excitement call this week"); // point 7 verbatim human sub
-    expect(src).toContain("Clients Still Need Contact"); // point 3 framing
-    expect(src).toContain("still within call window"); // point 3 split line
-    expect(src).toContain("missed call window");
-    expect(src).toContain("search={{ kpi: \"unreached\" }}"); // the unreached card filters to those people
-    expect(src).toContain("search={{ kpi: \"needs-review\" }}");
+    expect(src).toContain("Appointments requiring an excitement call this week"); // human sub
+    expect(src).toContain("Clients Still Need Contact");
+    expect(src).toContain("still within call window"); // the split line
+    expect(src).toContain(`search={{ kpi: "unreached" }}`); // drill link
+    expect(src).toContain(`search={{ kpi: "needs-review" }}`);
+    // the demotion: ONE quiet row of four text cells (label + text-xl value)
+    expect(src).toContain("SecondaryCount");
+    for (const label of [`label="Calls Attempted"`, `label="Clients Spoken With"`, `label="No-Shows"`, `label="Data Match Exceptions"`]) {
+      expect(src).toContain(label);
+    }
+    expect(src).toContain("border-t border-(--table-border-weak)"); // the hairline under Row A
+    expect(src).toContain("text-xl font-semibold tracking-tight tabular-nums"); // the quiet values
+    // the Still Unreached card deep-links the queue pre-filtered (§5.1)
+    expect(src).toContain("Open the unreached queue");
+    expect(src).toContain(`search={{ queue: "unreached" }}`);
   });
 
-  test("Needs Attention queue renders the spec's five columns; cancellations slot renders nothing (never faked)", () => {
+  test("§5.2 Needs Attention: four compact stage cards with deep-link CTAs (client names stop here)", () => {
     const src = page();
-    for (const col of [">Client<", ">Appointment<", ">Reason<", ">Status<", ">Action<"]) {
+    for (const title of ["Excitement Calls", "Cancellation Recovery", "No-Show Prevention", "Needs Review"]) {
+      expect(src).toContain(title);
+    }
+    // CTAs deep-link ?queue= — the ONE shared queue, pre-filtered
+    expect(src).toContain(`search={{ queue: "excitement" }}`);
+    expect(src).toContain(`search={{ queue: "cancellations" }}`);
+    expect(src).toContain(`search={{ queue: "needs-review" }}`);
+    // the no-show card honestly links the comparison (no action queue exists yet)
+    expect(src).toContain("See the comparison");
+    expect(src).toContain(`search={{ kpi: "no-shows" }}`);
+    // names appear in the queue and drill-downs, not here
+    expect(src).toContain("no names until a queue is opened");
+  });
+
+  test("§5.3 Queue: chips (reserved stages ABSENT), 7 columns, urgency vocabulary, completed affordances", () => {
+    const src = page();
+    // chips — only the five active ones; the reserved stages must NOT render
+    for (const label of [`value: "all"`, `value: "excitement"`, `value: "unreached"`, `value: "cancellations"`, `value: "needs-review"`]) {
+      expect(src).toContain(label);
+    }
+    expect(src).not.toContain(`value: "no-shows"`);
+    expect(src).not.toContain(`value: "reschedules"`);
+    // client-side segment mapping over the ONE loader array (never re-derived)
+    expect(src).toContain("SEGMENT_IN");
+    expect(src).toContain("queue.rows.filter");
+    // the seven columns
+    for (const col of [">Client<", ">Stage<", ">Appointment<", ">Last Contact<", ">Priority<", ">Status<"]) {
       expect(src).toContain(col);
     }
-    expect(src).toContain("SEGMENT_REASON[row.segment]"); // reason chips from the loader's segment
-    expect(src).toContain("queue.rows"); // rows come from the SAME loader data the drill-downs use
-    expect(src).toContain("cancellation: { dot:"); // the segment slot exists in the row vocabulary…
-    expect(src).not.toContain("Needs Save"); // …and no fake cancellation rows are rendered
-    expect(src).toContain("CANCELLATIONS_ENGINE_NOTE"); // honesty note kept
+    // urgency vocabulary + the caution dot for closing windows
+    expect(src).toContain("RETENTION_PRIORITY_LABEL");
+    expect(src).toContain("--dot-caution");
+    expect(src).toContain("window closes today");
+    expect(src).toContain("window closed");
+    // last contact renders "— none yet", never a fabricated date
+    expect(src).toContain("— none yet");
+    // completed affordances are LINK-ONLY + the ledger-derived recovery count
+    expect(src).toContain("Completed: see everyone reached this week");
+    expect(src).toContain(`search={{ kpi: "spoken-with", range: "this-week" }}`);
+    expect(src).toContain("cancellations recovered this week");
+    expect(src).toContain(`search={{ kpi: "recovery", range: "this-week" }}`);
+    // the Action column carries the read-only InfoTip
+    expect(src).toContain("the dashboard tracks and never contacts anyone");
+    // empty states say WHY per chip
+    expect(src).toContain("QUEUE_EMPTY_WHY");
+    expect(src).toContain("No cancellations awaiting outcome.");
   });
 
-  test("performance section holds the 4-5 KPIs with honest — for the unwritten cancellations ledger", () => {
+  test("§5.4/§5.5 Performance spans 7 beside Impact spans 5; Impact is the titled mini-list; no future-metric placeholders", () => {
     const src = page();
     expect(src).toContain("This Week&rsquo;s Retention Performance");
+    expect(src).toContain("xl:col-span-7");
+    expect(src).toContain("xl:col-span-5");
+    expect(src).toContain("xl:grid-cols-12");
     expect(src).toContain("Contact Compliance");
     expect(src).toContain("Clients Reached");
     expect(src).toContain("Cancellation Saves");
     expect(src).toContain("Successful Reschedules");
     expect(src).toContain("Recovery Rate");
-    // cancellation family: num("—") whenever the ledger value is null
-    expect(src).toContain('saves.value == null ? num("—")');
-    expect(src).toContain('recovery.ratio == null ? num("—")');
-  });
-
-  test("no-show card is the spoken/not-spoken comparison (point 4)", () => {
-    const src = page();
+    // cancellation family keeps the honest — when null
+    expect(src).toContain(`saves.value == null ? num("—")`);
+    expect(src).toContain(`recovery.ratio == null ? num("—")`);
+    // the impact restructure
+    expect(src).toContain("No-Show Comparison");
     expect(src).toContain("had spoken with");
     expect(src).toContain("had not spoken with");
     expect(src).toContain("do excitement calls actually reduce no-shows?");
-    expect(src).toContain("spokenSplit"); // the comparison comes from the loader, not parsed display strings
+    expect(src).toContain("spokenSplit");
+    // future metrics get NO placeholder cells (no stub rows)
+    expect(src).not.toContain("Revenue protected");
+    expect(src).not.toContain("Show rate");
   });
 
-  test("scorecard copy is human (point 6); technical detail lives in InfoTips", () => {
+  test("§5.6 Scorecard: humanized labels, storage fact demoted to the InfoTip, D7 wired to the stored row", () => {
     const src = page();
     expect(src).toContain("Results lock each Monday for the previous week");
     expect(src).toContain("Your first completed weekly scorecard will appear Monday");
-    expect(src).not.toContain("No stored week exists yet — the Monday compute writes"); // dev-doc copy replaced
-    expect(src).not.toContain("due = appt date −"); // raw formula off the main surface
-    expect(src).toContain("Of the prior week&rsquo;s clients"); // the primary weekly question stays
+    expect(src).not.toContain("No stored week exists yet — the Monday compute writes");
+    expect(src).not.toContain("due = appt date −"); // formulas stay in InfoTips
+    expect(src).toContain("Of the prior week&rsquo;s clients");
+    // zone-2 humanization
+    expect(src).toContain(`label="Clients due"`);
+    expect(src).toContain(`label="Contact attempted"`);
+    expect(src).toContain(`label="Still unreached"`);
+    expect(src).not.toContain(`label="Eligible appointments"`);
+    expect(src).not.toContain("Called ≥1 attempt");
+    // the storage fact lives in the Scoring basis InfoTip, not as a surface chip
+    expect(src).toContain("a stored week is never rewritten");
+    expect(src).not.toContain(`label="stored — past weeks never rewrite"`);
+    // D7 — the five wired cells now read the stored row (null stays "—")
+    expect(src).toContain("scorecard.cancellations_worked ?? ");
+    expect(src).toContain("scorecard.saves ?? ");
+    expect(src).toContain("scorecard.reschedules ?? ");
+    expect(src).toContain("scorecard.recoveries ?? ");
+    expect(src).toContain("scorecard.recovery_rate == null ?");
+    // No-Shows + Transfers remain honest "—" (no writer yet)
+    expect(src).toContain(`<KpiMid label="No-Shows" value="—" />`);
+    expect(src).toContain(`<KpiMid label="Transfers" value="—" sub="Excluded from owner compliance" />`);
   });
 
-  test("data-quality counts are demoted to a small strip with drill links (point 5)", () => {
+  test("§5.7 engineering language off the surface; formulas stay in InfoTips", () => {
+    const src = page();
+    expect(src).not.toContain("recovered ÷ eligible"); // loader-speak
+    expect(src).not.toContain("spoke with ÷ due");
+    expect(src).toContain("Share of this week&rsquo;s due clients"); // human phrasing
+    expect(src).toContain("Computed {formatStamp(scorecard.computed_at)} ET"); // fact stamp stays
+    expect(src).toContain("Where these numbers come from"); // method footer unchanged
+  });
+
+  test("§5.8 Data Quality demoted + quiet: one small strip, exc=open exceptions link", () => {
     const src = page();
     expect(src).toContain("Data Quality");
     expect(src).toContain("unmatched records");
     expect(src).toContain("records requiring review");
-    expect(src).toContain('search={{ kpi: "match-exceptions" }}');
+    expect(src).toContain(`search={{ kpi: "match-exceptions", exc: "open" }}`);
+    expect(src).toContain("text-xs"); // the quieter type scale
+    expect(src).toContain("py-3"); // tighter strip
+  });
+
+  test("§4 honesty: CTAs navigate only — no mutating buttons anywhere on the page", () => {
+    const src = page();
+    expect(src).not.toMatch(/<button/i); // nothing mutates (Segmented's buttons live in its own component)
+    expect(src).not.toContain("Mark Reached");
+    expect(src).not.toContain("Save Appointment");
+    expect(src).toContain("Action"); // the verb-link column survives
   });
 
   test("semantic color system routes through --ret-* tokens only (point 8)", () => {
@@ -178,3 +297,4 @@ describe("retention page RESTRUCTURE (owner directive 2026-10-20)", () => {
     expect(ui).toContain("inKpiUniverse(o, params.kpi");
   });
 });
+
