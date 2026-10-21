@@ -189,7 +189,21 @@ export { STALE_RUN_REAP_MINUTES } from "../store/types";
 // "acuity_availability" rides the machinery too (2026-10-07: a hung feed run
 // blocked every background tick for its 12h window — the provider was missing
 // from this set so the reaper never closed its rows).
-const REAPABLE_SYNC_PROVIDERS = new Set(["highlevel", "google_sheets", "acuity", "attribution", "acuity_availability", "retention"]);
+// 2026-10-21: the retention-family writers were added WITHOUT joining this set —
+// two retention-identity-backfill rows sat 'running' for 31h, invisible to the
+// reaper (same bug class as acuity_availability). EVERY new sync_runs writer
+// must land here in the same PR that introduces it.
+const REAPABLE_SYNC_PROVIDERS = new Set([
+  "highlevel",
+  "google_sheets",
+  "acuity",
+  "attribution",
+  "acuity_availability",
+  "retention",
+  "retention-identity-backfill",
+  "retention-cancellations",
+  "retention-scorecard",
+]);
 
 /**
  * Mark every "running" sync_runs row of a bounded provider that is older than
