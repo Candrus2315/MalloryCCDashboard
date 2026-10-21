@@ -23,10 +23,11 @@
  * 139 attempts live-fire), so reads are the store's bulk reads and the
  * aggregation is in-memory, matching the retention store's own doctrine.
  */
-import type { Store, RetentionOutcomeRow, RetentionAttemptRow, RetentionOwnerHistoryRow } from "../store/types";
+import type { Store, RetentionOutcomeRow, RetentionAttemptRow, RetentionOwnerHistoryRow, RetentionCancellationRow } from "../store/types";
 import type { DataMatchExceptionRow, InternalClientRow } from "../store/types";
 import { addDays, etDateStrFromInstant, etDayStartUtc, weekStart, OPERATIONAL_TIMEZONE } from "../date-logic";
 import type { NoteEvidence } from "./classify";
+import { RECOVERED_OUTCOMES } from "./cancellations";
 
 // ---- KPI catalog (labels verbatim from the owner list; UI spec §2) ----
 
@@ -202,21 +203,22 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
       split: { open: windowOpenCount, missed: unreachedRows.length - windowOpenCount },
     },
     { key: "compliance", label: "Contact Compliance %", value: complianceRatio == null ? null : Math.round(complianceRatio * 1000) / 10, ratio: complianceRatio, sub: "spoke with ÷ due", attention: false },
-    // Cancellations family — ret_cancellations has a writer (stage 4a): a
-    // written-ledger 0 is a fact (never a fabricated 0); ratios stay null
-    // until their denominators exist.
+    // Cancellations family — ret_cancellations has a writer (stage 4a). A
+    // written-ledger 0 is a fact (never a fabricated 0); counts come from the
+    // SAME §16 predicate the queue and drill use (inCancellationUniverse —
+    // one source of truth). Ratios stay null until their denominators exist.
     {
       key: "active-cancellations",
       label: "Active Cancellations",
-      value: cancellationRows.filter((r) => r.outcome === "pending").length,
+      value: cancellationRows.filter((r) => inCancellationUniverse(r, "active-cancellations")).length,
       ratio: null,
       sub: "awaiting outcome",
-      attention: cancellationRows.some((r) => r.outcome === "pending"),
+      attention: cancellationRows.some((r) => inCancellationUniverse(r, "active-cancellations")),
     },
     {
       key: "saves",
       label: "Saves",
-      value: cancellationRows.filter((r) => r.outcome === "saved_original").length,
+      value: cancellationRows.filter((r) => inCancellationUniverse(r, "saves")).length,
       ratio: null,
       sub: "original appointment kept",
       attention: false,
@@ -224,7 +226,7 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
     {
       key: "reschedules",
       label: "Reschedules",
-      value: cancellationRows.filter((r) => r.outcome === "rescheduled").length,
+      value: cancellationRows.filter((r) => inCancellationUniverse(r, "reschedules")).length,
       ratio: null,
       sub: "rebooked within window",
       attention: false,
@@ -237,8 +239,11 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
       // while no eligible rows exist — never a fabricated 0%/100%.
       key: "recovery",
       label: "Recovery Rate",
-      value: cancellationRows.filter((r) => r.recovered).length,
-      ratio: cancellationRows.length > 0 ? cancellationRows.filter((r) => r.recovered).length / cancellationRows.length : null,
+      value: cancellationRows.filter((r) => inCancellationUniverse(r, "recovery")).length,
+      ratio:
+        cancellationRows.length > 0
+          ? cancellationRows.filter((r) => inCancellationUniverse(r, "recovery")).length / cancellationRows.length
+          : null,
       sub: cancellationRows.length > 0 ? `of ${cancellationRows.length} tracked cancellations` : "recovered ÷ eligible",
       attention: false,
     },
@@ -360,9 +365,34 @@ export function inKpiUniverse(o: RetentionOutcomeRow, kpi: RetentionKpiKey, ctx:
     case "saves":
     case "reschedules":
     case "recovery":
-      return false; // cancellations ledger unwritten — honest empty
+      return false; // outcome rows never cover the cancellations family — ret_cancellations rows do (see below)
     default:
       return false;
+  }
+}
+
+/** The §16 cancellations-family kpi keys — the ledger family (ret_cancellations). */
+export type RetentionCancellationKpi = "active-cancellations" | "saves" | "reschedules" | "recovery";
+
+/**
+ * Is this LEDGER row in the named cancellations-family kpi's §16 universe?
+ * §16 VERBATIM over ret_cancellations — the ONE source of truth for the
+ * family: the overview cards, the Needs Attention queue (and later the
+ * drill-down's cancellation listing) all filter through this predicate so
+ * they can never drift. The outcome-family counterpart is inKpiUniverse
+ * above; cancelled appointments leave the contact funnel (compute skips
+ * them), so a ledger appointment can never also be an outcome row.
+ */
+export function inCancellationUniverse(r: RetentionCancellationRow, kpi: RetentionCancellationKpi): boolean {
+  switch (kpi) {
+    case "active-cancellations":
+      return r.outcome === "pending"; // the actionable queue — awaiting outcome
+    case "saves":
+      return r.outcome === "saved_original"; // the original appointment, kept
+    case "reschedules":
+      return r.outcome === "rescheduled"; // rebooked within the window
+    case "recovery":
+      return RECOVERED_OUTCOMES.has(r.outcome); // owner definition: saved_original ∪ rescheduled
   }
 }
 
@@ -797,11 +827,12 @@ export function retentionDrillCsv(
 /** Queue segments — proven engine families only; the cancellation slot stays empty until that stage writes its ledger. */
 export type RetentionQueueSegment = "call-due" | "unreached" | "window-missed" | "needs-review" | "cancellation";
 
-export const QUEUE_SEGMENT_LABEL: Record<Exclude<RetentionQueueSegment, "cancellation">, string> = {
+export const QUEUE_SEGMENT_LABEL: Record<RetentionQueueSegment, string> = {
   "call-due": "Excitement call due",
   unreached: "Still unreached",
   "window-missed": "Missed call window",
   "needs-review": "Needs review",
+  cancellation: "Cancellation — awaiting outcome",
 };
 
 export interface RetentionQueueRow {
@@ -836,8 +867,8 @@ export interface RetentionQueueData {
     unreached: number;
     windowMissed: number;
     needsReview: number;
-    /** Always null until the cancellations stage writes its ledger (honest "—", never 0). */
-    cancellations: null;
+    /** The §16 Active-Cancellations universe over the written ledger (stage 4a) — a real 0 is a fact. */
+    cancellations: number;
   };
   cancellationsEngineNote: string;
 }
@@ -854,13 +885,16 @@ export interface RetentionQueueData {
  *   window-missed  — §16 Still-Unreached universe, window closed (session
  *                    passed with zero answered attempts) → "Review".
  *   needs-review   — the evidence-conflict queue (all stored outcomes) → "Open".
- *   cancellation    — SLOT ONLY: ret_cancellations has no writer yet; zero
- *                    rows by construction (CANCELLATIONS_ENGINE_NOTE) — the
- *                    page renders nothing rather than fake a row.
+ *   cancellation    — the §16 Active-Cancellations universe over the WRITTEN
+ *                     ledger (stage 4a), via inCancellationUniverse — the SAME
+ *                     predicate the Active Cancellations card counts (one
+ *                     source of truth; cancelled appointments leave the
+ *                     contact funnel, so these rows can never also be
+ *                     call-due/unreached/needs-review rows) → "Save".
  * Disjoint by construction: call-due ids are removed from unreached-open, and
- * a row is never in two segments. Call-due/unreached/needs-review sort soonest
- * appointment first; missed windows sort most-recently-missed first (freshest
- * salvage opportunity on top).
+ * a row is never in two segments. Call-due/unreached/needs-review/cancellation
+ * sort soonest appointment first; missed windows sort most-recently-missed
+ * first (freshest salvage opportunity on top).
  */
 export async function retentionNeedsAttention(store: Store, now: () => Date = () => new Date()): Promise<RetentionQueueData> {
   const nowMs = now().getTime();
@@ -878,12 +912,13 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     max_contact_days: null,
   };
   const dueDays = retention.due_days;
-  const [outcomes, attempts, clients, appts, ownerRows] = await Promise.all([
+  const [outcomes, attempts, clients, appts, ownerRows, cancellationRows] = await Promise.all([
     store.listRetentionAppointmentOutcomes(),
     store.listRetentionAttempts(),
     store.listInternalClients(),
     store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(todayEt, -(retention.compute_lookback_days + dueDays + 2)))),
     store.listRetentionOwnerHistory(),
+    store.listRetentionCancellations(),
   ]);
   const ownerName = currentRetentionOwner(ownerRows, todayEt);
   const clientById = new Map(clients.map((c) => [c.id, c]));
@@ -957,6 +992,42 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   // Needs review — ALL stored outcomes (the open queue, like its card).
   const needsReview = outcomes.filter((o) => o.final_status === "needs_review");
 
+  // Cancellations — the §16 Active-Cancellations universe over the WRITTEN
+  // ledger (stage 4a), through inCancellationUniverse: the SAME predicate the
+  // Active Cancellations card counts. Pending = the actionable save work;
+  // recovered/confirmed/unable rows have outcomes and are not queue work.
+  // The engine only writes resolved-client rows (unlinked ones are exception-
+  // queued); the null-client guard is defensive honesty, never a drop.
+  const cancellations = cancellationRows.filter((r) => r.internal_client_id != null && inCancellationUniverse(r, "active-cancellations"));
+  const cancellationQueueRow = (r: RetentionCancellationRow): RetentionQueueRow => {
+    const client = clientById.get(r.internal_client_id!) ?? null;
+    const appt = apptById.get(r.appointment_id) ?? null;
+    const ms = appt ? Date.parse(appt.appointment_datetime) : NaN;
+    const cancelledMs = r.cancelled_at ? Date.parse(r.cancelled_at) : NaN;
+    const evAcuity = (r.notes as { acuity_appointment_id?: unknown } | null)?.acuity_appointment_id;
+    return {
+      segment: "cancellation",
+      appointmentId: r.appointment_id,
+      acuityId: appt?.acuity_appointment_id ?? (typeof evAcuity === "string" ? evAcuity : null),
+      internalClientId: r.internal_client_id!,
+      clientName: client?.display_name ?? null,
+      apptIso: Number.isFinite(ms) ? new Date(ms).toISOString() : null,
+      apptDateEt: Number.isFinite(ms) ? etDateStrFromInstant(ms) : null,
+      apptTimeEt: Number.isFinite(ms)
+        ? new Intl.DateTimeFormat("en-US", { timeZone: OPERATIONAL_TIMEZONE, hour: "numeric", minute: "2-digit" }).format(new Date(ms))
+        : null,
+      // The sub-label under the appointment renders "cancelled <date>" for
+      // this segment (route) — the write-once confirmation stamp, not a due date.
+      dueDate: Number.isFinite(cancelledMs) ? etDateStrFromInstant(cancelledMs) : "",
+      attemptsCount: r.attempts_count,
+      lastCallStatus: lastCallStatus(r.appointment_id),
+      finalStatus: r.final_contact_status ?? "none",
+      statusLabel: "Awaiting outcome",
+      actionLabel: "Save",
+      drillKpi: "active-cancellations",
+    };
+  };
+
   const rows: RetentionQueueRow[] = [
     ...callDue.map((o) =>
       shape(
@@ -970,6 +1041,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     ...unreachedOpen.map((o) => shape(o, "unreached", "Unreached", "Call again", "unreached")),
     ...windowMissed.map((o) => shape(o, "window-missed", "Window missed", "Review", "unreached")),
     ...needsReview.map((o) => shape(o, "needs-review", "Evidence conflict", "Open", "needs-review")),
+    ...cancellations.map(cancellationQueueRow),
   ];
   const segmentOrder: Record<RetentionQueueSegment, number> = { "call-due": 0, unreached: 1, "window-missed": 2, "needs-review": 3, cancellation: 4 };
   const byApptAsc = (a: RetentionQueueRow, b: RetentionQueueRow): number => {
@@ -999,7 +1071,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
       unreached: unreachedOpen.length,
       windowMissed: windowMissed.length,
       needsReview: needsReview.length,
-      cancellations: null,
+      cancellations: cancellations.length,
     },
     cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
   };

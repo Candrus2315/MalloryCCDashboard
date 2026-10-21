@@ -10,9 +10,9 @@
  *
  * The queue reuses the drill-down loaders' row universes via
  * retentionNeedsAttention (ui-data.ts — ONE source of truth; it never
- * re-derives §16 math). Cancellation queue rows do not exist yet — the
- * cancellations stage writes that ledger later; the slot renders nothing
- * rather than fake a row (honest "—" on the cancellations KPI cells).
+ * re-derives §16 math). Cancellation rows come from the written
+ * ret_cancellations ledger through the same inCancellationUniverse predicate
+ * the Active Cancellations card counts.
  *
  * Semantic color system (owner point 8): blue = excitement-call workflow ·
  * amber = client needs attention · green = saved/recovered · red =
@@ -77,7 +77,7 @@ const SEGMENT_TONE: Record<RetentionQueueRow["segment"], { dot: string; chip: st
   unreached: { dot: "bg-(--ret-amber-dot)", chip: "bg-(--ret-amber-bg) text-(--ret-amber-fg)" },
   "window-missed": { dot: "bg-(--ret-amber-dot)", chip: "bg-(--ret-amber-bg) text-(--ret-amber-fg)" },
   "needs-review": { dot: "bg-(--ret-purple-dot)", chip: "bg-(--ret-purple-bg) text-(--ret-purple-fg)" },
-  cancellation: { dot: "bg-(--dot-muted)", chip: "" }, // slot only — never rendered until the ledger has a writer
+  cancellation: { dot: "bg-(--ret-amber-dot)", chip: "bg-(--ret-amber-bg) text-(--ret-amber-fg)" }, // a client needs attention: save the session
 };
 const SEGMENT_REASON: Record<RetentionQueueRow["segment"], string> = {
   "call-due": "Excitement call due",
@@ -235,7 +235,7 @@ function RetentionPage() {
               Needs Attention
               <InfoTip
                 label="How this queue is built"
-                tip={`Client rows the engine can prove need action: excitement calls due, clients still unreached (within their call window or past it), and records with conflicting evidence. Each row opens the drill-down pre-filtered to that list. Cancellation rows appear here when the cancellations module lands. ${CANCELLATIONS_ENGINE_NOTE}`}
+                tip={`Client rows the engine can prove need action: excitement calls due, clients still unreached (within their call window or past it), records with conflicting evidence, and cancellations still awaiting an outcome (the save window is open). Each row opens the drill-down pre-filtered to that list. ${CANCELLATIONS_ENGINE_NOTE}`}
               />
             </p>
             <StatusChip
@@ -510,7 +510,9 @@ function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }
       ? { kpi: "clients-due", range: "this-week" } as const
       : row.drillKpi === "unreached"
         ? { kpi: "unreached", range: "all" } as const
-        : { kpi: "needs-review", range: "all", classification: "needs_review" } as const;
+        : row.drillKpi === "active-cancellations"
+          ? { kpi: "active-cancellations", range: "all" } as const
+          : { kpi: "needs-review", range: "all", classification: "needs_review" } as const;
   const appointment = row.apptDateEt ? `${formatShort(row.apptDateEt)}${row.apptTimeEt ? ` · ${row.apptTimeEt}` : ""}` : "—";
   const client = row.clientName ?? "Unnamed client";
   if (compact) {
@@ -543,7 +545,13 @@ function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }
       <td className="px-5 py-2.5 font-medium text-(--text-primary)">{client}</td>
       <td className="px-3 py-2.5 tabular-nums text-(--text-body)">
         {appointment}
-        <span className="block text-xs text-(--text-muted)">due {formatShort(row.dueDate)}</span>
+        <span className="block text-xs text-(--text-muted)">
+          {row.segment === "cancellation"
+            ? row.dueDate
+              ? `cancelled ${formatShort(row.dueDate)}`
+              : "cancelled —"
+            : `due ${formatShort(row.dueDate)}`}
+        </span>
       </td>
       <td className="px-3 py-2.5">
         <span className={`chip ${tone.chip}`}>

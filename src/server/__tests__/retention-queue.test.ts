@@ -2,11 +2,12 @@
  * NEEDS ATTENTION QUEUE tests (owner restructure directive 2026-10-20, point
  * 1) — the client-level work queue under the TODAY row, MemoryStore end-to-
  * end with deterministic fixtures: segment membership (call-due / unreached /
- * window-missed / needs-review), disjointness, the §16 ONE-SOURCE-OF-TRUTH
- * cross-check against the drill-down's own unreached universe, human status
- * labels, ordering, the honest empty cancellation slot, and the empty-store
- * shape. The cancellations ledger has no writer yet, so its segment stays
- * empty by construction (CANCELLATIONS_ENGINE_NOTE) — never faked.
+ * window-missed / needs-review / cancellation), disjointness, the §16
+ * ONE-SOURCE-OF-TRUTH cross-check against the drill-down's own unreached
+ * universe, human status labels, ordering, and the empty-store shape. The
+ * cancellations segment reads the WRITTEN ret_cancellations ledger (stage 4a)
+ * through the same inCancellationUniverse predicate the Active Cancellations
+ * card counts — a written-ledger 0 is a fact, never faked.
  */
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
@@ -112,7 +113,7 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
   test("segments: call-due / unreached / window-missed / needs-review with human labels", async () => {
     const s = await seed();
     const q = await retentionNeedsAttention(s.store, NOW);
-    expect(q.counts).toEqual({ callDue: 2, unreached: 0, windowMissed: 1, needsReview: 1, cancellations: null });
+    expect(q.counts).toEqual({ callDue: 2, unreached: 0, windowMissed: 1, needsReview: 1, cancellations: 0 });
 
     const byClient = Object.fromEntries(q.rows.map((r) => [r.clientName!, r]));
     // A1 — due this week, voicemail left, window open → call-due, classification label as status.
@@ -172,12 +173,87 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     expect(callDueClients).toEqual(["Jane Doe", "Cara Lee"]); // appt 10/26 < 10/27
   });
 
-  test("the cancellation slot stays honestly empty until its stage lands", async () => {
+  test("stage 4a: empty written ledger → zero cancellation rows, count 0 (a fact, never faked)", async () => {
     const s = await seed();
     const q = await retentionNeedsAttention(s.store, NOW);
     expect(q.rows.filter((r) => r.segment === "cancellation")).toHaveLength(0);
-    expect(q.counts.cancellations).toBeNull();
+    expect(q.counts.cancellations).toBe(0);
     expect(q.cancellationsEngineNote).toBe(CANCELLATIONS_ENGINE_NOTE);
+  });
+
+  test("stage 4a: pending ledger rows join the queue as cancellation work (Save → active-cancellations drill)", async () => {
+    const s = await seed();
+    // A5 (Eve Ray, session 11/02) is outside every outcome segment (due window
+    // not open) — mark it cancelled and write its ledger row the way the
+    // engine would: pending, cancelled_at inside the lookback.
+    await s.store.upsertAppointments([
+      {
+        id: "",
+        acuity_appointment_id: "A5",
+        contact_id: (await s.store.getContacts()).find((c) => c.external_id === "CT5")!.id,
+        calendar_id: "1335091",
+        calendar_name: "MALLORY PORTRAITS",
+        appointment_type: "Portrait Session",
+        appointment_datetime: "2026-11-02T18:00:00Z",
+        created_at: "2026-10-14T18:00:00Z",
+        status: "scheduled",
+        cancelled: true,
+        cancelled_at: "2026-10-15T14:00:00Z",
+        raw: null,
+      },
+    ] as never);
+    const appts = await s.store.getAppointmentsWithClientsSince("2026-09-01T00:00:00Z");
+    const a5 = appts.find((a) => a.acuity_appointment_id === "A5")!;
+    await s.store.insertRetentionCancellations([
+      {
+        appointmentId: a5.id,
+        internalClientId: s.clients.CT5,
+        ghlContactExternalId: "CT5",
+        cancelledAtIso: "2026-10-15T14:00:00Z",
+        attemptsCount: 1,
+        anyAnswered: false,
+        finalContactStatus: "voicemail",
+        outcome: "pending",
+        successorAppointmentId: null,
+        recovered: false,
+        recoveredAtIso: null,
+        notes: { acuity_appointment_id: "A5" },
+      },
+      // a saved cancellation is NOT queue work — outcome exists, not awaiting
+      {
+        appointmentId: appts.find((a) => a.acuity_appointment_id === "A6")!.id,
+        internalClientId: s.clients.CT6,
+        ghlContactExternalId: "CT6",
+        cancelledAtIso: "2026-10-16T14:00:00Z",
+        attemptsCount: 0,
+        anyAnswered: false,
+        finalContactStatus: null,
+        outcome: "saved_original",
+        successorAppointmentId: null,
+        recovered: true,
+        recoveredAtIso: "2026-10-17T10:00:00Z",
+        notes: {},
+      },
+    ]);
+    const q = await retentionNeedsAttention(s.store, NOW);
+    const cancelRows = q.rows.filter((r) => r.segment === "cancellation");
+    expect(cancelRows).toHaveLength(1); // only the pending row is actionable
+    expect(cancelRows[0]).toMatchObject({
+      clientName: "Eve Ray",
+      statusLabel: "Awaiting outcome",
+      actionLabel: "Save",
+      drillKpi: "active-cancellations",
+      attemptsCount: 1,
+      lastCallStatus: null,
+      apptDateEt: "2026-11-02",
+      dueDate: "2026-10-15", // renders as "cancelled Oct 15" — the write-once stamp, not a due date
+    });
+    expect(q.counts.cancellations).toBe(1);
+    // disjointness holds with the new segment present
+    const ids = q.rows.map((r) => r.appointmentId);
+    expect(new Set(ids).size).toBe(ids.length);
+    // ordering: cancellation rows sort last (after needs-review), soonest first
+    expect(q.rows[q.rows.length - 1]!.segment).toBe("cancellation");
   });
 
   test("rows carry the drill-link fields (client, appointment ET, due date, acuity id)", async () => {
@@ -191,11 +267,11 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     expect(jane.internalClientId).toBe(s.clients.CT1);
   });
 
-  test("empty store → empty queue, zero counts, cancellations still null (never fabricated)", async () => {
+  test("empty store → empty queue, zero counts (all facts, never fabricated)", async () => {
     const store = new MemoryStore();
     const q = await retentionNeedsAttention(store, NOW);
     expect(q.rows).toEqual([]);
-    expect(q.counts).toEqual({ callDue: 0, unreached: 0, windowMissed: 0, needsReview: 0, cancellations: null });
+    expect(q.counts).toEqual({ callDue: 0, unreached: 0, windowMissed: 0, needsReview: 0, cancellations: 0 });
     expect(q.dueDays).toBe(7);
   });
 });
