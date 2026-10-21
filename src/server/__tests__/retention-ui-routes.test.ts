@@ -110,6 +110,13 @@ describe("retention route ?queue= (UX overhaul §5.3 — the unified queue's sta
   });
 });
 
+describe("retention data-start boundary (owner directive 10/21 — scorecard DISPLAY scope)", () => {
+  test("getRetentionPageData filters stored scorecards through inRetentionScorecardScope (stored weeks stay, pre-boundary weeks not shown)", () => {
+    const q = readFileSync(new URL("../../server/queries.ts", import.meta.url), "utf8");
+    expect(q).toContain("inRetentionScorecardScope(r.week_start)"); // the display filter, cited to the owner directive
+  });
+});
+
 describe("retention page UX OVERHAUL (spec §5, owner directive 2026-10-21)", () => {
   const page = () => readFileSync(new URL("../../routes/retention.tsx", import.meta.url), "utf8");
 
