@@ -1310,6 +1310,8 @@ export interface TrendPoint {
   family: number;
   /** Animalia-sheet share of `leads` — split of the SAME already-computed rows (no new math). */
   animalia: number;
+  /** Fairyland-sheet share of `leads` — third genre, same no-new-math split. */
+  fairyland: number;
   /** Reference-line value: weekly lead budget per week, budget ÷ 7 per day. */
   budgetRef: number;
 }
@@ -1328,10 +1330,11 @@ function shortDayLabel(dateStr: string): string {
   );
 }
 
-// ---------- lead-source split (Family / Animalia) ----------
+// ---------- lead-source split (Family / Animalia / Fairyland) ----------
 export interface LeadSplit {
   family: number;
   animalia: number;
+  fairyland: number;
 }
 /**
  * Split ALREADY-COMPUTED lead rows by source sheet — no new math, no new
@@ -1343,12 +1346,14 @@ export interface LeadSplit {
 export function splitLeadRows(leads: LeadRow[]): LeadSplit {
   let family = 0;
   let animalia = 0;
+  let fairyland = 0;
   for (const l of leads) {
     const t = (l.lead_type || l.source_sheet || "").trim().toLowerCase();
     if (t === "family") family += 1;
     else if (t === "animalia") animalia += 1;
+    else if (t === "fairyland") fairyland += 1;
   }
-  return { family, animalia };
+  return { family, animalia, fairyland };
 }
 
 /**
@@ -1420,6 +1425,7 @@ export function buildTeamTrends(input: {
       leads: bLeadsCount,
       family: leadSplit.family,
       animalia: leadSplit.animalia,
+      fairyland: leadSplit.fairyland,
       budgetRef: mode === "week" ? weeklyBudget : weeklyBudget / 7,
     } satisfies TrendPoint;
   });

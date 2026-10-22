@@ -28,6 +28,7 @@ export interface TrendPointMeta {
   /** Lead split (E1) — carried for callers that compose split tooltips. */
   family?: number | null;
   animalia?: number | null;
+  fairyland?: number | null;
 }
 
 export interface TrendTooltipView {

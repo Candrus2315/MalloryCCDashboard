@@ -38,6 +38,7 @@ export interface TrendPointMeta {
   /** Lead split (E1, already in TrendPoint) for the Lead Volume tooltip. */
   family?: number | null;
   animalia?: number | null;
+  fairyland?: number | null;
 }
 
 /** A week bucket [Monday, Monday+6] is partial while it contains today. */
@@ -61,6 +62,7 @@ export function buildTrendMeta(
     isNonWorking: isNonWorkingBucket(p, bucketMode),
     family: p.family,
     animalia: p.animalia,
+    fairyland: p.fairyland,
   }));
 }
 
@@ -95,7 +97,7 @@ export function trendTooltip(input: TrendTooltipInput): TooltipView {
 
   const lines: string[] = [];
   if (unit === "int" && input.noun === "leads") {
-    // Lead Volume — the split template (Total · Family · Animalia · pace).
+    // Lead Volume — the split template (Total · Family · Animalia · Fairyland · pace).
     lines.push(leadSplitLine(p, input.bucketMode));
   } else if (unit === "int") {
     lines.push(value == null ? `${label} · —` : `${label} · ${formatInt(value)} ${input.noun ?? ""}`.trim());
@@ -127,7 +129,7 @@ export function leadSplitLine(p: TrendPoint, bucketMode: TrendBucketMode): strin
     bucketMode === "week"
       ? `budget ${formatInt(p.budgetRef)}/wk`
       : `budget pace ${formatInt(p.budgetRef)}/day`;
-  return `Total ${formatInt(p.leads)} · Family ${formatInt(p.family)} · Animalia ${formatInt(p.animalia)} · ${pace}`;
+  return `Total ${formatInt(p.leads)} · Family ${formatInt(p.family)} · Animalia ${formatInt(p.animalia)} · Fairyland ${formatInt(p.fairyland)} · ${pace}`;
 }
 
 // ---------- drawer heading + context (§3 context preservation) ----------

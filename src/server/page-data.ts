@@ -1492,11 +1492,12 @@ export interface WeeklyPageData {
     overall: number | null;
     family: number | null;
     animalia: number | null;
-    numerator: { overall: number; family: number; animalia: number };
-    denominator: { overall: number; family: number; animalia: number };
+    fairyland: number | null;
+    numerator: { overall: number; family: number; animalia: number; fairyland: number };
+    denominator: { overall: number; family: number; animalia: number; fairyland: number };
   };
   /** Sheet leads by source_date in the week. */
-  leads: { family: number; animalia: number; total: number };
+  leads: { family: number; animalia: number; fairyland: number; total: number };
   /** Month-to-date paid wins (current ET calendar month through today). */
   mtd: {
     total: number;
@@ -1873,6 +1874,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       total: winsLw.length,
       family: lwSplit.family,
       animalia: lwSplit.animalia,
+      fairyland: lwSplit.fairyland,
       goal: weeklyGoal,
       goalLine: goalVsActual(winsLw.length, weeklyGoal),
       daily: lwDates.map((d) => ({ date: d, count: dailyMap.get(d) ?? 0 })),

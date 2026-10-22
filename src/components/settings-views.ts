@@ -76,7 +76,7 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     id: "sheets",
     nav: "Sheets",
     title: "Google Sheets Mapping",
-    description: "Where the Family + Animalia lead counts come from and how each column is read.",
+    description: "Where the Family + Animalia + Fairyland lead counts come from and how each column is read.",
     subsections: [],
   },
   {

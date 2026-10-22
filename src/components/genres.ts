@@ -47,3 +47,13 @@ export function classifyLeadGenre(leadType: string): Genre {
   if (/fairyland/i.test(t)) return "fairyland";
   return "family";
 }
+
+/**
+ * Today-page filter chips (owner directive 10/22, net-new UI): "All | Family |
+ * Animalia | Fairyland" — the ONE genre list that does not follow GENRES
+ * order. Display-layer only: it selects which mix-bar segments / legend rows
+ * are PRESENTED; stored data is never filtered or changed.
+ */
+export function genresForFilter(selected: Genre | "all"): readonly Genre[] {
+  return selected === "all" ? GENRES : GENRES.filter((g) => g === selected);
+}

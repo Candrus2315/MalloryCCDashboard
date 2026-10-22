@@ -232,20 +232,20 @@ function SettingsPage() {
             </span>
             <span>
               <span className="block text-[15px] font-semibold tracking-tight text-(--text-primary)">Google Sheets Mapping</span>
-              <span className="mt-0.5 block text-[13px] text-(--text-caption)">Where the Family + Animalia lead counts come from and how each column is read.</span>
+              <span className="mt-0.5 block text-[13px] text-(--text-caption)">Where the Family + Animalia + Fairyland lead counts come from and how each column is read.</span>
             </span>
           </span>
           <span className="flex items-center gap-3">
-            <span className="hidden text-xs text-(--text-muted) sm:inline">{(["family", "animalia"] as const).map((s) => data.settings.sheets[s].mode === "row_per_lead" ? `${s} row-per-lead` : `${s} day+count`).join(" · ")}</span>
+            <span className="hidden text-xs text-(--text-muted) sm:inline">{(["family", "animalia", "fairyland"] as const).map((s) => data.settings.sheets[s].mode === "row_per_lead" ? `${s} row-per-lead` : `${s} day+count`).join(" · ")}</span>
             <span className="text-(--text-muted) transition-transform group-open:rotate-180" aria-hidden="true">
               ▾
             </span>
           </span>
         </summary>
         <div className="space-y-3 border-t border-(--table-border-weak) p-5">
-          <p className="text-[13px] text-(--text-caption)">Which columns of the Family / Animalia sheets hold each field, and whether each row is a day+count or a single lead. Test mapping fetches a REAL sample row from Google Sheets and parses it with the same code a live sync uses.</p>
+          <p className="text-[13px] text-(--text-caption)">Which columns of the Family / Animalia / Fairyland sheets hold each field, and whether each row is a day+count or a single lead. Test mapping fetches a REAL sample row from Google Sheets and parses it with the same code a live sync uses.</p>
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {(["family", "animalia"] as const).map((sheet) => (
+            {(["family", "animalia", "fairyland"] as const).map((sheet) => (
               <SheetMappingCard key={sheet} sheet={sheet} columns={data.settings.sheets[sheet].columns} mode={data.settings.sheets[sheet].mode} sheetId={data.settings.sheets[sheet].sheet_id} busy={busy} onSave={(columns, mode) => run(`${sheet} mapping saved`, () => saveSheetMapping({ data: { sheet, columns, mode } }))} />
             ))}
           </div>
@@ -836,6 +836,7 @@ function AcuityScopeCard({ data, busy, onSave }: {
   const catalogCalendars: { id: string; name: string }[] = [
     { id: "Family Studio", name: "Family Studio" },
     { id: "Animalia Studio", name: "Animalia Studio" },
+    { id: "Fairyland Studio", name: "Fairyland Studio" },
   ];
   const catalogTypes = [
     "Family Portrait Session",
@@ -844,6 +845,9 @@ function AcuityScopeCard({ data, busy, onSave }: {
     "Animalia Signature Session",
     "Animalia Pet Portrait",
     "Animalia Companion Session",
+    "Fairyland Signature Session",
+    "Fairyland Character Portrait",
+    "Fairyland Enchanted Session",
   ];
   const toggle = (list: string[], v: string, set: (l: string[]) => void) => set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   return (
@@ -1112,7 +1116,7 @@ function BlockedTimesCard({ data, busy, onAdd, onRemove }: {
 /* ================= 5 — sheet mapping ================= */
 
 function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, onSave }: {
-  sheet: "family" | "animalia";
+  sheet: "family" | "animalia" | "fairyland";
   columns: Record<string, string>;
   mode: SheetMappingMode;
   sheetId: string;
@@ -1140,7 +1144,7 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
   return (
     <div className="card card-nest card-dense space-y-3">
       <div>
-        <p className="section-title">{sheet === "family" ? "Family sheet" : "Animalia sheet"}</p>
+        <p className="section-title">{({ family: "Family sheet", animalia: "Animalia sheet", fairyland: "Fairyland sheet" } as const)[sheet]}</p>
         <p className="mt-1 truncate text-xs text-(--text-muted)">Sheet ID {sheetId}</p>
         <p className="mt-0.5 text-xs text-(--text-muted)">
           Default mapping: {defaultNote} (editable below)

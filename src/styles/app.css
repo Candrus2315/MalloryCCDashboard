@@ -102,6 +102,9 @@
   --bar-track: #e7e5e4; /* stone-200 */
   --bar-fill: #1c1917; /* stone-900 */
   --bar-fill-hit: #059669; /* emerald-600 */
+  /* genres — Fairyland's violet (owner directive 2026-10-22; the one
+     dark-mode-proven hue: same value already used by --ret-purple-dot) */
+  --genre-fairyland: #8b5cf6; /* violet-500 */
 
   /* accent (nav pill, primary buttons, strong badge) */
   --accent-solid: #1c1917; /* stone-900 */
@@ -223,6 +226,8 @@
   --bar-track: #2e2a26;
   --bar-fill: #fafaf9;
   --bar-fill-hit: #34d399;
+  /* genres — Fairyland violet brightens one step in dark mode (proven pair) */
+  --genre-fairyland: #a78bfa; /* violet-400 */
 
   /* accent — primary buttons + selected nav are a REFINED ELEVATED state
      (one step above Level 3), never a glaring white rectangle (owner
