@@ -25,6 +25,10 @@ export const RETENTION_NOSHOW_MIN_INTERVAL_MS = 5 * 60_000;
 export const RETENTION_NOSHOW_STALE_RUNNING_MS = 15 * 60_000;
 
 let lastBackgroundTickAt = 0;
+/** Test seam: clear the background throttle between tests (same as cancellations-tick). */
+export function resetRetentionNoShowsThrottle(): void {
+  lastBackgroundTickAt = 0;
+}
 
 export type RetentionNoShowTickResult =
   | (RetentionNoShowsResult & { outcome: "synced" })

@@ -12,7 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
 import { computeRetentionNoShows, deriveNoShowState, type NoShowStateDerivation } from "../retention/no-shows";
-import { retentionNoShowTick } from "../retention/no-shows-tick";
+import { retentionNoShowTick, resetRetentionNoShowsThrottle } from "../retention/no-shows-tick";
 
 // Fixed clock: 2026-10-20T15:00:00Z (Tue). The module fetch floor is
 // today − (lookback 30 + due 7 + 2) ET = 2026-09-11T04:00:00Z.
@@ -123,7 +123,7 @@ describe("computeRetentionNoShows — idempotence (content-keyed diff)", () => {
     expect(second.inserted).toBe(0);
     expect(second.updated).toBe(0);
     expect(second.unchanged).toBe(3);
-    expect((await s.store.listRetentionNoShows()).length).toBe(4);
+    expect((await s.store.listRetentionNoShows()).length).toBe(3); // NS1 + B2 + PRE — nothing else writes
     const row = await rowOf(s, "NS1");
     expect(row!.detected_at).toBe(NOW().toISOString()); // write-once survives re-runs
   });
@@ -203,6 +203,7 @@ describe("deriveNoShowState — the pure precedence chain", () => {
 
 describe("retentionNoShowTick — the scheduler wiring", () => {
   test("runs the engine under its own sync_runs provider; background re-runs inside the throttle skip; manual bypasses it", async () => {
+    resetRetentionNoShowsThrottle(); // module-level throttle may carry real-clock state from other test files
     const s = await seed();
     const manual = await retentionNoShowTick({ store: s.store, now: NOW, trigger: "manual" });
     expect(manual.outcome).toBe("synced");
@@ -212,8 +213,12 @@ describe("retentionNoShowTick — the scheduler wiring", () => {
     expect(mine[0]!.status).toBe("success");
     expect(mine[0]!.records_upserted).toBe(3);
 
+    // the throttle arms only on background passes (manual never suppresses the
+    // background cadence — same as the shipped cancellations tick), so the first
+    // background pass after a throttle reset runs, the +4:59 re-run is skipped,
+    // and the +5:01 re-run runs again.
     const bg = await retentionNoShowTick({ store: s.store, now: NOW, trigger: "background" });
-    expect(bg.outcome).toBe("skipped");
+    expect(bg.outcome).toBe("synced");
     const bgSoon = await retentionNoShowTick({ store: s.store, now: () => new Date("2026-10-20T15:04:59Z"), trigger: "background" });
     expect(bgSoon.outcome).toBe("skipped");
     const bgLater = await retentionNoShowTick({ store: s.store, now: () => new Date("2026-10-20T15:05:01Z"), trigger: "background" });
