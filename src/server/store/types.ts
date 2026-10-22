@@ -1509,13 +1509,70 @@ export interface RetentionCancellationWrite {
 }
 
 /**
+ * One stored no-show ledger row (retention_no_shows; stage 4b — the no-show
+ * pipeline, plan §16 + ruling D10). ONE row per detected no-show appointment
+ * (PK appointment_id). DETECTION is the owner-ratified D10 proxy: the
+ * session's start has passed while the appointment is still a qualifying
+ * status (scheduled) and not cancelled, as OBSERVED by the system on a pass.
+ *
+ * WRITE-ONCE FIELDS (the store COALESCEs them on update; the engine never
+ * moves them): session_at / session_date_et (the MISSED session's instant and
+ * ET date, copied at detection) and detected_at (when THIS SYSTEM first
+ * confirmed the no-show). A later cancellation or reschedule of the same
+ * appointment never deletes the row — the missed session happened; the
+ * follow-up state column records what came after (state vocabulary below).
+ *
+ * state vocabulary (closed):
+ *   open                      — the no-show stands; no later event (the queue's follow-up work)
+ *   rebooked                  — a qualifying successor appointment for the same client was
+ *                               created after detected_at (within the reschedule window); the
+ *                               client came back — the row is no longer open follow-up work
+ *   cancelled_after_no_show   — the appointment was cancelled AFTER the no-show was confirmed
+ *   rescheduled_after_no_show — the appointment's own datetime moved into the future AFTER
+ *                               detection (Acuity reschedules move the same appointment id)
+ */
+export interface RetentionNoShowRow {
+  appointment_id: string;
+  internal_client_id: string | null;
+  ghl_contact_external_id: string | null;
+  session_at: string | null;
+  session_date_et: string | null;
+  detected_at: string;
+  attempts_count: number;
+  any_answered: boolean;
+  final_contact_status: string | null;
+  state: string;
+  successor_appointment_id: string | null;
+  manual_overrides: Record<string, unknown> | null;
+  notes: Record<string, unknown> | null;
+}
+export interface RetentionNoShowWrite {
+  appointmentId: string;
+  internalClientId: string | null;
+  ghlContactExternalId: string | null;
+  /** The missed session's instant — write-once (the store COALESCEs on update). */
+  sessionAtIso: string | null;
+  /** The missed session's ET calendar date — write-once (the D10 week anchor). */
+  sessionDateEt: string | null;
+  /** When THIS SYSTEM confirmed the no-show — set at insert, never moved. */
+  detectedAtIso: string;
+  attemptsCount: number;
+  anyAnswered: boolean;
+  finalContactStatus: string | null;
+  state: string;
+  successorAppointmentId: string | null;
+  notes: Record<string, unknown>;
+}
+
+/**
  * One stored weekly scorecard row (ret_scorecards; stage 3c, plan §16).
  * APPEND-IF-NEW: one row per scored Mon–Sun ET week (UNIQUE week_start),
  * written ONCE — a stored week is NEVER rewritten (owner rule "past weeks
  * render byte-identically forever"). The cancellation-family cells
  * The cancellation-family cells, the no-show split and transfers are null
- * until their ledgers gain writers — null is "not computed", never a
- * fabricated 0.
+ * until their ledger weeks are covered (the no-show ledger has a writer since
+ * stage 4b — uncovered weeks still store null; transfers have no writer yet) —
+ * null is "not computed", never a fabricated 0.
  */
 export interface RetentionScorecardRow {
   id: string;
@@ -2149,6 +2206,17 @@ export interface Store {
   insertRetentionCancellations(rows: RetentionCancellationWrite[]): Promise<number>;
   /** Content update of ONE existing ledger row (derived outcome advanced); computed stamp rides notes. */
   updateRetentionCancellation(row: RetentionCancellationWrite): Promise<void>;
+  // ---- RETENTION NO-SHOW LEDGER (stage 4b; plan §16 + ruling D10) ----
+  // Same discipline as the cancellations ledger: bulk reads, content-diffed
+  // by the CALLER so an unchanged recompute writes nothing. session_at /
+  // session_date_et / detected_at are WRITE-ONCE (the store COALESCEs them on
+  // update); manual_overrides are never touched by the automatic writer.
+  /** Every no-show ledger row (bulk read for the diff + the UI family). */
+  listRetentionNoShows(): Promise<RetentionNoShowRow[]>;
+  /** Insert NEW ledger rows only (the engine pre-dedupes by appointment_id). Returns the number actually inserted. */
+  insertRetentionNoShows(rows: RetentionNoShowWrite[]): Promise<number>;
+  /** Content update of ONE existing ledger row (follow-up state advanced); write-once fields are preserved. */
+  updateRetentionNoShow(row: RetentionNoShowWrite): Promise<void>;
   /** Weekly scorecards (stage 3c): append-if-new storage — a stored week is never rewritten. */
   listRetentionScorecards(): Promise<RetentionScorecardRow[]>;
   getRetentionScorecard(weekStart: string): Promise<RetentionScorecardRow | null>;

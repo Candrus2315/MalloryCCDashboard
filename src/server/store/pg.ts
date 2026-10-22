@@ -74,6 +74,8 @@ import type {
   AvailabilitySyncRunRow,
   RetentionCancellationRow,
   RetentionCancellationWrite,
+  RetentionNoShowRow,
+  RetentionNoShowWrite,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -855,6 +857,32 @@ const DDL: string[] = [
     manual_overrides jsonb,
     notes jsonb
   )`,
+  // RETENTION NO-SHOW LEDGER (stage 4b — the no-show pipeline; plan §16 +
+  // ruling D10): one row per DETECTED no-show appointment (PK appointment_id).
+  // Detection is the owner-ratified proxy — the session's start passed while
+  // the appointment was still scheduled and not cancelled, as OBSERVED by the
+  // no-shows engine on a pass. session_at / session_date_et / detected_at are
+  // write-once (UPDATEs COALESCE them): a later cancellation or reschedule of
+  // the same appointment never moves or deletes the missed-session record —
+  // the state column carries what came after. Management overrides (the
+  // Settings stage) survive every automatic pass, exactly like §11's ledger.
+  `CREATE TABLE IF NOT EXISTS retention_no_shows (
+    appointment_id uuid PRIMARY KEY REFERENCES appointments(id),
+    internal_client_id uuid,
+    ghl_contact_external_id text,
+    session_at timestamptz,
+    session_date_et date,
+    detected_at timestamptz NOT NULL,
+    attempts_count int DEFAULT 0,
+    any_answered boolean DEFAULT false,
+    final_contact_status text,
+    state text NOT NULL DEFAULT 'open',
+    successor_appointment_id uuid,
+    manual_overrides jsonb,
+    notes jsonb
+  )`,
+  `CREATE INDEX IF NOT EXISTS ret_no_shows_session_idx ON retention_no_shows (session_date_et DESC)`,
+  `CREATE INDEX IF NOT EXISTS ret_no_shows_state_idx ON retention_no_shows (state)`,
   `CREATE TABLE IF NOT EXISTS retention_transfers (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     appointment_id uuid REFERENCES appointments(id),
@@ -4053,6 +4081,65 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
         successor_appointment_id = ${row.successorAppointmentId}::uuid,
         recovered = ${row.recovered},
         recovered_at = ${row.recoveredAtIso}::timestamptz,
+        notes = ${JSON.stringify(row.notes)}::jsonb
+      WHERE appointment_id = ${row.appointmentId}::uuid`;
+  }
+
+  // ---- RETENTION NO-SHOW LEDGER (stage 4b; plan §16 + ruling D10) ----
+  // One row per detected no-show (PK appointment_id). Same discipline as the
+  // cancellations ledger: bulk reads; the ENGINE content-diffs so an unchanged
+  // recompute writes nothing. session_at / session_date_et / detected_at are
+  // copied from the detection pass and NEVER moved by a later sync (the
+  // UPDATE path COALESCEs them). The UPDATE path never touches
+  // manual_overrides (management edits survive).
+  async listRetentionNoShows(): Promise<RetentionNoShowRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT appointment_id::text AS appointment_id, internal_client_id::text AS internal_client_id, ghl_contact_external_id, session_at, session_date_et, detected_at, attempts_count, any_answered, final_contact_status, state, successor_appointment_id::text AS successor_appointment_id, manual_overrides, notes FROM retention_no_shows ORDER BY session_at DESC NULLS LAST, appointment_id`;
+    return rows.map((r) => this.retentionNoShowRow(r as Record<string, unknown>));
+  }
+  private retentionNoShowRow(r: Record<string, unknown>): RetentionNoShowRow {
+    return {
+      appointment_id: String(r.appointment_id),
+      internal_client_id: r.internal_client_id == null ? null : String(r.internal_client_id),
+      ghl_contact_external_id: r.ghl_contact_external_id == null ? null : String(r.ghl_contact_external_id),
+      session_at: r.session_at == null ? null : new Date(r.session_at as string).toISOString(),
+      session_date_et: normalizePgBusinessDate(r.session_date_et),
+      detected_at: new Date(r.detected_at as string).toISOString(),
+      attempts_count: Number(r.attempts_count ?? 0),
+      any_answered: r.any_answered === true,
+      final_contact_status: r.final_contact_status == null ? null : String(r.final_contact_status),
+      state: String(r.state ?? "open"),
+      successor_appointment_id: r.successor_appointment_id == null ? null : String(r.successor_appointment_id),
+      manual_overrides: parseEvidenceCell(r.manual_overrides),
+      notes: parseEvidenceCell(r.notes),
+    };
+  }
+  async insertRetentionNoShows(rows: RetentionNoShowWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      const out = await this.sql`
+        INSERT INTO retention_no_shows (appointment_id, internal_client_id, ghl_contact_external_id, session_at, session_date_et, detected_at, attempts_count, any_answered, final_contact_status, state, successor_appointment_id, notes)
+        VALUES (${r.appointmentId}::uuid, ${r.internalClientId}::uuid, ${r.ghlContactExternalId}, ${r.sessionAtIso}::timestamptz, ${r.sessionDateEt}::date, ${r.detectedAtIso}::timestamptz, ${r.attemptsCount}, ${r.anyAnswered}, ${r.finalContactStatus}, ${r.state}, ${r.successorAppointmentId}::uuid, ${JSON.stringify(r.notes)}::jsonb)
+        ON CONFLICT (appointment_id) DO NOTHING
+        RETURNING appointment_id`;
+      created += out.length;
+    }
+    return created;
+  }
+  async updateRetentionNoShow(row: RetentionNoShowWrite): Promise<void> {
+    await this.ensureSchema();
+    await this.sql`
+      UPDATE retention_no_shows SET
+        internal_client_id = ${row.internalClientId}::uuid,
+        ghl_contact_external_id = ${row.ghlContactExternalId},
+        session_at = COALESCE(session_at, ${row.sessionAtIso}::timestamptz),
+        session_date_et = COALESCE(session_date_et, ${row.sessionDateEt}::date),
+        attempts_count = ${row.attemptsCount},
+        any_answered = ${row.anyAnswered},
+        final_contact_status = ${row.finalContactStatus},
+        state = ${row.state},
+        successor_appointment_id = ${row.successorAppointmentId}::uuid,
         notes = ${JSON.stringify(row.notes)}::jsonb
       WHERE appointment_id = ${row.appointmentId}::uuid`;
   }

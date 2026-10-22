@@ -223,6 +223,10 @@ const STORE_METHOD_FLAGS = {
   listRetentionCancellations: 1,
   insertRetentionCancellations: 1,
   updateRetentionCancellation: 1,
+  // stage 4b no-show ledger (D10; write-once detection stamps, diff-writes)
+  listRetentionNoShows: 1,
+  insertRetentionNoShows: 1,
+  updateRetentionNoShow: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */
