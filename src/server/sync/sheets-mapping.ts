@@ -89,6 +89,11 @@ export function applySheetMapping(row: string[], columns: Record<string, string>
   const warnings: string[] = [];
   const parsed: Record<string, string | null> = {};
   for (const field of fieldsForMode(mode)) {
+    // OPTIONAL last_name (Fairyland wiring): sheets that don't map a
+    // last_name column (Family/Animalia) must see byte-identical parsed
+    // output — no last_name key at all, not a null entry. Mapped-but-blank
+    // keeps the null key (pinned by sheets-last-name.test.ts).
+    if (field === "last_name" && !columns.last_name) continue;
     parsed[field] = null;
     const letter = columns[field];
     if (!letter) {
