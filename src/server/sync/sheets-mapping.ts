@@ -159,7 +159,7 @@ export function parseSheetDate(raw: unknown): string | null {
     // real month 1–12. The Fairyland tab's TimeStamp column is day-first
     // ("19/10/2026 10:54"): read as US month=19 it nulled, so every fresh
     // row was rejected as undatable. Ambiguous first components 1–12 keep
-    // US order ("01/02/2026" stays Feb 1); impossible either way ("13/23")
+    // US order ("01/02/2026" stays Jan 2 — the US reading); impossible either way ("13/23")
     // stays null. Family/Animalia output is unchanged (before/after proof:
     // scratch/proof-{before,after}-*.json on fix/fairyland-ingest-root-causes).
     if (+m[1] > 12 && +m[2] >= 1 && +m[2] <= 12) {
