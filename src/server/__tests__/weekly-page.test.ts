@@ -257,9 +257,9 @@ describe("weeklyPageData (MemoryStore, pinned today)", () => {
     const { store } = await seedWeeklyStore();
     const data = await weeklyPageData({ store, today: TODAY });
     // assigned leads in 9/21..9/27: l1,l2,l8 (family) + l3,l7,l10 (animalia) — l4/l9 unassigned, l5/l6 out of window
-    expect(data.conversion.denominator).toEqual({ overall: 6, family: 3, animalia: 3 });
+    expect(data.conversion.denominator).toEqual({ overall: 6, family: 3, animalia: 3, fairyland: 0 });
     // rep wins last week: mon-1,sun-1 (family) + mon-2,tue-1 (animalia) — unattr-1 excluded
-    expect(data.conversion.numerator).toEqual({ overall: 4, family: 2, animalia: 2 });
+    expect(data.conversion.numerator).toEqual({ overall: 4, family: 2, animalia: 2, fairyland: 0 });
     expect(data.conversion.overall).toBeCloseTo(4 / 6, 6);
     expect(data.conversion.family).toBeCloseTo(2 / 3, 6);
     expect(data.conversion.animalia).toBeCloseTo(2 / 3, 6);
@@ -269,7 +269,7 @@ describe("weeklyPageData (MemoryStore, pinned today)", () => {
     const { store } = await seedWeeklyStore();
     const data = await weeklyPageData({ store, today: TODAY });
     // in-window (9/21..9/27): family l1,l2,l8,l9; animalia l3,l4,l7,l10 — l5 (Sun before) and l6 (Mon after) out
-    expect(data.leads).toEqual({ family: 4, animalia: 4, total: 8 });
+    expect(data.leads).toEqual({ family: 4, animalia: 4, fairyland: 0, total: 8 });
   });
 
   test("MTD: month-start..today bucket — Aug 31 out, next-Monday in, top performer highlighted", async () => {

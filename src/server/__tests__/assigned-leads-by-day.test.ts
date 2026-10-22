@@ -220,8 +220,8 @@ describe("buildAssignedLeadsByDay — pure edge cases (no store)", () => {
   test("roster rep with an empty week keeps its zero row", () => {
     const g = base({});
     expect(g.rows).toHaveLength(1);
-    expect(g.rows[0].total).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 0 });
-    expect(g.weekTotal).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 0 });
+    expect(g.rows[0].total).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 0, fairyland: 0 });
+    expect(g.weekTotal).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 0, fairyland: 0 });
   });
 
   test("unassigned sheet leads are excluded; non-animalia lead types count family", () => {
@@ -232,7 +232,7 @@ describe("buildAssignedLeadsByDay — pure edge cases (no store)", () => {
         mkLead({ id: "a", lead_type: "animalia", work_date: "2026-09-22" }),
       ],
     });
-    expect(g.rows[0].days[0]).toEqual({ animalia: 0, family: 1, alliance: 0, auction: 0 });
+    expect(g.rows[0].days[0]).toEqual({ animalia: 0, family: 1, alliance: 0, auction: 0, fairyland: 0 });
     expect(g.rows[0].days[1].animalia).toBe(1);
   });
 
@@ -305,31 +305,31 @@ describe("assigned-leads-by-day battery — MemoryStore (owner table, week 2026-
 
     // week totals per rep (genre order: animalia/family/alliance/auction)
     const totalOf = (name: string) => grid.rows.find((r) => r.rep_name === name)!.total;
-    expect(totalOf("Allison Wittner")).toEqual({ animalia: 159, family: 111, alliance: 2, auction: 14 });
-    expect(totalOf("Carmine Morgano")).toEqual({ animalia: 74, family: 119, alliance: 0, auction: 0 });
-    expect(totalOf("Jennifer Stitt")).toEqual({ animalia: 47, family: 28, alliance: 0, auction: 0 });
-    expect(totalOf("Laura Rivera")).toEqual({ animalia: 28, family: 15, alliance: 0, auction: 0 });
-    expect(totalOf("Amy Clark")).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0 });
-    expect(totalOf("Lexa Brandis")).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0 });
-    expect(totalOf("Mallory Portraits Accounts")).toEqual({ animalia: 2, family: 1, alliance: 0, auction: 0 });
+    expect(totalOf("Allison Wittner")).toEqual({ animalia: 159, family: 111, alliance: 2, auction: 14, fairyland: 0 });
+    expect(totalOf("Carmine Morgano")).toEqual({ animalia: 74, family: 119, alliance: 0, auction: 0, fairyland: 0 });
+    expect(totalOf("Jennifer Stitt")).toEqual({ animalia: 47, family: 28, alliance: 0, auction: 0, fairyland: 0 });
+    expect(totalOf("Laura Rivera")).toEqual({ animalia: 28, family: 15, alliance: 0, auction: 0, fairyland: 0 });
+    expect(totalOf("Amy Clark")).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0, fairyland: 0 });
+    expect(totalOf("Lexa Brandis")).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0, fairyland: 0 });
+    expect(totalOf("Mallory Portraits Accounts")).toEqual({ animalia: 2, family: 1, alliance: 0, auction: 0, fairyland: 0 });
 
     // pinned day cells (CSV rows)
-    expect(cellOf(grid, "Allison Wittner", 0)).toEqual({ animalia: 61, family: 46, alliance: 2, auction: 8 });
-    expect(cellOf(grid, "Allison Wittner", 4)).toEqual({ animalia: 17, family: 16, alliance: 0, auction: 2 });
-    expect(cellOf(grid, "Allison Wittner", 5)).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 2 }); // Sat
-    expect(cellOf(grid, "Allison Wittner", 6)).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 1 }); // Sun
-    expect(cellOf(grid, "Carmine Morgano", 0)).toEqual({ animalia: 44, family: 49, alliance: 0, auction: 0 });
-    expect(cellOf(grid, "Carmine Morgano", 3)).toEqual({ animalia: 8, family: 10, alliance: 0, auction: 0 });
-    expect(cellOf(grid, "Jennifer Stitt", 2)).toEqual({ animalia: 8, family: 6, alliance: 0, auction: 0 });
-    expect(cellOf(grid, "Laura Rivera", 1)).toEqual({ animalia: 5, family: 2, alliance: 0, auction: 0 });
-    expect(cellOf(grid, "Amy Clark", 0)).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0 });
-    expect(cellOf(grid, "Lexa Brandis", 2)).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0 });
-    expect(cellOf(grid, "Mallory Portraits Accounts", 3)).toEqual({ animalia: 2, family: 0, alliance: 0, auction: 0 });
+    expect(cellOf(grid, "Allison Wittner", 0)).toEqual({ animalia: 61, family: 46, alliance: 2, auction: 8, fairyland: 0 });
+    expect(cellOf(grid, "Allison Wittner", 4)).toEqual({ animalia: 17, family: 16, alliance: 0, auction: 2, fairyland: 0 });
+    expect(cellOf(grid, "Allison Wittner", 5)).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 2, fairyland: 0 }); // Sat
+    expect(cellOf(grid, "Allison Wittner", 6)).toEqual({ animalia: 0, family: 0, alliance: 0, auction: 1, fairyland: 0 }); // Sun
+    expect(cellOf(grid, "Carmine Morgano", 0)).toEqual({ animalia: 44, family: 49, alliance: 0, auction: 0, fairyland: 0 });
+    expect(cellOf(grid, "Carmine Morgano", 3)).toEqual({ animalia: 8, family: 10, alliance: 0, auction: 0, fairyland: 0 });
+    expect(cellOf(grid, "Jennifer Stitt", 2)).toEqual({ animalia: 8, family: 6, alliance: 0, auction: 0, fairyland: 0 });
+    expect(cellOf(grid, "Laura Rivera", 1)).toEqual({ animalia: 5, family: 2, alliance: 0, auction: 0, fairyland: 0 });
+    expect(cellOf(grid, "Amy Clark", 0)).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0, fairyland: 0 });
+    expect(cellOf(grid, "Lexa Brandis", 2)).toEqual({ animalia: 1, family: 0, alliance: 0, auction: 0, fairyland: 0 });
+    expect(cellOf(grid, "Mallory Portraits Accounts", 3)).toEqual({ animalia: 2, family: 0, alliance: 0, auction: 0, fairyland: 0 });
 
     // day totals: Monday across all reps
-    expect(grid.dayTotals[0]).toEqual({ animalia: 139, family: 116, alliance: 2, auction: 8 });
+    expect(grid.dayTotals[0]).toEqual({ animalia: 139, family: 116, alliance: 2, auction: 8, fairyland: 0 });
     // week totals: 312 animalia / 274 family / 2 alliance / 14 auction
-    expect(grid.weekTotal).toEqual({ animalia: 312, family: 274, alliance: 2, auction: 14 });
+    expect(grid.weekTotal).toEqual({ animalia: 312, family: 274, alliance: 2, auction: 14, fairyland: 0 });
     // the unassigned lead and the rep-less auction opp never landed anywhere
     expect(grid.warnings.join(" ")).toContain("no owning rep");
   });
@@ -371,7 +371,7 @@ describe("repsPageData integration — the section rides the REAL loader chain (
     expect(payload.assignedWeek.mon).toBe("2026-09-21"); // any day in the week normalizes to its Monday
     expect(payload.assignedByDay.week_start).toBe("2026-09-21");
     const allison = payload.assignedByDay.rows.find((r) => r.rep_name === "Allison Wittner");
-    expect(allison?.total).toEqual({ animalia: 159, family: 111, alliance: 2, auction: 14 });
+    expect(allison?.total).toEqual({ animalia: 159, family: 111, alliance: 2, auction: 14, fairyland: 0 });
 
     const defaulted = await repsPageData({}, { store, today: "2026-10-01" });
     expect(defaulted.assignedWeek.mon).toBe("2026-09-21"); // Wed 10/1 → last completed week = 9/21
@@ -402,10 +402,10 @@ describe.skipIf(!TEST_DATABASE_URL)("assigned-leads-by-day battery — PgStore (
     // the same anchor numbers, on the shifted week
     expect(grid.rows.map((r) => r.rep_name)[0]).toBe("Allison Wittner");
     const allison = grid.rows.find((r) => r.rep_name === "Allison Wittner")!;
-    expect(allison.total).toEqual({ animalia: 159, family: 111, alliance: 2, auction: 14 });
-    expect(allison.days[0]).toEqual({ animalia: 61, family: 46, alliance: 2, auction: 8 });
+    expect(allison.total).toEqual({ animalia: 159, family: 111, alliance: 2, auction: 14, fairyland: 0 });
+    expect(allison.days[0]).toEqual({ animalia: 61, family: 46, alliance: 2, auction: 8, fairyland: 0 });
     expect(allison.days[6].auction).toBe(1);
-    expect(grid.weekTotal).toEqual({ animalia: 312, family: 274, alliance: 2, auction: 14 });
+    expect(grid.weekTotal).toEqual({ animalia: 312, family: 274, alliance: 2, auction: 14, fairyland: 0 });
     const csv = assignedLeadsCsv(grid);
     expect(csv).toContain("Allison Wittner,2027-01-04 Mon,Animalia,61");
     expect(csv).toContain("Carmine Morgano,2027-01-07 Thu,Family,10");

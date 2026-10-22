@@ -133,7 +133,7 @@ describe("leads", () => {
 
   test("leads today filters on work_date, not source_date", () => {
     const s = leadsToday(leads, "2026-09-25");
-    expect(s).toEqual({ family: 1, animalia: 2, total: 3 });
+    expect(s).toEqual({ family: 1, animalia: 2, fairyland: 0, total: 3 });
   });
 
   test("budget usage / remaining", () => {
