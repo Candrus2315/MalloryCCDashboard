@@ -45,13 +45,16 @@ import {
 /** The ?queue= stage filters (§5.3). No-Shows / Reschedules are RESERVED
  * (D4/D5): they render only when their pipeline stages ship real segments —
  * a chip that filters to zero while no-shows exist would read as a false
- * "nothing to do". Unknown params fall back to all (validateSearch). */
-export type QueueFilter = "all" | "excitement" | "unreached" | "cancellations" | "needs-review";
+ * "nothing to do". Transfers went ACTIVE with the stage-5 ledger (the
+ * transfers engine writes ret_transfers; its rows carry a standing fact).
+ * Unknown params fall back to all (validateSearch). */
+export type QueueFilter = "all" | "excitement" | "unreached" | "cancellations" | "transfers" | "needs-review";
 export const QUEUE_FILTERS: { value: QueueFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "excitement", label: "Excitement Calls" },
   { value: "unreached", label: "Still Unreached" },
   { value: "cancellations", label: "Cancellations" },
+  { value: "transfers", label: "Transfers" },
   { value: "needs-review", label: "Needs Review" },
 ];
 
@@ -107,6 +110,7 @@ const SEGMENT_TONE: Record<RetentionQueueRow["segment"], { dot: string; chip: st
   "window-missed": { dot: "bg-(--ret-amber-dot)", chip: "bg-(--ret-amber-bg) text-(--ret-amber-fg)" },
   "needs-review": { dot: "bg-(--ret-purple-dot)", chip: "bg-(--ret-purple-bg) text-(--ret-purple-fg)" },
   cancellation: { dot: "bg-(--ret-amber-dot)", chip: "bg-(--ret-amber-bg) text-(--ret-amber-fg)" }, // a client needs attention: save the session
+  transfer: { dot: "bg-(--ret-purple-dot)", chip: "bg-(--ret-purple-bg) text-(--ret-purple-fg)" }, // a standing fact for awareness (Records rank), not client work
 };
 const SEGMENT_REASON: Record<RetentionQueueRow["segment"], string> = {
   "call-due": "Excitement call due",
@@ -114,6 +118,7 @@ const SEGMENT_REASON: Record<RetentionQueueRow["segment"], string> = {
   "window-missed": "Missed call window",
   "needs-review": "Needs review",
   cancellation: "Cancellation",
+  transfer: "Transfer",
 };
 
 /** §5.3 — which loader segments each chip shows (client-side over the ONE
@@ -123,6 +128,7 @@ const SEGMENT_IN: Record<QueueFilter, (s: RetentionQueueRow["segment"]) => boole
   excitement: (s) => s === "call-due" || s === "unreached",
   unreached: (s) => s === "unreached" || s === "window-missed",
   cancellations: (s) => s === "cancellation",
+  transfers: (s) => s === "transfer",
   "needs-review": (s) => s === "needs-review",
 };
 
@@ -132,6 +138,7 @@ const QUEUE_EMPTY_WHY: Record<QueueFilter, string> = {
   excitement: "No excitement calls waiting — every client inside a call window has been reached.",
   unreached: "No unreached clients — everyone still inside a call window has been reached.",
   cancellations: "No cancellations awaiting outcome.",
+  transfers: "No transfers — no client session has moved between calendars.",
   "needs-review": "No records with conflicting evidence — every classification is settled.",
 };
 
@@ -316,7 +323,7 @@ function RetentionPage() {
               Needs Attention
               <InfoTip
                 label="How this queue is built"
-                tip={`Client rows the engine can prove need action: excitement calls due, clients still unreached (within their call window or past it), records with conflicting evidence, and cancellations still awaiting an outcome (the save window is open). Each stage card opens the shared queue pre-filtered. ${CANCELLATIONS_ENGINE_NOTE}`}
+                tip={`Client rows the engine can prove need action: excitement calls due, clients still unreached (within their call window or past it), records with conflicting evidence, and cancellations still awaiting an outcome (the save window is open). The Transfers card tracks the stage-5 transfers ledger — clients whose session moved to a different calendar — as a standing fact, never open work. Each stage card opens the shared queue pre-filtered. ${CANCELLATIONS_ENGINE_NOTE}`}
               />
             </p>
             <StatusChip
@@ -324,7 +331,7 @@ function RetentionPage() {
               label={queue.rows.length > 0 ? `${queue.rows.length} client${queue.rows.length === 1 ? "" : "s"} waiting` : "nothing waiting"}
             />
           </div>
-          <div className="mt-4 grid gap-3 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-4 grid gap-3 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-5">
             {/* Card 1 — Excitement Calls (blue). */}
             <div className="rounded-lg border border-(--ret-blue-border) bg-(--ret-blue-bg) px-4 py-3">
               <p className="kpi-label flex items-center gap-1.5 text-(--ret-blue-fg)">
@@ -425,6 +432,37 @@ function RetentionPage() {
                 Review <span aria-hidden="true">→</span>
               </Link>
             </div>
+            {/* Card 5 — Transfers (purple/gray: a standing fact for awareness,
+                Records rank — the client already moved calendars; nothing is
+                saved or called from here, §16 excludes transfers from owner
+                compliance). The count reads the stage-5 transfers ledger
+                DISPLAY-scoped; the share rate exists only with a real
+                denominator (tracked cancellations cancelled this week). */}
+            <div className="rounded-lg border border-(--ret-purple-border) bg-(--ret-purple-bg) px-4 py-3">
+              <p className="kpi-label flex items-center gap-1.5 text-(--ret-purple-fg)">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--ret-purple-dot)" aria-hidden="true" />
+                Transfers
+              </p>
+              <div className="mt-2 space-y-1 text-[15px] text-(--text-body)">
+                <p>
+                  <span className="font-semibold tabular-nums text-(--text-primary)">{num(String(data.transfersTotal ?? 0))}</span> transferred — client moved calendars
+                </p>
+                <p>
+                  <span className="font-semibold tabular-nums text-(--text-primary)">{num(String(data.transfersThisWeek ?? 0))}</span> this week
+                </p>
+                <p>
+                  <span className="font-semibold tabular-nums text-(--ret-green-fg)">{data.transfersRate == null ? num("—") : pct(data.transfersRate)}</span>{" "}
+                  {data.transfersRate == null ? "no tracked cancellations this week" : "of tracked cancellations"}
+                </p>
+              </div>
+              <Link
+                to="/retention"
+                search={{ queue: "transfers" }}
+                className="mt-3 inline-flex items-center gap-1 rounded text-sm font-medium text-(--text-primary) underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
+              >
+                Open Queue <span aria-hidden="true">→</span>
+              </Link>
+            </div>
           </div>
         </Panel>
       </section>
@@ -440,7 +478,7 @@ function RetentionPage() {
               Today&rsquo;s Retention Queue
               <InfoTip
                 label="One list, one source"
-                tip={`Everyone the engine can prove needs action today — excitement calls, still-unreached clients, cancellations awaiting an outcome, records with conflicting evidence — filtered by stage. The rows are the SAME data the drill-downs use, never re-counted. Priority is the owner's order: save first, call next, salvage, then records. ${CANCELLATIONS_ENGINE_NOTE}`}
+                tip={`Everyone the engine can prove needs action today — excitement calls, still-unreached clients, cancellations awaiting an outcome, records with conflicting evidence — plus confirmed transfers (standing facts, Records rank). Filtered by stage. The rows are the SAME data the drill-downs use, never re-counted. Priority is the owner's order: save first, call next, salvage, then records. ${CANCELLATIONS_ENGINE_NOTE}`}
               />
             </p>
             <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
@@ -525,7 +563,7 @@ function RetentionPage() {
                 tip={`Contact Compliance = spoke with ÷ clients due. Clients Reached = the clients due who have a verified conversation. The cancellation family (Saves, Reschedules, Recovery Rate) reads the cancellations ledger. Exact formulas: ${formulaOf("compliance")} · ${formulaOf("spoken-with")} · ${formulaOf("saves")} · ${formulaOf("reschedules")} · ${formulaOf("recovery")}. ${CANCELLATIONS_ENGINE_NOTE}`}
               />
             </p>
-            <div className="mt-4 grid grid-cols-2 gap-y-5 pb-5 sm:grid-cols-3 xl:grid-cols-5 xl:divide-x xl:divide-(--table-border-weak)">
+            <div className="mt-4 grid grid-cols-2 gap-y-5 pb-5 sm:grid-cols-3 xl:grid-cols-6 xl:divide-x xl:divide-(--table-border-weak)">
               <div className="px-5 py-1">
                 <p className="kpi-label flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--ret-blue-dot)" aria-hidden="true" />
@@ -567,6 +605,20 @@ function RetentionPage() {
                 </p>
                 <p className="mt-2 text-3xl font-semibold tracking-tight tabular-nums text-(--text-primary)">{recovery.ratio == null ? num("—") : pct(recovery.ratio)}</p>
                 <p className="kpi-sub mt-1.5">Eligible cancellations saved or rescheduled</p>
+              </div>
+              {/* Stage-5 transfers — the written ledger, display-scoped. The
+                  share rate exists only when a real denominator exists
+                  (tracked cancellations cancelled this week); otherwise an
+                  honest — (never a fabricated 0%). */}
+              <div className="px-5 py-1">
+                <p className="kpi-label flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--ret-purple-dot)" aria-hidden="true" />
+                  This Week Transfers
+                </p>
+                <p className="mt-2 text-3xl font-semibold tracking-tight tabular-nums text-(--text-primary)">{num(String(data.transfersThisWeek ?? 0))}</p>
+                <p className="kpi-sub mt-1.5">
+                  {data.transfersRate == null ? "No tracked cancellations this week" : `${pct(data.transfersRate)} of tracked cancellations`}
+                </p>
               </div>
             </div>
           </Panel>
@@ -629,7 +681,7 @@ function RetentionPage() {
                 <StatusChip kind="neutral" label="Results lock each Monday for the previous week" />
                 <InfoTip
                   label="Scoring basis"
-                  tip={`Auto-computes every Monday for the prior completed Mon–Sun ET week and is then stored — a stored week is never rewritten, so past weeks render byte-identically forever. The Retention Owner for each week resolves via retention_owner_history effective dates; a week is scored against whoever owned the role that week. Formulas are §16 verbatim. The cancellation-family cells (Cancellations worked, Saves, Reschedules, Recovery rate) read the written ret_cancellations ledger for weeks the ledger covers — older weeks store null and render —. No-Shows and Transfers read ledgers no stage writes yet — they render —, never 0. ${CANCELLATIONS_ENGINE_NOTE}`}
+                  tip={`Auto-computes every Monday for the prior completed Mon–Sun ET week and is then stored — a stored week is never rewritten, so past weeks render byte-identically forever. The Retention Owner for each week resolves via retention_owner_history effective dates; a week is scored against whoever owned the role that week. Formulas are §16 verbatim. The cancellation-family cells (Cancellations worked, Saves, Reschedules, Recovery rate) read the written ret_cancellations ledger for weeks the ledger covers — older weeks store null and render —. The No-Shows and Transfers cells stay — (never 0): their scorecard writers are follow-ups — the transfers ledger itself IS written (stage 5), but same-appointment staff-move detection is unobservable from stored data, and the scorecard row does not compute transfers yet. ${CANCELLATIONS_ENGINE_NOTE}`}
                 />
               </p>
               {scorecard && (
@@ -685,7 +737,7 @@ function RetentionPage() {
                 <KpiMid label="Recoveries" value={scorecard.recoveries ?? "—"} sub="Saved or rescheduled" />
                 <KpiMid label="Recovery rate" value={scorecard.recovery_rate == null ? "—" : pct(scorecard.recovery_rate)} sub="Recovered, of tracked" />
                 <KpiMid label="No-Shows" value="—" />
-                <KpiMid label="Transfers" value="—" sub="Excluded from owner compliance" />
+                <KpiMid label="Transfers" value="—" sub="Deferred — scorecard writer is a follow-up" />
                 <KpiMid label="Needs Review" value={scorecard.needs_review} sub={scorecard.needs_review > 0 ? "Conflicting evidence" : "All clear"} />
                 <KpiMid
                   label="Data Match Exceptions"
@@ -774,7 +826,9 @@ function PriorityChip({ row }: { row: RetentionQueueRow }) {
 
 /** One queue row: a desktop <tr> or a phone card (md:hidden pairing). The
     Action cell is the row's link into the pre-filtered drill-down — a LINK,
-    never a mutating button (spec §4.4). */
+    never a mutating button (spec §4.4). Transfer rows have NO drill home, so
+    the Action cell is an honest "—" (a link to the wrong list would be a
+    fabrication). */
 function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }) {
   const tone = SEGMENT_TONE[row.segment];
   const drillSearch =
@@ -784,7 +838,9 @@ function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }
         ? { kpi: "unreached", range: "all" } as const
         : row.drillKpi === "active-cancellations"
           ? { kpi: "active-cancellations", range: "all" } as const
-          : { kpi: "needs-review", range: "all", classification: "needs_review" } as const;
+          : row.drillKpi === "needs-review"
+            ? { kpi: "needs-review", range: "all", classification: "needs_review" } as const
+            : null; // transfers — no drill mode exists; the Action cell renders —
   const appointment = row.apptDateEt ? `${formatShort(row.apptDateEt)}${row.apptTimeEt ? ` · ${row.apptTimeEt}` : ""}` : "—";
   const client = row.clientName ?? "Unnamed client";
   // D1 — last contact ("Oct 20", or "— none yet" when nothing is recorded).
@@ -795,20 +851,20 @@ function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }
       ? row.dueDate
         ? `cancelled ${formatShort(row.dueDate)}`
         : "cancelled —"
-      : row.segment === "window-missed"
-        ? "window closed"
-        : row.windowCloses
-          ? row.windowClosing
-            ? `window closes today, ${formatTime(row.windowCloses)}`
-            : `window closes ${formatDayTime(row.windowCloses)}`
-          : `due ${formatShort(row.dueDate)}`;
+      : row.segment === "transfer"
+        ? row.dueDate
+          ? `transferred ${formatShort(row.dueDate)}`
+          : "transferred —"
+        : row.segment === "window-missed"
+          ? "window closed"
+          : row.windowCloses
+            ? row.windowClosing
+              ? `window closes today, ${formatTime(row.windowCloses)}`
+              : `window closes ${formatDayTime(row.windowCloses)}`
+            : `due ${formatShort(row.dueDate)}`;
   if (compact) {
-    return (
-      <Link
-        to="/retention-drill"
-        search={drillSearch}
-        className="block rounded-lg border border-(--card-border) bg-(--card-bg) px-4 py-3 transition-colors hover:bg-(--surface-hover) focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
-      >
+    const cardBody = (
+      <>
         <p className="flex items-center justify-between gap-2">
           <span className="font-medium text-(--text-primary)">{client}</span>
           <span className="text-xs text-(--text-caption)">{appointment}</span>
@@ -829,8 +885,23 @@ function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }
           {row.statusLabel}
           {row.attemptsCount > 0 ? ` · ${row.attemptsCount} attempt${row.attemptsCount === 1 ? "" : "s"}` : ""}
         </p>
-        <p className="mt-2 text-xs font-medium text-(--text-primary)">{row.actionLabel} →</p>
+        {row.drillKpi == null ? (
+          <p className="mt-2 text-xs text-(--text-muted)">No in-app action — tracked for awareness</p>
+        ) : (
+          <p className="mt-2 text-xs font-medium text-(--text-primary)">{row.actionLabel} →</p>
+        )}
+      </>
+    );
+    return drillSearch ? (
+      <Link
+        to="/retention-drill"
+        search={drillSearch}
+        className="block rounded-lg border border-(--card-border) bg-(--card-bg) px-4 py-3 transition-colors hover:bg-(--surface-hover) focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
+      >
+        {cardBody}
       </Link>
+    ) : (
+      <div className="block rounded-lg border border-(--card-border) bg-(--card-bg) px-4 py-3">{cardBody}</div>
     );
   }
   return (
@@ -857,14 +928,18 @@ function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }
         {row.attemptsCount > 0 ? <span className="block text-xs text-(--text-muted)">{row.attemptsCount} attempt{row.attemptsCount === 1 ? "" : "s"}</span> : null}
       </td>
       <td className="px-5 py-2.5 text-right">
-        <Link
-          to="/retention-drill"
-          search={drillSearch}
-          className="inline-flex items-center gap-1 rounded text-sm font-medium text-(--text-primary) underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
-        >
-          {row.actionLabel}
-          <span aria-hidden="true">→</span>
-        </Link>
+        {drillSearch ? (
+          <Link
+            to="/retention-drill"
+            search={drillSearch}
+            className="inline-flex items-center gap-1 rounded text-sm font-medium text-(--text-primary) underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
+          >
+            {row.actionLabel}
+            <span aria-hidden="true">→</span>
+          </Link>
+        ) : (
+          <span className="text-(--text-muted)">—</span>
+        )}
       </td>
     </tr>
   );

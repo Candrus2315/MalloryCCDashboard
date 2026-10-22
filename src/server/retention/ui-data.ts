@@ -14,8 +14,10 @@
  *    ret_cancellations (stage 4a writer live). A count of 0 over a WRITTEN
  *    ledger is a fact, not a fabrication; the Recovery RATE stays null ("—")
  *    while the ledger has no eligible rows (never a fabricated 0%/100%).
- *  - Transfers (no 13th card; scorecard row + InfoTip) come from
- *    ret_transfers — still unwritten, same treatment.
+ *  - Transfers (stage 5) read the WRITTEN ret_transfers ledger — the
+ *    transfers engine owns it: queue rows, the Needs-Attention stage card and
+ *    the This-Week KPI here; the scorecard's own transfers cell stays honest
+ *    — (its scorecard writer is a follow-up).
  *  - The Weekly Scorecard is NOT computed here (separate later delegation);
  *    the page renders its EmptyState until storage exists.
  *
@@ -23,7 +25,7 @@
  * 139 attempts live-fire), so reads are the store's bulk reads and the
  * aggregation is in-memory, matching the retention store's own doctrine.
  */
-import type { Store, RetentionOutcomeRow, RetentionAttemptRow, RetentionOwnerHistoryRow, RetentionCancellationRow } from "../store/types";
+import type { Store, RetentionOutcomeRow, RetentionAttemptRow, RetentionOwnerHistoryRow, RetentionCancellationRow, RetentionTransferRow } from "../store/types";
 import type { DataMatchExceptionRow, InternalClientRow } from "../store/types";
 import { addDays, etDateStrFromInstant, etDayStartUtc, weekStart, OPERATIONAL_TIMEZONE } from "../date-logic";
 import type { NoteEvidence } from "./classify";
@@ -162,7 +164,7 @@ export const RETENTION_KPIS: RetentionKpiMeta[] = [
 ];
 
 export const CANCELLATIONS_ENGINE_NOTE =
-  "The cancellations ledger (ret_cancellations) is written by the retention-cancellations engine (stage 4a); its counts fill the Today row, the Needs Attention queue, This Week's Retention Performance and new weekly scorecards, and the four family drill-downs (Active Cancellations, Saves, Reschedules, Recovery Rate) list its rows through the same §16 predicate. Surfaces a stage does not write yet (no-shows, transfers) render an honest — (not computed), never 0.";
+  "The cancellations ledger (ret_cancellations) is written by the retention-cancellations engine (stage 4a); its counts fill the Today row, the Needs Attention queue, This Week's Retention Performance and new weekly scorecards, and the four family drill-downs (Active Cancellations, Saves, Reschedules, Recovery Rate) list its rows through the same §16 predicate. The transfers ledger (ret_transfers) is written by the transfers engine (stage 5). Surfaces whose own writer is a follow-up (the scorecard's No-Shows and Transfers cells) render an honest — (not computed), never 0.";
 
 export const RETENTION_KPI_LABEL: Record<RetentionKpiKey, string> = Object.fromEntries(
   RETENTION_KPIS.map((k) => [k.key, k.label]),
@@ -200,6 +202,17 @@ export interface RetentionOverviewData {
   cards: RetentionCard[];
   exceptionsOpen: number;
   needsReviewOpen: number;
+  /** Stage-5 transfers ledger rows whose ORIGINAL appointment is in display scope (owner directive 10/21) — every standing transfer, the same pool the queue's transfers segment shows. */
+  transfersTotal: number;
+  /** Transfers CONFIRMED (detected_at) inside the current Mon–Sun ET week — the This-Week KPI numerator. */
+  transfersThisWeek: number;
+  /**
+   * transfersThisWeek ÷ tracked cancellations CANCELLED in the current week
+   * (display-scoped, the §16 week anchor for the cancellations family). The
+   * share rate exists only when the denominator is a real number of tracked
+   * cancellations — otherwise null ("—", never a fabricated 0%).
+   */
+  transfersRate: number | null;
 }
 
 export async function retentionOverview(store: Store, now: () => Date = () => new Date()): Promise<RetentionOverviewData> {
@@ -218,12 +231,13 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
     max_contact_days: null,
   };
   const dueDays = retention.due_days;
-  const [outcomes, attempts, openExceptions, ownerRows, allCancellations] = await Promise.all([
+  const [outcomes, attempts, openExceptions, ownerRows, allCancellations, allTransfers] = await Promise.all([
     store.listRetentionAppointmentOutcomes(),
     store.listRetentionAttempts(),
     store.getDataMatchExceptions({ status: "open" }),
     store.listRetentionOwnerHistory(),
     store.listRetentionCancellations(),
+    store.listRetentionTransfers(),
   ]);
   const ownerName = currentRetentionOwner(ownerRows, todayEt);
 
@@ -246,6 +260,30 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
   // observing everything; this only narrows what the loaders RETURN.
   const cancellationRows = allCancellations.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id)));
   const exceptionsOpen = openExceptions.filter((e) => inRetentionExceptionScope(e, apptMsByAcuityIdOf(appts))).length;
+
+  // STAGE-5 TRANSFERS — the written ret_transfers ledger, DISPLAY-scoped on
+  // the ORIGINAL appointment's session instant (the row is attributed to the
+  // original booker's client series, so the original's instant is the row's
+  // scope anchor; a row whose original cannot be placed is not provably in
+  // scope and stays hidden — fail-honest, same as the cancellations family).
+  const transferRows = allTransfers.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id)));
+  const transfersThisWeek = transferRows.filter((r) => {
+    const ms = Date.parse(r.detected_at);
+    if (!Number.isFinite(ms)) return false; // no confirmation stamp — never guessed into a week
+    const d = etDateStrFromInstant(ms);
+    return d >= ws && d <= we;
+  }).length;
+  // The share rate's denominator: tracked cancellations CANCELLED in the
+  // current week (the §16 week anchor for the cancellations family). Only a
+  // real denominator yields a rate — otherwise null ("—", never 0%).
+  const cancellationsThisWeek = cancellationRows.filter((r) => {
+    if (!r.cancelled_at) return false;
+    const ms = Date.parse(r.cancelled_at);
+    if (!Number.isFinite(ms)) return false;
+    const d = etDateStrFromInstant(ms);
+    return d >= ws && d <= we;
+  }).length;
+  const transfersRate = cancellationsThisWeek > 0 ? transfersThisWeek / cancellationsThisWeek : null;
 
   // Current-week due cohort ("as of now" R — UI spec §2: cards summarize the
   // current week's due cohort and all open queues).
@@ -380,6 +418,9 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
     cards,
     exceptionsOpen,
     needsReviewOpen,
+    transfersTotal: transferRows.length,
+    transfersThisWeek,
+    transfersRate,
   };
 }
 
@@ -1170,7 +1211,7 @@ export function retentionDrillCsv(
 // ---- NEEDS ATTENTION queue (owner restructure directive 2026-10-20, point 1) ----
 
 /** Queue segments — proven engine families only; the cancellation slot stays empty until that stage writes its ledger. */
-export type RetentionQueueSegment = "call-due" | "unreached" | "window-missed" | "needs-review" | "cancellation";
+export type RetentionQueueSegment = "call-due" | "unreached" | "window-missed" | "needs-review" | "cancellation" | "transfer";
 
 export const QUEUE_SEGMENT_LABEL: Record<RetentionQueueSegment, string> = {
   "call-due": "Excitement call due",
@@ -1178,6 +1219,7 @@ export const QUEUE_SEGMENT_LABEL: Record<RetentionQueueSegment, string> = {
   "window-missed": "Missed call window",
   "needs-review": "Needs review",
   cancellation: "Cancellation — awaiting outcome",
+  transfer: "Transfer — client moved calendars",
 };
 
 export interface RetentionQueueRow {
@@ -1195,9 +1237,10 @@ export interface RetentionQueueRow {
   finalStatus: string;
   /** Human status for the queue's Status column (never the raw enum). */
   statusLabel: string;
-  /** The queue's Action cell — its verb; the row links to the drill pre-filtered. */
+  /** The queue's Action cell — its verb; the row links to the drill pre-filtered. Transfers rows carry NO drill home yet (no drill mode exists), so the Action cell renders — rather than a dishonest link. */
   actionLabel: string;
-  drillKpi: RetentionKpiKey;
+  /** null = no drill-down exists for this segment (transfers, stage 5) — the route renders the Action cell as an honest —, never a link to the wrong list. */
+  drillKpi: RetentionKpiKey | null;
   /** D1 — last contact instant (outcome last_attempt_at; ledger rows derive it from the same attempt ledger). Null renders "— none yet". */
   lastAttemptAt: string | null;
   /** D2 — when the call window closes (appointment instant; call-due / unreached-open only; derived at load). */
@@ -1218,13 +1261,17 @@ export const RETENTION_PRIORITY_LABEL: Record<RetentionPriority, string> = {
   5: "Records",
 };
 
-/** Segment -> urgency rank (reserved ranks absent). */
+/** Segment -> urgency rank (reserved ranks absent). Transfers ride the
+ * Records rank (5): a standing fact for management awareness, never open
+ * client work — the client already moved calendars; nothing is saved or
+ * called from here (owner §16: transfers are excluded from owner compliance). */
 const QUEUE_PRIORITY: Record<RetentionQueueSegment, RetentionPriority> = {
   cancellation: 1,
   "call-due": 2,
   unreached: 2,
   "window-missed": 4,
   "needs-review": 5,
+  transfer: 5,
 };
 
 export interface RetentionQueueData {
@@ -1241,6 +1288,8 @@ export interface RetentionQueueData {
     needsReview: number;
     /** The §16 Active-Cancellations universe over the written ledger (stage 4a) — a real 0 is a fact. */
     cancellations: number;
+    /** The stage-5 transfers ledger, display-scoped on the ORIGINAL appointment — every standing transfer row. */
+    transfers: number;
   };
   /** D3 — ledger rows via inCancellationUniverse(r, "recovery") with recovered_at in the current Mon–Sun ET week. Derived only; the ledger stays write-once. */
   cancellationsRecoveredThisWeek: number;
@@ -1265,6 +1314,15 @@ export interface RetentionQueueData {
  *                     source of truth; cancelled appointments leave the
  *                     contact funnel, so these rows can never also be
  *                     call-due/unreached/needs-review rows) → "Save".
+ *   transfer        — the WRITTEN transfers ledger (stage 5), display-scoped
+ *                     on the ORIGINAL appointment's instant (owner directive
+ *                     10/21): a standing fact for awareness, never open work
+ *                     — the client already moved calendars, so the Action cell
+ *                     is an honest "—" (no drill home exists; no link to the
+ *                     wrong list). The pool is same-client by construction and
+ *                     a transferred original's cancellations outcome is
+ *                     "rescheduled", never "pending", so it can never also be
+ *                     a cancellation row — disjoint by the ledgers' own rules.
  * Disjoint by construction: call-due ids are removed from unreached-open, and
  * a row is never in two segments.
  *
@@ -1292,13 +1350,14 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     max_contact_days: null,
   };
   const dueDays = retention.due_days;
-  const [outcomes, attempts, clients, appts, ownerRows, cancellationRows] = await Promise.all([
+  const [outcomes, attempts, clients, appts, ownerRows, cancellationRows, transferRows] = await Promise.all([
     store.listRetentionAppointmentOutcomes(),
     store.listRetentionAttempts(),
     store.listInternalClients(),
     store.getAppointmentsWithClientsSince(etDayStartUtc(addDays(todayEt, -(retention.compute_lookback_days + dueDays + 2)))),
     store.listRetentionOwnerHistory(),
     store.listRetentionCancellations(),
+    store.listRetentionTransfers(),
   ]);
   const ownerName = currentRetentionOwner(ownerRows, todayEt);
   const clientById = new Map(clients.map((c) => [c.id, c]));
@@ -1443,6 +1502,55 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     };
   };
 
+  // Transfers — the WRITTEN stage-5 ledger (ret_transfers), display-scoped on
+  // the ORIGINAL appointment's instant (owner directive 10/21; the engine's
+  // display_note). The null-client guard is defensive honesty (the engine only
+  // writes resolved-client rows — unlinked originals are exception-queued).
+  // A transfer is a standing fact, NOT open work: the client already moved
+  // calendars, so priority 5 (Records), statusLabel "Transferred", and the
+  // Action cell is an honest "—" via drillKpi null (no drill home exists —
+  // a link to the wrong list would be a fabrication; the owner's §16 ruling
+  // keeps transfers OUT of owner compliance).
+  const transfers = transferRows.filter(
+    (r) =>
+      r.internal_client_id != null &&
+      inRetentionDataScope(apptIdMs(r.appointment_id)), // owner directive 10/21 — pre-cutoff transfers stay stored, not shown
+  );
+  const transferQueueRow = (r: RetentionTransferRow): RetentionQueueRow => {
+    const client = clientById.get(r.internal_client_id!) ?? null;
+    const appt = apptById.get(r.appointment_id) ?? null;
+    const ms = appt ? Date.parse(appt.appointment_datetime) : NaN;
+    const detectedMs = Date.parse(r.detected_at);
+    const evAcuity = (r.notes as { acuity_appointment_id?: unknown } | null)?.acuity_appointment_id;
+    return {
+      segment: "transfer",
+      priority: QUEUE_PRIORITY.transfer,
+      lastAttemptAt: lastAttemptAtOf(r.appointment_id),
+      windowCloses: null, // the transfer window is closed by definition (the client already rebooked)
+      windowClosing: false,
+      appointmentId: r.appointment_id,
+      acuityId: appt?.acuity_appointment_id ?? (typeof evAcuity === "string" ? evAcuity : null),
+      internalClientId: r.internal_client_id!,
+      clientName: client?.display_name ?? null,
+      // The ORIGINAL booking's session — the row is attributed to the original
+      // booker's client series (the original-booker exception).
+      apptIso: Number.isFinite(ms) ? new Date(ms).toISOString() : null,
+      apptDateEt: Number.isFinite(ms) ? etDateStrFromInstant(ms) : null,
+      apptTimeEt: Number.isFinite(ms)
+        ? new Intl.DateTimeFormat("en-US", { timeZone: OPERATIONAL_TIMEZONE, hour: "numeric", minute: "2-digit" }).format(new Date(ms))
+        : null,
+      // The sub-label under the appointment renders "transferred <date>" for
+      // this segment (route) — the write-once confirmation stamp, not a due date.
+      dueDate: Number.isFinite(detectedMs) ? etDateStrFromInstant(detectedMs) : "",
+      attemptsCount: attempts.reduce((n, a) => (a.appointment_id === r.appointment_id ? n + 1 : n), 0),
+      lastCallStatus: lastCallStatus(r.appointment_id),
+      finalStatus: "none", // the transfers ledger carries no final-contact classification; statusLabel speaks instead
+      statusLabel: "Transferred",
+      actionLabel: "",
+      drillKpi: null,
+    };
+  };
+
   const rows: RetentionQueueRow[] = [
     ...callDue.map((o) =>
       shape(
@@ -1457,6 +1565,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     ...windowMissed.map((o) => shape(o, "window-missed", "Window missed", "Review", "unreached")),
     ...needsReview.map((o) => shape(o, "needs-review", "Evidence conflict", "Open", "needs-review")),
     ...cancellations.map(cancellationQueueRow),
+    ...transfers.map(transferQueueRow),
   ];
   const byApptAsc = (a: RetentionQueueRow, b: RetentionQueueRow): number => {
     if (a.apptIso == null || b.apptIso == null) return a.apptIso == null ? 1 : -1;
@@ -1470,10 +1579,12 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
     unreached: 1,
     "window-missed": 0,
     "needs-review": 0,
+    transfer: 0,
   };
   // D6 — the owner's urgency sort: 1 cancellation · 2 call-due then
   // unreached-open (soonest appointment first) · 4 window-missed (most
-  // recently missed first) · 5 needs-review. Ranks 3/4-reschedule slot in
+  // recently missed first) · 5 needs-review then transfers (both Records-rank
+  // standing facts; soonest appointment first). Ranks 3/4-reschedule slot in
   // with their pipeline stages (nothing renders for them today).
   rows.sort((a, b) => {
     const pr = a.priority - b.priority;
@@ -1516,6 +1627,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
       windowMissed: windowMissed.length,
       needsReview: needsReview.length,
       cancellations: cancellations.length,
+      transfers: transfers.length,
     },
     cancellationsRecoveredThisWeek: recoveredThisWeek,
     cancellationsEngineNote: CANCELLATIONS_ENGINE_NOTE,
