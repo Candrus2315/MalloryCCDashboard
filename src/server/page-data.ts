@@ -64,6 +64,7 @@ import {
   FUNNEL_SERIES_WEEKS,
   goalVsActual,
   isAnimaliaSession,
+  isFairylandSession,
   lastCompletedWeekStart,
   monthKeyOf,
   monthStartDate,
@@ -1646,11 +1647,16 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
 
   // ---- LAST WEEK: assigned-lead conversion (source-dated denominators) ----
   const assigned = assignedLeadsInRange(leadsWeek, lwMon, lwSun);
+  // THREE-GENRE assigned-lead conversion split (owner directive 2026-10-22):
+  // Fairyland is a sibling of Family/Animalia — never silently Family.
   const isAniLead = (l: { lead_type: string }) => /animalia/i.test(l.lead_type);
-  const assignedFam = assigned.filter((l) => !isAniLead(l));
+  const isFaiLead = (l: { lead_type: string }) => /fairyland/i.test(l.lead_type);
+  const assignedFam = assigned.filter((l) => !isAniLead(l) && !isFaiLead(l));
   const assignedAni = assigned.filter(isAniLead);
-  const repWinsFam = lwOwnership.repWins.filter((a) => !isAnimaliaSession(a.appointment_type)).length;
-  const repWinsAni = lwOwnership.repWins.length - repWinsFam;
+  const assignedFai = assigned.filter((l) => !isAniLead(l) && isFaiLead(l));
+  const repWinsFam = lwOwnership.repWins.filter((a) => !isAnimaliaSession(a.appointment_type) && !isFairylandSession(a.appointment_type)).length;
+  const repWinsAni = lwOwnership.repWins.filter(isAnimaliaSession).length;
+  const repWinsFai = lwOwnership.repWins.filter(isFairylandSession).length;
 
   // ---- MTD ----
   const mtdOwnership = splitWinOwnership(winsMtd, attributions);
@@ -1843,6 +1849,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       overall: conversionRate(lwOwnership.repWins.length, assigned.length),
       family: conversionRate(repWinsFam, assignedFam.length),
       animalia: conversionRate(repWinsAni, assignedAni.length),
+      fairyland: conversionRate(repWinsFai, assignedFai.length),
     },
     funnel,
     calendar,
@@ -1879,8 +1886,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       overall: conversionRate(lwOwnership.repWins.length, assigned.length),
       family: conversionRate(repWinsFam, assignedFam.length),
       animalia: conversionRate(repWinsAni, assignedAni.length),
-      numerator: { overall: lwOwnership.repWins.length, family: repWinsFam, animalia: repWinsAni },
-      denominator: { overall: assigned.length, family: assignedFam.length, animalia: assignedAni.length },
+      fairyland: conversionRate(repWinsFai, assignedFai.length),
+      numerator: { overall: lwOwnership.repWins.length, family: repWinsFam, animalia: repWinsAni, fairyland: repWinsFai },
+      denominator: { overall: assigned.length, family: assignedFam.length, animalia: assignedAni.length, fairyland: assignedFai.length },
     },
     leads: splitLeadsByType(leadsWeek),
     funnel,

@@ -50,8 +50,8 @@ export interface WeeklyCcReportInput {
   channels: ChannelSplitLine;
   /** Alliance/Auction LEADS from GHL opportunities (ET created-date week); website null (no synced source). */
   channelLeads: ChannelSplitLine;
-  leads: { family: number; animalia: number; total: number };
-  conversion: { overall: number | null; family: number | null; animalia: number | null };
+  leads: { family: number; animalia: number; fairyland: number; total: number };
+  conversion: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
   /**
    * BOOKINGS FROM LEADS (owner request 2026-09-29): ALL paid bookings of the
    * week ÷ ALL sheet leads — the overall funnel rate. pct is null when the
@@ -117,13 +117,14 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   lines.push(`Auction — Leads: ${formatInt(input.channelLeads.auction)} · Bookings: ${formatInt(input.channels.auction)}`);
   lines.push(`Website — Leads: ${input.channelLeads.website == null ? NO_SOURCE : formatInt(input.channelLeads.website)} · Bookings: ${input.channels.website == null ? NO_SOURCE : formatInt(input.channels.website)}`);
   lines.push("");
-  lines.push("Leads (week — synced Family/Animalia sheets):");
+  lines.push("Leads (week — synced Family/Animalia/Fairyland sheets):");
   lines.push(`Family: ${formatInt(input.leads.family)}`);
   lines.push(`Animalia: ${formatInt(input.leads.animalia)}`);
+  lines.push(`Fairyland: ${formatInt(input.leads.fairyland)}`);
   lines.push(`Total: ${formatInt(input.leads.total)}`);
   lines.push("");
   lines.push(
-    `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)})`,
+    `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)} · Fairyland ${formatPercent(input.conversion.fairyland)})`,
   );
   // BOOKINGS FROM LEADS (owner request 2026-09-29) — the overall funnel rate
   // right after the assigned-lead conversion; the owner edits it out freely.

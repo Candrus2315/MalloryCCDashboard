@@ -24,8 +24,8 @@ import { addDays, etDateStrFromInstant, weekdayName } from "../date-logic";
 import { ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID, type ChannelLeadRow } from "./weekly";
 import type { LeadRow } from "./compute";
 
-/** The four grid genres in their fixed display/CSV order. */
-export const ASSIGNED_GENRES = ["animalia", "family", "alliance", "auction"] as const;
+/** The grid genres in their fixed display/CSV order (Fairyland appends LAST — owner directive 2026-10-22). */
+export const ASSIGNED_GENRES = ["animalia", "family", "alliance", "auction", "fairyland"] as const;
 export type AssignedGenre = (typeof ASSIGNED_GENRES)[number];
 
 /** CSV/display label per genre (the owner's hand-made table wording). */
@@ -34,14 +34,16 @@ export const ASSIGNED_GENRE_LABELS: Record<AssignedGenre, string> = {
   family: "Family",
   alliance: "Alliance",
   auction: "Auction",
+  fairyland: "Fairyland",
 };
 
-/** One rep × one day cell — all four genres, zero-filled. */
+/** One rep × one day cell — all five genres, zero-filled. */
 export interface AssignedByDayCell {
   animalia: number;
   family: number;
   alliance: number;
   auction: number;
+  fairyland: number;
 }
 
 /** One rep row: seven day cells (Mon..Sun) plus the week total per genre. */
@@ -83,14 +85,19 @@ export interface AssignedByDayInput {
   sun: string;
 }
 
-const emptyCell = (): AssignedByDayCell => ({ animalia: 0, family: 0, alliance: 0, auction: 0 });
+const emptyCell = (): AssignedByDayCell => ({ animalia: 0, family: 0, alliance: 0, auction: 0, fairyland: 0 });
 
 const addInto = (into: AssignedByDayCell, genre: AssignedGenre, n: number) => {
   into[genre] += n;
 };
 
-const isAllZero = (c: AssignedByDayCell): boolean =>
-  c.animalia === 0 && c.family === 0 && c.alliance === 0 && c.auction === 0;
+const isAllZero = (c: AssignedByDayCell): boolean => ASSIGNED_GENRES.every((g) => c[g] === 0);
+
+const addCellInto = (into: AssignedByDayCell, from: AssignedByDayCell) => {
+  for (const g of ASSIGNED_GENRES) into[g] += from[g];
+};
+
+const cellTotal = (c: AssignedByDayCell): number => ASSIGNED_GENRES.reduce((n, g) => n + c[g], 0);
 
 /**
  * Build the assigned-leads-by-day grid. Deterministic: rows sort by week
@@ -124,7 +131,7 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
     if (l.assigned_rep_id == null) continue; // unassigned sheet leads are excluded
     const i = dateIndex.get(l.work_date);
     if (i == null) continue; // defensive: store fetch already scopes work dates
-    const genre: AssignedGenre = /animalia/i.test(l.lead_type) ? "animalia" : "family";
+    const genre: AssignedGenre = /animalia/i.test(l.lead_type) ? "animalia" : /fairyland/i.test(l.lead_type) ? "fairyland" : "family";
     addInto(ensureRep(l.assigned_rep_id)[i], genre, 1);
   }
 
@@ -169,12 +176,7 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
   const rows: AssignedByDayRow[] = order.map((repId) => {
     const cells = cellByRep.get(repId)!;
     const total = emptyCell();
-    for (const c of cells) {
-      total.animalia += c.animalia;
-      total.family += c.family;
-      total.alliance += c.alliance;
-      total.auction += c.auction;
-    }
+    for (const c of cells) addCellInto(total, c);
     return {
       rep_id: repId,
       rep_name: nameById.get(repId) ?? "Unknown rep",
@@ -186,26 +188,14 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
   // (a roster rep's zero row stays: "one row per roster rep").
   const rosterIds = new Set(rosterReps.map((r) => r.id));
   const visible = rows.filter((r) => rosterIds.has(r.rep_id) || !isAllZero(r.total));
-  visible.sort((a, b) => {
-    const ta = a.total.animalia + a.total.family + a.total.alliance + a.total.auction;
-    const tb = b.total.animalia + b.total.family + b.total.alliance + b.total.auction;
-    return tb - ta || a.rep_name.localeCompare(b.rep_name) || a.rep_id.localeCompare(b.rep_id);
-  });
+  visible.sort((a, b) => cellTotal(b.total) - cellTotal(a.total) || a.rep_name.localeCompare(b.rep_name) || a.rep_id.localeCompare(b.rep_id));
 
   // ---- day + week totals ----
   const dayTotals = dates.map(() => emptyCell());
   const weekTotal = emptyCell();
   for (const r of visible) {
-    r.days.forEach((c, i) => {
-      dayTotals[i].animalia += c.animalia;
-      dayTotals[i].family += c.family;
-      dayTotals[i].alliance += c.alliance;
-      dayTotals[i].auction += c.auction;
-    });
-    weekTotal.animalia += r.total.animalia;
-    weekTotal.family += r.total.family;
-    weekTotal.alliance += r.total.alliance;
-    weekTotal.auction += r.total.auction;
+    r.days.forEach((c, i) => addCellInto(dayTotals[i], c));
+    addCellInto(weekTotal, r.total);
   }
 
   return {

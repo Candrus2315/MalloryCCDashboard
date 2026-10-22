@@ -149,6 +149,7 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     `Leads Today: ${formatInt(m.leadsToday)}`,
     `Family: ${formatInt(m.familyLeadsToday)}`,
     `Animalia: ${formatInt(m.animaliaLeadsToday)}`,
+    `Fairyland: ${formatInt(m.fairylandLeadsToday)}`,
     `Total Weekly Leads: ${formatInt(m.weeklyLeads)}`,
     `% of Budget Used: ${formatPercent(m.leadBudgetUsedPct)}`,
     `Leads Remaining: ${formatInt(m.leadsRemaining)}`,
