@@ -198,22 +198,18 @@ await writeServerLockfile(LOCK_PATH, {
 // next tick; recomputes attributions after each successful HighLevel sync.
 import { startScheduler } from "./src/server/sync/scheduler";
 
-// Background Google Sheets lead sync (owner directive 2026-09-28): build the
-// LIVE sheets adapter the way production does — GOOGLE_SERVICE_ACCOUNT_JSON
-// from env + the Settings sheet config — and thread it into the scheduler's
-// tick. When the store/secret isn't ready at boot we pass nothing: the tick
-// resolves the adapter itself from env each round and skips cleanly when no
-// secret is configured (it never falls back to demo rows — runSheetsSync's
-// demo-replace guard keeps stored leads). Sheet-config changes picked up on
-// the next restart; SYNC NOW always reads current settings.
-import { getStore } from "./src/server/store";
-import { createSheetsAdapter } from "./src/server/sync/sheets-live";
-const liveSheets = await (async () => {
-  try {
-    const store = await getStore();
-    return createSheetsAdapter((await store.getSettings()).sheets);
-  } catch {
-    return null; // store not ready at boot — the tick self-resolves per round
-  }
-})();
-startScheduler(liveSheets ? { liveAdapters: { sheets: liveSheets } } : undefined);
+// Background Google Sheets lead sync (owner directive 2026-09-28): the
+// scheduler is started with NO pre-built adapters — every consumer resolves
+// its own adapter fresh from the store's CURRENT settings each tick:
+//   - the sheets tick (sheets-tick.ts) builds the LIVE adapter from the
+//     service-account secret + current Settings sheet config per call and
+//     skips cleanly when no secret is configured (it never falls back to
+//     demo rows — runSheetsSync's demo-replace guard keeps stored leads);
+//   - the freshness watchdog's forced recovery calls the same tick functions
+//     with no adapter keys (freshness-watchdog.ts), and the full-sync path
+//     resolves from settings per run (run.ts) — so a sheet config saved in
+//     Settings applies on the NEXT TICK, no restart.
+// (Regression guard: a boot-frozen adapter threaded through liveAdapters made
+// every google_sheets run after a mid-flight settings save skip the new sheet
+// with "no sheet id configured" — sheets-fresh-config.test.ts pins the fix.)
+startScheduler();

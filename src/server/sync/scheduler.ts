@@ -833,8 +833,11 @@ export function tickInFlight(): boolean {
  * Start the background loop (serve.ts calls this once). Re-entrant safe:
  * multiple calls start at most one loop. Reads the interval from settings each
  * tick so a Settings change applies without a restart. `liveAdapters` threads
- * pre-built live adapters into every tick (serve.ts passes the sheets adapter
- * it built; pieces left undefined resolve themselves from credentials).
+ * pre-built live adapters into every tick (tests thread stubs; production
+ * passes NOTHING — every consumer then resolves its own adapter from the
+ * store's CURRENT settings per tick, so a settings save applies without a
+ * restart; the boot-frozen-adapter regression is pinned in
+ * sheets-fresh-config.test.ts).
  */
 export function startScheduler(options?: {
   tick?: typeof schedulerTick;
@@ -848,8 +851,9 @@ export function startScheduler(options?: {
   // (the in-tick reap pass only runs when ticks complete — 2026-10-17).
   // Phase 2a: the SAME loop also runs the provider freshness watchdog
   // (self-recovery + escalation) — one loop, two safety nets; liveAdapters
-  // threads the sheets adapter into forced recovery syncs exactly as the
-  // tick gets it.
+  // (when a caller supplies it — tests only) threads the adapters into forced
+  // recovery syncs exactly as the tick gets them; absent, recovery resolves
+  // fresh per attempt like every other consumer.
   void runStaleRunReaperLoop(liveAdapters ? { freshness: { liveAdapters } } : { freshness: {} });
   void (async () => {
     for (;;) {
