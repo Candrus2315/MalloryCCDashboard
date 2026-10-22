@@ -57,7 +57,7 @@ export function isSheetMappingMode(v: unknown): v is SheetMappingMode {
 }
 
 /** Legacy (Phase 1) mapping fields — kept as the row_per_lead field set. */
-export const SHEET_MAPPING_FIELDS = ["source_date", "name", "phone", "email", "lead_type"] as const;
+export const SHEET_MAPPING_FIELDS = ["source_date", "name", "last_name", "phone", "email", "lead_type"] as const;
 /** Fields interpreted in row-per-day-count mode. */
 export const SHEET_MAPPING_FIELDS_DAY_COUNT = ["source_date", "count", "lead_type"] as const;
 
@@ -83,7 +83,7 @@ export interface SheetRowParseResult {
  * Mode defaults to "row_per_lead" (the Phase-1 behavior).
  */
 /** Fields whose absence is legitimate (they fall back to the sheet name). */
-const OPTIONAL_FIELDS = new Set(["lead_type"]);
+const OPTIONAL_FIELDS = new Set(["lead_type", "last_name"]);
 
 export function applySheetMapping(row: string[], columns: Record<string, string>, mode: SheetMappingMode = "row_per_lead"): SheetRowParseResult {
   const warnings: string[] = [];
@@ -373,6 +373,14 @@ export function parseSheetRows(opts: {
       return idx == null ? "" : (row[idx] ?? "").trim();
     };
     const name = idxOf("name") || null;
+    const lastName = idxOf("last_name") || null;
+    // OPTIONAL last_name (owner requirement, Fairyland wiring): when a
+    // last_name column maps and has a value, it is combined into the ONE
+    // normalized lead name with the SAME per-cell trimming the single-name
+    // path uses above (First + " " + Last). Sheets without a last_name
+    // mapping (Family/Animalia) read byte-identical: lastName is null here
+    // and join() reduces to the original single name.
+    const fullName = [name, lastName].filter((s): s is string => !!s).join(" ") || null;
     const phone = idxOf("phone") || null;
     const email = idxOf("email") || null;
     const leadType = idxOf("lead_type") || sheet;
@@ -389,7 +397,7 @@ export function parseSheetRows(opts: {
       leadType,
       sourceDate: d,
       workDate: getWorkDate(d),
-      name, phone, email,
+      name: fullName, phone, email,
       sheet,
     });
     stats.usedRows++;

@@ -67,6 +67,7 @@ const COLUMN_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const SHEET_FIELDS_LEAD: { key: string; label: string }[] = [
   { key: "source_date", label: "Date" },
   { key: "name", label: "Name" },
+  { key: "last_name", label: "Last name (optional)" },
   { key: "phone", label: "Phone" },
   { key: "email", label: "Email" },
   { key: "lead_type", label: "Lead Type (optional)" },
