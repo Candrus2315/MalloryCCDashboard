@@ -1598,7 +1598,68 @@ export interface RetentionNoShowWrite {
 }
 
 /**
+/**
+ * One stored transfer ledger row (retention_transfers; stage 5 — owner build
+ * order "transfers (original-booker exception)"). ONE row per detected
+ * transferred original appointment (UNIQUE appointment_id — the content key).
+ *
+ * DETECTION (evidence, never inference — owner ruling "never guess"): the
+ * client's session moved to a DIFFERENT service calendar (staff) while the
+ * identity chain holds. The v1 evidence channel: the SAME internal client's
+ * cancelled appointment (the original booking, on calendar A) has a successor
+ * booking created strictly within the reschedule window on a DIFFERENT known
+ * calendar B. If the successor evidence cannot prove the staff change
+ * (successor calendar unknown, or same-calendar and cross-calendar candidates
+ * mixed) the ambiguity goes to the Data Match Exceptions queue instead of this
+ * ledger — a transfer is never asserted from unresolvable evidence.
+ *
+ * ORIGINAL-BOOKER EXCEPTION (the supersession rule, retention-only):
+ *   the row is attributed to the ORIGINAL appointment's internal client (the
+ *   original booker's client series). The receiving appointment never gets its
+ *   own row (it rides this row as evidence). A cross-client candidate is
+ *   structurally impossible (the candidate pool is same-client by
+ *   construction) — no transfer is ever asserted across two different client
+ *   series, so the receiving side cannot fabricate a new client relationship
+ *   here. This engine NEVER rewrites the cancellations/no-show/outcome ledgers
+ *   or the core booking attribution — the exception is documentary (this
+ *   ledger + its surfaces), never destructive.
+ *
+ * WRITE-ONCE FIELDS (the store COALESCEs them on update; the engine never
+ * moves them): detected_at, original_calendar_id/name (the original booking's
+ * staff calendar as first confirmed). A later re-derivation never deletes the
+ * row — the transfer happened; the audit trail stays complete.
+ */
+export interface RetentionTransferRow {
+  appointment_id: string;
+  internal_client_id: string | null;
+  ghl_contact_external_id: string | null;
+  original_calendar_id: string | null;
+  original_calendar_name: string | null;
+  receiving_appointment_id: string | null;
+  receiving_calendar_id: string | null;
+  receiving_calendar_name: string | null;
+  detected_at: string;
+  basis: string;
+  manual_overrides: Record<string, unknown> | null;
+  notes: Record<string, unknown> | null;
+}
+export interface RetentionTransferWrite {
+  appointmentId: string;
+  internalClientId: string | null;
+  ghlContactExternalId: string | null;
+  originalCalendarId: string | null;
+  originalCalendarName: string | null;
+  receivingAppointmentId: string | null;
+  receivingCalendarId: string | null;
+  receivingCalendarName: string | null;
+  detectedAtIso: string;
+  basis: string;
+  notes: Record<string, unknown>;
+}
+
+/**
  * One stored weekly scorecard row (ret_scorecards; stage 3c, plan §16).
+
  * APPEND-IF-NEW: one row per scored Mon–Sun ET week (UNIQUE week_start),
  * written ONCE — a stored week is NEVER rewritten (owner rule "past weeks
  * render byte-identically forever"). The cancellation-family cells
@@ -2250,6 +2311,18 @@ export interface Store {
   insertRetentionNoShows(rows: RetentionNoShowWrite[]): Promise<number>;
   /** Content update of ONE existing ledger row (follow-up state advanced); write-once fields are preserved. */
   updateRetentionNoShow(row: RetentionNoShowWrite): Promise<void>;
+  // ---- RETENTION TRANSFERS LEDGER (stage 5; owner build order "transfers / original-booker exception") ----
+  // Same discipline as the no-show/cancellations ledgers: bulk reads,
+  // content-diffed by the CALLER so an unchanged recompute writes nothing.
+  // detected_at / original_calendar_id / original_calendar_name are WRITE-ONCE
+  // (the store COALESCEs them on update); manual_overrides are never touched
+  // by the automatic writer.
+  /** Every transfer ledger row (bulk read for the diff + the UI family). */
+  listRetentionTransfers(): Promise<RetentionTransferRow[]>;
+  /** Insert NEW transfer rows only (the engine pre-dedupes by appointment_id). Returns the number actually inserted. */
+  insertRetentionTransfers(rows: RetentionTransferWrite[]): Promise<number>;
+  /** Content update of ONE existing transfer row (receiving-side evidence advanced); write-once fields are preserved. */
+  updateRetentionTransfer(row: RetentionTransferWrite): Promise<void>;
   /** Weekly scorecards (stage 3c): append-if-new storage — a stored week is never rewritten. */
   listRetentionScorecards(): Promise<RetentionScorecardRow[]>;
   getRetentionScorecard(weekStart: string): Promise<RetentionScorecardRow | null>;
