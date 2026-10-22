@@ -38,6 +38,28 @@ describe("parseSheetDate robustness", () => {
     ["12/31/2026 11:59:59 PM", "2026-12-31"],
     ["9-24-2026", "2026-09-24"],
     ["9/24/26", "2026-09-24"],
+    // Day-first fallback (Fairyland tab's TimeStamp column, 2026-10-22): fires
+    // ONLY when US order is impossible — first component 13–31, second a real
+    // month 1–12. "19/10/2026 10:54" returned null before the fallback (US
+    // read: month 19), which rejected every fresh Fairyland row.
+    ["19/10/2026 10:54", "2026-10-19"],
+    ["19/10/2026", "2026-10-19"],
+    ["19-10-2026", "2026-10-19"],
+    ["19/10/26 10:54", "2026-10-19"], // 2-digit year unchanged (→ 20xx)
+    ["13/01/2026", "2026-01-13"],
+    ["31/12/2026", "2026-12-31"],
+    // Ambiguous first component (1–12) stays US order — Family/Animalia rows
+    // parse byte-identically to before the fallback existed. "01/02/2026" is
+    // M/D: month 01, day 02 → Jan 2 (the US read; NOT Feb 1 — that would be
+    // the day-first read, and it must never fire for an ambiguous pair).
+    ["01/02/2026", "2026-01-02"],
+    ["02/01/2026", "2026-02-01"],
+    ["12/12/2026", "2026-12-12"],
+    ["12/31/2026", "2026-12-31"],
+    // Impossible either way stays null.
+    ["13/23/2026", null],
+    ["13/13/2026", null],
+    ["45/10/2026", null], // 45 is no valid day either
     ["Sep 24, 2026", "2026-09-24"],
     ["September 24 2026", "2026-09-24"],
     ["24 Sep 2026", "2026-09-24"],

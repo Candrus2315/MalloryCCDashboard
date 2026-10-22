@@ -151,7 +151,21 @@ export function parseSheetDate(raw: unknown): string | null {
   m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?:[T\s].*)?$/.exec(s);
   if (m) {
     const yr = +m[3] < 100 ? 2000 + +m[3] : +m[3];
-    return validDateStr(yr, +m[1], +m[2]);
+    // US order first — byte-identical for every row that parses today.
+    const us = validDateStr(yr, +m[1], +m[2]);
+    if (us) return us;
+    // Day-first fallback (2026-10-22, Fairyland): ONLY when US order is
+    // impossible — first component 13–31 (no such month) and the second is a
+    // real month 1–12. The Fairyland tab's TimeStamp column is day-first
+    // ("19/10/2026 10:54"): read as US month=19 it nulled, so every fresh
+    // row was rejected as undatable. Ambiguous first components 1–12 keep
+    // US order ("01/02/2026" stays Jan 2 — the US reading); impossible either way ("13/23")
+    // stays null. Family/Animalia output is unchanged (before/after proof:
+    // scratch/proof-{before,after}-*.json on fix/fairyland-ingest-root-causes).
+    if (+m[1] > 12 && +m[2] >= 1 && +m[2] <= 12) {
+      return validDateStr(yr, +m[2], +m[1]);
+    }
+    return us; // null — unchanged for every other rejected shape
   }
   // "Sep 24, 2026" / "September 24 2026"
   m = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/.exec(s);
