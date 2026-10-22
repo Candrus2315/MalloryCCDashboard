@@ -262,9 +262,11 @@ describe("retention page UX OVERHAUL (spec §5, owner directive 2026-10-21)", ()
     expect(src).toContain("scorecard.reschedules ?? ");
     expect(src).toContain("scorecard.recoveries ?? ");
     expect(src).toContain("scorecard.recovery_rate == null ?");
-    // No-Shows + Transfers remain honest "—" (no writer yet)
+    // No-Shows stays honest "—" (no writer yet). Transfers stays honest "—"
+    // too: the stage-5 ledger IS written (the transfers engine), but the
+    // scorecard's transfers cell is a documented follow-up — "Deferred", never 0.
     expect(src).toContain(`<KpiMid label="No-Shows" value="—" />`);
-    expect(src).toContain(`<KpiMid label="Transfers" value="—" sub="Excluded from owner compliance" />`);
+    expect(src).toContain(`<KpiMid label="Transfers" value="—" sub="Deferred — scorecard writer is a follow-up" />`);
   });
 
   test("§5.7 engineering language off the surface; formulas stay in InfoTips", () => {

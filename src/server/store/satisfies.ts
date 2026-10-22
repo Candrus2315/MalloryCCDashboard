@@ -227,6 +227,11 @@ const STORE_METHOD_FLAGS = {
   listRetentionNoShows: 1,
   insertRetentionNoShows: 1,
   updateRetentionNoShow: 1,
+  // stage 5 transfers ledger (owner build order "transfers / original-booker
+  // exception"; write-once detection stamps, diff-writes)
+  listRetentionTransfers: 1,
+  insertRetentionTransfers: 1,
+  updateRetentionTransfer: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */
