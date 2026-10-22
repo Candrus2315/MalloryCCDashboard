@@ -101,7 +101,7 @@ describe("tooltip templates per unit (exact playbook shapes)", () => {
 
   test("leads: 'Total 402 · Family 250 · Animalia 152 · budget pace 100/day'", () => {
     const v = tip({ noun: "leads", point: point({ leads: 402, family: 250, animalia: 152 }) });
-    expect(v.lines).toEqual(["Total 402 · Family 250 · Animalia 152 · budget pace 100/day"]);
+    expect(v.lines).toEqual(["Total 402 · Family 250 · Animalia 152 · Fairyland — · budget pace 100/day"]);
   });
 
   test("leads weekly bucket: weekly budget label", () => {
@@ -259,7 +259,7 @@ describe("per-metric drawer content", () => {
 
   test("lead cohort view: split + getLeadCohort source dates (Thu → previous day) + honesty note", () => {
     const lc = leadCohortView(point({ leads: 402, family: 250, animalia: 152 }), "day");
-    expect(lc.split).toBe("Total 402 · Family 250 · Animalia 152 · budget pace 100/day");
+    expect(lc.split).toBe("Total 402 · Family 250 · Animalia 152 · Fairyland — · budget pace 100/day");
     expect(lc.cohort).toHaveLength(1);
     expect(lc.cohort[0]).toContain("Sep 23");
     expect(lc.note).toContain("not loaded yet");

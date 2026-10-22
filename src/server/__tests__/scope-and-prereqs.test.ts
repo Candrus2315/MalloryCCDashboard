@@ -204,8 +204,9 @@ describe("E1: TrendPoint carries the family/animalia lead split (no new math)", 
     expect(splitLeadRows([lead("f1", "family", "family"), lead("a1", "animalia", "animalia"), lead("f2", "", "family"), lead("u1", "other", "other")])).toEqual({
       family: 2,
       animalia: 1,
+      fairyland: 0,
     });
-    expect(splitLeadRows([])).toEqual({ family: 0, animalia: 0 });
+    expect(splitLeadRows([])).toEqual({ family: 0, animalia: 0, fairyland: 0 });
   });
 
   test("buildTeamTrends points carry the split of the SAME leads the totals count", () => {

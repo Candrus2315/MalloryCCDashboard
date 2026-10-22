@@ -166,12 +166,13 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
         "Auction — Leads: 21 · Bookings: 17",
         "Website — Leads: — · Bookings: —",
         "",
-        "Leads (week — synced Family/Animalia sheets):",
+        "Leads (week — synced Family/Animalia/Fairyland sheets):",
         "Family: 214",
         "Animalia: 178",
+        "Fairyland: —",
         "Total: 392",
         "",
-        "Conversion of Assigned Leads: 21.05% (Family 18.18% · Animalia 23.81%)",
+        "Conversion of Assigned Leads: 21.05% (Family 18.18% · Animalia 23.81% · Fairyland —)",
         "Bookings from Leads: 8.83%",
         "",
         "Calendar / Booked-out:",
@@ -221,7 +222,7 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
     input.funnel = { wins: 0, leads: 0, pct: null }; // zero sheet leads → never a fabricated 0%
     const text = buildWeeklyCcReportText(input);
     expect(text).toContain("Bookings (Month-to-Date, September 2026): 239/—");
-    expect(text).toContain("Conversion of Assigned Leads: — (Family — · Animalia —)");
+    expect(text).toContain("Conversion of Assigned Leads: — (Family — · Animalia — · Fairyland —)");
     expect(text).toContain("Bookings from Leads: —");
     expect(text).toContain("This week: 5/— filled");
     expect(text).toContain("First fully open day: —");

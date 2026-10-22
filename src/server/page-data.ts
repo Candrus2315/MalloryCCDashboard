@@ -1656,8 +1656,8 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const assignedAni = assigned.filter(isAniLead);
   const assignedFai = assigned.filter((l) => !isAniLead(l) && isFaiLead(l));
   const repWinsFam = lwOwnership.repWins.filter((a) => !isAnimaliaSession(a.appointment_type) && !isFairylandSession(a.appointment_type)).length;
-  const repWinsAni = lwOwnership.repWins.filter(isAnimaliaSession).length;
-  const repWinsFai = lwOwnership.repWins.filter(isFairylandSession).length;
+  const repWinsAni = lwOwnership.repWins.filter((a) => isAnimaliaSession(a.appointment_type)).length;
+  const repWinsFai = lwOwnership.repWins.filter((a) => isFairylandSession(a.appointment_type)).length;
 
   // ---- MTD ----
   const mtdOwnership = splitWinOwnership(winsMtd, attributions);

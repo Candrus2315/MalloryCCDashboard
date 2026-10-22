@@ -101,8 +101,8 @@ describe("week goals + team-share fallback", () => {
     const mk = (id: string, type: string, work: string) => ({ id, lead_type: type, source_date: work, work_date: work, contact_id: null, assigned_rep_id: null, source_sheet: type });
     const leads = [mk("a", "family", "2026-10-05"), mk("b", "family", "2026-10-05"), mk("c", "animalia", "2026-10-05")];
     const adj = [{ work_date: "2026-10-05", sheet: "family", delta: -1 }];
-    expect(leadsToday(leads, "2026-10-05")).toEqual({ family: 2, animalia: 1, total: 3 });
-    expect(leadsToday(leads, "2026-10-05", adj)).toEqual({ family: 1, animalia: 1, total: 2 });
+    expect(leadsToday(leads, "2026-10-05")).toEqual({ family: 2, animalia: 1, fairyland: 0, total: 3 });
+    expect(leadsToday(leads, "2026-10-05", adj)).toEqual({ family: 1, animalia: 1, fairyland: 0, total: 2 });
     expect(leadsForWeek(leads, "2026-10-05", adj).total).toBe(2);
   });
 
