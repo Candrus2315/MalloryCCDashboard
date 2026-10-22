@@ -244,7 +244,7 @@ describe("schedulerTick with a hung provider call (10/22 morning pattern)", () =
         creds: CREDS,
         fetchImpl: ghlFetch,
         sleep: async () => {},
-        trigger: "background",
+        trigger: "manual", // manual bypasses the module-level commission/retention throttles — other test files tick the same process and would otherwise legitimately skip commission here
         liveAdapters: { sheets: hangingLiveSheets },
         acuityAdapter: null, // no credentials → skipped (nothing to hang behind sheets)
       });
