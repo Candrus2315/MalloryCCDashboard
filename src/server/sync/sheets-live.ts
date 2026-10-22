@@ -318,7 +318,7 @@ export class LiveSheetsAdapter implements GoogleSheetsAdapter {
       // Third genre (owner directive 2026-10-22): the Fairyland sheet stays
       // UNCONFIGURED (empty id) until the owner saves one in Settings —
       // fail-honest skip with a visible note, never a guessed sheet id.
-      if (!conf.sheet_id.trim()) {
+      if (!conf?.sheet_id?.trim()) {
         warnings.push(`${sheet}: no sheet id configured — skipped (set one in Settings → Sheets)`);
         continue;
       }

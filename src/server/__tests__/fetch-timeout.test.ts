@@ -171,7 +171,7 @@ describe("per-fetch timeout wiring per provider", () => {
   test("google_sheets: a hung fetch surfaces the provider-named error through the REAL adapter", async () =>
     withTestServiceAccount(async () => {
       const adapter = new LiveSheetsAdapter(
-        { family: { sheet_id: "s1", mode: "name", columns: {} }, animalia: { sheet_id: "s2", mode: "name", columns: {} } } as never,
+        { family: { sheet_id: "s1", mode: "name", columns: {} }, animalia: { sheet_id: "s2", mode: "name", columns: {} }, fairyland: { sheet_id: "", mode: "row_per_lead", columns: {} } } as never,
         30,
         { fetchImpl: hangingFetch(), timeoutMs: 150 },
       );
@@ -186,7 +186,7 @@ describe("per-fetch timeout wiring per provider", () => {
     withTestServiceAccount(async () => {
       const store = new MemoryStore();
       const adapter = new LiveSheetsAdapter(
-        { family: { sheet_id: "s1", mode: "name", columns: {} }, animalia: { sheet_id: "s2", mode: "name", columns: {} } } as never,
+        { family: { sheet_id: "s1", mode: "name", columns: {} }, animalia: { sheet_id: "s2", mode: "name", columns: {} }, fairyland: { sheet_id: "", mode: "row_per_lead", columns: {} } } as never,
         30,
         { fetchImpl: hangingFetch(), timeoutMs: 150 },
       );
@@ -233,7 +233,7 @@ describe("schedulerTick with a hung provider call (10/22 morning pattern)", () =
         return json({});
       };
       const hangingLiveSheets = new LiveSheetsAdapter(
-        { family: { sheet_id: "s1", mode: "name", columns: {} }, animalia: { sheet_id: "s2", mode: "name", columns: {} } } as never,
+        { family: { sheet_id: "s1", mode: "name", columns: {} }, animalia: { sheet_id: "s2", mode: "name", columns: {} }, fairyland: { sheet_id: "", mode: "row_per_lead", columns: {} } } as never,
         30,
         { fetchImpl: hangingFetch(), timeoutMs: 150 },
       );
