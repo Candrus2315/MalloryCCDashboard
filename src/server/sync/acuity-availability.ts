@@ -42,6 +42,7 @@
  */
 import { getSecret } from "../env";
 import { raceBodyRead } from "./body-read";
+import { syncFetchTimeoutMs, timedFetch } from "./fetch-timeout";
 
 // ---------- credentials (same pattern as acuity-live.ts) ----------
 
@@ -158,6 +159,8 @@ export class AcuityAvailabilityClient {
     private creds: AcuityCreds,
     private fetchImpl: FetchImpl = fetch as unknown as FetchImpl,
     private sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+    /** Hard per-request cap; injectable for test shrinking. Default: the shared SYNC_FETCH_TIMEOUT_MS resolver (~90s). */
+    private timeoutMs: number = syncFetchTimeoutMs(),
   ) {}
 
   /**
@@ -183,18 +186,20 @@ export class AcuityAvailabilityClient {
 
     const qs = new URLSearchParams(params).toString();
     const url = `https://acuityscheduling.com/api/v1/${path}${qs ? `?${qs}` : ""}`;
-    const res = await this.fetchImpl(url, {
+    // PER-FETCH BOUNDS (fetch-timeout.ts, 2026-10-22): two runs hung forever on
+    // wedged connections before the 2026-10-07 bound; the bound is now the
+    // shared per-call cap (abort signal composed into the request AND a
+    // JS-timer race — the timer never depends on socket events), and the
+    // timeout names provider=acuity_availability so the sync_runs error line
+    // is actionable. A hung call can never hold the tick behind it.
+    const res = await timedFetch(this.fetchImpl, url, {
       method: "GET",
-      // Bounded (2026-10-07: two runs hung forever on a wedged connection —
-      // no timeout meant the run never finished and blocked the tick guard).
-      // 20s ≫ a healthy paced call (~1.1s); the abort covers the body read too.
-      signal: AbortSignal.timeout(20_000),
       headers: {
         Authorization: this.authHeader(),
         Accept: "application/json",
         "User-Agent": "MalloryCCDashboard/1.0 (availability feed sync)",
       },
-    });
+    }, { provider: "acuity_availability", timeoutMs: this.timeoutMs });
     if (this.lastRun) {
       this.lastRun.requests += 1;
       this.lastRun.calls.push({ path, params });
@@ -210,7 +215,7 @@ export class AcuityAvailabilityClient {
       try {
         // Bounded body read (2026-10-17): parked reads never wake on the
         // armed signal — race them (body-read.ts docblock).
-        const body = (await raceBodyRead(res.json(), 20_000, `Acuity /${path} error body`)) as { error?: string; message?: string };
+        const body = (await raceBodyRead(res.json(), this.timeoutMs, `Acuity /${path} error body`)) as { error?: string; message?: string };
         hint = body?.error ? ` (${body.error})` : "";
       } catch {
         // body was not JSON — the status alone is the message
@@ -218,7 +223,7 @@ export class AcuityAvailabilityClient {
       throw new Error(`Acuity API error ${res.status} on GET /${path}${hint}`);
     }
     // Bounded body read (2026-10-17): race — see body-read.ts docblock.
-    return raceBodyRead(res.json(), 20_000, `Acuity /${path} response body`);
+    return raceBodyRead(res.json(), this.timeoutMs, `Acuity /${path} response body`);
   }
 
   /** GET /calendars — the studio's calendars (probed: exactly 3, §1.1). */
@@ -306,9 +311,10 @@ export class AcuityAvailabilityClient {
 export function resolveAcuityAvailabilityClient(options?: {
   fetchImpl?: FetchImpl;
   sleep?: (ms: number) => Promise<void>;
+  timeoutMs?: number;
 }): AcuityAvailabilityClient | null {
   if (process.env.NODE_ENV === "test") return null;
   const creds = readAcuityAvailabilityCreds();
   if (!creds) return null;
-  return new AcuityAvailabilityClient(creds, options?.fetchImpl, options?.sleep);
+  return new AcuityAvailabilityClient(creds, options?.fetchImpl, options?.sleep, options?.timeoutMs);
 }

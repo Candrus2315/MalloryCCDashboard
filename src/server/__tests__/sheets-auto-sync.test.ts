@@ -355,7 +355,7 @@ describe("HighLevel fetch timeout", () => {
     } catch (e) {
       expect(Date.now() - started).toBeLessThan(5_000);
       expect((e as { kind?: string }).kind).toBe("network");
-      expect((e as Error).message).toContain("timed out");
+      expect((e as Error).message).toContain("fetch timeout"); // provider-named message (fetch-timeout.ts)
     }
     expect(sawSignal).toBeInstanceOf(AbortSignal); // real fetch would abort at the cap
   });

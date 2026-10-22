@@ -89,9 +89,11 @@ export async function harvestIncremental(opts: {
   creds: HighLevelCreds;
   fetchImpl: FetchLike;
   sleep?: (ms: number) => Promise<void>;
+  /** Hard per-call cap (tests shrink it); default: the shared SYNC_FETCH_TIMEOUT_MS resolver. */
+  timeoutMs?: number;
   sinceMs: number;
 }): Promise<IncrementalHarvest> {
-  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? defaultSleep };
+  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? defaultSleep, timeoutMs: opts.timeoutMs };
   const warnings: string[] = [];
 
   // 1) users snapshot (single unpaginated request on this account)

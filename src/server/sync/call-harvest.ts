@@ -176,12 +176,14 @@ export async function visitConversationMessages(opts: {
   creds: HighLevelCreds;
   fetchImpl: HlEndpointOpts["fetchImpl"];
   sleep?: (ms: number) => Promise<void>;
+  /** Hard per-call cap (tests shrink it); default: the shared SYNC_FETCH_TIMEOUT_MS resolver. */
+  timeoutMs?: number;
   conversationId: string;
   windowStartMs: number;
   maxPages?: number;
 }): Promise<{ calls: NormalizedCall[]; messagesScanned: number; warnings: string[] }> {
   const doRequest = opts.hlRequestFn ?? hlRequest;
-  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))) };
+  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))), timeoutMs: opts.timeoutMs };
   const calls = new Map<string, NormalizedCall>();
   const warnings: string[] = [];
   let messagesScanned = 0;
@@ -223,8 +225,8 @@ export async function visitConversationMessages(opts: {
 /** Build the real ListPageFn against /conversations/search (startDate/endDate = dateAdded bounds).
  *  `extraQuery` adds server-side narrowing (e.g. lastMessageType=TYPE_CALL — probed to work;
  *  the numeric messageTypes param is IGNORED by this endpoint). */
-export function makeListPageFn(creds: HighLevelCreds, fetchImpl: HlEndpointOpts["fetchImpl"], sleep?: (ms: number) => Promise<void>, extraQuery?: Record<string, string>): ListPageFn {
-  const endpointOpts: HlEndpointOpts = { creds, fetchImpl, sleep: sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))) };
+export function makeListPageFn(creds: HighLevelCreds, fetchImpl: HlEndpointOpts["fetchImpl"], sleep?: (ms: number) => Promise<void>, extraQuery?: Record<string, string>, timeoutMs?: number): ListPageFn {
+  const endpointOpts: HlEndpointOpts = { creds, fetchImpl, sleep: sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))), timeoutMs };
   return async (startMs, endMsExclusive) => {
     const query = new URLSearchParams({ locationId: creds.locationId, limit: "100", startDate: String(startMs), endDate: String(endMsExclusive) });
     for (const [k, v] of Object.entries(extraQuery ?? {})) query.set(k, v);
@@ -270,6 +272,8 @@ export interface HarvestChunkOpts {
   creds: HighLevelCreds;
   fetchImpl: HlEndpointOpts["fetchImpl"];
   sleep?: (ms: number) => Promise<void>;
+  /** Hard per-call cap (tests shrink it); default: the shared SYNC_FETCH_TIMEOUT_MS resolver. */
+  timeoutMs?: number;
   /** Backfill window (ET-day-aligned): conversations active on/after this instant are in scope. */
   windowStartUtc: string;
   /** Budgets for ONE chunk (kept small so a chunk fits between scheduler ticks). */
@@ -345,7 +349,7 @@ export async function runHarvestChunk(opts: HarvestChunkOpts): Promise<HarvestCh
   const now = opts.now ?? (() => new Date());
 
   const progress = (await opts.store.getHarvestProgress(opts.progressId ?? "highlevel-calls")) ?? defaultProgress(opts.progressId ?? "highlevel-calls", opts.windowStartUtc, now().toISOString(), now().getTime());
-  const listPage = opts.listPage ?? makeListPageFn(opts.creds, opts.fetchImpl, opts.sleep, opts.listExtraQuery);
+  const listPage = opts.listPage ?? makeListPageFn(opts.creds, opts.fetchImpl, opts.sleep, opts.listExtraQuery, opts.timeoutMs);
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
   const result: HarvestChunkResult = {
@@ -412,6 +416,7 @@ export async function runHarvestChunk(opts: HarvestChunkOpts): Promise<HarvestCh
           creds: opts.creds,
           fetchImpl: opts.fetchImpl,
           sleep: opts.sleep,
+          timeoutMs: opts.timeoutMs,
           conversationId: conv.conv_id,
           windowStartMs,
         });
