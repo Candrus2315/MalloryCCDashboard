@@ -40,6 +40,7 @@ import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
 import { commissionCloseTick, type CommissionCloseResult } from "../commission/close";
 import { retentionTick, type RetentionTickResult } from "../retention/tick";
 import { retentionCancellationsTick, type RetentionCancellationsTickResult } from "../retention/cancellations-tick";
+import { retentionNoShowTick, type RetentionNoShowTickResult } from "../retention/no-shows-tick";
 import {
   ensureRetentionScorecardBootBackfill,
   retentionScorecardTick,
@@ -202,6 +203,7 @@ const REAPABLE_SYNC_PROVIDERS = new Set([
   "retention",
   "retention-identity-backfill",
   "retention-cancellations",
+  "retention-no-shows",
   "retention-scorecard",
 ]);
 
@@ -282,6 +284,7 @@ export interface SchedulerTickResult {
   scorecardBoot?: RetentionScorecardTickResult;
   /** Independent cancellations-ledger recompute piggy-backed on the same tick (never fails the tick; throttled). */
   cancellations?: RetentionCancellationsTickResult;
+  noShows?: RetentionNoShowTickResult;
   /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
   reaped?: number;
 }
@@ -781,7 +784,22 @@ export async function schedulerTick(options?: {
   } catch (e) {
     cancellations = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
-  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, scorecard, scorecardBoot, cancellations, reaped };
+  // RETENTION NO-SHOW PIPELINE (stage 4b, owner build order): the no-show
+  // ledger (D10 detection), idempotent diff-writes. Same piggy-back contract
+  // as the retention/scorecard/cancellations pieces above: own guards
+  // (running guard, 5-min throttle), own sync_runs rows
+  // ("retention-no-shows"), never fails the tick.
+  let noShows: RetentionNoShowTickResult | undefined;
+  try {
+    noShows = await retentionNoShowTick({
+      store: options?.store,
+      now: options?.now,
+      trigger: options?.trigger,
+    });
+  } catch (e) {
+    noShows = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, scorecard, scorecardBoot, cancellations, noShows, reaped };
 }
 
 // ---------- the always-on loop ----------

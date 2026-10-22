@@ -79,6 +79,8 @@ import type {
   AvailabilitySyncRunRow,
   RetentionCancellationRow,
   RetentionCancellationWrite,
+  RetentionNoShowRow,
+  RetentionNoShowWrite,
 } from "./types";
 import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -1894,6 +1896,7 @@ export class MemoryStore implements Store {
   private retentionAttempts = new Map<string, RetentionAttemptRow>();
   private retentionOutcomes = new Map<string, RetentionOutcomeRow>();
   private retentionCancellations = new Map<string, RetentionCancellationRow>();
+  private retentionNoShows = new Map<string, RetentionNoShowRow>();
   async listRetentionAttempts(): Promise<RetentionAttemptRow[]> {
     await this.ensureSchema();
     return [...this.retentionAttempts.values()]
@@ -2038,6 +2041,54 @@ export class MemoryStore implements Store {
     const cur = this.retentionCancellations.get(row.appointmentId);
     if (!cur) throw new Error(`updateRetentionCancellation: unknown appointment ${row.appointmentId}`);
     this.retentionCancellations.set(row.appointmentId, this.retentionCancellationRowFromWrite(row, cur));
+  }
+
+  // ---- RETENTION NO-SHOW LEDGER (stage 4b; plan §16 + ruling D10) ----
+  // session_at / session_date_et / detected_at are WRITE-ONCE: an update
+  // preserves the prev row's values (the store-level COALESCE mirror). The
+  // automatic writer never touches manual_overrides.
+  private retentionNoShowRowFromWrite(w: RetentionNoShowWrite, prev: RetentionNoShowRow | null): RetentionNoShowRow {
+    return {
+      appointment_id: w.appointmentId,
+      internal_client_id: w.internalClientId,
+      ghl_contact_external_id: w.ghlContactExternalId,
+      session_at: prev ? prev.session_at ?? w.sessionAtIso : w.sessionAtIso,
+      session_date_et: prev ? prev.session_date_et ?? w.sessionDateEt : w.sessionDateEt,
+      detected_at: prev ? prev.detected_at : w.detectedAtIso,
+      attempts_count: w.attemptsCount,
+      any_answered: w.anyAnswered,
+      final_contact_status: w.finalContactStatus,
+      state: w.state,
+      successor_appointment_id: w.successorAppointmentId,
+      // MANAGEMENT EDITS (manual_overrides) are never touched by the automatic
+      // writer — the prev row's overrides ride through untouched.
+      manual_overrides: prev ? prev.manual_overrides : null,
+      notes: JSON.parse(JSON.stringify(w.notes)) as Record<string, unknown>,
+    };
+  }
+  async listRetentionNoShows(): Promise<RetentionNoShowRow[]> {
+    await this.ensureSchema();
+    return [...this.retentionNoShows.values()]
+      .sort((a, b) =>
+        (a.session_at ?? "") < (b.session_at ?? "") ? 1 : (a.session_at ?? "") > (b.session_at ?? "") ? -1 : a.appointment_id < b.appointment_id ? -1 : 1,
+      )
+      .map((r) => JSON.parse(JSON.stringify(r)) as RetentionNoShowRow);
+  }
+  async insertRetentionNoShows(rows: RetentionNoShowWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      if (this.retentionNoShows.has(r.appointmentId)) continue;
+      this.retentionNoShows.set(r.appointmentId, this.retentionNoShowRowFromWrite(r, null));
+      created += 1;
+    }
+    return created;
+  }
+  async updateRetentionNoShow(row: RetentionNoShowWrite): Promise<void> {
+    await this.ensureSchema();
+    const cur = this.retentionNoShows.get(row.appointmentId);
+    if (!cur) throw new Error(`updateRetentionNoShow: unknown appointment ${row.appointmentId}`);
+    this.retentionNoShows.set(row.appointmentId, this.retentionNoShowRowFromWrite(row, cur));
   }
   async dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void> {
     await this.ensureSchema();
