@@ -81,6 +81,8 @@ import type {
   RetentionCancellationWrite,
   RetentionNoShowRow,
   RetentionNoShowWrite,
+  RetentionTransferRow,
+  RetentionTransferWrite,
 } from "./types";
 import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -1897,6 +1899,7 @@ export class MemoryStore implements Store {
   private retentionOutcomes = new Map<string, RetentionOutcomeRow>();
   private retentionCancellations = new Map<string, RetentionCancellationRow>();
   private retentionNoShows = new Map<string, RetentionNoShowRow>();
+  private retentionTransfers = new Map<string, RetentionTransferRow>();
   async listRetentionAttempts(): Promise<RetentionAttemptRow[]> {
     await this.ensureSchema();
     return [...this.retentionAttempts.values()]
@@ -2089,6 +2092,53 @@ export class MemoryStore implements Store {
     const cur = this.retentionNoShows.get(row.appointmentId);
     if (!cur) throw new Error(`updateRetentionNoShow: unknown appointment ${row.appointmentId}`);
     this.retentionNoShows.set(row.appointmentId, this.retentionNoShowRowFromWrite(row, cur));
+  }
+  // ---- RETENTION TRANSFERS LEDGER (stage 5; owner build order "transfers /
+  // original-booker exception") ----
+  // detected_at / original_calendar_id / original_calendar_name are WRITE-ONCE:
+  // an update preserves the prev row's values (the store-level COALESCE
+  // mirror). The automatic writer never touches manual_overrides.
+  private retentionTransferRowFromWrite(w: RetentionTransferWrite, prev: RetentionTransferRow | null): RetentionTransferRow {
+    return {
+      appointment_id: w.appointmentId,
+      internal_client_id: w.internalClientId,
+      ghl_contact_external_id: w.ghlContactExternalId,
+      original_calendar_id: prev ? prev.original_calendar_id ?? w.originalCalendarId : w.originalCalendarId,
+      original_calendar_name: prev ? prev.original_calendar_name ?? w.originalCalendarName : w.originalCalendarName,
+      receiving_appointment_id: w.receivingAppointmentId,
+      receiving_calendar_id: w.receivingCalendarId,
+      receiving_calendar_name: w.receivingCalendarName,
+      detected_at: prev ? prev.detected_at : w.detectedAtIso,
+      basis: w.basis,
+      // MANAGEMENT EDITS (manual_overrides) are never touched by the automatic
+      // writer — the prev row's overrides ride through untouched.
+      manual_overrides: prev ? prev.manual_overrides : null,
+      notes: JSON.parse(JSON.stringify(w.notes)) as Record<string, unknown>,
+    };
+  }
+  async listRetentionTransfers(): Promise<RetentionTransferRow[]> {
+    await this.ensureSchema();
+    return [...this.retentionTransfers.values()]
+      .sort((a, b) =>
+        a.detected_at < b.detected_at ? 1 : a.detected_at > b.detected_at ? -1 : a.appointment_id < b.appointment_id ? -1 : 1,
+      )
+      .map((r) => JSON.parse(JSON.stringify(r)) as RetentionTransferRow);
+  }
+  async insertRetentionTransfers(rows: RetentionTransferWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      if (this.retentionTransfers.has(r.appointmentId)) continue;
+      this.retentionTransfers.set(r.appointmentId, this.retentionTransferRowFromWrite(r, null));
+      created += 1;
+    }
+    return created;
+  }
+  async updateRetentionTransfer(row: RetentionTransferWrite): Promise<void> {
+    await this.ensureSchema();
+    const cur = this.retentionTransfers.get(row.appointmentId);
+    if (!cur) throw new Error(`updateRetentionTransfer: unknown appointment ${row.appointmentId}`);
+    this.retentionTransfers.set(row.appointmentId, this.retentionTransferRowFromWrite(row, cur));
   }
   async dismissDataMatchException(id: string, opts: { resolvedBy: string }): Promise<void> {
     await this.ensureSchema();

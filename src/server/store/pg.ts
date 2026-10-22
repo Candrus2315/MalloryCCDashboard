@@ -76,6 +76,8 @@ import type {
   RetentionCancellationWrite,
   RetentionNoShowRow,
   RetentionNoShowWrite,
+  RetentionTransferRow,
+  RetentionTransferWrite,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -893,6 +895,27 @@ const DDL: string[] = [
     detected_at timestamptz NOT NULL DEFAULT now(),
     details jsonb
   )`,
+  // STAGE 5 (retention transfers engine — owner build order "transfers /
+  // original-booker exception"): additive columns on the §13-declared table
+  // + the content key (ONE row per ORIGINAL appointment — UNIQUE
+  // appointment_id). The §13 shape stays: outcome is filled 'transferred',
+  // original_booker carries the original calendar's human label (the
+  // ORIGINAL booker side of the exception), reason carries the detection
+  // rule, details carries the evidence notes. The structured columns below
+  // are what the engine + surfaces read. Write-once fields (detected_at,
+  // original_calendar_id/name) are COALESCEd by the UPDATE path — a later
+  // re-derivation never moves the original side of a confirmed transfer.
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS internal_client_id uuid`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS ghl_contact_external_id text`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS original_calendar_id text`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS original_calendar_name text`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS receiving_appointment_id uuid`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS receiving_calendar_id text`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS receiving_calendar_name text`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS basis text`,
+  `ALTER TABLE retention_transfers ADD COLUMN IF NOT EXISTS manual_overrides jsonb`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS retention_transfers_appt_key ON retention_transfers (appointment_id)`,
+  `CREATE INDEX IF NOT EXISTS retention_transfers_client_idx ON retention_transfers (internal_client_id)`,
   `CREATE TABLE IF NOT EXISTS retention_owner_history (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     employee_user_id uuid NOT NULL REFERENCES users(id),
@@ -4144,6 +4167,68 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
       WHERE appointment_id = ${row.appointmentId}::uuid`;
   }
 
+  // ---- RETENTION TRANSFERS LEDGER (stage 5; owner build order "transfers /
+  // original-booker exception") ----
+  // One row per detected transfer (UNIQUE appointment_id — the content key).
+  // Same discipline as the no-show/cancellations ledgers: bulk reads; the
+  // ENGINE content-diffs so an unchanged recompute writes nothing.
+  // detected_at / original_calendar_id / original_calendar_name are copied
+  // from the detection pass and NEVER moved by a later sync (the UPDATE
+  // path COALESCEs them). The UPDATE path never touches manual_overrides
+  // (management edits survive).
+  async listRetentionTransfers(): Promise<RetentionTransferRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT appointment_id::text AS appointment_id, internal_client_id::text AS internal_client_id, ghl_contact_external_id, original_calendar_id, original_calendar_name, receiving_appointment_id::text AS receiving_appointment_id, receiving_calendar_id, receiving_calendar_name, detected_at, basis, manual_overrides, details AS notes FROM retention_transfers ORDER BY detected_at DESC NULLS LAST, appointment_id`;
+    return rows.map((r) => this.retentionTransferRow(r as Record<string, unknown>));
+  }
+  private retentionTransferRow(r: Record<string, unknown>): RetentionTransferRow {
+    return {
+      appointment_id: String(r.appointment_id),
+      internal_client_id: r.internal_client_id == null ? null : String(r.internal_client_id),
+      ghl_contact_external_id: r.ghl_contact_external_id == null ? null : String(r.ghl_contact_external_id),
+      original_calendar_id: r.original_calendar_id == null ? null : String(r.original_calendar_id),
+      original_calendar_name: r.original_calendar_name == null ? null : String(r.original_calendar_name),
+      receiving_appointment_id: r.receiving_appointment_id == null ? null : String(r.receiving_appointment_id),
+      receiving_calendar_id: r.receiving_calendar_id == null ? null : String(r.receiving_calendar_id),
+      receiving_calendar_name: r.receiving_calendar_name == null ? null : String(r.receiving_calendar_name),
+      detected_at: new Date(r.detected_at as string).toISOString(),
+      basis: String(r.basis ?? "rebooked_other_calendar"),
+      manual_overrides: parseEvidenceCell(r.manual_overrides),
+      notes: parseEvidenceCell(r.notes),
+    };
+  }
+  async insertRetentionTransfers(rows: RetentionTransferWrite[]): Promise<number> {
+    await this.ensureSchema();
+    let created = 0;
+    for (const r of rows) {
+      const reason = String(r.notes.basis_rule ?? "");
+      const out = await this.sql`
+        INSERT INTO retention_transfers (appointment_id, internal_client_id, ghl_contact_external_id, original_calendar_id, original_calendar_name, receiving_appointment_id, receiving_calendar_id, receiving_calendar_name, detected_at, basis, original_booker, reason, outcome, details)
+        VALUES (${r.appointmentId}::uuid, ${r.internalClientId}::uuid, ${r.ghlContactExternalId}, ${r.originalCalendarId}, ${r.originalCalendarName}, ${r.receivingAppointmentId}::uuid, ${r.receivingCalendarId}, ${r.receivingCalendarName}, ${r.detectedAtIso}::timestamptz, ${r.basis}, ${r.originalCalendarName}, ${reason}, 'transferred', ${JSON.stringify(r.notes)}::jsonb)
+        ON CONFLICT (appointment_id) DO NOTHING
+        RETURNING appointment_id`;
+      created += out.length;
+    }
+    return created;
+  }
+  async updateRetentionTransfer(row: RetentionTransferWrite): Promise<void> {
+    await this.ensureSchema();
+    const reason = String(row.notes.basis_rule ?? "");
+    await this.sql`
+      UPDATE retention_transfers SET
+        internal_client_id = ${row.internalClientId}::uuid,
+        ghl_contact_external_id = ${row.ghlContactExternalId},
+        receiving_appointment_id = ${row.receivingAppointmentId}::uuid,
+        receiving_calendar_id = ${row.receivingCalendarId},
+        receiving_calendar_name = ${row.receivingCalendarName},
+        detected_at = COALESCE(detected_at, ${row.detectedAtIso}::timestamptz),
+        original_calendar_id = COALESCE(original_calendar_id, ${row.originalCalendarId}),
+        original_calendar_name = COALESCE(original_calendar_name, ${row.originalCalendarName}),
+        original_booker = COALESCE(original_booker, ${row.originalCalendarName}),
+        reason = ${reason},
+        details = ${JSON.stringify(row.notes)}::jsonb
+      WHERE appointment_id = ${row.appointmentId}::uuid`;
+  }
   // ---- RETENTION SCORECARDS (stage 3c; plan §16) — append-if-new storage ----
   // A stored week is NEVER rewritten: the only write is an ON CONFLICT DO
   // NOTHING insert; there is no update path. Reads are uncached (same doctrine

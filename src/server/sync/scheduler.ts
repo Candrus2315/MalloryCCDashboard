@@ -41,6 +41,7 @@ import { commissionCloseTick, type CommissionCloseResult } from "../commission/c
 import { retentionTick, type RetentionTickResult } from "../retention/tick";
 import { retentionCancellationsTick, type RetentionCancellationsTickResult } from "../retention/cancellations-tick";
 import { retentionNoShowTick, type RetentionNoShowTickResult } from "../retention/no-shows-tick";
+import { retentionTransfersTick, type RetentionTransfersTickResult } from "../retention/transfers-tick";
 import {
   ensureRetentionScorecardBootBackfill,
   retentionScorecardTick,
@@ -204,6 +205,7 @@ const REAPABLE_SYNC_PROVIDERS = new Set([
   "retention-identity-backfill",
   "retention-cancellations",
   "retention-no-shows",
+  "retention-transfers",
   "retention-scorecard",
 ]);
 
@@ -285,6 +287,7 @@ export interface SchedulerTickResult {
   /** Independent cancellations-ledger recompute piggy-backed on the same tick (never fails the tick; throttled). */
   cancellations?: RetentionCancellationsTickResult;
   noShows?: RetentionNoShowTickResult;
+  transfers?: RetentionTransfersTickResult;
   /** Stale-run reaper: zombie "running" rows (hung processes) marked failed this tick. */
   reaped?: number;
 }
@@ -799,7 +802,24 @@ export async function schedulerTick(options?: {
   } catch (e) {
     noShows = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
-  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, scorecard, scorecardBoot, cancellations, noShows, reaped };
+
+  // RETENTION TRANSFERS LEDGER (stage 5, owner build order "transfers /
+  // original-booker exception"): the transfers ledger (cross-calendar
+  // rebooking detection), idempotent diff-writes. Same piggy-back contract
+  // as the retention/scorecard/cancellations/no-shows pieces above: own
+  // guards (running guard, 5-min throttle), own sync_runs rows
+  // ("retention-transfers"), never fails the tick.
+  let transfers: RetentionTransfersTickResult | undefined;
+  try {
+    transfers = await retentionTransfersTick({
+      store: options?.store,
+      now: options?.now,
+      trigger: options?.trigger,
+    });
+  } catch (e) {
+    transfers = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
+  }
+  return { ...base, availability, attribution, sheets, availabilityFeed, commission, retention, scorecard, scorecardBoot, cancellations, noShows, transfers, reaped };
 }
 
 // ---------- the always-on loop ----------

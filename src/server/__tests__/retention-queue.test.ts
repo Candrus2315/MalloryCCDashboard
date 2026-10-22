@@ -117,7 +117,7 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
   test("segments: call-due / unreached / window-missed / needs-review with human labels", async () => {
     const s = await seed();
     const q = await retentionNeedsAttention(s.store, NOW);
-    expect(q.counts).toEqual({ callDue: 2, unreached: 0, windowMissed: 1, needsReview: 1, cancellations: 0 });
+    expect(q.counts).toEqual({ callDue: 2, unreached: 0, windowMissed: 1, needsReview: 1, cancellations: 0, transfers: 0 });
 
     const byClient = Object.fromEntries(q.rows.map((r) => [r.clientName!, r]));
     // A1 — due this week, voicemail left, window open → call-due, classification label as status.
@@ -507,7 +507,9 @@ describe("retentionNeedsAttention (the owner's client-level work queue)", () => 
     const store = new MemoryStore();
     const q = await retentionNeedsAttention(store, NOW);
     expect(q.rows).toEqual([]);
-    expect(q.counts).toEqual({ callDue: 0, unreached: 0, windowMissed: 0, needsReview: 0, cancellations: 0 });
+    // transfers joined the queue with the stage-5 ledger (stage 5): an empty
+    // store reports its real 0 alongside the other segments.
+    expect(q.counts).toEqual({ callDue: 0, unreached: 0, windowMissed: 0, needsReview: 0, cancellations: 0, transfers: 0 });
     expect(q.cancellationsRecoveredThisWeek).toBe(0);
     expect(q.dueDays).toBe(7);
   });
