@@ -150,12 +150,14 @@ export async function harvestContactsIncremental(opts: {
   creds: HighLevelCreds;
   fetchImpl: FetchLike;
   sleep?: (ms: number) => Promise<void>;
+  /** Hard per-call cap (tests shrink it); default: the shared SYNC_FETCH_TIMEOUT_MS resolver. */
+  timeoutMs?: number;
   /** External ids already stored — the walk's identity frontier. */
   knownExternalIds: Set<string>;
   maxPages?: number;
   maxNew?: number;
 }): Promise<ContactsWalkResult> {
-  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? defaultSleep };
+  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? defaultSleep, timeoutMs: opts.timeoutMs };
   const maxPages = opts.maxPages ?? CONTACTS_WALK_MAX_PAGES;
   const maxNew = opts.maxNew ?? CONTACTS_WALK_MAX_NEW;
   const warnings: string[] = [];
@@ -282,13 +284,15 @@ export async function reconcileContacts(opts: {
   creds: HighLevelCreds;
   fetchImpl: FetchLike;
   sleep?: (ms: number) => Promise<void>;
+  /** Hard per-call cap (tests shrink it); default: the shared SYNC_FETCH_TIMEOUT_MS resolver. */
+  timeoutMs?: number;
   dbCount: number;
   now?: () => string;
   previous?: ContactsReconciliationCheckpoint | null;
 }): Promise<ContactsReconciliationResult> {
   const now = opts.now ?? (() => new Date().toISOString());
   const previous = opts.previous ?? null;
-  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? defaultSleep };
+  const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? defaultSleep, timeoutMs: opts.timeoutMs };
   let sourceTotal: number | null = null;
   try {
     const body = (await hlRequest({ path: "/contacts/", query: new URLSearchParams({ locationId: opts.creds.locationId, limit: "1" }) }, endpointOpts)) as Record<string, unknown> | null;

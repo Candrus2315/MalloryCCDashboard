@@ -18,6 +18,7 @@
 import { createSign } from "node:crypto";
 import { addDays, etToday } from "../date-logic";
 import { getSecret } from "../env";
+import { isFetchTimeoutError, syncFetchTimeoutMs, timedFetch, type TimedFetchImpl } from "./fetch-timeout";
 import { raceBodyRead } from "./body-read";
 import type { AppSettings } from "../store/types";
 import type { GoogleSheetsAdapter } from "./adapters";
@@ -47,6 +48,34 @@ export interface ServiceAccountInfo {
   privateKey: string;
 }
 
+/**
+ * Per-call HTTP plumbing threaded from the adapter (or defaulted): the fetch
+ * impl (tests inject a hanging/stub fetch; production uses global fetch) and
+ * the per-call timeout cap (tests shrink it; production resolves
+ * SYNC_FETCH_TIMEOUT_MS per call — default ~90s).
+ */
+export interface SheetsHttp {
+  fetchImpl?: TimedFetchImpl;
+  timeoutMs?: number;
+}
+
+function sheetsFetchImpl(http?: SheetsHttp): TimedFetchImpl {
+  return http?.fetchImpl ?? (fetch as unknown as TimedFetchImpl);
+}
+
+function sheetsTimeoutMs(http?: SheetsHttp): number {
+  return http?.timeoutMs ?? syncFetchTimeoutMs();
+}
+
+/** Map a per-call failure to its honest SheetsError: a FetchTimeoutError keeps
+ * its provider-named line verbatim; anything else keeps the legacy wrap. */
+function sheetsNetworkError(e: unknown, what: string): SheetsError {
+  if (isFetchTimeoutError(e)) {
+    return new SheetsError("network", e instanceof Error ? e.message : String(e));
+  }
+  return new SheetsError("network", `${what}: ${e instanceof Error ? e.message : String(e)}`);
+}
+
 /** Parse the saved secret into its usable parts (never log the value). */
 export function readServiceAccount(): ServiceAccountInfo {
   const raw = getSecret("GOOGLE_SERVICE_ACCOUNT_JSON");
@@ -70,7 +99,7 @@ export function readServiceAccount(): ServiceAccountInfo {
 // ---------- token (JWT → access token) ----------
 let cachedToken: { token: string; expMs: number } | null = null;
 
-async function getAccessToken(sa: ServiceAccountInfo): Promise<string> {
+async function getAccessToken(sa: ServiceAccountInfo, http?: SheetsHttp): Promise<string> {
   if (cachedToken && cachedToken.expMs > Date.now() + 60_000) return cachedToken.token;
   const b64url = (b: string | Buffer) => Buffer.from(b).toString("base64url");
   const nowSec = Math.floor(Date.now() / 1000);
@@ -92,14 +121,17 @@ async function getAccessToken(sa: ServiceAccountInfo): Promise<string> {
   }
   let res: Response;
   try {
-    res = await fetch("https://oauth2.googleapis.com/token", {
+    // PER-FETCH BOUNDS (fetch-timeout.ts, 2026-10-22): abort signal composed
+    // into the request AND a JS-timer race at the shared per-call cap — a hung
+    // token call aborts as a provider-named network error, never wedges the
+    // run (the 2026-10-22 wake incident class).
+    res = await timedFetch(sheetsFetchImpl(http), "https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
-      signal: AbortSignal.timeout(60_000),
-    });
+      body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }).toString(),
+    }, { provider: "google_sheets", timeoutMs: sheetsTimeoutMs(http) });
   } catch (e) {
-    throw new SheetsError("network", `Could not reach Google's OAuth endpoint: ${e instanceof Error ? e.message : String(e)}`);
+    throw sheetsNetworkError(e, "Could not reach Google's OAuth endpoint");
   }
   // BOUNDED + HONEST body read (2026-10-17): the armed fetch signal cannot
   // wake a read PARKED on a silent socket (body-read.ts docblock — the live
@@ -108,7 +140,7 @@ async function getAccessToken(sa: ServiceAccountInfo): Promise<string> {
   // surfaced as a bogus "credentials rejected" auth error. Network-class
   // failures now throw SheetsError("network") (retry next tick); only a
   // genuine non-JSON body keeps the legacy {} → auth-classification path.
-  const body = (await raceBodyRead(res.json(), 60_000, "Google OAuth response body").catch((e) => {
+  const body = (await raceBodyRead(res.json(), sheetsTimeoutMs(http), "Google OAuth response body").catch((e) => {
     if (isNetworkBodyError(e)) {
       throw new SheetsError("network", `Google OAuth response body read failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -139,12 +171,16 @@ function classifySheetsError(status: number, apiMessage: string, sa: ServiceAcco
   return new SheetsError("api", `Google Sheets API error (HTTP ${status}): ${msg}`);
 }
 
-async function sheetsFetch(token: string, url: string, sa: ServiceAccountInfo): Promise<unknown> {
+async function sheetsFetch(token: string, url: string, sa: ServiceAccountInfo, http?: SheetsHttp): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) });
+    // PER-FETCH BOUNDS (fetch-timeout.ts, 2026-10-22): the 2026-10-22 wake
+    // incident class — a hung values call used to age until the reaper window
+    // while the tick sat behind it; now the abort signal + JS-timer race
+    // abort it at the shared per-call cap with a provider-named error.
+    res = await timedFetch(sheetsFetchImpl(http), url, { headers: { authorization: `Bearer ${token}` } }, { provider: "google_sheets", timeoutMs: sheetsTimeoutMs(http) });
   } catch (e) {
-    throw new SheetsError("network", `Could not reach Google Sheets: ${e instanceof Error ? e.message : String(e)}`);
+    throw sheetsNetworkError(e, "Could not reach Google Sheets");
   }
   // BODY-READ HONESTY (2026-10-12 hardening): this catch used to swallow EVERY
   // body-read failure as {} — including a socket dying MID-BODY, which then
@@ -153,7 +189,7 @@ async function sheetsFetch(token: string, url: string, sa: ServiceAccountInfo): 
   // failure now surfaces as SheetsError("network") (same class as the connect
   // path); only a genuine NON-JSON body keeps the legacy {} path so the
   // !res.ok classification below still renders Google's status/message.
-  const body = (await raceBodyRead(res.json(), 60_000, "Google Sheets response body").catch((e) => {
+  const body = (await raceBodyRead(res.json(), sheetsTimeoutMs(http), "Google Sheets response body").catch((e) => {
     if (isNetworkBodyError(e)) {
       throw new SheetsError("network", `Google Sheets response body read failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -190,17 +226,17 @@ export function isNetworkBodyError(e: unknown): boolean {
 
 // ---------- API calls ----------
 /** Title of the first worksheet tab (used to scope values.get ranges). */
-export async function fetchFirstTabTitle(token: string, sheetId: string, sa: ServiceAccountInfo): Promise<string> {
-  const body = (await sheetsFetch(token, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title,sheets.properties.title`, sa)) as {
+export async function fetchFirstTabTitle(token: string, sheetId: string, sa: ServiceAccountInfo, http?: SheetsHttp): Promise<string> {
+  const body = (await sheetsFetch(token, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title,sheets.properties.title`, sa, http)) as {
     sheets?: { properties?: { title?: string } }[];
   };
   return body.sheets?.[0]?.properties?.title ?? "Sheet1";
 }
 
 /** All rows (header included) of a spreadsheet's first tab, as raw strings. */
-export async function fetchSheetRows(token: string, sheetId: string, sa: ServiceAccountInfo): Promise<{ tab: string; rows: string[][] }> {
-  const tab = await fetchFirstTabTitle(token, sheetId, sa);
-  const body = (await sheetsFetch(token, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(`${tab}!A1:ZZ`)}?majorDimension=ROWS`, sa)) as {
+export async function fetchSheetRows(token: string, sheetId: string, sa: ServiceAccountInfo, http?: SheetsHttp): Promise<{ tab: string; rows: string[][] }> {
+  const tab = await fetchFirstTabTitle(token, sheetId, sa, http);
+  const body = (await sheetsFetch(token, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(`${tab}!A1:ZZ`)}?majorDimension=ROWS`, sa, http)) as {
     values?: string[][];
   };
   return { tab, rows: body.values ?? [] };
@@ -219,10 +255,10 @@ export interface SheetSample {
  * to `maxRows` real data rows from the sheet's first tab. Throws SheetsError
  * with an actionable message when access isn't granted yet.
  */
-export async function fetchSheetSampleLive(sheetId: string, maxRows = 5): Promise<SheetSample> {
+export async function fetchSheetSampleLive(sheetId: string, maxRows = 5, http?: SheetsHttp): Promise<SheetSample> {
   const sa = readServiceAccount();
-  const token = await getAccessToken(sa);
-  const { tab, rows } = await fetchSheetRows(token, sheetId, sa);
+  const token = await getAccessToken(sa, http);
+  const { tab, rows } = await fetchSheetRows(token, sheetId, sa, http);
   const header = rows[0] ?? [];
   const dataRows = rows.slice(1).filter((r) => r.some((c) => String(c ?? "").trim() !== ""));
   if (dataRows.length === 0) {
@@ -260,11 +296,13 @@ export class LiveSheetsAdapter implements GoogleSheetsAdapter {
   constructor(
     private cfg: AppSettings["sheets"],
     private windowDays: number = LEAD_BACKFILL_DAYS,
+    /** Per-call HTTP plumbing: tests inject a stub/hanging fetch + a tiny cap; production leaves both to the defaults (global fetch + SYNC_FETCH_TIMEOUT_MS resolver). */
+    private http?: SheetsHttp,
   ) {}
 
   async fetchLeads(): Promise<NormalizedLead[]> {
     const sa = readServiceAccount();
-    const token = await getAccessToken(sa);
+    const token = await getAccessToken(sa, this.http);
     const windowStart = addDays(etToday(), -this.windowDays);
     const leads: NormalizedLead[] = [];
     const perSheet: SheetsLivePerSheet[] = [];
@@ -275,7 +313,7 @@ export class LiveSheetsAdapter implements GoogleSheetsAdapter {
       const conf = this.cfg[sheet];
       const mapping = { mode: conf.mode, columns: conf.columns };
       try {
-        const { tab, rows } = await fetchSheetRows(token, conf.sheet_id, sa);
+        const { tab, rows } = await fetchSheetRows(token, conf.sheet_id, sa, this.http);
         const res = parseSheetRows({ sheet, sheetId: conf.sheet_id, mapping, rows, windowStart });
         leads.push(...res.leads);
         warnings.push(...res.warnings.map((w) => `${sheet}: ${w}`));
