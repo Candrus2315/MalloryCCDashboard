@@ -284,7 +284,7 @@ const MAX_PLAUSIBLE_DAY_COUNT = 10_000;
  * expansion for row-per-day sheets, and deterministic source_ids.
  */
 export function parseSheetRows(opts: {
-  sheet: "family" | "animalia";
+  sheet: "family" | "animalia" | "fairyland";
   sheetId: string;
   mapping: SheetMapping;
   rows: string[][];

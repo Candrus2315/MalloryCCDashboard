@@ -595,6 +595,13 @@ export interface SheetConfig {
   sheet_id: string;
   mode: SheetMappingMode;
   columns: Record<string, string>;
+  /**
+   * OPTIONAL worksheet tab to fetch (owner directive 2026-10-22, Fairyland
+   * wiring): when set, the sync targets THIS tab by name; absent/empty = the
+   * spreadsheet's FIRST tab (long-standing Family/Animalia behavior,
+   * byte-identical). Only sheets whose target tab is not first need this.
+   */
+  tab_name?: string;
 }
 
 // The two SPEC'd Google Sheet IDs live in settings. Fairyland (third genre,
@@ -699,7 +706,16 @@ function normalizeSheetConfig(raw: unknown, fallbackId: string): SheetConfig {
   const columns = hasColumns
     ? rawColumns
     : { ...(mode === "row_per_day_count" ? DEFAULT_COLUMN_MAPPING_DAY_COUNT : DEFAULT_COLUMN_MAPPING) };
-  return { sheet_id: typeof r.sheet_id === "string" && r.sheet_id ? r.sheet_id : fallbackId, mode, columns };
+  // Optional target tab: preserved ONLY as a non-empty string — an empty or
+  // non-string value normalizes away (absent = first tab, as today). Existing
+  // Family/Animalia rows carry no tab_name and read back byte-identical.
+  const tabName = typeof r.tab_name === "string" && r.tab_name.trim() ? r.tab_name.trim() : undefined;
+  return {
+    sheet_id: typeof r.sheet_id === "string" && r.sheet_id ? r.sheet_id : fallbackId,
+    mode,
+    columns,
+    ...(tabName ? { tab_name: tabName } : {}),
+  };
 }
 
 /**
