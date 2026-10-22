@@ -40,11 +40,17 @@ export function classifySessionGenre(appointmentType: string): Genre {
   return "family";
 }
 
-/** Lead-row genre classifier (lead_type / source_sheet) — same convention. */
-export function classifyLeadGenre(leadType: string): Genre {
+/**
+ * Lead-row genre classifier (lead_type text first; optional sourceSheet is
+ * the SHEET-IDENTITY FALLBACK — a lead ingested from the fairyland sheet is
+ * fairyland even when its Campaign Name text doesn't contain "fairyland").
+ * Family/Animalia sheets classify exactly as before (text-first order).
+ */
+export function classifyLeadGenre(leadType: string, sourceSheet?: string): Genre {
   const t = leadType ?? "";
   if (/animalia/i.test(t)) return "animalia";
   if (/fairyland/i.test(t)) return "fairyland";
+  if (sourceSheet === "fairyland") return "fairyland";
   return "family";
 }
 

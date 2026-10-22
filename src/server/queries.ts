@@ -669,7 +669,7 @@ export const testSheetMapping = createServerFn({ method: "POST" })
     let source: "live" | "demo-fallback" = "demo-fallback";
     let liveError: string | null = null;
     try {
-      sample = await fetchSheetSampleLive(settings.sheets[sheet].sheet_id);
+      sample = await fetchSheetSampleLive(settings.sheets[sheet].sheet_id, 5, undefined, settings.sheets[sheet].tab_name);
       source = "live";
     } catch (e) {
       liveError = e instanceof Error ? e.message : String(e);

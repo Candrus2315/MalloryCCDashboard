@@ -233,9 +233,13 @@ export async function fetchFirstTabTitle(token: string, sheetId: string, sa: Ser
   return body.sheets?.[0]?.properties?.title ?? "Sheet1";
 }
 
-/** All rows (header included) of a spreadsheet's first tab, as raw strings. */
-export async function fetchSheetRows(token: string, sheetId: string, sa: ServiceAccountInfo, http?: SheetsHttp): Promise<{ tab: string; rows: string[][] }> {
-  const tab = await fetchFirstTabTitle(token, sheetId, sa, http);
+/** All rows (header included) of a spreadsheet tab, as raw strings.
+ * `tabName` — optional target tab (Fairyland wiring, owner directive
+ * 2026-10-22): when set, THAT tab is fetched by name (a wrong name surfaces
+ * Google's honest 400 error); absent/empty keeps the long-standing first-tab
+ * behavior byte-identical (Family/Animalia pass no tab name). */
+export async function fetchSheetRows(token: string, sheetId: string, sa: ServiceAccountInfo, http?: SheetsHttp, tabName?: string): Promise<{ tab: string; rows: string[][] }> {
+  const tab = tabName?.trim() ? tabName.trim() : await fetchFirstTabTitle(token, sheetId, sa, http);
   const body = (await sheetsFetch(token, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(`${tab}!A1:ZZ`)}?majorDimension=ROWS`, sa, http)) as {
     values?: string[][];
   };
@@ -255,10 +259,10 @@ export interface SheetSample {
  * to `maxRows` real data rows from the sheet's first tab. Throws SheetsError
  * with an actionable message when access isn't granted yet.
  */
-export async function fetchSheetSampleLive(sheetId: string, maxRows = 5, http?: SheetsHttp): Promise<SheetSample> {
+export async function fetchSheetSampleLive(sheetId: string, maxRows = 5, http?: SheetsHttp, tabName?: string): Promise<SheetSample> {
   const sa = readServiceAccount();
   const token = await getAccessToken(sa, http);
-  const { tab, rows } = await fetchSheetRows(token, sheetId, sa, http);
+  const { tab, rows } = await fetchSheetRows(token, sheetId, sa, http, tabName);
   const header = rows[0] ?? [];
   const dataRows = rows.slice(1).filter((r) => r.some((c) => String(c ?? "").trim() !== ""));
   if (dataRows.length === 0) {
@@ -314,13 +318,15 @@ export class LiveSheetsAdapter implements GoogleSheetsAdapter {
       // Third genre (owner directive 2026-10-22): the Fairyland sheet stays
       // UNCONFIGURED (empty id) until the owner saves one in Settings —
       // fail-honest skip with a visible note, never a guessed sheet id.
-      if (!conf.sheet_id.trim()) {
+      if (!conf?.sheet_id?.trim()) {
         warnings.push(`${sheet}: no sheet id configured — skipped (set one in Settings → Sheets)`);
         continue;
       }
       const mapping = { mode: conf.mode, columns: conf.columns };
       try {
-        const { tab, rows } = await fetchSheetRows(token, conf.sheet_id, sa, this.http);
+        // Optional tab targeting (Fairyland, owner directive 2026-10-22):
+        // tab_name present → fetch THAT tab; absent → first tab as always.
+        const { tab, rows } = await fetchSheetRows(token, conf.sheet_id, sa, this.http, conf.tab_name?.trim() || undefined);
         const res = parseSheetRows({ sheet, sheetId: conf.sheet_id, mapping, rows, windowStart });
         leads.push(...res.leads);
         warnings.push(...res.warnings.map((w) => `${sheet}: ${w}`));

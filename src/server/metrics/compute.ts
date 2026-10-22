@@ -598,7 +598,11 @@ function summarizeLeadRows(rows: LeadRow[]): LeadSummary {
   let fairyland = 0;
   for (const l of rows) {
     if (/animalia/i.test(l.lead_type)) animalia += 1;
-    else if (/fairyland/i.test(l.lead_type)) fairyland += 1;
+    // SHEET-IDENTITY FALLBACK (Fairyland wiring, owner directive): a lead
+    // ingested from the fairyland SHEET is fairyland even when its lead_type
+    // text (Campaign Name) doesn't contain "fairyland". Text-first order
+    // keeps animalia/family outcomes exactly as before.
+    else if (/fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland") fairyland += 1;
     else family += 1;
   }
   return { family, animalia, fairyland, total: family + animalia + fairyland };

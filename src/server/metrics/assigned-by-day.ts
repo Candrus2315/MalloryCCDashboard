@@ -131,7 +131,15 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
     if (l.assigned_rep_id == null) continue; // unassigned sheet leads are excluded
     const i = dateIndex.get(l.work_date);
     if (i == null) continue; // defensive: store fetch already scopes work dates
-    const genre: AssignedGenre = /animalia/i.test(l.lead_type) ? "animalia" : /fairyland/i.test(l.lead_type) ? "fairyland" : "family";
+    // SHEET-IDENTITY FALLBACK (Fairyland wiring): a lead ingested from the
+    // fairyland SHEET is fairyland even when its lead_type text doesn't
+    // contain "fairyland". Text-first order keeps animalia/family outcomes
+    // exactly as before.
+    const genre: AssignedGenre = /animalia/i.test(l.lead_type)
+      ? "animalia"
+      : (/fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland")
+        ? "fairyland"
+        : "family";
     addInto(ensureRep(l.assigned_rep_id)[i], genre, 1);
   }
 
