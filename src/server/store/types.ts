@@ -492,6 +492,14 @@ export interface AppSettings {
   sheets: {
     family: SheetConfig;
     animalia: SheetConfig;
+    /**
+     * Third genre (owner directive 2026-10-22). The Fairyland sheet is NOT
+     * configured until the owner saves a real sheet id in Settings — the
+     * default below is an EMPTY id, and every consumer treats an empty id as
+     * "not configured" (the sync skips it, counts read zero, corrections
+     * don't apply). Never a guessed sheet id.
+     */
+    fairyland: SheetConfig;
   };
   acuity: {
     calendars_included: string[];
@@ -589,10 +597,13 @@ export interface SheetConfig {
   columns: Record<string, string>;
 }
 
-// The two SPEC'd Google Sheet IDs live in settings.
+// The two SPEC'd Google Sheet IDs live in settings. Fairyland (third genre,
+// owner directive 2026-10-22) has NO default id: an empty string means "not
+// configured" — the sync skips it and no count/correction is ever invented.
 export const DEFAULT_SHEET_IDS = {
   family: "1_5d1TDrOLg_E3RICEY6M7K9wnM97M9wkHLUN-C0oIvg",
   animalia: "1Zp_ghywl-u4e13NHMoPRubZ9DCZC-Khv1ePL6PVahZU",
+  fairyland: "",
 };
 
 // Configurable column mapping (column letters/names per sheet).
@@ -651,7 +662,7 @@ export function mergeSheetsSettings(
   const sheets = { ...current };
   const modeChanges: { sheet: keyof AppSettings["sheets"]; from: SheetMappingMode; to: SheetMappingMode }[] = [];
   if (patch) {
-    for (const key of ["family", "animalia"] as const) {
+    for (const key of ["family", "animalia", "fairyland"] as const) {
       const p = patch[key];
       if (!p) continue;
       // Normalize the saved config first so a legacy stored shape (mode
@@ -726,6 +737,9 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
     sheets: {
       family: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.family ?? base.sheets.family, DEFAULT_SHEET_IDS.family),
       animalia: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.animalia ?? base.sheets.animalia, DEFAULT_SHEET_IDS.animalia),
+      // Third genre: absent on settings saved before 2026-10-22 → the default
+      // (sheet_id "") applies — "not configured", never a guessed sheet id.
+      fairyland: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.fairyland ?? base.sheets.fairyland, DEFAULT_SHEET_IDS.fairyland),
     },
     acuity: { ...base.acuity, ...(r.acuity ?? {}) },
     unattributedQueue: normalizeUnattributedQueueSettings(r.unattributedQueue ?? base.unattributedQueue),
@@ -782,6 +796,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sheets: {
     family: { sheet_id: DEFAULT_SHEET_IDS.family, mode: "row_per_day_count", columns: { ...DEFAULT_COLUMN_MAPPING_DAY_COUNT } },
     animalia: { sheet_id: DEFAULT_SHEET_IDS.animalia, mode: "row_per_day_count", columns: { ...DEFAULT_COLUMN_MAPPING_DAY_COUNT } },
+    // Third genre: sheet_id "" = NOT configured — the sync skips it honestly
+    // until the owner saves the real Fairyland sheet in Settings.
+    fairyland: { sheet_id: DEFAULT_SHEET_IDS.fairyland, mode: "row_per_day_count", columns: { ...DEFAULT_COLUMN_MAPPING_DAY_COUNT } },
   },
   acuity: { calendars_included: [], types_included: [] },
 };

@@ -94,11 +94,17 @@ export interface GoogleSheetsAdapter {
  * row per sheet). Used by the Settings "test mapping" action to demonstrate
  * the mapping → parse pipeline on realistic data.
  */
-export function sampleSheetRow(sheet: "family" | "animalia"): { header: string[]; rows: string[][] } {
+export function sampleSheetRow(sheet: "family" | "animalia" | "fairyland"): { header: string[]; rows: string[][] } {
   if (sheet === "family") {
     return {
       header: ["Date", "Name", "Phone", "Email", "Lead Type"],
       rows: [["2026-09-24", "Emma Carter", "+19175550142", "emma.carter@example.com", "family"]],
+    };
+  }
+  if (sheet === "fairyland") {
+    return {
+      header: ["Date", "Name", "Phone", "Email", "Lead Type"],
+      rows: [["2026-09-24", "Ava Bell", "+19175550177", "ava.bell@example.com", "fairyland"]],
     };
   }
   return {

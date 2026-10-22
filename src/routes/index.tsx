@@ -6,6 +6,8 @@ import { AttentionPanel } from "~/components/AttentionPanel";
 import { DayCardStrip, type DayCardData } from "~/components/DayCardStrip";
 import { InfoTip } from "~/components/InfoTip";
 import { StatusChip } from "~/components/StatusChip";
+import { Segmented } from "~/components/Segmented";
+import { GENRES, GENRE_BAR, GENRE_LABELS, genresForFilter, type Genre } from "~/components/genres";
 // Harmonization Wave 1: Today composes the SAME page primitives as Daily
 // Report / Weekly (Panel / Eyebrow / RatioBar).
 import { Eyebrow, KpiMid, num, Panel, RatioBar } from "~/components/page-panel";
@@ -214,8 +216,11 @@ function TodayPage() {
   // existing over-budget test (was BudgetTile's `over`).
   const leadBudgetOver = m.leads.percentUsed != null && m.leads.percentUsed > 1;
   const todayMixTotal = m.leads.today.total;
-  const animaliaPct = todayMixTotal > 0 ? Math.min(100, (m.leads.today.animalia / todayMixTotal) * 100) : 0;
-  const familyPct = todayMixTotal > 0 ? Math.min(100, (m.leads.today.family / todayMixTotal) * 100) : 0;
+  const todayMixPct = (n: number) => (todayMixTotal > 0 ? Math.min(100, (n / todayMixTotal) * 100) : 0);
+  // Filter chips (net-new, owner 10/22): "All | Family | Animalia | Fairyland"
+  // — display-layer only; the presented mix/legend narrows, stored data does not.
+  const [todayGenre, setTodayGenre] = useState<Genre | "all">("all");
+  const todayMixGenres = genresForFilter(todayGenre);
 
   // Spec §4 honesty banner: store/db clauses + provider-aware live/demo line +
   // stale warnings, one slim line. Provider-aware so "leads live, calls demo"
@@ -534,19 +539,29 @@ function TodayPage() {
               <p className="mt-2 text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
                 {m.leads.today.total}
               </p>
+              <div className="mt-3">
+                <Segmented<"all" | Genre>
+                  ariaLabel="Filter today's lead mix by genre"
+                  options={[
+                    { value: "all", label: "All" },
+                    ...GENRES.map((g) => ({ value: g, label: GENRE_LABELS[g] })),
+                  ]}
+                  value={todayGenre}
+                  onChange={setTodayGenre}
+                />
+              </div>
               <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
-                <div style={{ width: `${animaliaPct}%`, background: "var(--bar-fill)" }} />
-                <div style={{ width: `${familyPct}%`, background: "var(--text-muted)" }} />
+                {todayMixGenres.map((g) => (
+                  <div key={g} style={{ width: `${todayMixPct(m.leads.today[g])}%`, background: GENRE_BAR[g] }} />
+                ))}
               </div>
               <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
-                <li className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--bar-fill)" }} aria-hidden="true" />
-                  <span className="tabular-nums">{m.leads.today.animalia}</span> Animalia Leads Today
-                </li>
-                <li className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--text-muted)" }} aria-hidden="true" />
-                  <span className="tabular-nums">{m.leads.today.family}</span> Family Leads Today
-                </li>
+                {todayMixGenres.map((g) => (
+                  <li key={g} className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: GENRE_BAR[g] }} aria-hidden="true" />
+                    <span className="tabular-nums">{m.leads.today[g]}</span> {GENRE_LABELS[g]} Leads Today
+                  </li>
+                ))}
               </ul>
             </div>
           </div>

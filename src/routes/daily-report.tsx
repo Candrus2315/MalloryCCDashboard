@@ -6,6 +6,7 @@ import { getDailyReportData, saveDailyPriorities } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
 import { formatInt, formatPercent, anchorDayPhrase, bookingsAnchorLabel } from "~/server/metrics/report-text";
 import { InfoTip } from "~/components/InfoTip";
+import { GENRES, GENRE_BAR, GENRE_LABELS, type Genre } from "~/components/genres";
 import { CopyButton } from "~/components/CopyButton";
 // Harmonization Wave 1: Panel/Eyebrow/RatioBar live ONCE in the shared
 // page-primitives module (same markup they replaced here).
@@ -68,8 +69,12 @@ function DailyReportPage() {
   // Today's mix bar geometry (presentation-only proportions from the two
   // payload counts; the legend text always shows the raw values).
   const mixTotal = m.leadsToday > 0 ? m.leadsToday : 0;
-  const animaliaPct = mixTotal > 0 ? Math.min(100, (m.animaliaLeadsToday / mixTotal) * 100) : 0;
-  const familyPct = mixTotal > 0 ? Math.min(100, (m.familyLeadsToday / mixTotal) * 100) : 0;
+  const mixPct = (n: number) => (mixTotal > 0 ? Math.min(100, (n / mixTotal) * 100) : 0);
+  const todayMix: Record<Genre, number> = {
+    family: m.familyLeadsToday,
+    animalia: m.animaliaLeadsToday,
+    fairyland: m.fairylandLeadsToday,
+  };
 
   const priorities: [string, string, (v: string) => void][] = [
     ["1", p1, setP1],
@@ -219,18 +224,17 @@ function DailyReportPage() {
                 className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)"
                 aria-hidden="true"
               >
-                <div style={{ width: `${animaliaPct}%`, background: "var(--bar-fill)" }} />
-                <div style={{ width: `${familyPct}%`, background: "var(--text-muted)" }} />
+                {GENRES.map((g) => (
+                  <div key={g} style={{ width: `${mixPct(todayMix[g])}%`, background: GENRE_BAR[g] }} />
+                ))}
               </div>
               <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
-                <li className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--bar-fill)" }} aria-hidden="true" />
-                  <span className="tabular-nums">{formatInt(m.animaliaLeadsToday)}</span> Animalia
-                </li>
-                <li className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: "var(--text-muted)" }} aria-hidden="true" />
-                  <span className="tabular-nums">{formatInt(m.familyLeadsToday)}</span> Family
-                </li>
+                {GENRES.map((g) => (
+                  <li key={g} className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: GENRE_BAR[g] }} aria-hidden="true" />
+                    <span className="tabular-nums">{formatInt(todayMix[g])}</span> {GENRE_LABELS[g]}
+                  </li>
+                ))}
               </ul>
               <div className="mt-4 border-t border-(--table-border-weak) pt-3">
                 <p className="text-[13px] font-medium text-(--text-body)">Daily Leads Needed</p>

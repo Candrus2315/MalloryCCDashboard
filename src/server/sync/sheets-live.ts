@@ -309,8 +309,15 @@ export class LiveSheetsAdapter implements GoogleSheetsAdapter {
     const warnings: string[] = [];
     const suggestions: string[] = [];
 
-    for (const sheet of ["family", "animalia"] as const) {
+    for (const sheet of ["family", "animalia", "fairyland"] as const) {
       const conf = this.cfg[sheet];
+      // Third genre (owner directive 2026-10-22): the Fairyland sheet stays
+      // UNCONFIGURED (empty id) until the owner saves one in Settings —
+      // fail-honest skip with a visible note, never a guessed sheet id.
+      if (!conf.sheet_id.trim()) {
+        warnings.push(`${sheet}: no sheet id configured — skipped (set one in Settings → Sheets)`);
+        continue;
+      }
       const mapping = { mode: conf.mode, columns: conf.columns };
       try {
         const { tab, rows } = await fetchSheetRows(token, conf.sheet_id, sa, this.http);

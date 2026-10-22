@@ -543,6 +543,8 @@ export function paceNeeded(remaining: number, daysLeft: number): number {
 export interface LeadSummary {
   family: number;
   animalia: number;
+  /** Third genre (owner directive 2026-10-22) — always a sibling of family/animalia, never a fork. */
+  fairyland: number;
   total: number;
 }
 
@@ -554,7 +556,7 @@ export interface LeadSummary {
  */
 export interface LeadCountAdjustment {
   work_date: string; // ET date the cohort is worked
-  sheet: string; // "family" | "animalia" (source_sheet)
+  sheet: string; // "family" | "animalia" | "fairyland" (source_sheet)
   delta: number; // correction vs the synced rows (+/-)
 }
 
@@ -566,13 +568,19 @@ function applyLeadAdjustments(
   if (!adjustments || adjustments.length === 0) return base;
   let family = base.family;
   let animalia = base.animalia;
+  let fairyland = base.fairyland;
   for (const a of adjustments) {
     if (!include(a)) continue;
     const d = Number(a.delta) || 0;
     if (a.sheet === "family") family += d;
     else if (a.sheet === "animalia") animalia += d;
+    else if (a.sheet === "fairyland") fairyland += d;
+    // An adjustment naming an UNCONFIGURED sheet (e.g. fairyland before the
+    // owner adds its sheet id) has nothing to correct — fail-honest: it is
+    // skipped here and the Settings count editor simply offers no such row.
+    // Never guessed, never folded into another genre's count.
   }
-  return { family, animalia, total: family + animalia };
+  return { family, animalia, fairyland, total: family + animalia + fairyland };
 }
 
 /** Leads the team works on reportDate (work_date = reportDate), by type. */
@@ -582,9 +590,18 @@ export function leadsToday(leads: LeadRow[], reportDate: string, adjustments?: L
 }
 
 function summarizeLeadRows(rows: LeadRow[]): LeadSummary {
-  const family = rows.filter((l) => l.lead_type === "family").length;
-  const animalia = rows.filter((l) => l.lead_type === "animalia").length;
-  return { family, animalia, total: family + animalia };
+  // Three-genre classifier (same convention as splitLeadsByType / the
+  // assigned-by-day grid): /animalia/i → animalia, /fairyland/i → fairyland,
+  // everything else family — Fairyland never silently counts as Family.
+  let family = 0;
+  let animalia = 0;
+  let fairyland = 0;
+  for (const l of rows) {
+    if (/animalia/i.test(l.lead_type)) animalia += 1;
+    else if (/fairyland/i.test(l.lead_type)) fairyland += 1;
+    else family += 1;
+  }
+  return { family, animalia, fairyland, total: family + animalia + fairyland };
 }
 
 /** Weekly leads: work_date within the operational week (Mon..Sun) containing reportDate. */
@@ -1293,6 +1310,8 @@ export interface TrendPoint {
   family: number;
   /** Animalia-sheet share of `leads` — split of the SAME already-computed rows (no new math). */
   animalia: number;
+  /** Fairyland-sheet share of `leads` — third genre, same no-new-math split. */
+  fairyland: number;
   /** Reference-line value: weekly lead budget per week, budget ÷ 7 per day. */
   budgetRef: number;
 }
@@ -1311,10 +1330,11 @@ function shortDayLabel(dateStr: string): string {
   );
 }
 
-// ---------- lead-source split (Family / Animalia) ----------
+// ---------- lead-source split (Family / Animalia / Fairyland) ----------
 export interface LeadSplit {
   family: number;
   animalia: number;
+  fairyland: number;
 }
 /**
  * Split ALREADY-COMPUTED lead rows by source sheet — no new math, no new
@@ -1326,12 +1346,14 @@ export interface LeadSplit {
 export function splitLeadRows(leads: LeadRow[]): LeadSplit {
   let family = 0;
   let animalia = 0;
+  let fairyland = 0;
   for (const l of leads) {
     const t = (l.lead_type || l.source_sheet || "").trim().toLowerCase();
     if (t === "family") family += 1;
     else if (t === "animalia") animalia += 1;
+    else if (t === "fairyland") fairyland += 1;
   }
-  return { family, animalia };
+  return { family, animalia, fairyland };
 }
 
 /**
@@ -1403,6 +1425,7 @@ export function buildTeamTrends(input: {
       leads: bLeadsCount,
       family: leadSplit.family,
       animalia: leadSplit.animalia,
+      fairyland: leadSplit.fairyland,
       budgetRef: mode === "week" ? weeklyBudget : weeklyBudget / 7,
     } satisfies TrendPoint;
   });
@@ -1887,6 +1910,8 @@ export interface DailyReportMetrics {
   leadsToday: number;
   familyLeadsToday: number;
   animaliaLeadsToday: number;
+  /** Third genre (owner directive 2026-10-22) — sibling of family/animalia everywhere. */
+  fairylandLeadsToday: number;
   weeklyLeads: number;
   leadBudgetUsedPct: number | null;
   leadsRemaining: number;
@@ -1970,6 +1995,7 @@ export function buildDailyReportMetrics(input: {
     leadsToday: todayCohort.total,
     familyLeadsToday: todayCohort.family,
     animaliaLeadsToday: todayCohort.animalia,
+    fairylandLeadsToday: todayCohort.fairyland,
     weeklyLeads: weekly.total,
     leadBudgetUsedPct: leadBudgetUsage(weekly.total, input.weeklyLeadBudget),
     leadsRemaining: leadsRemaining(weekly.total, input.weeklyLeadBudget),

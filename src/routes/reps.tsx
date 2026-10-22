@@ -195,7 +195,7 @@ function RepsPage() {
   const ccRows = assignedGrid.rows.filter((r) => rosterIdSet.has(r.rep_id));
   const otherRows = assignedGrid.rows.filter((r) => !rosterIdSet.has(r.rep_id));
   const otherLeadCount = otherRows.reduce(
-    (n, r) => n + r.total.animalia + r.total.family + r.total.alliance + r.total.auction,
+    (n, r) => n + r.total.animalia + r.total.family + r.total.alliance + r.total.auction + r.total.fairyland,
     0,
   );
   const weekendCols = useMemo(() => assignedGrid.dates.map(isWeekendColumn), [assignedGrid.dates]);
@@ -839,7 +839,7 @@ function RepsPage() {
             <span className="inline-flex items-center gap-1.5">
               <p className="section-heading">Assigned Leads by Day</p>
               <InfoTip
-                tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by the rep's HighLevel user (bucketed by ET created date). All dates America/New_York; unassigned sheet leads are excluded. Each cell stacks the count with its genre label — Animalia or Family — and Al · Au mark Alliance/Auction leads that rep owns. Team Total sums every lead owner shown, including the collapsed Other Lead Owners. CSV columns: rep, day, genre, assigned_leads."
+                tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by the rep's HighLevel user (bucketed by ET created date). All dates America/New_York; unassigned sheet leads are excluded. Each cell stacks the count with its genre label — Animalia, Family or Fairyland — and Al · Au mark Alliance/Auction leads that rep owns. Team Total sums every lead owner shown, including the collapsed Other Lead Owners. CSV columns: rep, day, genre, assigned_leads."
                 label="What Assigned Leads by Day shows"
               />
             </span>
@@ -980,9 +980,10 @@ function isWeekendColumn(date: string): boolean {
 }
 
 /** Genre label marker: small neutral ink ticks — consistent per genre, theme-safe, no color badges. */
-const GENRE_TICK: Record<"Animalia" | "Family", string> = {
+const GENRE_TICK: Record<"Animalia" | "Family" | "Fairyland", string> = {
   Animalia: "bg-(--text-body)",
   Family: "bg-(--text-muted)",
+  Fairyland: "bg-violet-500 dark:bg-violet-400",
 };
 
 /** One count + genre label line: the count is the primary element (larger,
@@ -994,7 +995,7 @@ function GenreCount({
   strong,
 }: {
   n: number;
-  genre: "Animalia" | "Family";
+  genre: "Animalia" | "Family" | "Fairyland";
   tone: string;
   strong?: boolean;
 }) {
@@ -1017,13 +1018,14 @@ function GenreCount({
     renders a quiet em dash — never a fake 0. `dim` mutes a weekend column one
     step; `strong` marks rollup cells (Weekly Total, Team Total row). */
 function AssignedCellBlock({ c, dim, strong }: { c: AssignedByDayCell; dim?: boolean; strong?: boolean }) {
-  const allZero = c.animalia === 0 && c.family === 0 && c.alliance === 0 && c.auction === 0;
+  const allZero = c.animalia === 0 && c.family === 0 && c.alliance === 0 && c.auction === 0 && c.fairyland === 0;
   if (allZero) return <span className="text-xs text-(--text-faint)">—</span>;
   const tone = dim ? "text-(--text-body)" : "text-(--text-primary)";
   return (
     <span className="block whitespace-nowrap tabular-nums">
       {c.animalia > 0 && <GenreCount n={c.animalia} genre="Animalia" tone={tone} strong={strong} />}
       {c.family > 0 && <GenreCount n={c.family} genre="Family" tone={tone} strong={strong} />}
+      {c.fairyland > 0 && <GenreCount n={c.fairyland} genre="Fairyland" tone={tone} strong={strong} />}
       {(c.alliance > 0 || c.auction > 0) && (
         <span className={"mt-1 block text-[11px] leading-none text-(--text-muted)" + (dim ? " opacity-75" : "")}>
           {c.alliance > 0 && <span>Al {c.alliance}</span>}

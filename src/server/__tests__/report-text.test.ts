@@ -14,6 +14,7 @@ import type { AppointmentRow, AttributionRow, CallRow, LeadRow } from "../metric
 // ---------- helpers ----------
 
 const specExampleMetrics = (): DailyReportMetrics => ({
+  fairylandLeadsToday: 0,
   reportDate: "2026-09-25",
   anchorDate: "2026-09-24", // calendar yesterday — the SPEC's "next morning" report
   weekStart: "2026-09-21",
@@ -60,6 +61,7 @@ const SPEC_EXAMPLE = [
   "Leads Today: 80",
   "Family: 27",
   "Animalia: 53",
+  "Fairyland: 0",
   "Total Weekly Leads: 594",
   "% of Budget Used: 84.86%",
   "Leads Remaining: 106",

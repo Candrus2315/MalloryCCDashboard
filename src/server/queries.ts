@@ -170,7 +170,7 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
 
   // Observed per-date lead counts (before adjustments) for the count editor.
   const observedCounts = week.flatMap((d) => {
-    return (["family", "animalia"] as const).map((sheet) => {
+    return (["family", "animalia", "fairyland"] as const).map((sheet) => {
       const observed = weekLeads.filter((l) => l.work_date === d && l.source_sheet === sheet).length;
       const prior = leadAdjustments.find((a) => a.work_date === d && a.sheet === sheet);
       return { date: d, sheet, observed, adjustedDelta: prior ? prior.delta : null };
@@ -634,10 +634,10 @@ export const saveWeeklyReportNotes = createServerFn({ method: "POST" })
 
 /** Sheet column mapping (persisted to app_settings). */
 export const saveSheetMapping = createServerFn({ method: "POST" })
-  .validator((input: unknown) => input as { sheet: "family" | "animalia"; columns: Record<string, string>; mode?: string })
+  .validator((input: unknown) => input as { sheet: "family" | "animalia" | "fairyland"; columns: Record<string, string>; mode?: string })
   .handler(async ({ data }) => {
     const store = await getStore();
-    const sheet = data.sheet === "animalia" ? "animalia" : "family";
+    const sheet = data.sheet === "animalia" ? "animalia" : data.sheet === "fairyland" ? "fairyland" : "family";
     const settings = await store.getSettings();
     const columns: Record<string, string> = { ...settings.sheets[sheet].columns, ...data.columns };
     const mode = isSheetMappingMode(data.mode) ? data.mode : settings.sheets[sheet].mode;
@@ -655,13 +655,13 @@ export const saveSheetMapping = createServerFn({ method: "POST" })
  * reachable yet — the actionable live error is returned either way.
  */
 export const testSheetMapping = createServerFn({ method: "POST" })
-  .validator((input: unknown) => input as { sheet: "family" | "animalia"; columns: Record<string, string>; mode?: string })
+  .validator((input: unknown) => input as { sheet: "family" | "animalia" | "fairyland"; columns: Record<string, string>; mode?: string })
   .handler(async ({ data }) => {
     const { applySheetMapping, sampleSheetRow } = await import("./sync/adapters");
     const { parseSheetDate } = await import("./sync/sheets-mapping");
     const { fetchSheetSampleLive } = await import("./sync/sheets-live");
     const { getWorkDate } = await import("./date-logic");
-    const sheet = data.sheet === "animalia" ? "animalia" : "family";
+    const sheet = data.sheet === "animalia" ? "animalia" : data.sheet === "fairyland" ? "fairyland" : "family";
     const store = await getStore();
     const settings = await store.getSettings();
     const mode = isSheetMappingMode(data.mode) ? data.mode : settings.sheets[sheet].mode;
@@ -994,7 +994,7 @@ export const setLeadCount = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const store = await getStore();
     const date = String(data.date);
-    const sheet = data.sheet === "animalia" ? "animalia" : "family";
+    const sheet = data.sheet === "animalia" ? "animalia" : data.sheet === "fairyland" ? "fairyland" : "family";
     const count = Math.max(0, Math.floor(Number(data.count) || 0));
     const ws = weekStart(date);
     const leads = await store.getLeadsByWorkDates(dateRange(ws, addDays(ws, 6)));

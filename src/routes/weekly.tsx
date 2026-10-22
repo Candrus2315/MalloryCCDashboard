@@ -359,8 +359,9 @@ function WeeklyPage() {
                     <>
                       Paid Bookings (Booking Wins): appointments whose required deposit was paid, counted on the ET date the
                       deposit was received — the same rule every page uses. Session type: "animalia" in the Acuity type name →
-                      Animalia, everything else Family. Rep rows join stored attributions; owner manual overrides count as rep
-                      bookings. Online / unattributed wins count toward the team total only — never a rep's row.
+                      Animalia, "fairyland" → Fairyland, everything else Family. Rep rows join stored attributions; owner manual
+                      overrides count as rep bookings. Online / unattributed wins count toward the team total only — never a
+                      rep's row.
                     </>
                   }
                 />
@@ -396,6 +397,7 @@ function WeeklyPage() {
               <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
                 <div className="bg-(--bar-fill)" style={{ width: `${mixSeg(b.animalia)}%` }} />
                 <div className="bg-(--text-muted)" style={{ width: `${mixSeg(b.family)}%` }} />
+                <div className="bg-(--genre-fairyland)" style={{ width: `${mixSeg(b.fairyland)}%` }} />
               </div>
               <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
                 <li className="flex items-center gap-1.5">
@@ -405,6 +407,10 @@ function WeeklyPage() {
                 <li className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--text-muted)" aria-hidden="true" />
                   <span className="tabular-nums">{formatInt(b.family)}</span> Family
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--genre-fairyland)" aria-hidden="true" />
+                  <span className="tabular-nums">{formatInt(b.fairyland)}</span> Fairyland
                 </li>
               </ul>
               <p className="kpi-sub mt-3 border-t border-(--table-border-weak) pt-3">
@@ -469,7 +475,7 @@ function WeeklyPage() {
                   <>
                     Numerator: paid bookings attributed to a rep that week (manual overrides included). Denominator:
                     leads with an assigned rep whose SHEET date (source_date) falls in the week — the cohorts the team
-                    worked from the Family/Animalia sheets. Conversion is shown only when the denominator is nonzero.
+                    worked from the Family/Animalia/Fairyland sheets. Conversion is shown only when the denominator is nonzero.
                   </>
                 }
               />
@@ -485,7 +491,7 @@ function WeeklyPage() {
             <p className="kpi-sub mt-2 tabular-nums">
               {formatInt(c.numerator.overall)}/{formatInt(c.denominator.overall)} leads
             </p>
-            {/* the two genre splits of the SAME numerator/denominator definition */}
+            {/* the three genre splits of the SAME numerator/denominator definition */}
             <dl className="mt-4 space-y-2.5 border-t border-(--table-border-weak) pt-4">
               <div className="flex items-baseline justify-between gap-3">
                 <dt className="text-[13px] font-medium text-(--text-body)">Family</dt>
@@ -505,6 +511,15 @@ function WeeklyPage() {
                   </span>
                 </dd>
               </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-[13px] font-medium text-(--text-body)">Fairyland</dt>
+                <dd className="tabular-nums text-[13px] text-(--text-body)">
+                  <span className={c.fairyland != null ? "font-semibold text-(--text-primary)" : "text-(--text-muted)"}>{formatPercent(c.fairyland)}</span>
+                  <span className="ml-2 text-(--text-muted)">
+                    {formatInt(c.numerator.fairyland)}/{formatInt(c.denominator.fairyland)}
+                  </span>
+                </dd>
+              </div>
             </dl>
             {/* clearly differentiated denominator: the overall funnel rate */}
             <div className="mt-4 border-t border-(--table-border-weak) pt-4">
@@ -515,7 +530,7 @@ function WeeklyPage() {
                   tip={
                     <>
                       Numerator: ALL paid bookings of the week (booking wins — online/unattributed included).
-                      Denominator: ALL sheet leads (Family + Animalia) whose SHEET date (source_date) falls in the
+                      Denominator: ALL sheet leads (Family + Animalia + Fairyland) whose SHEET date (source_date) falls in the
                       week. Caveat: some bookings never came from sheet leads — online bookings, repeat clients,
                       Alliance/Auction members — so this is the overall funnel rate, not a strict lead→booking
                       attribution.
@@ -566,7 +581,7 @@ function WeeklyPage() {
               Leads
               <InfoTip
                 label="How weekly leads are dated"
-                tip="Sheet leads by the date they entered the sheet (source_date), Mon–Sun of the report week — family and animalia sheets, America/New_York."
+                tip="Sheet leads by the date they entered the sheet (source_date), Mon–Sun of the report week — family, animalia and fairyland sheets, America/New_York."
               />
             </p>
             <p className="mt-3 flex items-baseline gap-2">
@@ -578,6 +593,7 @@ function WeeklyPage() {
             <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
               <div className="bg-(--bar-fill)" style={{ width: `${leadMixSeg(data.leads.animalia)}%` }} />
               <div className="bg-(--text-muted)" style={{ width: `${leadMixSeg(data.leads.family)}%` }} />
+              <div className="bg-(--genre-fairyland)" style={{ width: `${leadMixSeg(data.leads.fairyland)}%` }} />
             </div>
             <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
               <li className="flex items-center gap-1.5">
@@ -587,6 +603,10 @@ function WeeklyPage() {
               <li className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--text-muted)" aria-hidden="true" />
                 <span className="tabular-nums">{formatInt(data.leads.family)}</span> Family
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--genre-fairyland)" aria-hidden="true" />
+                <span className="tabular-nums">{formatInt(data.leads.fairyland)}</span> Fairyland
               </li>
             </ul>
           </Panel>

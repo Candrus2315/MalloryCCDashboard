@@ -31,6 +31,17 @@ export function isAnimaliaSession(appointmentType: string): boolean {
 }
 
 /**
+ * THIRD-GENRE CLASSIFIER (owner directive 2026-10-22): an Acuity appointment
+ * type belongs to the Fairyland genre when the type name contains the word
+ * "fairyland" (case-insensitive). Same regex convention as isAnimaliaSession;
+ * checked AFTER animalia so every existing classification is preserved
+ * bit-for-bit — Fairyland is a pure widening, never a re-bucketing.
+ */
+export function isFairylandSession(appointmentType: string): boolean {
+  return /fairyland/i.test(appointmentType ?? "");
+}
+
+/**
  * CANONICAL AUCTION-GENRE CLASSIFIER: an Acuity appointment type belongs to
  * the auction genre when the type name contains the channel word
  * "auction" (case-insensitive — live types are e.g. "Auction Portrait
@@ -53,15 +64,17 @@ export function monthStartDate(today: string): string {
   return `${today.slice(0, 7)}-01`;
 }
 
-/** Family/animalia session-type split over booking wins. */
-export function splitWinsBySessionType(wins: AppointmentRow[]): { family: number; animalia: number } {
+/** Family/animalia/fairyland session-type split over booking wins (three genres, no fork). */
+export function splitWinsBySessionType(wins: AppointmentRow[]): { family: number; animalia: number; fairyland: number } {
   let family = 0;
   let animalia = 0;
+  let fairyland = 0;
   for (const w of wins) {
     if (isAnimaliaSession(w.appointment_type)) animalia += 1;
+    else if (isFairylandSession(w.appointment_type)) fairyland += 1;
     else family += 1;
   }
-  return { family, animalia };
+  return { family, animalia, fairyland };
 }
 
 /**
@@ -230,14 +243,16 @@ export function assignedLeadsInRange(leads: LeadRow[], start: string, end: strin
 }
 
 /** Lead counts by sheet type over the fetched lead rows (no date filter — callers pass the window). */
-export function splitLeadsByType(leads: LeadRow[]): { family: number; animalia: number; total: number } {
+export function splitLeadsByType(leads: LeadRow[]): { family: number; animalia: number; fairyland: number; total: number } {
   let family = 0;
   let animalia = 0;
+  let fairyland = 0;
   for (const l of leads) {
     if (/animalia/i.test(l.lead_type)) animalia += 1;
+    else if (/fairyland/i.test(l.lead_type)) fairyland += 1;
     else family += 1;
   }
-  return { family, animalia, total: leads.length };
+  return { family, animalia, fairyland, total: leads.length };
 }
 
 /** Format "X/Goal (±N)" — the weekly bookings-vs-goal string (−/±/+, goal "—" when unset). */

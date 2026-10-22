@@ -220,7 +220,7 @@ describe("buildWeeklyCcReportText funnel line (pure)", () => {
     bookingsMonth: { total: 239, goal: 316 },
     channels: { alliance: 0, auction: 0, website: null },
     channelLeads: { alliance: 0, auction: 0, website: null },
-    leads: { family: 3, animalia: 1, total: 4 },
+    leads: { family: 3, animalia: 1, fairyland: 0, total: 4 },
     conversion: { overall: 0.5, family: 0.5, animalia: 0.5 },
     funnel: { wins: 2, leads: 4, pct: 0.5 },
     calendar: {
