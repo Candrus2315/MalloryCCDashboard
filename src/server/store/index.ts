@@ -176,6 +176,18 @@ export function getDbStatus(): DbStatus {
   return { mode: "memory", ok: false, reason: lastError ?? "database unreachable" };
 }
 
+/**
+ * TEST SEAM (boot-seed-wedge regression): reset the module-level probe cache
+ * so a test observes THIS test's probe, not a store cached by an earlier test
+ * file (bun test shares one process; getStore's sticky rule would otherwise
+ * hide the fallback path). Not for production use.
+ */
+export function __resetStoreProbeStateForTests(): void {
+  cached = null;
+  inFlight = null;
+  lastError = null;
+}
+
 /** Force a re-probe (used by SYNC NOW). */
 export async function reprobe(): Promise<Store> {
   if (cached?.store.mode === "postgres") return cached.store;

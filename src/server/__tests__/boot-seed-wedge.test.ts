@@ -42,6 +42,7 @@ import {
   probePg,
   getStore,
   getDbStatus,
+  __resetStoreProbeStateForTests,
   DEFAULT_PROBE_TIMEOUT_MS,
   ProbeTimeoutError,
   type ProbeOptions,
@@ -215,14 +216,19 @@ describe("boot-seed wedge ③ — probePg/getStore bounded + honest memory fallb
   };
 
   // probePg reads the env at call time via getSecret; set a valid-shape URL so
-  // the url-validation gate passes and the (injected) factory path runs.
+  // the url-validation gate passes and the (injected) factory path runs. The
+  // module probe cache is reset before AND after: bun test shares one process,
+  // so an earlier file's cached postgres store would otherwise satisfy
+  // getStore's sticky rule and hide the fallback path this scenario pins.
   const withProbeUrl = <T>(fn: () => Promise<T>): Promise<T> => {
     realUrl = process.env.Database_URL;
     process.env.Database_URL = FAKE_URL;
     clearRegistry();
+    __resetStoreProbeStateForTests();
     return fn().finally(() => {
       if (realUrl === undefined) delete process.env.Database_URL;
       else process.env.Database_URL = realUrl;
+      __resetStoreProbeStateForTests();
     });
   };
 
