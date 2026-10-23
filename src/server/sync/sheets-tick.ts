@@ -3,8 +3,11 @@
  * sync, pattern-matched on availabilityTick (acuity-live.ts):
  *
  *   - RUNNING GUARD: skip while a google_sheets sync_runs row is in flight
- *     (a stale row older than 15 min is reaped by the scheduler's stale-run
- *     reaper before this guard runs);
+ *     (staleness is the ONE shared liveness bound — TICK_WATCHDOG_CAP_MS, 30
+ *     min, the tick ceiling, canonical in store/types.ts: the store nulls
+ *     rows past it and the scheduler's stale-run reaper closes them within
+ *     one cadence; this guard re-checks with the SAME parse and bound so it
+ *     passes only when the run is genuinely past the bound);
  *   - ADAPTER: the LIVE adapter only — built from the service-account secret +
  *     current Settings sheet config each tick (tests inject via `adapter`).
  *     NO ADAPTER → SKIP. Sheets never demo-falls-back in the background:
@@ -25,15 +28,18 @@
  */
 import { getStore } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
-import type { Store } from "../store/types";
+import { parseSyncStartedMs, TICK_WATCHDOG_CAP_MS, type Store } from "../store/types";
 import type { GoogleSheetsAdapter } from "./adapters";
 import { runSheetsSync } from "./run";
 import { createSheetsAdapter } from "./sheets-live";
 
 /** Minimum gap between BACKGROUND sheets syncs (sheet data is daily). */
 export const SHEETS_MIN_INTERVAL_MS = 10 * 60_000;
-/** Running-row staleness for this provider's own guard (the reaper clears it first). */
-const SHEETS_STALE_RUNNING_MS = 15 * 60_000;
+// (No local running-row staleness constant: the ONE shared liveness bound
+// TICK_WATCHDOG_CAP_MS — store/types.ts, 30 min, the tick ceiling — owns it.
+// The old duplicate SHEETS_STALE_RUNNING_MS = 15 min misclassified live runs
+// as dead: a legit sheets run finished SUCCESS at 17m28s and the guard then
+// admitted a second run while the first was still alive — forensics §2.)
 
 export interface SheetsTickResult {
   outcome: "synced" | "skipped" | "error";
@@ -54,12 +60,17 @@ export async function sheetsTick(options?: {
   const store = withSyncWriteRetry(options?.store ?? (await getStore()));
   const trigger = options?.trigger ?? "background";
 
-  // --- skip 1: a sheets sync run is already in progress (crashed rows are
-  // reaped by the scheduler before the tick; this guard only sees live ones) ---
+  // --- skip 1: a sheets sync run is already in progress ---
+  // ONE SHARED LIVENESS BOUND (2026-10-23, forensics §2): the store already
+  // nulls rows past TICK_WATCHDOG_CAP_MS (30 min), but this guard re-checks
+  // with the SAME parse (parseSyncStartedMs — the store's, not a bare
+  // Date.parse that misreads the Postgres text form) and the SAME bound, so
+  // it passes only when the run is genuinely past the bound. The scheduler's
+  // reaper closes such a row within one reaper cadence for good.
   const running = await store.getRunningSyncRun("google_sheets");
   if (running) {
-    const startedMs = Date.parse(running.started_at);
-    const stale = !Number.isFinite(startedMs) || now().getTime() - startedMs > SHEETS_STALE_RUNNING_MS;
+    const startedMs = parseSyncStartedMs(running.started_at);
+    const stale = !Number.isFinite(startedMs) || now().getTime() - startedMs > TICK_WATCHDOG_CAP_MS;
     if (!stale) return { outcome: "skipped", reason: "sync-in-progress" };
   }
 

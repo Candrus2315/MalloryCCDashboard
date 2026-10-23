@@ -7,8 +7,10 @@
  *
  *   1. SKIP if a sync run for highlevel is already in progress (sync_runs row
  *      with status='running') — a backfill or manual sync owns the provider.
- *      A running row older than STALE_RUNNING_CUTOFF_HOURS is treated as a
- *      crashed process and ignored so it cannot wedge the scheduler forever.
+ *      Staleness is owned by the ONE shared liveness bound (TICK_WATCHDOG_CAP_MS,
+ *      30 min — the tick ceiling, canonical in store/types.ts):
+ *      getRunningSyncRun reports a row older than that as NOT running (crashed
+ *      process), so it cannot wedge the scheduler forever.
  *   2. SKIP when no HighLevel credentials resolve (demo mode).
  *   3. No watermark yet → run the FULL sync (runDemoSync) once; it harvests
  *      the 30-day window and sets the watermark on success.
@@ -21,7 +23,7 @@
  */
 import { getStore, type Store } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
-import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, type AppSettings } from "../store/types";
+import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS, type AppSettings } from "../store/types";
 import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds, type LiveHighLevelAdapter } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
@@ -56,9 +58,6 @@ import {
   type SendAlertFn,
 } from "./freshness-watchdog";
 
-/** A "running" sync_runs row older than this is a crashed process, not a live one. */
-export const STALE_RUNNING_CUTOFF_HOURS = 12;
-
 /**
  * TICK WATCHDOG CAP (2026-10-17) — one tick may hold the scheduler loop at
  * most this long. A healthy tick is seconds (the heaviest legit piece, a
@@ -70,8 +69,19 @@ export const STALE_RUNNING_CUTOFF_HOURS = 12;
  * the loop when the cap fires; the parked tick keeps running detached (it
  * cannot be cancelled) and its stale sync_runs rows are reaped by the
  * independent reaper below.
+ *
+ * 2026-10-23 (running-guard forensics §2): this cap is now THE ONE SHARED
+ * LIVENESS BOUND — the store guards (getRunningSyncRun), the sheets-tick
+ * running guard and the reaper's window (STALE_RUN_REAP_MINUTES) all derive
+ * from it, so a legitimately live run is never misclassified as dead while a
+ * hung one is still reaped within one reaper cadence. The old local 12-hour
+ * staleness re-check (STALE_RUNNING_CUTOFF_HOURS = 12, deleted here) was
+ * UNREACHABLE dead code: the store nulls a zombie FIRST (getRunningSyncRun's
+ * freshness bound), so the 12h `stale` branch in highlevelTick could never
+ * fire for the rows it guarded. Canonical definition lives in store/types.ts
+ * (no store→scheduler cycle); re-exported below for callers/tests.
  */
-export const TICK_WATCHDOG_CAP_MS = 30 * 60_000;
+export { STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS } from "../store/types";
 
 /** Independent stale-run reaper cadence (see runStaleRunReaperLoop). */
 export const REAPER_INTERVAL_MS = 5 * 60_000;
@@ -183,11 +193,12 @@ export const COMMISSION_CLOSE_MIN_INTERVAL_MS = 15 * 60_000;
 let lastCommissionCloseAt = 0;
 
 /**
- * STALE-RUN REAP WINDOW — the constant now lives in store/types (both stores
- * need it for getRunningSyncRun's freshness bound; defining it there avoids a
- * store→scheduler import cycle). Re-exported here for existing callers/tests.
+ * SHARED LIVENESS CONSTANTS — both now live in store/types (both stores need
+ * them for getRunningSyncRun's freshness bound; defining them there avoids a
+ * store→scheduler import cycle). Re-exported here for existing callers/tests:
+ * TICK_WATCHDOG_CAP_MS (the ONE shared liveness bound, 2026-10-23) and
+ * STALE_RUN_REAP_MINUTES (the reaper's window, derived from it).
  */
-export { STALE_RUN_REAP_MINUTES } from "../store/types";
 // "acuity_availability" rides the machinery too (2026-10-07: a hung feed run
 // blocked every background tick for its 12h window — the provider was missing
 // from this set so the reaper never closed its rows).
@@ -340,12 +351,18 @@ export async function highlevelTick(options?: {
   const settings = options?.settings ?? (await store.getSettings());
 
   // --- skip 1: a sync run for this provider is already in progress ---
+  // The ONE SHARED LIVENESS BOUND owns staleness here (2026-10-23, forensics
+  // §2): getRunningSyncRun nulls any "running" row older than
+  // TICK_WATCHDOG_CAP_MS (30 min — the tick ceiling; store/types.ts), so a
+  // row returned below is by construction a live run and we always skip. The
+  // old local 12-hour re-check (STALE_RUNNING_CUTOFF_HOURS, deleted) was
+  // UNREACHABLE for exactly the rows it guarded: the store nulls a zombie
+  // first (its bound was 15 min even then — 12h could never fire), so
+  // `stale` was always false and overlap protection here actually rested on
+  // the reaper + the in-process inflight mutex (a manual SYNC NOW can still
+  // overlap the background tick by design; the store bound closes the row).
   const running = await store.getRunningSyncRun("highlevel");
-  if (running) {
-    const startedMs = Date.parse(running.started_at);
-    const stale = Number.isFinite(startedMs) && now().getTime() - startedMs > STALE_RUNNING_CUTOFF_HOURS * 3_600_000;
-    if (!stale) return { outcome: "skipped", reason: "sync-in-progress", error: undefined };
-  }
+  if (running) return { outcome: "skipped", reason: "sync-in-progress", error: undefined };
 
   // --- skip 2: no credentials (demo mode) — nothing incremental to fetch ---
   const creds = "creds" in (options ?? {}) ? (options?.creds ?? null) : readHighLevelCreds();
@@ -662,6 +679,18 @@ export async function schedulerTick(options?: {
   const now = options?.now ?? (() => new Date());
   // Stale-run reaper (best-effort; never fails the tick). Runs FIRST so a
   // zombie row is cleared before this tick's own guards check for in-flight runs.
+  //
+  // INTRA-TICK ORDERING HAZARD (2026-10-23, forensics §2 — documented, not
+  // "fixed" by reordering): the reap happens HERE, but the sheets sync runs
+  // FOURTH below, after the highlevel → availability → attribution pieces
+  // have aged the clock. A run just under the shared liveness bound at reap
+  // time can cross it by the time sheetsTick's guard reads the row — an
+  // overlap window INSIDE one tick. Re-running the reap right before the
+  // sheets piece would only SHRINK that window: the bound is age-only, so no
+  // ordering can fix a bound that misclassifies live runs. The real fix is
+  // the bound itself — TICK_WATCHDOG_CAP_MS (30 min) sits past any
+  // legitimate run (the longest observed legit sheets run finished SUCCESS at
+  // 17m28s), so a live run is never "stale" to begin with.
   let reaped: number | undefined;
   try {
     reaped = await reapStaleSyncRuns(withSyncWriteRetry(options?.store ?? (await getStore())), now); // SYNC WRITE RESILIENCE
@@ -691,6 +720,9 @@ export async function schedulerTick(options?: {
   } catch (e) {
     attribution = { outcome: "error", error: e instanceof Error ? e.message : String(e) };
   }
+  // Sheets runs FOURTH — see the INTRA-TICK ORDERING HAZARD note at the
+  // reaper above: a guard-time row age can have crossed the shared bound
+  // mid-tick; the shared bound itself (not reordering) is what makes that safe.
   let sheets: SheetsTickResult;
   try {
     sheets = await sheetsTick({

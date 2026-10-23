@@ -12,9 +12,14 @@
  *     made getFreshnessData/refreshNow report running:true forever.
  *
  * Fix contract: the reaper scans by STATUS (getRunningSyncRuns — every
- * 'running' row of any age, same 15-min cutoff / reapable-provider set /
- * error note); getRunningSyncRun only trusts rows started within
- * STALE_RUN_REAP_MINUTES (unparsable started_at = stale, never a crash).
+ * 'running' row of any age, same reapable-provider set / error note);
+ * getRunningSyncRun only trusts rows started within STALE_RUN_REAP_MINUTES
+ * (unparsable started_at = stale, never a crash).
+ * 2026-10-23 (running-guard forensics §2): the window is no longer an
+ * independent 15-min number — it is derived from the ONE shared liveness
+ * bound, TICK_WATCHDOG_CAP_MS (30 min, the tick ceiling; store/types.ts),
+ * because a legitimate sheets run finished SUCCESS at 17m28s and the old
+ * 15-min bound misclassified live runs as dead.
  * getFreshnessData/refreshNow consume getRunningSyncRun unchanged — their
  * FreshnessData shape is untouched; the header fix flows through the store.
  */
@@ -72,7 +77,7 @@ describe("stale-run reaper scans by status, not recency window", () => {
     const withinCutoff = () => minutesFromNow(STALE_RUN_REAP_MINUTES - 1);
     const zombieId = await store.insertSyncRun("highlevel");
     const backfillId = await store.insertSyncRun("resumable-backfill"); // legitimately long — not reapable
-    expect(await reapStaleSyncRuns(store, withinCutoff)).toBe(0); // 15-min cutoff still honored
+    expect(await reapStaleSyncRuns(store, withinCutoff)).toBe(0); // the shared-bound cutoff still honored
     expect(await reapStaleSyncRuns(store)).toBe(0); // real clock: fresh rows are not zombies
     const runs = await store.getSyncRuns(10);
     expect(runs.find((r) => r.id === zombieId)!.status).toBe("running");
@@ -85,7 +90,7 @@ describe("stale-run reaper scans by status, not recency window", () => {
     const cancellationsZombie = await store.insertSyncRun("retention-cancellations");
     const scorecardZombie = await store.insertSyncRun("retention-scorecard");
     // The live incident: 31 HOURS past start (boot backfills finish in minutes —
-    // anything past the 15-min window is a dead process, not a long one).
+    // anything past the shared 30-min window is a dead process, not a long one).
     const started31hAgo = new Date(Date.now() - 31 * 3_600_000).toISOString();
     for (const id of [backfillZombie, cancellationsZombie, scorecardZombie]) {
       syncRunsOf(store).find((r) => r.id === id)!.started_at = started31hAgo;
