@@ -100,6 +100,7 @@ import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assig
 import { applyAttributionEligibility, applyRosterEligibility, buildReportingEligibility, buildRosterEligibility, historicalRepIds, reportingRepUsers } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
 import { serializableConnections, syncStaleWarnings, type PageMeta, type RepsSearchParams, type RepStripRow, type TeamSearchParams } from "./queries";
+import { withHeartbeatWarning } from "./heartbeat-freshness"; // Reliability 2b/3 banner clause
 
 async function loadPageMeta(): Promise<PageMeta> {
   const seeded = await import("./sync/run").then((m) => m.ensureDemoData());
@@ -288,7 +289,8 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     // missing-data warnings — never render a plausible number for absent data.
     // A "Not Yet Active" rep (call_start_date in the future) EXPECTS zero
     // calls: no zero-activity warning, ever (owner spec).
-    const warnings: string[] = [...syncStaleWarnings(await store.getConnections())];
+    // Reliability 2b/3: + the shared heartbeat staleness clause.
+    const warnings: string[] = await withHeartbeatWarning([...syncStaleWarnings(await store.getConnections())]);
     if (range.warning) warnings.push(range.warning);
     if (!rep) warnings.push("No active reps found — sync HighLevel users to populate this page.");
     if (rep && metrics && selectedOperatingState !== "not-yet-active") {
@@ -510,7 +512,8 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
       .sort((a, b) => b.totalBookings - a.totalBookings || b.callsOverThreshold - a.callsOverThreshold);
 
     // missing-data warnings — never render a plausible number for absent data
-    const warnings: string[] = [...syncStaleWarnings(await store.getConnections())];
+    // Reliability 2b/3: + the shared heartbeat staleness clause.
+    const warnings: string[] = await withHeartbeatWarning([...syncStaleWarnings(await store.getConnections())]);
     if (range.warning) warnings.push(range.warning);
     if (reps.length === 0) warnings.push("No active reps found — sync HighLevel users to populate this page.");
     if (metrics.totalCalls === 0 && metrics.totalBookings === 0 && metrics.assignedLeads === 0 && trends.points.every((p) => p.leads === 0)) {
@@ -781,7 +784,7 @@ export async function todayPageData(deps?: PageDeps) {
     metrics,
     pendingPayments,
     connections: serializableConnections(connections),
-    staleWarnings: syncStaleWarnings(connections),
+    staleWarnings: await withHeartbeatWarning(syncStaleWarnings(connections)),
     cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")}`,
   };
 }
@@ -885,7 +888,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
     meta,
     metrics,
     priorities: saved,
-    warnings: [...syncStaleWarnings(await store.getConnections()), ...warnings],
+    warnings: await withHeartbeatWarning([...syncStaleWarnings(await store.getConnections()), ...warnings]),
     reportText,
     emailText: buildDailyReportEmail(metrics, saved),
     slackText: buildDailyReportSlack(metrics, saved),
@@ -1806,7 +1809,8 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const nextWeekHoles = holesFor(nextMon, futureAppts);
 
   // ---- warnings (honest states, never invented data) ----
-  const warnings: string[] = [...syncStaleWarnings(connections)];
+  // Reliability 2b/3: + the shared heartbeat staleness clause.
+  const warnings: string[] = await withHeartbeatWarning([...syncStaleWarnings(connections)]);
   if (!teamGoal)
     warnings.push(`No team booking goal stored for the week of ${formatDateHuman(lwMon)} — the ${weeklyGoal} default is shown.`);
   if (winsLw.length === 0)
