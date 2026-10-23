@@ -15,6 +15,7 @@ import {
 } from "../metrics/compute";
 import { OWNER_RULE_AUCTION_METHOD, OWNER_RULE_AUCTION_REP_NAME } from "../metrics/attribution";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
+import { chunkRows, dedupeLast, makeRunDeadline, type IngestOptions, type RunDeadline } from "./ingest-batch";
 import type {
   AppSettings,
   ContactIdentityRow,
@@ -1797,13 +1798,41 @@ export class PgStore implements Store {
   // appointments writer — every Acuity sync then crashed at
   // "store.upsertAppointments is not a function" once the demo-purge hotfix
   // unblocked it. Recovered verbatim from pre-#17 main (e2f3412).
-  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null; payment_state?: string | null; booking_win_business_date?: string | null; payment_business_date_source?: string | null; first_seen_paid_at?: string | null })[]): Promise<number> {
+  async upsertAppointments(rows: (AppointmentRow & { acuity_appointment_id: string; client_name?: string | null; client_phone?: string | null; client_email?: string | null; created_business_date?: string | null; created_time_source?: string | null; created_time_precision?: string | null; raw?: Record<string, unknown> | null; payment_state?: string | null; booking_win_business_date?: string | null; payment_business_date_source?: string | null; first_seen_paid_at?: string | null })[], opts?: IngestOptions): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
-    for (const r of rows) {
+    // INGEST BATCHING (10/23 wedge fix): one multi-row INSERT…ON CONFLICT per
+    // ~500-row chunk instead of one round-trip per row — a ~3,900-statement
+    // sheets-scale run collapses to ~8 statements. Each row's VALUES tuple is
+    // still a parameterized sql fragment built from this.sql (no string
+    // building — injection-safe), and the ON CONFLICT SET list below is
+    // byte-identical to the per-row version this replaces, so the write-once
+    // win/cancellation semantics are unchanged. deadline.check() per chunk
+    // bounds a detached zombie chain: past INGEST_RUN_DEADLINE_MS it throws
+    // RunDeadlineExceeded and the loop stops (the run row was already reaped).
+    const deadline = opts?.deadline ?? makeRunDeadline({ label: "upsertAppointments" });
+    // LAST-WINS dedupe: one statement cannot upsert the same acuity id twice
+    // (the per-row loop applied duplicates in order — final state preserved).
+    const unique = dedupeLast(rows, (r) => r.acuity_appointment_id);
+    for (const chunk of chunkRows(unique)) {
+      deadline.check();
+      // VALUES as a nested plain-value array — the one multi-row expansion
+      // postgres.js 3.4.9 executes correctly (probe5: A-nested PASS; fragment
+      // tuples fail server-side). Postgres infers each param's type from the
+      // INSERT column list (dates/booleans/jsonb coerced from text).
+      const values = chunk.map((r) => [
+        r.acuity_appointment_id, r.contact_id, r.calendar_id, r.calendar_name ?? null,
+        r.appointment_type, r.appointment_datetime, r.duration_minutes ?? null,
+        r.created_at, r.created_business_date ?? null, r.created_time_source ?? null,
+        r.created_time_precision ?? null, r.payment_state ?? null,
+        r.booking_win_business_date ?? null, r.payment_business_date_source ?? null,
+        r.first_seen_paid_at ?? null, r.raw ?? null, r.status, r.cancelled,
+        r.cancelled_at ?? null, r.cancellation_source ?? null,
+        r.client_name ?? null, r.client_phone ?? null, r.client_email ?? null,
+      ]);
       await this.sql`
         INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source, client_name, client_phone, client_email)
-        VALUES (${r.acuity_appointment_id}, ${r.contact_id}, ${r.calendar_id}, ${r.calendar_name ?? null}, ${r.appointment_type}, ${r.appointment_datetime}, ${r.duration_minutes ?? null}, ${r.created_at}, ${r.created_business_date ?? null}, ${r.created_time_source ?? null}, ${r.created_time_precision ?? null}, ${r.payment_state ?? null}, ${r.booking_win_business_date ?? null}, ${r.payment_business_date_source ?? null}, ${r.first_seen_paid_at ?? null}, ${r.raw ?? null}, ${r.status}, ${r.cancelled}, ${r.cancelled_at ?? null}, ${r.cancellation_source ?? null}, ${r.client_name ?? null}, ${r.client_phone ?? null}, ${r.client_email ?? null})
+        VALUES ${this.sql(values)}
         ON CONFLICT (acuity_appointment_id) DO UPDATE SET
           contact_id = EXCLUDED.contact_id, calendar_id = EXCLUDED.calendar_id, calendar_name = EXCLUDED.calendar_name,
           appointment_type = EXCLUDED.appointment_type, appointment_datetime = EXCLUDED.appointment_datetime,
@@ -2006,7 +2035,7 @@ export class PgStore implements Store {
       client_name: r.client_name == null ? null : String(r.client_name),
     }));
   }
-  async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
+  async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean; deadline?: RunDeadline }): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     if (rows.length === 0) return 0;
@@ -2045,17 +2074,62 @@ export class PgStore implements Store {
           );
         }
       }
+      // OWNER-RULE SUPERSEDE AUDIT (precomputed from the PRE-write snapshot):
+      // when the rule flipped a manual override that named a different rep,
+      // record the previous owner in the manual_overrides trail (the Audit
+      // page) — the directive is owner authority, and every takeover of a
+      // human decision is auditable. The predicate mirrors the batched upsert's
+      // WHERE clause below (a rule row naming a DIFFERENT rep supersedes even
+      // a manual override; a rule row for an appointment ALREADY owned by the
+      // rule rep is a no-op — Christopher's manual provenance stays verbatim),
+      // computed from existingRows exactly as the per-row version did.
+      const priorById = new Map(
+        existingRows.map((e: Record<string, unknown>) => [String(e.appointment_id), e]),
+      );
+      const audits: { appointmentId: string; previousValue: string }[] = [];
       for (const r of rows) {
-        // appointment_id is UNIQUE — re-syncs replace attributions instead of duplicating.
-        // Never overwrite a manual override automatically — EXCEPT the owner
-        // rule for auction-genre bookings (directive 2026-10-19): a rule row
-        // naming a DIFFERENT rep supersedes even a manual override (the flip
-        // is audited into manual_overrides below); a rule row for an
-        // appointment ALREADY owned by the rule rep is a no-op (no churn,
-        // Christopher's manual provenance stays verbatim).
+        const prior = priorById.get(r.appointment_id);
+        if (
+          r.method === OWNER_RULE_AUCTION_METHOD &&
+          prior &&
+          Boolean(prior.manual_override) &&
+          (prior.rep_id == null ? null : String(prior.rep_id)) !== (r.rep_id ?? null)
+        ) {
+          audits.push({
+            appointmentId: r.appointment_id,
+            // rep_name comes off the pg row as string | null — the fallback
+            // mirrors the per-row audit this replaced verbatim.
+            previousValue: (prior.rep_name ?? (prior.rep_id == null ? "unattributed" : String(prior.rep_id))) as string,
+          });
+        }
+      }
+      // INGEST BATCHING (10/23 wedge fix): one multi-row INSERT…ON CONFLICT per
+      // ~500-row chunk inside the SAME advisory-locked transaction — the global
+      // pg_advisory_xact_lock hold collapses from ~27 min at flare latency to
+      // seconds, so concurrent attribution writers stop stacking behind it.
+      // Each row's VALUES tuple is a parameterized sql fragment (no string
+      // building — injection-safe); the ON CONFLICT SET/WHERE below is
+      // byte-identical to the per-row version this replaces, so the
+      // manual-override protection semantics are unchanged. deadline.check()
+      // per chunk stops a detached zombie's loop past the ingest budget.
+      const deadline = opts?.deadline ?? makeRunDeadline({ label: "upsertAttributions" });
+      // LAST-WINS dedupe: one statement cannot upsert the same appointment
+      // twice (the per-row loop applied duplicates in order — final state
+      // preserved; audits are computed from the pre-write snapshot either way).
+      const unique = dedupeLast(rows, (r) => r.appointment_id);
+      for (const chunk of chunkRows(unique)) {
+        deadline.check();
+        // appointment_id is UNIQUE — re-syncs replace attributions instead of
+        // duplicating; the WHERE preserves the manual-override protection.
+        // VALUES as a nested plain-value array via tx (probe5 A-nested shape);
+        // the text param for appointment_id is inferred as uuid from the column.
+        const values = chunk.map((r) => [
+          r.appointment_id, r.call_id, r.rep_id, r.method, r.confidence,
+          r.manual_override, r.note ?? null, r.reason_code ?? null,
+        ]);
         await tx`
         INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note, reason_code)
-        VALUES (${r.appointment_id}::uuid, ${r.call_id}, ${r.rep_id}, ${r.method}, ${r.confidence}, ${r.manual_override}, ${r.note ?? null}, ${r.reason_code ?? null})
+        VALUES ${tx(values)}
         ON CONFLICT (appointment_id) DO UPDATE SET
           call_id = EXCLUDED.call_id, rep_id = EXCLUDED.rep_id, method = EXCLUDED.method,
           confidence = EXCLUDED.confidence,
@@ -2064,25 +2138,13 @@ export class PgStore implements Store {
         WHERE booking_attributions.manual_override = false
            OR (EXCLUDED.method = ${OWNER_RULE_AUCTION_METHOD} AND booking_attributions.rep_id IS DISTINCT FROM EXCLUDED.rep_id)
       `;
-        // OWNER-RULE SUPERSEDE AUDIT: when the rule flipped a manual override
-        // that named a different rep, record the previous owner in the
-        // manual_overrides trail (the Audit page) — the directive is owner
-        // authority, and every takeover of a human decision is auditable.
-        const prior = existingRows.find(
-          (e: Record<string, unknown>) => String(e.appointment_id) === r.appointment_id,
-        );
-        if (
-          r.method === OWNER_RULE_AUCTION_METHOD &&
-          prior &&
-          Boolean(prior.manual_override) &&
-          (prior.rep_id == null ? null : String(prior.rep_id)) !== (r.rep_id ?? null)
-        ) {
-          await tx`
+      }
+      for (const a of audits) {
+        await tx`
             INSERT INTO manual_overrides (entity_type, entity_id, field, previous_value, new_value, changed_by)
-            VALUES ('booking_attribution', ${r.appointment_id}, 'rep',
-                    ${prior.rep_name ?? (prior.rep_id == null ? "unattributed" : String(prior.rep_id))},
+            VALUES ('booking_attribution', ${a.appointmentId}, 'rep',
+                    ${a.previousValue},
                     ${OWNER_RULE_AUCTION_REP_NAME}, 'owner-rule-auction')`;
-        }
       }
     });
     return rows.length;
@@ -2129,13 +2191,36 @@ export class PgStore implements Store {
     await this.sql`DELETE FROM booking_attributions WHERE appointment_id = ${appointmentId}::uuid`;
   }
 
-  async upsertLeads(rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null })[]): Promise<number> {
+  async upsertLeads(rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null })[], opts?: IngestOptions): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
-    for (const r of rows) {
+    // INGEST BATCHING (10/23 wedge fix): the sheets run's dominant cost was
+    // ~3,900 single-statement INSERT…ON CONFLICT round-trips (measured 63-755
+    // ms/row — the wedge). One multi-row statement per ~500-row chunk
+    // collapses that to ~8 statements. Each row's VALUES tuple is a
+    // parameterized sql fragment with the same casts as the per-row version
+    // (no string building — injection-safe); the ON CONFLICT SET list is
+    // byte-identical. deadline.check() per chunk stops a detached zombie
+    // chain past INGEST_RUN_DEADLINE_MS (reap bound 30 min + margin; legit
+    // runs observed max 21.5 min).
+    const deadline = opts?.deadline ?? makeRunDeadline({ label: "upsertLeads" });
+    // LAST-WINS dedupe: one statement cannot upsert the same (provider,
+    // source_id) twice (the per-row loop applied duplicates in order — final
+    // state preserved; the sync never sends intra-call duplicates anyway).
+    const unique = dedupeLast(rows, (r) => r.provider + "\u0000" + r.source_id);
+    for (const chunk of chunkRows(unique)) {
+      deadline.check();
+      // VALUES as a nested plain-value array — probe5 A-nested PASS shape.
+      // The source/work-date text params are inferred as dates from the
+      // column list (the per-row ::date casts are unnecessary here).
+      const values = chunk.map((r) => [
+        r.provider, r.source_id, r.lead_type, r.source_date, r.work_date,
+        r.name ?? null, r.phone ?? null, r.email ?? null, r.contact_id,
+        r.assigned_rep_id, r.source_sheet,
+      ]);
       await this.sql`
         INSERT INTO leads (provider, source_id, lead_type, source_date, work_date, name, phone, email, contact_id, assigned_rep_id, source_sheet)
-        VALUES (${r.provider}, ${r.source_id}, ${r.lead_type}, ${r.source_date}::date, ${r.work_date}::date, ${r.name ?? null}, ${r.phone ?? null}, ${r.email ?? null}, ${r.contact_id}, ${r.assigned_rep_id}, ${r.source_sheet})
+        VALUES ${this.sql(values)}
         ON CONFLICT (provider, source_id) DO UPDATE SET
           lead_type = EXCLUDED.lead_type, source_date = EXCLUDED.source_date, work_date = EXCLUDED.work_date,
           name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email,
@@ -2650,9 +2735,19 @@ export class PgStore implements Store {
     const rows = await this.sql`INSERT INTO sync_runs (provider) VALUES (${provider}) RETURNING id::text`;
     return String(rows[0].id);
   }
-  async finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<void> {
+  /** HONEST FINISH (10/23 wedge fix): the UPDATE only applies while the run's
+   * status is still 'running' — a late detached zombie's finish can no longer
+   * overwrite the reaper's 'error' row with a false "success" (the 16:05
+   * misleading recovery). Returns whether the transition applied; a rejected
+   * late finish is logged one-line and the reaper's record stands. */
+  async finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<boolean> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
-    await this.sql`UPDATE sync_runs SET status = ${status}, records_upserted = ${recordsUpserted}, error = ${error}, finished_at = now() WHERE id = ${id}::uuid`;
+    const applied = await this.sql`UPDATE sync_runs SET status = ${status}, records_upserted = ${recordsUpserted}, error = ${error}, finished_at = now() WHERE id = ${id}::uuid AND status = 'running' RETURNING id`;
+    if (applied.length === 0) {
+      console.warn(`[sync] finishSyncRun rejected (late finish): run ${id} is no longer 'running' — reaped or already finished; discarded ${status} result (${recordsUpserted} rows)`);
+      return false;
+    }
+    return true;
   }
   async getSyncRuns(limit: number): Promise<SyncRunRow[]> {
     return this.cache.wrap("getSyncRuns:" + JSON.stringify([limit]), () => this.getSyncRunsCached(limit));

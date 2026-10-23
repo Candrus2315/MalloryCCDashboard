@@ -16,6 +16,7 @@ import {
   createdBusinessDateOf,
 } from "../metrics/compute";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
+import type { RunDeadline } from "./ingest-batch";
 import { OWNER_RULE_AUCTION_METHOD, OWNER_RULE_AUCTION_REP_NAME } from "../metrics/attribution";
 import type {
   AppSettings,
@@ -543,7 +544,7 @@ export class MemoryStore implements Store {
     return { users, contacts, calls };
   }
 
-  async upsertAppointments(rows: ApptExt[]): Promise<number> {
+  async upsertAppointments(rows: ApptExt[], _opts?: { deadline?: RunDeadline }): Promise<number> {
     for (const r of rows) {
       const existing = this.appointments.get(r.acuity_appointment_id);
       // keep stable internal id across re-syncs; cancellations update in place.
@@ -689,7 +690,7 @@ export class MemoryStore implements Store {
       .sort((a, b) => (a.booking_win_business_date ?? "").localeCompare(b.booking_win_business_date ?? ""))
       .map((a) => ({ ...this.stripAppt(a), acuity_appointment_id: a.acuity_appointment_id, duration_minutes: a.duration_minutes ?? null, client_name: a.client_name ?? null }));
   }
-  async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number> {
+  async upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean; deadline?: RunDeadline }): Promise<number> {
     // WRITER PROTECTION (owner directive 2026-09-27): the SAME degradation
     // guard as the PG store (one shared pure function — identical semantics;
     // the advisory lock is a PG-only concern, the memory store is
@@ -774,7 +775,7 @@ export class MemoryStore implements Store {
     }
     return n;
   }
-  async upsertLeads(rows: LeadExt[]): Promise<number> {
+  async upsertLeads(rows: LeadExt[], _opts?: { deadline?: RunDeadline }): Promise<number> {
     for (const r of rows) {
       const key = `${r.provider}:${r.source_id}`;
       const existing = this.leads.get(key);
@@ -1085,14 +1086,16 @@ export class MemoryStore implements Store {
     this.syncRuns.push({ id, provider, status: "running", started_at: new Date().toISOString(), finished_at: null, records_upserted: 0, error: null });
     return id;
   }
-  async finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<void> {
+  /** HONEST FINISH (10/23 wedge fix): only a still-'running' run transitions —
+   * a late finish cannot overwrite a reaper's 'error' record. Mirrors PgStore. */
+  async finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<boolean> {
     const run = this.syncRuns.find((r) => r.id === id);
-    if (run) {
-      run.status = status;
-      run.records_upserted = recordsUpserted;
-      run.error = error;
-      run.finished_at = new Date().toISOString();
-    }
+    if (!run || run.status !== "running") return false;
+    run.status = status;
+    run.records_upserted = recordsUpserted;
+    run.error = error;
+    run.finished_at = new Date().toISOString();
+    return true;
   }
   async getSyncRuns(limit: number): Promise<SyncRunRow[]> {
     return this.syncRuns.slice(-limit).reverse();

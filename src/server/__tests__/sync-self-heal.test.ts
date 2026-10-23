@@ -162,7 +162,7 @@ describe("tick watchdog + independent stale-run reaper (self-healing tick chain)
     const originalFinish = store.finishSyncRun.bind(store);
     store.finishSyncRun = (async (id: string, status: string, rec: number, error: string | null) => {
       finished.push({ id, status, error });
-      await originalFinish(id, status, rec, error);
+      return originalFinish(id, status, rec, error);
     }) as typeof store.finishSyncRun;
 
     await runStaleRunReaperLoop({ store, sleep: realSleep, rounds: 1, intervalMs: 1 });
@@ -180,7 +180,7 @@ describe("tick watchdog + independent stale-run reaper (self-healing tick chain)
     const originalFinish = store.finishSyncRun.bind(store);
     store.finishSyncRun = (async (...args: unknown[]) => {
       finished.push(args);
-      await originalFinish(...(args as [string, string, number, string | null]));
+      return originalFinish(...(args as [string, string, number, string | null]));
     }) as typeof store.finishSyncRun;
     await runStaleRunReaperLoop({ store, sleep: realSleep, rounds: 1, intervalMs: 1 });
     expect(finished).toHaveLength(0);

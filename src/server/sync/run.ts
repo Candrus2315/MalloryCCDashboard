@@ -16,6 +16,7 @@ import { createDemoAdapters } from "./adapters";
 import type { HighLevelAdapter, NormalizedLead } from "./adapters";
 import { createSheetsAdapter, type SheetsLiveRunReport } from "./sheets-live";
 import { isLegacySheetsSourceId, sheetLeadKey } from "./sheets-mapping";
+import { makeRunDeadline } from "../store/ingest-batch";
 import { migrateSheetsLeadKeys } from "./sheets-rekey";
 import { createHighLevelAdapter, type LiveHighLevelAdapter } from "./highlevel-live";
 import { reconcileCancellations, resolveAcuityAdapterForSync, upsertAcuityAppointments, writeAcuityConnection, type AcuityLiveAdapter } from "./acuity-live";
@@ -454,6 +455,10 @@ export async function runSheetsSync(
   adapter: GoogleSheetsAdapter | null,
   options?: { nowIso?: string },
 ): Promise<SheetsSyncResult> {
+  // PER-RUN INGEST DEADLINE (10/23 wedge fix): anchored at run start and
+  // checked per chunk inside the store's upsert loop — a reaped run's
+  // detached chain stops hammering the DB within INGEST_RUN_DEADLINE_MS.
+  const ingestDeadline = makeRunDeadline({ label: "google_sheets" });
   const { sheets: demoSheets } = createDemoAdapters({
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
     windowHours: settings.attribution_window_hours,
@@ -518,6 +523,9 @@ export async function runSheetsSync(
     const needContacts = leads.some((l) => l.phone || l.email);
     const storedContacts = needContacts ? await store.getContacts() : [];
     const contactByPhone = new Map(storedContacts.map((c) => [c.phone?.replace(/\D/g, "").slice(-10) ?? "", c.id]));
+    // O(1) contact resolution: the per-lead storedContacts.find linear scan
+    // over ~116k rows was ~7x10^8 comparisons per run (forensics H4).
+    const contactById = new Map(storedContacts.map((c) => [c.id, c]));
     const contactByEmail = new Map(storedContacts.map((c) => [c.email?.toLowerCase() ?? "", c.id]));
 
     // UPSERT-ONLY housekeeping (live content only — never the demo seed):
@@ -565,7 +573,7 @@ export async function runSheetsSync(
           }
           const contactId = l.phone ? contactByPhone.get(l.phone.replace(/\D/g, "").slice(-10)) ?? null : null;
           const contactId2 = contactId ?? (l.email ? contactByEmail.get(l.email.toLowerCase()) ?? null : null);
-          const contact = contactId2 ? storedContacts.find((c) => c.id === contactId2) : null;
+          const contact = contactId2 ? contactById.get(contactId2) ?? null : null;
           return {
             provider: "google_sheets",
             source_id: l.source_id,
@@ -580,6 +588,7 @@ export async function runSheetsSync(
             source_sheet: l.sheet,
           };
         }),
+        { deadline: ingestDeadline },
       );
       count += sheetLeads.length;
     }
