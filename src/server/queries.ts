@@ -41,6 +41,7 @@ import {
 } from "./metrics/compute";
 import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
+import { withHeartbeatWarning } from "./heartbeat-freshness";
 import type { Store } from "./store/types";
 import { availabilityPageData, type AvailabilityViewRawSearch, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
 import { resolveAvailabilityViewArgs } from "./availability-wiring";
@@ -248,7 +249,9 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
       .map((l) => ({ id: l.id, lead_type: l.lead_type, source_sheet: l.source_sheet, source_date: l.source_date, work_date: l.work_date, name: l.name ?? null }))
       .sort((a, b) => (a.work_date < b.work_date ? 1 : a.work_date > b.work_date ? -1 : 0)),
     blockedTimes: blockedWindow,
-    staleWarnings: syncStaleWarnings(connections),
+    // Reliability 2b/3: the shared banner also surfaces a stale/dead sync
+    // heartbeat (same quiet warning language; unknown log surfaces nothing).
+    staleWarnings: await withHeartbeatWarning(syncStaleWarnings(connections)),
   };
 }));
 

@@ -23,6 +23,7 @@
  */
 import { getStore, type Store } from "./store";
 import { computeProviderFreshness, FRESHNESS_PROVIDERS, type ProviderFreshness } from "./sync/freshness-watchdog";
+import { readHeartbeatFreshness, type HeartbeatFreshness } from "./heartbeat-freshness";
 import type { AppSettings } from "./store/types";
 
 /**
@@ -62,6 +63,17 @@ export interface HealthPayload {
   now: string;
   /** Keyed by provider for the five tracked sync providers. */
   providers: Record<string, HealthProviderReport>;
+  /**
+   * Reliability 2b/3: sync-heartbeat liveness (the 240s driver of every
+   * background sync), classified from the newest TICK line in its log.
+   * ADDITIVE field — the existing fields above are untouched (the owner's
+   * /health consumers and the banner read them). Deliberately NOT folded
+   * into `status`/the 200-vs-503 contract: a dead heartbeat stops syncs, and
+   * the providers' own staleness already degrades `status` through the
+   * existing rule — double-counting would change the external ping's contract
+   * without an owner ruling. /health + the banner surface it directly.
+   */
+  heartbeat: HeartbeatFreshness;
   error?: string;
 }
 
@@ -88,6 +100,10 @@ export async function buildHealthPayload(opts?: {
   store?: Store;
   now?: () => Date;
   settings?: AppSettings;
+  /** Injected heartbeat freshness (tests); otherwise read from the log. */
+  heartbeat?: HeartbeatFreshness;
+  /** Override the heartbeat log path (tests); default per heartbeat-freshness. */
+  heartbeatLogPath?: string;
 }): Promise<HealthPayload> {
   const now = opts?.now ?? (() => new Date());
   const base = {
@@ -95,6 +111,11 @@ export async function buildHealthPayload(opts?: {
     commit: resolveGitCommit(),
     now: now().toISOString(),
   };
+  // Heartbeat freshness is store-INDEPENDENT (a local log read, never
+  // throws) — computed outside the try so a store outage never blanks it.
+  const heartbeat =
+    opts?.heartbeat ??
+    (await readHeartbeatFreshness({ now: now(), ...(opts?.heartbeatLogPath ? { logPath: opts.heartbeatLogPath } : {}) }));
   try {
     const store = opts?.store ?? (await getStore());
     const settings = opts?.settings ?? (await store.getSettings());
@@ -103,7 +124,7 @@ export async function buildHealthPayload(opts?: {
     const providers: Record<string, HealthProviderReport> = {};
     for (const f of freshness) providers[f.provider] = reportOf(f);
     const anyDegraded = freshness.some((f) => f.status === "degraded");
-    return { status: anyDegraded ? "degraded" : "ok", ...base, providers };
+    return { status: anyDegraded ? "degraded" : "ok", ...base, providers, heartbeat };
   } catch (e) {
     // The health check itself could not read its inputs (store unreachable…).
     // Honest 503 with the real reason — never a plausible-looking ok.
@@ -121,6 +142,7 @@ export async function buildHealthPayload(opts?: {
       status: "degraded",
       ...base,
       providers: unknownProviders,
+      heartbeat,
       error: `health check failed: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
