@@ -1069,6 +1069,61 @@ function parseEvidenceCell(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
+/**
+ * BOOT-SEED WEDGE HARDENING (reliability 2b/3, forensics §3
+ * "POST-PUBLISH-WEDGE (boot-seed)"). ensureSchema memoizes its promise
+ * (schemaReady) with no timeout and never reset it on failure, so ONE hung DDL
+ * statement (an ACCESS EXCLUSIVE lock blocker, a stalled TLS write, a
+ * provider-side flap) wedged the WHOLE process forever: every store method
+ * awaits schemaReady, so SSR loaders, sync ticks, and /health all hung behind
+ * it (the 10/8-9 and 10/20-21 boot wedges; serve.ts:11-17 chain). Two seams
+ * close it:
+ *   1. PER-STATEMENT CAP — each DDL statement races a client-side JS-timer
+ *      bound (default 90s: >30× the healthy worst statement (~0.3s across the
+ *      ~65s sweep), above the 30s connect timeout, under the 300s server
+ *      statement_timeout — which never fires anyway when the connection itself
+ *      is stalled). Same dependable-bound pattern as fetch-timeout.ts: a plain
+ *      JS timer that never depends on socket events. A fired cap does NOT kill
+ *      the underlying query (the server-side statement_timeout still bounds
+ *      it); it just stops the boot from waiting on it.
+ *   2. RESET-ON-FAILURE — any failure (cap or rejection) clears the memoized
+ *      promise so the NEXT ensureSchema call retries from the top (recovery
+ *      without restart). The healthy path is byte-identical: same statements,
+ *      same order, same pool, timer cleared on settle.
+ */
+export const DEFAULT_SCHEMA_STMT_TIMEOUT_MS = 90_000;
+
+/** Honest, name-set error for the per-statement cap (same shape as FetchTimeoutError). */
+export class SchemaAcquireTimeoutError extends Error {
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number) {
+    const rendered = timeoutMs >= 1_000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`;
+    super(`schema statement timeout after ${rendered} — boot DDL hung (lock or stalled connection); memoized schemaReady reset for retry`);
+    this.name = "SchemaAcquireTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Race one DDL statement against the client-side cap. Returns the original
+ * promise when the cap is disabled (0/negative). Timer cleared on settle —
+ * no leak on the healthy path.
+ */
+function raceSchemaStmt(p: Promise<unknown>, timeoutMs: number): Promise<unknown> {
+  if (!(timeoutMs > 0)) return p;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Timer is cleared in the RACE's finally — a synchronous finally here would
+  // clear it before it ever fires (the hung statement would never reject).
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new SchemaAcquireTimeoutError(timeoutMs)), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export class PgStore implements Store {
   /** The pips column-list fragment (per-instance; see module-level comment). */
   private get pipCols() {
@@ -1089,7 +1144,32 @@ export class PgStore implements Store {
   /** PERF: short-TTL (20s) read cache — bumped by every write; see store/read-cache.ts. */
   private cache = new TtlReadCache();
 
-  constructor(databaseUrl: string, options?: { profile?: PoolProfile }) {
+  constructor(
+    databaseUrl: string,
+    options?: {
+      profile?: PoolProfile;
+      /**
+       * CLIENT-side per-statement cap for the boot DDL sweep, in ms —
+       * DEFAULT_SCHEMA_STMT_TIMEOUT_MS by default; 0/negative disables the cap
+       * (the pre-fix wedge behavior, kept reachable for the real-DB lock probe
+       * in scratch/boot-seed-lock-probe.ts).
+       */
+      schemaStmtTimeoutMs?: number;
+      /**
+       * TEST SEAM (forensics §3 "missing seam"): inject a stubbed/hung sql so
+       * the boot path is testable without a real connection. Only ensureSchema
+       * + close are meaningful on an injected client.
+       */
+      sql?: { unsafe: (stmt: string) => Promise<unknown>; end?: (opts?: unknown) => Promise<unknown> };
+    },
+  ) {
+    // TEST SEAM: an injected sql skips pool construction entirely — no real
+    // connection is ever opened.
+    if (options?.sql) {
+      this.sql = options.sql as unknown as ReturnType<typeof postgres>;
+      this.schemaStmtTimeoutMs = options.schemaStmtTimeoutMs ?? DEFAULT_SCHEMA_STMT_TIMEOUT_MS;
+      return;
+    }
     // Managed Postgres (Tiger Cloud) requires TLS. If the URL carries its own
     // sslmode param, let postgres.js honor it; otherwise default to ssl
     // "require" so managed hosts connect out of the box.
@@ -1108,6 +1188,7 @@ export class PgStore implements Store {
     // cannot hold the ceiling hostage even if processes stack (boot-guard
     // prevents stacking; this cap bounds the damage if one ever happens).
     const pool = resolvePoolOptions(options?.profile);
+    this.schemaStmtTimeoutMs = options?.schemaStmtTimeoutMs ?? DEFAULT_SCHEMA_STMT_TIMEOUT_MS;
     this.sql = postgres(databaseUrl, {
       max: pool.max,
       idle_timeout: pool.idle_timeout,
@@ -1147,16 +1228,38 @@ export class PgStore implements Store {
    * (postgres.js end() on a closed pool is a no-op).
    */
   async close(): Promise<void> {
-    await this.sql.end({ timeout: 5 });
+    await (this.sql as { end?: (opts?: unknown) => Promise<unknown> }).end?.({ timeout: 5 });
   }
 
   async ensureSchema(): Promise<void> {
     if (!this.schemaReady) {
-      this.schemaReady = (async () => {
-        for (const stmt of DDL) await this.sql.unsafe(stmt);
-      })();
+      const attempt = this.runSchemaDdl();
+      this.schemaReady = attempt;
     }
     return this.schemaReady;
+  }
+
+  /**
+   * The full boot sweep, one statement at a time, each under the per-statement
+   * cap. On ANY failure (cap or rejection) the memoized schemaReady is reset
+   * so the next ensureSchema call retries — recovery without restart.
+   */
+  private runSchemaDdl(): Promise<void> {
+    let attempt: Promise<void> | undefined;
+    attempt = (async () => {
+      try {
+        for (const stmt of DDL) {
+          await raceSchemaStmt(this.sql.unsafe(stmt), this.schemaStmtTimeoutMs);
+        }
+      } catch (e) {
+        // RESET (forensics §3 assert iv): never leave the memoized promise
+        // wedged. Identity guard: don't clobber a NEWER attempt a concurrent
+        // caller may have started after the reset window opened.
+        if (attempt && this.schemaReady === attempt) this.schemaReady = null;
+        throw e;
+      }
+    })();
+    return attempt;
   }
 
   async getSettings(): Promise<AppSettings> {
