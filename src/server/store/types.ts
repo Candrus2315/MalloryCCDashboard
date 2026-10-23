@@ -222,13 +222,48 @@ export interface SyncRunRow {
 // ---------- sync-run freshness (shared by both stores + the scheduler) ----------
 
 /**
+ * TICK WATCHDOG CAP — THE ONE SHARED LIVENESS BOUND (2026-10-23, forensics
+ * scratch/reliability-forensics.md §2). One scheduler tick may hold the loop
+ * at most this long (30 min ≫ any real tick: the heaviest legit piece, a
+ * manual bootstrap full-sync, is minutes; past the cap the watchdog RELEASES
+ * the loop and the independent reaper closes the run's rows), so a bounded
+ * provider's "running" sync_runs row OLDER than this cap cannot be a
+ * legitimately live run. Every liveness consumer now derives from THIS single
+ * constant — no drift possible:
+ *   - store getRunningSyncRun nulls rows older than it (pg.ts + memory.ts);
+ *   - sheets-tick's running guard re-checks against it directly;
+ *   - STALE_RUN_REAP_MINUTES (below) re-derives the reaper's window from it;
+ *   - sync/scheduler re-exports both for the tick watchdog + callers/tests.
+ *
+ * History: the 2026-09-28 owner directive ("a bounded provider's running row
+ * stuck too long is a hang") was first encoded as THREE independent 15-minute
+ * bounds (the store guard, a sheets-tick duplicate, the reaper window). Field
+ * evidence killed that: a legitimate sheets run finished SUCCESS at 17m28s
+ * (full REPLACE of 3,870 rows — scratch/fairyland-run17-out.txt) and two
+ * real overlaps were captured — any 15-minute bound misclassifies live runs
+ * as dead. 30 min is the tick ceiling itself, so nothing legitimately running
+ * can be misclassified, while a genuinely hung row is still reaped within one
+ * reaper cadence past the cap.
+ *
+ * Defined HERE (not in sync/scheduler) for the same no-cycle reason as the
+ * reap window below: both stores need it in getRunningSyncRun without
+ * importing the scheduler (which imports the store — a cycle).
+ */
+export const TICK_WATCHDOG_CAP_MS = 30 * 60_000;
+
+/**
  * STALE-RUN REAP WINDOW (owner directive 2026-09-28): a bounded provider's
  * "running" sync_runs row stuck longer than this is a hung process, not a live
- * one. Defined HERE (not in sync/scheduler) so both stores can use it in
+ * one. DELIBERATE ALIAS — derived from TICK_WATCHDOG_CAP_MS (the one shared
+ * liveness bound above): the store guards null past it, the reaper reaps after
+ * it, so the window and the guards can never drift apart. Kept as a public
+ * minutes-valued constant because the reaper's honest error message and other
+ * consumers (freshness watchdog, Settings running badge) speak in minutes.
+ * Defined HERE (not in sync/scheduler) so both stores can use it in
  * getRunningSyncRun without importing the scheduler (which imports the store
  * — a cycle). sync/scheduler re-exports it for its callers/tests.
  */
-export const STALE_RUN_REAP_MINUTES = 15;
+export const STALE_RUN_REAP_MINUTES = TICK_WATCHDOG_CAP_MS / 60_000;
 
 /**
  * Defensive started_at parse. Accepts ISO strings AND Postgres's text form

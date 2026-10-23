@@ -20,8 +20,11 @@
  *    running-row guard;
  *  - schedulerTick includes the sheets sync (result.sheets) when an adapter
  *    is provided, and reaps zombie "running" rows before proceeding;
- *  - reapStaleSyncRuns: bounded providers' >15-min "running" rows marked
- *    failed with a clear note; fresh rows and non-reapable providers kept;
+ *  - reapStaleSyncRuns: bounded providers' "running" rows past the ONE
+ *    shared liveness bound (TICK_WATCHDOG_CAP_MS = 30 min, the tick ceiling
+ *    — was three separate 15-min bounds until the 2026-10-23 running-guard
+ *    fix: a legit sheets run finished SUCCESS at 17m28s) marked failed with
+ *    a clear note; fresh rows and non-reapable providers kept;
  *  - HL fetch timeout: a hung API call becomes a fast network error (no
  *    forever-running run), test-shrunk via opts.timeoutMs.
  */
@@ -234,7 +237,7 @@ describe("sheetsTick", () => {
     expect(later.outcome).toBe("synced");
   });
 
-  test("running google_sheets row blocks the tick; >15-min row proceeds (crashed process)", async () => {
+  test("running google_sheets row blocks the tick; past-the-bound row proceeds (crashed process)", async () => {
     const store = new MemoryStore();
     await store.insertSyncRun("google_sheets");
     const blocked = await sheetsTick({ store, adapter: liveStub(["2026-09-27"]), trigger: "background" });
@@ -271,7 +274,7 @@ describe("schedulerTick × sheets + stale-run reaper", () => {
     expect(await store.countLeads("google_sheets")).toBe(0);
   });
 
-  test("REAPER: zombie runs >15 min marked failed with a clear note; fresh rows + non-reapable providers untouched", async () => {
+  test("REAPER: zombie runs past the shared liveness bound marked failed with a clear note; fresh rows + non-reapable providers untouched", async () => {
     const store = new MemoryStore();
     const justOverCutoff = () => new Date(Date.now() + (STALE_RUN_REAP_MINUTES + 1) * 60_000);
     const zombieId = await store.insertSyncRun("highlevel");
@@ -284,7 +287,7 @@ describe("schedulerTick × sheets + stale-run reaper", () => {
     const zombie = runs.find((r) => r.id === zombieId)!;
     expect(zombie.status).toBe("error");
     expect(zombie.error).toContain("stale");
-    expect(zombie.error).toContain("15 minutes");
+    expect(zombie.error).toContain(`${STALE_RUN_REAP_MINUTES} minutes`);
     expect(zombie.error).toContain("stale-run reaper");
     expect(runs.find((r) => r.id === freshId)!.status).toBe("running");
     expect(runs.find((r) => r.id === backfillId)!.status).toBe("running");

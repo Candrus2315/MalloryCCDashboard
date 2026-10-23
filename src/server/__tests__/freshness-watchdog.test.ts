@@ -159,7 +159,7 @@ describe("provider freshness watchdog — recovery", () => {
     const state = baseState({
       lastSuccess: { attribution: iso(30 * MIN) },
       running: [
-        { id: "run-stale", provider: "attribution", status: "running", started_at: iso(30 * MIN), finished_at: null, records_upserted: 3, error: null },
+        { id: "run-stale", provider: "attribution", status: "running", started_at: iso(45 * MIN), finished_at: null, records_upserted: 3, error: null },
       ],
     });
     const store = makeStore(state);
@@ -177,7 +177,7 @@ describe("provider freshness watchdog — recovery", () => {
     expect(pass.recovered).toEqual(["attribution"]);
     expect(pass.escalated).toEqual([]);
     expect(pass.alerts).toEqual([]); // recovered before escalation — no paging
-    // the stale row (30 min > 15-min reap window) cleared with honest text
+    // the stale row (45 min > the 30-min shared liveness bound) cleared with honest text
     expect(pass.clearedRunningRows).toBe(1);
     expect(state.running[0].status).toBe("error");
     expect(state.finishedErrors[0]).toContain("freshness watchdog");
