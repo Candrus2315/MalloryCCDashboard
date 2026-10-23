@@ -42,6 +42,7 @@ import {
   saveRepGoals,
   saveRepMappings,
   saveRepStartDates,
+  saveRetentionSettings,
   saveSettings,
   saveSheetMapping,
   saveStudioRules,
@@ -59,7 +60,7 @@ export const Route = createFileRoute("/settings")({
 });
 
 import { SHEET_MODE_LABELS, type SheetMappingMode } from "~/server/sync/sheets-mapping";
-import { DEFAULT_COLUMN_MAPPING, DEFAULT_COLUMN_MAPPING_DAY_COUNT } from "~/server/store/types";
+import { DEFAULT_COLUMN_MAPPING, DEFAULT_COLUMN_MAPPING_DAY_COUNT, DEFAULT_RETENTION_SETTINGS } from "~/server/store/types";
 
 type SettingsData = ReturnType<typeof Route.useLoaderData>;
 
@@ -198,7 +199,22 @@ function SettingsPage() {
         </Panel>
       </section>
 
-      {/* 4 — Acuity scope + availability rules (spec §4, one major section) */}
+      {/* 4 — Retention Rules (owner build-order item after transfers): the
+          data-start display boundary + the excitement-call window, saved
+          through the audited settings path (manual_overrides). DISPLAY-SCOPE
+          ONLY — a change never rewrites stored retention history. */}
+      <section id="retention" className="scroll-mt-28">
+        <Panel className="p-5 sm:p-6 m-acc">
+          <input type="checkbox" id="macc-retention" className="m-acc-input" />
+          <label htmlFor="macc-retention" className="m-acc-head">
+            <SectionHeader id="retention" />
+          </label>
+          <div className="mt-4 m-acc-body">
+            <RetentionRulesCard data={data} busy={busy} onSave={(dataStartWeekStart, excitementDays) => run("Retention rules saved", () => saveRetentionSettings({ data: { dataStartWeekStart, excitementDays } }))} />
+          </div>
+        </Panel>
+      </section>
+      {/* 5 — Acuity scope + availability rules (spec §4, one major section) */}
       <section id="acuity" className="scroll-mt-28">
         <Panel className="p-5 sm:p-6 m-acc">
           <input type="checkbox" id="macc-acuity" className="m-acc-input" />
@@ -823,6 +839,73 @@ function CoreOpsCard({ data, busy, onSave }: {
   );
 }
 
+/* ================= retention rules ================= */
+function RetentionRulesCard({ data, busy, onSave }: {
+  data: SettingsData;
+  busy: boolean;
+  onSave: (dataStartWeekStart: string, excitementDays: number) => void;
+}) {
+  // Defaults hold when the settings row predates the field (the store
+  // normalizes on read — this fallback is belt-and-braces, never a guess).
+  const retention = data.settings.retention ?? DEFAULT_RETENTION_SETTINGS;
+  const [dataStart, setDataStart] = useState(String(retention.data_start_week_start));
+  const [days, setDays] = useState(String(retention.due_days));
+  // Client-side mirror of the server validation (the server re-validates —
+  // the store is the honest gate; this only disables the button early).
+  const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(dataStart.trim()) && Number.isFinite(Date.parse(dataStart.trim()));
+  const daysNum = Number(days);
+  const daysOk = Number.isInteger(daysNum) && daysNum >= 1 && daysNum <= 60;
+  return (
+    <div className="card card-nest card-dense space-y-4">
+      <p className="text-xs text-(--text-muted)">
+        Owner rules for the Retention tab.{" "}
+        <span className="font-medium text-(--banner-fg)">
+          Changes affect the tab's display scope going forward — stored history is never rewritten.
+        </span>
+      </p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <span className="kpi-label flex items-center gap-1.5">
+            Data-start week
+            <InfoTip tip="Nothing from before this week shows on the Retention tab (owner directive 10/21: data from the week of Mon Oct 12, 2026 ET onward). Pick any date in the intended week — it is saved as that week's Monday. Stored records stay untouched; only what the tab displays changes." label="What the data-start week controls" />
+          </span>
+          <input
+            type="date"
+            value={dataStart}
+            onChange={(e) => setDataStart(e.target.value)}
+            className="input-field mt-1 w-full"
+            aria-label="Retention data-start week"
+          />
+          <p className="mt-1 text-xs text-(--text-muted)">Saved as that week's Monday — any date in the intended week.</p>
+        </div>
+        <div>
+          <span className="kpi-label flex items-center gap-1.5">
+            Excitement-call window (days)
+            <InfoTip tip="An appointment's excitement call is due this many days before the session. Changing it re-scopes what the Retention tab reports as due from now on." label="What the excitement-call window controls" />
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={60}
+            step={1}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            className="input-field mt-1 w-full"
+            aria-label="Excitement-call window in days"
+          />
+          <p className="mt-1 text-xs text-(--text-muted)">Whole number, 1–60 (current default 7).</p>
+        </div>
+      </div>
+      {!dateOk && <p className="text-xs font-medium text-(--banner-fg)">Pick a valid date for the data-start week.</p>}
+      {dateOk && !daysOk && <p className="text-xs font-medium text-(--banner-fg)">Excitement-call days must be a whole number between 1 and 60.</p>}
+      <div className="flex justify-end">
+        <button className="btn-primary" disabled={busy || !dateOk || !daysOk} onClick={() => onSave(dataStart.trim(), daysNum)}>
+          Save retention rules
+        </button>
+      </div>
+    </div>
+  );
+}
 /* ================= 4 — acuity scope ================= */
 
 function AcuityScopeCard({ data, busy, onSave }: {

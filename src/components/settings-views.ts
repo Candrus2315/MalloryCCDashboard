@@ -66,6 +66,13 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
     subsections: [],
   },
   {
+    id: "retention",
+    nav: "Retention",
+    title: "Retention Rules",
+    description: "The data-start week that scopes the Retention tab and the excitement-call window — the module's owner-facing rules.",
+    subsections: [],
+  },
+  {
     id: "acuity",
     nav: "Acuity",
     title: "Acuity Scope & Availability Rules",

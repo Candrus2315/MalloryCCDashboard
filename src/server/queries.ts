@@ -60,7 +60,7 @@ import { refreshAvailabilityRange } from "./sync/availability-feed";
 import type { AuditOkBody } from "./audit-api";
 import type { RetentionKpiKey, RetentionRange } from "./retention/ui-data";
 import { isSheetMappingMode } from "./sync/sheets-mapping";
-import { normalizeHistoricalReps, normalizeRepMappings, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, type AppSettings, type RepMapping, type RosterEntry, type SyncRunRow } from "./store/types";
+import { normalizeHistoricalReps, normalizeRepMappings, normalizeRetentionSettings, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, weekStartOfDateOrUndefined, type AppSettings, type RepMapping, type RetentionSettings, type RosterEntry, type SyncRunRow } from "./store/types";
 
 export interface PageMeta {
   mode: "postgres" | "memory";
@@ -358,7 +358,52 @@ export const saveSettings = createServerFn({ method: "POST" })
     if (Object.keys(patch).length) await store.saveSettings(patch);
     return { ok: true };
   });
-
+/**
+ * RETENTION RULES SAVE (retention Settings surface — the owner's build-order
+ * item after transfers). Saves the two owner-facing retention rules through
+ * the ONE settings path: the write is owner-labeled (SETTINGS_OWNER_ACTOR —
+ * exactly like the sheet-config saves) and the STORE audits every changed
+ * field (manual_overrides, old → new, this actor). Validation is honest:
+ *  - dataStartWeekStart must parse as a calendar date (any day of the intended
+ *    week — the store normalizes it to that week's Monday);
+ *  - excitementDays (the excitement-call window, due_days) must be a whole
+ *    number 1–60.
+ * DISPLAY-SCOPE ONLY: a settings change never rewrites stored ret_* rows —
+ * the cutoff applies at read/display time (retention/ui-data.ts resolves it
+ * from CURRENT settings on every call).
+ */
+export interface SaveRetentionSettingsInput {
+  /** Any calendar date of the intended data-start week (YYYY-MM-DD). */
+  dataStartWeekStart?: string;
+  /** The excitement-call window in days (the RetentionSettings.due_days rule). */
+  excitementDays?: number;
+}
+export async function saveRetentionSettingsCore(store: Store, data?: SaveRetentionSettingsInput): Promise<{ ok: true }> {
+    const errors: string[] = [];
+    const patch: Partial<RetentionSettings> = {};
+    if (data?.excitementDays != null) {
+      const n = Number(data.excitementDays);
+      if (!Number.isInteger(n) || n < 1 || n > 60) errors.push(`Excitement-call days must be a whole number between 1 and 60 (got ${JSON.stringify(data.excitementDays ?? null)}).`);
+      else patch.due_days = n;
+    }
+    if (data?.dataStartWeekStart != null) {
+      const raw = String(data.dataStartWeekStart).trim();
+      if (!weekStartOfDateOrUndefined(raw)) errors.push(`Data-start week must be a calendar date in YYYY-MM-DD form (got "${raw}").`);
+      else patch.data_start_week_start = raw;
+    }
+    if (errors.length) throw new Error(errors.join(" "));
+    if (!Object.keys(patch).length) throw new Error("Nothing to save — no retention rule changed.");
+    // Field-wise merge over CURRENT settings + normalize (defaults hold for
+    // absent fields — existing deployments keep behavior), then save through
+    // the audited settings path; unchanged fields produce no audit rows.
+    const current = await store.getSettings();
+    const retention = normalizeRetentionSettings({ ...current.retention, ...patch });
+    await store.saveSettings({ retention }, SETTINGS_OWNER_ACTOR);
+    return { ok: true };
+}
+export const saveRetentionSettings = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as SaveRetentionSettingsInput)
+  .handler(async ({ data }) => saveRetentionSettingsCore(await getStore(), data ?? {}));
 /** Save one week's team booking goal + lead budget, with an audit row per changed field. */
 export const saveWeekGoal = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { weekStart: string; bookingGoal: number; leadBudget: number })
@@ -1369,16 +1414,21 @@ export const getRetentionPageData = createServerFn().handler(() =>
     const store = await getStore();
     // ONE loader for the page: overview cards + Needs Attention queue (both
     // read the same ret_* tables via ui-data) + the stored scorecards.
-    const [overview, queue, scorecards] = await Promise.all([
+    // SETTINGS included: the scorecard DISPLAY boundary is resolved from
+    // CURRENT settings at call time (the sheets-adapter per-tick contract —
+    // no boot-frozen snapshot; regression-pinned in retention-settings.test.ts).
+    const [overview, queue, scorecards, settings] = await Promise.all([
       ui.retentionOverview(store),
       ui.retentionNeedsAttention(store),
       store.listRetentionScorecards(),
+      store.getSettings(),
     ]);
     // OWNER DIRECTIVE 10/21 — scorecard DISPLAY scope: stored weeks before the
-    // data-start boundary (week of Mon 2026-10-12 ET) stay in the DB untouched
-    // (append-if-new, never rewritten) but are not shown — the departed-rep-
-    // history pattern: preserved, not shown.
-    return { ...overview, queue, scorecards: scorecards.filter((r) => ui.inRetentionScorecardScope(r.week_start)) };
+    // data-start boundary (owner-editable in Settings → Retention; default the
+    // week of Mon 2026-10-12 ET) stay in the DB untouched (append-if-new,
+    // never rewritten) but are not shown — the departed-rep-history pattern:
+    // preserved, not shown.
+    return { ...overview, queue, scorecards: scorecards.filter((r) => ui.inRetentionScorecardScope(r.week_start, settings.retention.data_start_week_start)) };
   }),
 );
 

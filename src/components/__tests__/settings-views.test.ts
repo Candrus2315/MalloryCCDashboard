@@ -49,11 +49,12 @@ describe("leadPickerOptionLabel", () => {
 // ---------- 8-section IA (spec §IA + §MICROCOPY) ----------
 
 describe("SETTINGS_SECTIONS", () => {
-  test("has exactly the spec's 8 sections in order", () => {
+  test("has exactly the spec's sections in order (Retention added after Rules — the owner's build-order Settings surface)", () => {
     expect(SETTINGS_SECTIONS.map((s) => s.id)).toEqual([
       "security",
       "goals",
       "rules",
+      "retention",
       "acuity",
       "sheets",
       "sync",
@@ -72,6 +73,7 @@ describe("SETTINGS_SECTIONS", () => {
       "Security",
       "Goals",
       "Rules",
+      "Retention",
       "Acuity",
       "Sheets",
       "Sync",
@@ -109,7 +111,8 @@ describe("SETTINGS_SECTIONS", () => {
 
   test("sectionNumber is 1-based zero-padded and sectionMeta resolves", () => {
     expect(sectionNumber("security")).toBe("01");
-    expect(sectionNumber("audit")).toBe("08");
+    expect(sectionNumber("retention")).toBe("04");
+    expect(sectionNumber("audit")).toBe("09");
     expect(sectionMeta("goals").title).toBe("Goals");
     expect(() => sectionMeta("nope")).toThrow("Unknown settings section");
   });

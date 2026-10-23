@@ -30,6 +30,7 @@ import type { DataMatchExceptionRow, InternalClientRow } from "../store/types";
 import { addDays, etDateStrFromInstant, etDayStartUtc, weekStart, OPERATIONAL_TIMEZONE } from "../date-logic";
 import type { NoteEvidence } from "./classify";
 import { RECOVERED_OUTCOMES } from "./cancellations";
+import { DEFAULT_RETENTION_SETTINGS, normalizeRetentionSettings } from "../store/types";
 
 // ---- Retention data-start boundary (owner directive 10/21) ----
 
@@ -50,7 +51,15 @@ import { RECOVERED_OUTCOMES } from "./cancellations";
  * constant; every loader reads the boundary through the helpers below.
  */
 export const RETENTION_DATA_START_ET = etDayStartUtc("2026-10-12"); // the ET instant of Mon 2026-10-12 00:00
-/** The boundary's ET calendar date, derived FROM the constant (single source of truth). */
+/**
+ * The boundary's ET calendar date, derived FROM the constant — now the
+ * DEFAULT boundary only: the owner-editable value lives in settings
+ * (AppSettings.retention.data_start_week_start) and every loader resolves it
+ * from CURRENT settings at call time (the sheets-adapter per-tick contract —
+ * no boot-frozen snapshot; regression-pinned in retention-settings.test.ts).
+ * A caller that omits the parameter gets exactly the pre-settings behavior
+ * (byte-identical), which is what the owner-ratified default preserves.
+ */
 export const RETENTION_DATA_START_DATE_ET = etDateStrFromInstant(Date.parse(RETENTION_DATA_START_ET));
 
 /**
@@ -62,9 +71,9 @@ export const RETENTION_DATA_START_DATE_ET = etDateStrFromInstant(Date.parse(RETE
  * the owner's view (fail-honest; in practice the loaders' fetch floor always
  * covers the appointment of every stored outcome/ledger row).
  */
-export function inRetentionDataScope(apptMs: number | null | undefined): boolean {
+export function inRetentionDataScope(apptMs: number | null | undefined, dataStartWeekStart: string = RETENTION_DATA_START_DATE_ET): boolean {
   if (apptMs == null || !Number.isFinite(apptMs)) return false;
-  return etDateStrFromInstant(apptMs) >= RETENTION_DATA_START_DATE_ET;
+  return etDateStrFromInstant(apptMs) >= dataStartWeekStart;
 }
 
 /**
@@ -72,8 +81,8 @@ export function inRetentionDataScope(apptMs: number | null | undefined): boolean
  * boundary stay in the DB untouched (append-if-new, never rewritten) but are
  * not shown — the departed-rep-history pattern: preserved, not shown.
  */
-export function inRetentionScorecardScope(weekStartEt: string): boolean {
-  return weekStartEt >= RETENTION_DATA_START_DATE_ET;
+export function inRetentionScorecardScope(weekStartEt: string, dataStartWeekStart: string = RETENTION_DATA_START_DATE_ET): boolean {
+  return weekStartEt >= dataStartWeekStart;
 }
 
 /**
@@ -107,9 +116,10 @@ export function exceptionTriggerMs(
 export function inRetentionExceptionScope(
   e: { payload: Record<string, unknown>; context: Record<string, unknown> | null },
   apptMsByAcuityId: Map<string, number>,
+  dataStartWeekStart: string = RETENTION_DATA_START_DATE_ET,
 ): boolean {
   const ms = exceptionTriggerMs(e, apptMsByAcuityId);
-  return ms == null ? true : inRetentionDataScope(ms);
+  return ms == null ? true : inRetentionDataScope(ms, dataStartWeekStart);
 }
 
 /** acuity appointment id → appointment_datetime epoch ms (exception scoping's anchor map). */
@@ -221,16 +231,13 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
   const ws = weekStart(todayEt);
   const we = addDays(ws, 6);
   const settings = await store.getSettings();
-  const retention = settings.retention ?? {
-    due_days: 7,
-    qualifying_statuses: ["scheduled"],
-    compute_lookback_days: 30,
-    employee_initials: {},
-    max_attempts: null,
-    max_attempt_days: null,
-    max_contact_days: null,
-  };
+  // CURRENT settings at call time (no boot-frozen snapshot): the store
+  // normalizes on read, and normalizeRetentionSettings makes the loader safe
+  // even against a hand-built store whose settings omit the group — every
+  // absent field falls back to DEFAULT_RETENTION_SETTINGS (byte-identical).
+  const retention = normalizeRetentionSettings(settings.retention ?? DEFAULT_RETENTION_SETTINGS);
   const dueDays = retention.due_days;
+  const dataStart = retention.data_start_week_start; // the DISPLAY boundary, resolved at call time
   const [outcomes, attempts, openExceptions, ownerRows, allCancellations, allTransfers] = await Promise.all([
     store.listRetentionAppointmentOutcomes(),
     store.listRetentionAttempts(),
@@ -258,15 +265,15 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
   // OWNER DIRECTIVE 10/21 — the display-layer boundary (RETENTION_DATA_START_ET):
   // no pre-cutoff appointment may contribute to any card. The writers keep
   // observing everything; this only narrows what the loaders RETURN.
-  const cancellationRows = allCancellations.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id)));
-  const exceptionsOpen = openExceptions.filter((e) => inRetentionExceptionScope(e, apptMsByAcuityIdOf(appts))).length;
+  const cancellationRows = allCancellations.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id), dataStart));
+  const exceptionsOpen = openExceptions.filter((e) => inRetentionExceptionScope(e, apptMsByAcuityIdOf(appts), dataStart)).length;
 
   // STAGE-5 TRANSFERS — the written ret_transfers ledger, DISPLAY-scoped on
   // the ORIGINAL appointment's session instant (the row is attributed to the
   // original booker's client series, so the original's instant is the row's
   // scope anchor; a row whose original cannot be placed is not provably in
   // scope and stays hidden — fail-honest, same as the cancellations family).
-  const transferRows = allTransfers.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id)));
+  const transferRows = allTransfers.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id), dataStart));
   const transfersThisWeek = transferRows.filter((r) => {
     const ms = Date.parse(r.detected_at);
     if (!Number.isFinite(ms)) return false; // no confirmation stamp — never guessed into a week
@@ -288,7 +295,7 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
   // Current-week due cohort ("as of now" R — UI spec §2: cards summarize the
   // current week's due cohort and all open queues).
   const cohort = outcomes.filter(
-    (o) => o.eligible && o.contact_due_date >= ws && o.contact_due_date <= we && inRetentionDataScope(apptMs(o)),
+    (o) => o.eligible && o.contact_due_date >= ws && o.contact_due_date <= we && inRetentionDataScope(apptMs(o), dataStart),
   );
   const cohortIds = new Set(cohort.map((o) => o.appointment_id));
 
@@ -314,7 +321,7 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
   };
   const noShowRows = outcomes.filter((o) => {
     if (!o.eligible) return false;
-    if (!inRetentionDataScope(apptMs(o))) return false; // owner directive 10/21 — display boundary
+    if (!inRetentionDataScope(apptMs(o), dataStart)) return false; // owner directive 10/21 — display boundary
     const d = apptDateEtOf(o);
     if (d == null || d < ws || d > we) return false;
     const a = apptById.get(o.appointment_id);
@@ -399,7 +406,7 @@ export async function retentionOverview(store: Store, now: () => Date = () => ne
     { key: "match-exceptions", label: "Data Match Exceptions", value: exceptionsOpen, ratio: null, sub: exceptionsOpen > 0 ? "match unresolved" : "all clear", attention: exceptionsOpen > 0 },
     // Needs Review — the open evidence-conflict queue; pre-cutoff rows are
     // hidden from DISPLAY (owner directive 10/21) but stay stored.
-    { key: "needs-review", label: "Needs Review", value: outcomes.filter((o) => o.final_status === "needs_review" && inRetentionDataScope(apptMs(o))).length, ratio: null, sub: "", attention: false },
+    { key: "needs-review", label: "Needs Review", value: outcomes.filter((o) => o.final_status === "needs_review" && inRetentionDataScope(apptMs(o), dataStart)).length, ratio: null, sub: "", attention: false },
   ];
   // Needs Review card: attention accent + consequence sub when > 0 (computed
   // over the DISPLAY-scoped stored outcomes — an open queue, not a
@@ -646,16 +653,10 @@ export async function retentionDrillData(
   const todayEt = etDateStrFromInstant(nowMs);
   const ws = weekStart(todayEt);
   const settings = await store.getSettings();
-  const retention = settings.retention ?? {
-    due_days: 7,
-    qualifying_statuses: ["scheduled"],
-    compute_lookback_days: 30,
-    employee_initials: {},
-    max_attempts: null,
-    max_attempt_days: null,
-    max_contact_days: null,
-  };
+  // CURRENT settings at call time (see retentionOverview).
+  const retention = normalizeRetentionSettings(settings.retention ?? DEFAULT_RETENTION_SETTINGS);
   const dueDays = retention.due_days;
+  const dataStart = retention.data_start_week_start; // the DISPLAY boundary, resolved at call time
   const ownerRows = await store.listRetentionOwnerHistory();
   const ownerName = currentRetentionOwner(ownerRows, todayEt);
 
@@ -694,7 +695,7 @@ export async function retentionDrillData(
       exceptions: (DataMatchExceptionRow & { candidates_expanded: (InternalClientRow | null)[]; resolved_client: InternalClientRow | null })[];
     };
     const excAnchorMs = apptMsByAcuityIdOf(appts);
-    const scoped = body.exceptions.filter((e) => inRetentionExceptionScope(e, excAnchorMs));
+    const scoped = body.exceptions.filter((e) => inRetentionExceptionScope(e, excAnchorMs, dataStart));
     const scopedCounts = {
       open: scoped.filter((e) => e.status === "open").length,
       resolved: scoped.filter((e) => e.status === "resolved").length,
@@ -799,7 +800,7 @@ export async function retentionDrillData(
     // a row whose appointment instant cannot be derived is not provably in
     // scope and stays hidden — fail-honest, exactly like the cards).
     const universe = cancellationRows.filter(
-      (r) => inRetentionDataScope(apptIdMs(r.appointment_id)) && inCancellationUniverse(r, kpi),
+      (r) => inRetentionDataScope(apptIdMs(r.appointment_id), dataStart) && inCancellationUniverse(r, kpi),
     );
     const base = universe.filter((r) => {
       if (range.start == null) return true;
@@ -891,7 +892,7 @@ export async function retentionDrillData(
     // numerator); the CARD's rate divides them by every tracked cancellation
     // in display scope (range-independent — the card's own denominator).
     const recoveryDenominator =
-      kpi === "recovery" ? cancellationRows.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id))).length : null;
+      kpi === "recovery" ? cancellationRows.filter((r) => inRetentionDataScope(apptIdMs(r.appointment_id), dataStart)).length : null;
 
     return {
       kpi,
@@ -984,7 +985,7 @@ export async function retentionDrillData(
   };
   const base = outcomes.filter((o) => {
     if (!o.eligible) return false;
-    if (!inRetentionDataScope(apptMsOf(o))) return false; // owner directive 10/21 — display boundary (pre-cutoff rows stay stored, not shown)
+    if (!inRetentionDataScope(apptMsOf(o), dataStart)) return false; // owner directive 10/21 — display boundary (pre-cutoff rows stay stored, not shown)
     const rangeOk = params.kpi === "no-shows" ? inRangeByAppt(o) : inRange(o);
     if (!rangeOk) return false;
     return inKpiUniverse(o, params.kpi, { nowMs, apptMsOf, noShowRow });
@@ -1340,16 +1341,10 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   const ws = weekStart(todayEt);
   const we = addDays(ws, 6);
   const settings = await store.getSettings();
-  const retention = settings.retention ?? {
-    due_days: 7,
-    qualifying_statuses: ["scheduled"],
-    compute_lookback_days: 30,
-    employee_initials: {},
-    max_attempts: null,
-    max_attempt_days: null,
-    max_contact_days: null,
-  };
+  // CURRENT settings at call time (see retentionOverview).
+  const retention = normalizeRetentionSettings(settings.retention ?? DEFAULT_RETENTION_SETTINGS);
   const dueDays = retention.due_days;
+  const dataStart = retention.data_start_week_start; // the DISPLAY boundary, resolved at call time
   const [outcomes, attempts, clients, appts, ownerRows, cancellationRows, transferRows] = await Promise.all([
     store.listRetentionAppointmentOutcomes(),
     store.listRetentionAttempts(),
@@ -1432,7 +1427,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   // cohort minus spoken-with and needs-review (those have their own homes).
   const callDue = outcomes.filter((o) => {
     if (!o.eligible) return false;
-    if (!inRetentionDataScope(apptMsOf(o))) return false; // owner directive 10/21 — display boundary
+    if (!inRetentionDataScope(apptMsOf(o), dataStart)) return false; // owner directive 10/21 — display boundary
     if (o.contact_due_date < ws || o.contact_due_date > we) return false;
     if (o.final_status === "verified_spoke_with" || o.final_status === "needs_review") return false;
     const ms = apptMsOf(o);
@@ -1443,7 +1438,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   // §16 Still-Unreached universe over ALL stored outcomes (the open queue,
   // not a week slice) — same predicate the drill's unreached kpi uses;
   // pre-cutoff rows hidden from DISPLAY (owner directive 10/21).
-  const unreachedRows = outcomes.filter((o) => o.eligible && inRetentionDataScope(apptMsOf(o)) && inKpiUniverse(o, "unreached", ctx));
+  const unreachedRows = outcomes.filter((o) => o.eligible && inRetentionDataScope(apptMsOf(o), dataStart) && inKpiUniverse(o, "unreached", ctx));
   const unreachedOpen = unreachedRows.filter((o) => {
     const ms = apptMsOf(o);
     return ms != null && ms >= nowMs && !callDueIds.has(o.appointment_id);
@@ -1455,7 +1450,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
 
   // Needs review — ALL stored outcomes in DISPLAY scope (the open queue, like
   // its card); pre-cutoff rows stay stored, not shown (owner directive 10/21).
-  const needsReview = outcomes.filter((o) => o.final_status === "needs_review" && inRetentionDataScope(apptMsOf(o)));
+  const needsReview = outcomes.filter((o) => o.final_status === "needs_review" && inRetentionDataScope(apptMsOf(o), dataStart));
 
   // Cancellations — the §16 Active-Cancellations universe over the WRITTEN
   // ledger (stage 4a), through inCancellationUniverse: the SAME predicate the
@@ -1466,7 +1461,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   const cancellations = cancellationRows.filter(
     (r) =>
       r.internal_client_id != null &&
-      inRetentionDataScope(apptIdMs(r.appointment_id)) && // owner directive 10/21 — pre-cutoff cancellations stay stored, not shown
+      inRetentionDataScope(apptIdMs(r.appointment_id), dataStart) && // owner directive 10/21 — pre-cutoff cancellations stay stored, not shown
       inCancellationUniverse(r, "active-cancellations"),
   );
   const cancellationQueueRow = (r: RetentionCancellationRow): RetentionQueueRow => {
@@ -1514,7 +1509,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   const transfers = transferRows.filter(
     (r) =>
       r.internal_client_id != null &&
-      inRetentionDataScope(apptIdMs(r.appointment_id)), // owner directive 10/21 — pre-cutoff transfers stay stored, not shown
+      inRetentionDataScope(apptIdMs(r.appointment_id), dataStart), // owner directive 10/21 — pre-cutoff transfers stay stored, not shown
   );
   const transferQueueRow = (r: RetentionTransferRow): RetentionQueueRow => {
     const client = clientById.get(r.internal_client_id!) ?? null;
@@ -1606,7 +1601,7 @@ export async function retentionNeedsAttention(store: Store, now: () => Date = ()
   // week AND whose cancelled appointment is in DISPLAY scope (owner directive
   // 10/21). The SAME §16 predicate the Recovery card counts.
   const recoveredThisWeek = cancellationRows.filter((r) => {
-    if (!inRetentionDataScope(apptIdMs(r.appointment_id))) return false; // owner directive 10/21 — display boundary
+    if (!inRetentionDataScope(apptIdMs(r.appointment_id), dataStart)) return false; // owner directive 10/21 — display boundary
     if (!inCancellationUniverse(r, "recovery") || r.recovered_at == null) return false;
     const ms = Date.parse(r.recovered_at);
     if (!Number.isFinite(ms)) return false;
