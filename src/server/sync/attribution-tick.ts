@@ -50,6 +50,7 @@ import { assertBookingInvariant, type AttributionRow } from "../metrics/compute"
 import { buildRosterEligibility } from "../roster";
 import type { AppSettings, Store } from "../store/types";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { makeRunDeadline } from "../store/ingest-batch";
 
 /** Minimum gap between BACKGROUND attribution recomputes (manual skips it). */
 export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
@@ -290,6 +291,9 @@ export async function computeAndPersistAttributions(
   options?: { now?: () => Date; force?: boolean; since?: string },
 ): Promise<AttributionComputationResult> {
   const today = etDateStrFromInstant((options?.now ?? (() => new Date()))().getTime());
+  // PER-RUN INGEST DEADLINE (10/23 wedge fix): bounds the advisory-locked
+  // attribution write so a detached zombie's chunk loop stops within budget.
+  const ingestDeadline = makeRunDeadline({ label: "attribution" });
 
   // WRITER-VERSION GUARD: an outdated build must never rewrite the table with
   // old semantics. The latest writer version is stored machinery state
@@ -475,7 +479,7 @@ export async function computeAndPersistAttributions(
   // store's degradation guard treats untouched rows as untouched (absent from
   // the write ≠ stripped).
   const toWrite = preserved.size > 0 ? rows.filter((r) => !preserved.has(r.appointment_id)) : rows;
-  await store.upsertAttributions(toWrite, { force: options?.force ?? false });
+  await store.upsertAttributions(toWrite, { force: options?.force ?? false, deadline: ingestDeadline });
 
   // STAMP: this writer's version is now the latest that has written (takeover
   // — a fresh deploy always takes over; equal versions are idempotent).

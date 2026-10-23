@@ -49,6 +49,7 @@ import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics
 import { deriveBookingPaymentFields } from "../payments";
 import type { Store } from "../store/types";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { makeRunDeadline } from "../store/ingest-batch";
 import { raceBodyRead } from "./body-read";
 import { syncFetchTimeoutMs, timedFetch } from "./fetch-timeout";
 import type { NormalizedAppointment } from "./adapters";
@@ -582,6 +583,9 @@ export async function reconcileCancellations(
  * external id (demo), then phone, then email (SPEC attribution priority).
  */
 export async function upsertAcuityAppointments(store: Store, appts: NormalizedAppointment[]): Promise<number> {
+  // PER-RUN INGEST DEADLINE (10/23 wedge fix): bounds the batched appointments
+  // upsert (the shared write path for the full sync AND the background tick).
+  const ingestDeadline = makeRunDeadline({ label: "acuity" });
   const storedContacts = await store.getContacts();
   const contactByExt = new Map(storedContacts.map((c) => [c.external_id, c.id]));
   const contactByPhone = new Map(storedContacts.map((c) => [c.phone?.replace(/\D/g, "").slice(-10) ?? "", c.id]));
@@ -646,6 +650,7 @@ export async function upsertAcuityAppointments(store: Store, appts: NormalizedAp
         client_email: normalizeAttributionEmail(a.clientEmail) ?? "",
       };
     }),
+    { deadline: ingestDeadline },
   );
   return appts.length;
 }

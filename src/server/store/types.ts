@@ -15,6 +15,7 @@ import type {
   LeadRow,
   RecurringBlock,
 } from "../metrics/compute";
+import type { IngestOptions, RunDeadline } from "./ingest-batch";
 
 export interface UserRow {
   id: string; // internal id (uuid in pg; provider key in memory)
@@ -1976,6 +1977,7 @@ export interface Store {
       cancelled_at?: string | null;
       cancellation_source?: string | null;
     })[],
+    opts?: IngestOptions,
   ): Promise<number>;
   /**
    * S7c: appointments CREATED on an ET BUSINESS DATE in [start, end] — the
@@ -2044,7 +2046,7 @@ export interface Store {
    * degradation guard for a deliberate recovery recompute (manual_override
    * rows are still skipped, always).
    */
-  upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean }): Promise<number>;
+  upsertAttributions(rows: AttributionRow[], opts?: { force?: boolean; deadline?: RunDeadline }): Promise<number>;
   getAttributions(): Promise<AttributionRow[]>;
   /** Manual assignment from the overrides UI — force-writes method="manual", manual_override=true. */
   setManualAttribution(row: AttributionRow): Promise<void>;
@@ -2058,6 +2060,7 @@ export interface Store {
   // leads
   upsertLeads(
     rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null })[],
+    opts?: IngestOptions,
   ): Promise<number>;
   /**
    * Remove every stored lead for one source sheet (provider google_sheets,
@@ -2118,7 +2121,10 @@ export interface Store {
   upsertConnection(row: ConnectionRow): Promise<void>;
   getConnections(): Promise<ConnectionRow[]>;
   insertSyncRun(provider: string): Promise<string>;
-  finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<void>;
+  /** Resolves true when the transition applied (the run was still 'running');
+   * false when the run was already reaped/finished — a late zombie's finish
+   * never overwrites the reaper's record. */
+finishSyncRun(id: string, status: string, recordsUpserted: number, error: string | null): Promise<boolean>;
   getSyncRuns(limit: number): Promise<SyncRunRow[]>;
   /**
    * The most recent SUCCESSFUL sync_runs row per provider, keyed by provider,
