@@ -112,7 +112,7 @@ describe("availability wiring — serverfn args → builder view request (loader
 });
 
 
-describe("resolveAvailabilityViewArgs — 2026-10-07 args-lost recovery", () => {
+describe("resolveAvailabilityViewArgs — args recovery (2026-10-07 fallback kept; 2026-10-10 client-nav transport fixed)", () => {
   test("data present → passed through, argsLost=false", () => {
     const r = resolveAvailabilityViewArgs({ view: "day", date: "2026-10-08" }, null);
     expect(r.argsLost).toBe(false);
@@ -128,12 +128,28 @@ describe("resolveAvailabilityViewArgs — 2026-10-07 args-lost recovery", () => 
     expect(r.argsLost).toBe(true);
     expect(r.args.view).toBe("month");
   });
-  test("data empty + _serverFn request URL (client-nav RPC) → route default, argsLost=true", () => {
+  test("2026-10-10 FIX — client navigation now delivers the payload explicitly (component-issued POST, the refreshAvailabilityFeed transport) → args = the delivered search, argsLost=false", () => {
+    // THE OLD PIN (asserting the dead-end as EXPECTED client-nav behavior) is
+    // flipped: the suite was green while the page was broken for the owner.
+    // The route's go() now POSTs the normalized search itself (see
+    // availability-flow.ts + routes/availability.tsx), so the handler receives
+    // the args on client navigation and resolves them from the payload —
+    // month-advanced, filtered, never the route default.
     const r = resolveAvailabilityViewArgs(
+      { view: "month", month: "2026-12", st: "booked" },
+      "https://x/_serverFn/eyJmaWxlIjoiL3NyYy9zZXJ2ZXIvcXVlcmllcy50cyJ9",
+    );
+    expect(r.argsLost).toBe(false);
+    expect(r.args).toEqual({ view: "month", month: "2026-12", st: "booked" });
+    // The route-default fallback stays as a fail-safe for a transport that
+    // drops even an explicit POST body: it answers the same payload a bare
+    // /availability load renders, honestly flagged (argsLost) — never
+    // invented content.
+    const lost = resolveAvailabilityViewArgs(
       {},
       "https://x/_serverFn/eyJmaWxlIjoiL3NyYy9zZXJ2ZXIvcXVlcmllcy50cyJ9",
     );
-    expect(r.argsLost).toBe(true);
-    expect(r.args.view).toBe("month");
+    expect(lost.argsLost).toBe(true);
+    expect(lost.args.view).toBe("month");
   });
 });

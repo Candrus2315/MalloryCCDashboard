@@ -96,6 +96,12 @@ import {
 } from "./availability-view";
 import { deriveDatesToPush, pushRangeLabel, type AvailabilityPushRow } from "./availability-push";
 import { availabilityPushCopy, type AvailabilityCopyDay } from "../components/availability-copy";
+// The args-lost honesty marker lives in the client-safe flow module (the
+// availability route reads it from payload warnings to distrust a loader
+// payload and self-heal) — imported here so the two can never drift.
+import { AVAILABILITY_ARGS_LOST_WARNING } from "../components/availability-flow";
+// Re-exported: the wiring tests assert byte-identity with the client marker.
+export { AVAILABILITY_ARGS_LOST_WARNING };
 import { buildAssignedLeadsByDay, type AssignedByDayGrid } from "./metrics/assigned-by-day";
 import { applyAttributionEligibility, applyRosterEligibility, buildReportingEligibility, buildRosterEligibility, historicalRepIds, reportingRepUsers } from "./roster";
 import { buildCallOwnershipBuckets } from "../components/reps-views";
@@ -959,7 +965,7 @@ export async function availabilityPageData(deps?: PageDeps) {
     ]);
     const { connection, warnings } = availabilityConnectionState(connections);
     if (deps?.viewArgsLost) {
-      warnings.push("Availability view args were lost in transit — the default month view (today) is shown.");
+      warnings.push(AVAILABILITY_ARGS_LOST_WARNING);
     }
     // PR-1's designed page-loader top-up: read the cache NOW, kick ONE bounded
     // background run for what the visible range is missing — never awaited
