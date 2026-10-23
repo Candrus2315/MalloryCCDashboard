@@ -79,7 +79,7 @@ import type {
   RetentionTransferRow,
   RetentionTransferWrite,
 } from "./types";
-import { DEFAULT_SETTINGS, isPipStatus, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_SETTINGS, isPipStatus, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -1180,12 +1180,18 @@ export class PgStore implements Store {
     // ONLY from owner-labeled writes — a system/unlabeled or default-
     // application write can never silently flip a saved mode.
     const { sheets, modeChanges } = mergeSheetsSettings(current.sheets, patch.sheets, actor === SETTINGS_OWNER_ACTOR);
+    // RETENTION MERGE (retention Settings surface): field-wise over the
+    // current group + normalized, so a partial patch never wipes the owner's
+    // other saved retention fields and an absent field falls back to the
+    // default (existing deployments keep behavior).
+    const { retention, changes: retentionChanges } = mergeRetentionSettings(current.retention, patch.retention);
     const next: AppSettings = {
       ...current,
       ...patch,
       studio: { ...current.studio, ...(patch.studio ?? {}) },
       sheets,
       acuity: { ...current.acuity, ...(patch.acuity ?? {}) },
+      retention,
     };
     await this.sql`
       INSERT INTO app_settings (key, value) VALUES ('app', ${this.sql.json(next)}::jsonb)
@@ -1197,6 +1203,18 @@ export class PgStore implements Store {
         entity_type: "sheet_mapping",
         entity_id: ch.sheet,
         field: "mode",
+        previous_value: ch.from,
+        new_value: ch.to,
+        changed_by: actor,
+      });
+    }
+    // RETENTION AUDIT: every retention-rule change THIS write made — old →
+    // new, actor (the same manual_overrides trail the sheet-config saves use).
+    for (const ch of retentionChanges) {
+      await this.insertManualOverride({
+        entity_type: "retention_settings",
+        entity_id: "app",
+        field: ch.field,
         previous_value: ch.from,
         new_value: ch.to,
         changed_by: actor,

@@ -84,7 +84,7 @@ import type {
   RetentionTransferRow,
   RetentionTransferWrite,
 } from "./types";
-import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -219,12 +219,18 @@ export class MemoryStore implements Store {
     // ONLY from owner-labeled writes — a system/unlabeled or default-
     // application write can never silently flip a saved mode.
     const { sheets, modeChanges } = mergeSheetsSettings(this.settings.sheets, patch.sheets, actor === SETTINGS_OWNER_ACTOR);
+    // RETENTION MERGE (retention Settings surface): field-wise over the
+    // current group + normalized, so a partial patch never wipes the owner's
+    // other saved retention fields and an absent field falls back to the
+    // default (existing deployments keep behavior).
+    const { retention, changes: retentionChanges } = mergeRetentionSettings(this.settings.retention, patch.retention);
     this.settings = {
       ...this.settings,
       ...patch,
       studio: { ...this.settings.studio, ...(patch.studio ?? {}) },
       sheets,
       acuity: { ...this.settings.acuity, ...(patch.acuity ?? {}) },
+      retention,
     };
     // MODE AUDIT: every sheet-mode change THIS write made — old → new, actor.
     for (const ch of modeChanges) {
@@ -232,6 +238,18 @@ export class MemoryStore implements Store {
         entity_type: "sheet_mapping",
         entity_id: ch.sheet,
         field: "mode",
+        previous_value: ch.from,
+        new_value: ch.to,
+        changed_by: actor,
+      });
+    }
+    // RETENTION AUDIT: every retention-rule change THIS write made — old →
+    // new, actor (the same manual_overrides trail the sheet-config saves use).
+    for (const ch of retentionChanges) {
+      await this.insertManualOverride({
+        entity_type: "retention_settings",
+        entity_id: "app",
+        field: ch.field,
         previous_value: ch.from,
         new_value: ch.to,
         changed_by: actor,

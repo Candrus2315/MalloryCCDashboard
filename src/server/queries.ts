@@ -1369,16 +1369,21 @@ export const getRetentionPageData = createServerFn().handler(() =>
     const store = await getStore();
     // ONE loader for the page: overview cards + Needs Attention queue (both
     // read the same ret_* tables via ui-data) + the stored scorecards.
-    const [overview, queue, scorecards] = await Promise.all([
+    // SETTINGS included: the scorecard DISPLAY boundary is resolved from
+    // CURRENT settings at call time (the sheets-adapter per-tick contract —
+    // no boot-frozen snapshot; regression-pinned in retention-settings.test.ts).
+    const [overview, queue, scorecards, settings] = await Promise.all([
       ui.retentionOverview(store),
       ui.retentionNeedsAttention(store),
       store.listRetentionScorecards(),
+      store.getSettings(),
     ]);
     // OWNER DIRECTIVE 10/21 — scorecard DISPLAY scope: stored weeks before the
-    // data-start boundary (week of Mon 2026-10-12 ET) stay in the DB untouched
-    // (append-if-new, never rewritten) but are not shown — the departed-rep-
-    // history pattern: preserved, not shown.
-    return { ...overview, queue, scorecards: scorecards.filter((r) => ui.inRetentionScorecardScope(r.week_start)) };
+    // data-start boundary (owner-editable in Settings → Retention; default the
+    // week of Mon 2026-10-12 ET) stay in the DB untouched (append-if-new,
+    // never rewritten) but are not shown — the departed-rep-history pattern:
+    // preserved, not shown.
+    return { ...overview, queue, scorecards: scorecards.filter((r) => ui.inRetentionScorecardScope(r.week_start, settings.retention.data_start_week_start)) };
   }),
 );
 

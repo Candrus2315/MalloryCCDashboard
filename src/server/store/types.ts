@@ -544,6 +544,18 @@ export interface RetentionSettings {
   max_contact_days: number | null;
   /** §11 reschedule/save window: days after a cancellation in which a rebooking counts as a recovery (plan §12; default 14). */
   reschedule_days: number;
+  /**
+   * RETENTION DISPLAY SCOPE — the data-start cutoff, stored as the ET
+   * calendar date (YYYY-MM-DD) of the Monday that starts the FIRST IN-SCOPE
+   * week. Owner-ratified default: the week containing Mon Oct 12 2026 ET
+   * (directive 10/21 — "i dont need any data before the week of the 12th of
+   * Oct for the retention tab"), which IS 2026-10-12 (Oct 12 2026 is a
+   * Monday), so the default is byte-identical to the constant this setting
+   * replaces. DISPLAY-LAYER ONLY: stored ret_* rows are never rewritten —
+   * every consumer resolves this value from CURRENT settings at call time
+   * (the sheets-adapter per-tick contract) and compares ET calendar dates.
+   */
+  data_start_week_start: string;
 }
 export const DEFAULT_RETENTION_SETTINGS: RetentionSettings = {
   due_days: 7,
@@ -554,7 +566,28 @@ export const DEFAULT_RETENTION_SETTINGS: RetentionSettings = {
   max_attempt_days: null,
   max_contact_days: null,
   reschedule_days: 14,
+  /** The week of Mon Oct 12 2026 ET (owner directive 10/21). */
+  data_start_week_start: "2026-10-12",
 };
+
+/**
+ * The Monday (ET calendar date YYYY-MM-DD) of the week containing a date the
+ * owner typed. Strict YYYY-MM-DD shape check first (Date.parse would also
+ * accept "2026-10" or "Oct 12 2026"); the round-trip check rejects rollover
+ * fabrications (2026-02-31 would parse as Mar 3). Null when unparsable — the
+ * normalizer falls back to the default rather than guessing.
+ */
+export function weekStartOfDateOrUndefined(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.trim().length === 0) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== mo - 1 || date.getUTCDate() !== d) return null;
+  const dow = date.getUTCDay(); // 0 Sun … 6 Sat
+  date.setUTCDate(date.getUTCDate() - ((dow + 6) % 7)); // step back to Monday
+  return date.toISOString().slice(0, 10);
+}
 
 export function normalizeRetentionSettings(raw: unknown): RetentionSettings {
   const base = { ...DEFAULT_RETENTION_SETTINGS };
@@ -579,9 +612,41 @@ export function normalizeRetentionSettings(raw: unknown): RetentionSettings {
     max_attempt_days: typeof r.max_attempt_days === "number" && Number.isFinite(r.max_attempt_days) && r.max_attempt_days > 0 ? Math.round(r.max_attempt_days) : null,
     max_contact_days: typeof r.max_contact_days === "number" && Number.isFinite(r.max_contact_days) && r.max_contact_days > 0 ? Math.round(r.max_contact_days) : null,
     reschedule_days: int(r.reschedule_days, base.reschedule_days, 1, 90),
+    // DISPLAY SCOPE (retention Settings surface): a stored/typed date
+    // normalizes to the Monday that starts ITS week ("the week containing
+    // X"), so the owner can enter any date in the intended week. Unparsable
+    // garbage falls back to the owner-ratified default — never a guessed date.
+    data_start_week_start: weekStartOfDateOrUndefined(r.data_start_week_start) ?? base.data_start_week_start,
   };
 }
-
+/**
+ * DEFENSIVE RETENTION MERGE — the ONE merge used by BOTH stores' saveSettings
+ * (memory + pg), so their semantics cannot drift. A patch that carries
+ * `retention` merges FIELD-WISE over the current group (a partial patch never
+ * wipes the owner's other saved retention fields), and the result is
+ * normalized (clamps + defaults) so an absent field always falls back to
+ * DEFAULT_RETENTION_SETTINGS (existing deployments keep byte-identical
+ * behavior). Returns every field THIS write actually CHANGED (old → new) so
+ * the stores can audit each through insertManualOverride — exactly the
+ * sheet-mode audit pattern.
+ */
+export function mergeRetentionSettings(
+  current: RetentionSettings | undefined,
+  patch: Partial<RetentionSettings> | undefined,
+): {
+  retention: RetentionSettings;
+  changes: { field: keyof RetentionSettings; from: string; to: string }[];
+} {
+  const retention = normalizeRetentionSettings({ ...normalizeRetentionSettings(current), ...(patch ?? {}) });
+  const before = normalizeRetentionSettings(current);
+  const changes: { field: keyof RetentionSettings; from: string; to: string }[] = [];
+  for (const key of Object.keys(retention) as (keyof RetentionSettings)[]) {
+    const from = String(before[key]);
+    const to = String(retention[key]);
+    if (from !== to) changes.push({ field: key, from, to });
+  }
+  return { retention, changes };
+}
 /**
  * Per-sheet Google Sheets config. `mode` selects the sheet shape (the real
  * sheets were not visible when this shipped, so BOTH are first-class):
