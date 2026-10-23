@@ -59,7 +59,15 @@ export function availabilityViewArgsFrom(
  * transport — GET and POST, the SSR in-process chain AND the client-navigation
  * RPC (the handler then sees data={} while getRequest() holds the page request
  * during SSR but the _serverFn endpoint request during client nav). The URL
- * fallback rescues SSR page loads; client navigation has NO recoverable source.
+ * fallback rescues SSR page loads.
+ *
+ * 2026-10-10 UPDATE (availability interactivity fix): client navigation now
+ * has a recoverable source — the ROUTE's component issues the serverfn call
+ * ITSELF (the refreshAvailabilityFeed transport, proven to deliver payloads)
+ * with the normalized search, so this resolver receives a real payload on
+ * client-nav RPCs too. The URL fallback + route default below remain pure
+ * belt-and-suspenders for SSR page loads and any transport that still drops a
+ * body — the argsLost flag keeps that fallback honest, never silent.
  *
  * The availability serverfn has exactly ONE production caller — the
  * availability route — whose validateSearch DEFAULTS view="month". When

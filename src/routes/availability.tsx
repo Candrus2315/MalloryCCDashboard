@@ -15,6 +15,13 @@ import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
 // Wave 2 harmonization: the view switcher uses the SAME shared segmented
 // control as Team/Reps date ranges (one control language across the app).
 import { Segmented } from "~/components/Segmented";
+// 2026-10-10 interactivity fix: the client-side args contract (normalization,
+// render-source key, args-lost marker) — the explicit-fetch transport's pure pieces.
+import {
+  AVAILABILITY_ARGS_LOST_WARNING,
+  normalizeAvailabilitySearch,
+  sameAvailabilitySearch,
+} from "~/components/availability-flow";
 
 /* ---------------------------------------------------------------------------
    AVAILABILITY REBUILD PR-3 — the rebuilt page over the range-view payload
@@ -24,18 +31,11 @@ import { Segmented } from "~/components/Segmented";
 --------------------------------------------------------------------------- */
 
 export const Route = createFileRoute("/availability")({
-  validateSearch: (search: Record<string, unknown>): AvailabilityViewRawSearch => {
-    const s = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
-    return {
-      view: s(search.view) ?? "month", // month is the DEFAULT view (owner §2 directive)
-      month: s(search.month),
-      from: s(search.from),
-      date: s(search.date),
-      cal: s(search.cal),
-      type: s(search.type),
-      st: s(search.st),
-    };
-  },
+  // 2026-10-10: the normalization moved to the client-safe flow module — the
+  // component's go() runs the SAME function before its explicit fetch, so the
+  // URL search and the explicitly-POSTed payload can never diverge.
+  validateSearch: (search: Record<string, unknown>): AvailabilityViewRawSearch =>
+    normalizeAvailabilitySearch(search as Partial<AvailabilityViewRawSearch>),
   loader: ({ search }) => getAvailabilityData({ data: search }),
   component: AvailabilityPage,
 });
@@ -144,16 +144,62 @@ function monthWeeks(dates: string[]): (string | null)[][] {
   return weeks;
 }
 
+/** The page payload the explicit fetch returns (same shape the loader delivers). */
+type AvailabilityPagePayload = Awaited<ReturnType<typeof getAvailabilityData>>;
+
 function AvailabilityPage() {
-  const data = Route.useLoaderData();
+  const loaderData = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+
+  // THE FIX (2026-10-10): a LOADER-issued serverfn call drops its payload in
+  // transit on client navigation (TanStack Start 1.158, live-instrumented —
+  // scratch/availability-root-cause.md), so every in-tab interaction used to
+  // advance the URL while the view froze on the route default (and a manual
+  // refresh "fixed" it, because a full SSR load recovers the args from the
+  // page URL). The transport proven to deliver payloads is a DIRECT
+  // component-issued serverfn call (the refreshAvailabilityFeed pattern):
+  // interactions now navigate the URL AND explicitly POST the normalized
+  // search. The loader keeps serving SSR page loads (its page-URL fallback
+  // recovers the args there); the render source prefers explicit-fetch data
+  // whenever it matches the URL's current search.
+  const [live, setLive] = useState<{ search: AvailabilityViewRawSearch; data: AvailabilityPagePayload | null } | null>(null);
+  const data = live != null && sameAvailabilitySearch(live.search, search) && live.data ? live.data : loaderData;
   const view = data.view as AvailabilityPageView | undefined;
   const conn = connectionView(data.connection, null);
   const suppressed = conn.unavailable;
 
-  const go = (patch: Partial<AvailabilityViewRawSearch>) =>
-    void navigate({ search: (prev) => ({ ...prev, ...patch }) });
+  const fetchView = (next: AvailabilityViewRawSearch, hold: AvailabilityPagePayload | null = null) => {
+    // hold: the data currently on screen — renders while the explicit fetch is
+    // in flight, so a dropped loader payload can never flash into the view.
+    setLive((cur) => (cur && sameAvailabilitySearch(cur.search, next) ? { ...cur, data: hold ?? cur.data } : { search: next, data: hold }));
+    void getAvailabilityData({ data: next })
+      .then((payload) =>
+        setLive((cur) => (cur && sameAvailabilitySearch(cur.search, next) ? { search: cur.search, data: payload } : cur)),
+      )
+      .catch(() =>
+        setLive((cur) => (cur && sameAvailabilitySearch(cur.search, next) ? { search: cur.search, data: hold } : cur)),
+      );
+  };
+  const go = (patch: Partial<AvailabilityViewRawSearch>) => {
+    const next = normalizeAvailabilitySearch({ ...search, ...patch });
+    void navigate({ search: next });
+    fetchView(next, data);
+  };
+
+  // SELF-HEAL (2026-10-10): navigations that bypass go() — back/forward
+  // buttons, cross-page links into a parameterized availability URL — re-run
+  // the loader, whose dropped payload lands as the route default (with the
+  // args-lost banner). When the loader payload carries the args-lost marker
+  // and no explicit data covers this search, re-fetch through the proven
+  // transport. go() already owns its own searches — the first guard skips
+  // those. Deps: search changes are the only trigger; live/data are read at
+  // effect-run time.
+  useEffect(() => {
+    if (live && sameAvailabilitySearch(live.search, search)) return;
+    if (!data.warnings.includes(AVAILABILITY_ARGS_LOST_WARNING)) return;
+    fetchView(normalizeAvailabilitySearch(search));
+  }, [search]);
 
   const selectedDay = useMemo(() => {
     if (!view || view.kind !== "day") return null;
@@ -183,6 +229,9 @@ function AvailabilityPage() {
             : res.reason === "sync-in-progress"
               ? "Refresh skipped — a feed sync is already running."
               : `Refresh failed — ${res.error ?? res.reason ?? "unknown"}.`;
+      // the feed cache just changed — rebuild the visible view through the
+      // proven transport so the REFRESH button updates the page too
+      if (res.outcome === "synced") fetchView(normalizeAvailabilitySearch(search));
       setRefresh({ state: "done", line });
     } catch {
       setRefresh({ state: "done", line: "Refresh failed — the server could not run the feed sync." });

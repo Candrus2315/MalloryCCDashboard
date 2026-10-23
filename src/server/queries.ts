@@ -1376,11 +1376,16 @@ function currentRequestUrl(): string | null {
  * drops a GET serverfn's payload in BOTH transports — the SSR in-process chain
  * AND the client-navigation RPC (the handler then sees data={} with the request
  * context either holding the PAGE request during SSR, or the _serverFn endpoint
- * request during client nav — never a recoverable search). The POST transport
- * delivers the payload in both (the refreshAvailabilityFeed POST demonstrably
- * runs server-side from the browser). The page-URL fallback in
- * availabilityViewArgsFrom stays as belt-and-suspenders for any transport that
- * drops a POST body too (SSR page loads carry the search in their URL).
+ * request during client nav — never a recoverable search). The POST switch
+ * fixed the SSR chain, but 2026-10-10 live verification (owner symptoms +
+ * scratch/availability-root-cause.md) proved a LOADER-issued call STILL drops
+ * its payload on the client-navigation RPC — the URL advanced while the view
+ * froze. The fix lives in the route component: interactions issue the serverfn
+ * call DIRECTLY (the refreshAvailabilityFeed transport, which demonstrably
+ * delivers its POST body from the browser). This handler therefore receives a
+ * real payload on every path the route can reach; the page-URL fallback in
+ * availabilityViewArgsFrom stays as belt-and-suspenders (SSR page loads carry
+ * the search in their URL), and argsLost flags any residual drop honestly.
  */
 export const getAvailabilityData = createServerFn({ method: "POST" })
   .validator((input?: AvailabilityViewRawSearch) => input ?? {})
