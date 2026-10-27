@@ -1760,9 +1760,13 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // null in practice (the workbook has no rep column) — no live number moves.
   const assigned = assignedLeadsInRange(leadsWeek, lwMon, lwSun).filter((l) => !isFormSourceSheet(l.source_sheet));
   // THREE-GENRE assigned-lead conversion split (owner directive 2026-10-22):
-  // Fairyland is a sibling of Family/Animalia — never silently Family.
+  // Fairyland is a sibling of Family/Animalia — never silently Family. The
+  // SHEET-IDENTITY FALLBACK (owner directive 2026-10-27, item 4) matches
+  // splitLeadsByType: a fairyland-sheet lead is fairyland even when its
+  // lead_type text ("Fairies" — the sheet's Campaign Name) lacks the genre word.
   const isAniLead = (l: { lead_type: string }) => /animalia/i.test(l.lead_type);
-  const isFaiLead = (l: { lead_type: string }) => /fairyland/i.test(l.lead_type);
+  const isFaiLead = (l: { lead_type: string; source_sheet: string }) =>
+    /fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland";
   const assignedFam = assigned.filter((l) => !isAniLead(l) && !isFaiLead(l));
   const assignedAni = assigned.filter(isAniLead);
   const assignedFai = assigned.filter((l) => !isAniLead(l) && isFaiLead(l));

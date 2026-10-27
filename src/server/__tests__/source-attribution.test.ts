@@ -534,6 +534,11 @@ describe("classifyLeadSource mirrors splitLeadsByType exactly", () => {
     expect(classifyLeadSource({ lead_type: "Fairyland", source_sheet: "family" })).toBe("fairyland");
     expect(classifyLeadSource({ lead_type: "", source_sheet: "animalia" })).toBe("family"); // catch-all is TEXT, not sheet
     expect(classifyLeadSource({ lead_type: "Family", source_sheet: "family" })).toBe("family");
+    // SHEET-IDENTITY FALLBACK (owner directive 2026-10-27, item 4): the
+    // Fairyland sheet's Campaign Name says "Fairies" — never matched by
+    // /fairyland/i — so sheet identity decides for fairyland-sheet rows.
+    expect(classifyLeadSource({ lead_type: "Fairies", source_sheet: "fairyland" })).toBe("fairyland");
+    expect(classifyLeadSource({ lead_type: "Fairies", source_sheet: "family" })).toBe("family"); // family-sheet text never re-buckets
     expect(phone10("+1 (555) 201-1234")).toBe("5552011234");
     expect(buildLeadSourceIndex([lead({ contact_id: "c1", phone: "5551112222" })]).byContact.get("c1")).toHaveLength(1);
   });

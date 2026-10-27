@@ -245,11 +245,15 @@ export function assignedLeadsInRange(leads: LeadRow[], start: string, end: strin
 /**
  * Per-SOURCE lead counts over the fetched lead rows (no date filter — callers
  * pass the window). Seven sources since the 10/27 form-workbook directive:
- * the three genre sheets classify by lead_type text EXACTLY as before
- * (/animalia/i → animalia, /fairyland/i → fairyland, else family); the four
- * "Forms Data" workbook sheets classify by SHEET IDENTITY — their lead_type
- * text ("Family"/"Pet" project names on the Google Ads tab) is never a genre
- * vote, so genre counts stay byte-identical to their pre-forms behavior.
+ * the three genre sheets classify by lead_type text with the SHEET-IDENTITY
+ * FALLBACK for Fairyland (/animalia/i → animalia; /fairyland/i → fairyland;
+ * OR the row was ingested from the fairyland sheet → fairyland; else family —
+ * the Fairyland sheet's Campaign Name column says "Fairies", which
+ * /fairyland/i never matches, so without the fallback every genuine
+ * Fairyland-sheet lead silently counted as Family); the four "Forms Data"
+ * workbook sheets classify by SHEET IDENTITY — their lead_type text
+ * ("Family"/"Pet" project names on the Google Ads tab) is never a genre vote,
+ * so genre counts stay byte-identical to their pre-forms behavior.
  * `total` is the combined lead count (all seven sources).
  */
 export function splitLeadsByType(leads: LeadRow[]): {
@@ -271,7 +275,12 @@ export function splitLeadsByType(leads: LeadRow[]): {
     if (l.source_sheet === "alliance_activate_certificate") { alliance_activate_certificate += 1; continue; }
     if (l.source_sheet === "website_applications") { website_applications += 1; continue; }
     if (/animalia/i.test(l.lead_type)) animalia += 1;
-    else if (/fairyland/i.test(l.lead_type)) fairyland += 1;
+    // SHEET-IDENTITY FALLBACK (owner directive 2026-10-27, item 4): a lead
+    // ingested from the fairyland SHEET is fairyland even when its lead_type
+    // text ("Fairies" — the sheet's Campaign Name) doesn't contain
+    // "fairyland". Same convention summarizeLeadRows/assigned-by-day already
+    // use; text-first order keeps animalia/family outcomes byte-identical.
+    else if (/fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland") fairyland += 1;
     else family += 1;
   }
   return {
