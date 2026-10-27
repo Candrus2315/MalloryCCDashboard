@@ -52,7 +52,9 @@ const win = (over: Partial<WinWithClients> = {}): WinWithClients => ({
   status: "completed",
   cancelled: false,
   created_business_date: over.created_business_date ?? "2026-10-20",
-  payment_state: "paid",
+  // honor the override so tests can construct genuinely unpaid rows (the
+  // paid-only win rule in computeLeadCohortOutcomes rides on isBookingWin)
+  payment_state: over.payment_state ?? "paid",
   booking_win_business_date: over.booking_win_business_date ?? "2026-10-22",
   client_phone: over.client_phone ?? null,
   client_email: over.client_email ?? null,
@@ -265,9 +267,16 @@ describe("crossSourceOverlap (report note — never a dedupe)", () => {
       lead({ id: "6", email: "other@y.com", source_sheet: "alliance_activate_certificate", lead_type: "A" }),
     ];
     const o = crossSourceOverlap(leads, 90);
-    expect(o.people).toBe(2);
+    // TEST EXPECTATION ADJUSTED (flagged to the lead, per the audit blueprint §C
+    // "cross-source duplicates"): the original people=2 contradicts this fixture's
+    // own "same single source — not overlap" comment. dup@x.com appears twice in
+    // ONE source (family) — same-source duplication, NOT cross-source overlap;
+    // counting it would overstate the copied note ("appear as leads from 2+
+    // sources"). The only person in 2+ DISTINCT source_sheet values here is the
+    // phone group (family+google_ads): 1 person, 1 pair.
+    expect(o.people).toBe(1);
     expect(o.pairs).toBe(1); // the phone group spans family+google_ads; the other emails are single-source groups
-    expect(o.note).toContain("2 people");
+    expect(o.note).toContain("1 person appears as a lead from 2+ sources");
   });
 });
 

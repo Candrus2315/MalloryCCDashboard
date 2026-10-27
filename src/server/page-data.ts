@@ -84,7 +84,7 @@ import {
   type WeeklyDayByRepGrid,
   type WeeklyRepRow,
 } from "./metrics/weekly";
-import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
+import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "./metrics/weekly-report-text";
 import {
   bestWorstSourceLines,
   buildSourcePerformanceTable,
@@ -1605,6 +1605,8 @@ export interface WeeklyPageData {
     celebrateDefault: string | null;
     /** The full CC Report text COPY REPORT emits (owner's template order). */
     reportText: string;
+    /** The LEAD SOURCE PERFORMANCE section input reportText carries (owner directive 10/27, Step 5). */
+    sourcePerformance: NonNullable<WeeklyCcReportInput["sourcePerformance"]>;
   };
   /**
    * BOOKINGS FROM LEADS (owner funnel, 2026-09-29): ALL paid bookings of the
@@ -1970,6 +1972,18 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   };
 
   const reportNotes = reportNotesRow?.notes ?? {};
+  // The LEAD SOURCE PERFORMANCE section input the copy carries (directive
+  // 10/27, Step 5). Exposed on data.report so the byte-identity tests (and the
+  // UI) can see exactly what the report renders without re-deriving it.
+  const reportSourcePerformance: NonNullable<WeeklyCcReportInput["sourcePerformance"]> = {
+    rows: sourceTable.rows,
+    totalLeads: sourceTable.totalLeads,
+    totalBookings: sourceTable.totalBookings,
+    totalConv: sourceTable.totalConv,
+    best: sourceBestWorst.best,
+    worst: sourceBestWorst.worst,
+    overlapNote: sourceOverlap.note,
+  };
   const reportText = buildWeeklyCcReportText({
     week: { start: lwMon, end: lwSun },
     monthKey,
@@ -1978,15 +1992,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     channels,
     channelLeads,
     leads: splitLeadsByType(leadsWeek),
-    sourcePerformance: {
-      rows: sourceTable.rows,
-      totalLeads: sourceTable.totalLeads,
-      totalBookings: sourceTable.totalBookings,
-      totalConv: sourceTable.totalConv,
-      best: sourceBestWorst.best,
-      worst: sourceBestWorst.worst,
-      overlapNote: sourceOverlap.note,
-    },
+    sourcePerformance: reportSourcePerformance,
     conversion: {
       overall: conversionRate(lwOwnership.repWins.length, assigned.length),
       family: conversionRate(repWinsFam, assignedFam.length),
@@ -2055,6 +2061,8 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       notes: reportNotes,
       celebrateDefault,
       reportText,
+      /** The Lead Source Performance section input reportText was built with. */
+      sourcePerformance: reportSourcePerformance,
     },
     warnings,
   };

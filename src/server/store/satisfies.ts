@@ -232,6 +232,9 @@ const STORE_METHOD_FLAGS = {
   listRetentionTransfers: 1,
   insertRetentionTransfers: 1,
   updateRetentionTransfer: 1,
+  // per-source booking attribution joins (owner directive 2026-10-27; read-only)
+  getWinsWithClientsBetween: 1,
+  getLeadsJoinRange: 1,
 } satisfies Record<keyof Store, number>;
 
 /** Every Store member name — compiler-verified complete (see module doc). */

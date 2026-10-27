@@ -225,7 +225,7 @@ export interface SourcePerformanceTable {
   totalLeads: number;
   totalBookings: number;
   totalConv: number | null;
-  /** Wins with no lead link — the honest Unattributed row's bookings count. */
+  /** Wins with no lead link INSIDE the cohort — the honest Unattributed row's bookings count. */
   unattributedBookings: number;
 }
 
@@ -240,6 +240,11 @@ export function sourceConversion(bookings: number, leads: number): number | null
  * classifyLeadSource so the genre numbers are BYTE-IDENTICAL to every
  * existing surface. `byWinSource` is resolveBookingSources' output over the
  * period's in-scope wins.
+ *
+ * COHORT SCOPING (strict): a win is credited to the source of its matched
+ * lead ONLY when that lead id is IN `cohortLeads` — the table counts nothing
+ * outside what the caller passed. A win whose matched lead falls outside the
+ * cohort (or with no match at all) lands honestly in Unattributed.
  */
 export function buildSourcePerformanceTable(
   cohortLeads: LeadRow[],
@@ -265,8 +270,15 @@ export function buildSourcePerformanceTable(
 
   const bookingsByBucket = new Map<SourceBucket, number>();
   let unattributedBookings = 0;
+  // STRICT COHORT SCOPING: credit a win to its resolved source only when the
+  // resolved lead is inside THIS cohort — the caller's cohort and wins are the
+  // only inputs, and a booking can never be attributed to a lead the table
+  // does not count (it stays honestly Unattributed here).
+  const cohortLeadIds = new Set(cohortLeads.map((l) => l.id));
   for (const w of wins) {
-    const b = byWinSource.get(w.id)?.source ?? "unattributed";
+    const resolved = byWinSource.get(w.id);
+    const b: SourceBucket =
+      resolved && resolved.leadId !== null && cohortLeadIds.has(resolved.leadId) ? resolved.source : "unattributed";
     if (b === "unattributed") unattributedBookings += 1;
     bookingsByBucket.set(b, (bookingsByBucket.get(b) ?? 0) + 1);
   }
@@ -290,11 +302,25 @@ export function buildSourcePerformanceTable(
   return { rows, totalLeads, totalBookings, totalConv: sourceConversion(totalBookings, totalLeads), unattributedBookings };
 }
 
-/** Best/worst conversion among sources with ≥1 lead and ≥1 booking / ≥1 lead (null when none qualifies). */
-export function bestWorstSourceLines(rows: SourcePerformanceRow[]): { best: string | null; worst: string | null } {
+/**
+ * Best/worst conversion among the table's real source rows (Total and
+ * Unattributed never qualify). BEST = highest conv among sources with ≥1 lead
+ * AND ≥1 booking (a 0% source is never "best"). WORST = lowest conv among
+ * sources with ≥1 lead — a defined 0.0% IS the worst (honest: leads came in,
+ * none booked); sources with NO leads (conv "—", null) never qualify on
+ * either end. Ties resolve deterministically to the FIRST row in table order.
+ * Accepts the buildSourcePerformanceTable result or a bare rows array.
+ * Returns nulls when nothing qualifies.
+ */
+export function bestWorstSourceLines(
+  tableOrRows: SourcePerformanceTable | SourcePerformanceRow[],
+): { best: string | null; worst: string | null } {
+  const rows = Array.isArray(tableOrRows) ? tableOrRows : tableOrRows.rows;
   const pctLabel = (r: SourcePerformanceRow): string => `${r.label} (${((r.conv ?? 0) * 100).toFixed(1)}%)`;
-  const qualifying = rows.filter((r) => r.source !== "total" && r.source !== "unattributed" && r.leads > 0 && r.bookings > 0);
-  const withLeads = rows.filter((r) => r.source !== "total" && r.source !== "unattributed" && r.leads > 0);
+  const realSource = (r: SourcePerformanceRow) => r.source !== "total" && r.source !== "unattributed";
+  const qualifying = rows.filter((r) => realSource(r) && r.leads > 0 && r.bookings > 0);
+  const withLeads = rows.filter((r) => realSource(r) && r.leads > 0);
+  // reduce keeps the FIRST extreme on ties → deterministic with fixed row order.
   const best = qualifying.length ? qualifying.reduce((a, b) => ((b.conv ?? 0) > (a.conv ?? 0) ? b : a)) : null;
   const worst = withLeads.length ? withLeads.reduce((a, b) => ((b.conv ?? 0) < (a.conv ?? 0) ? b : a)) : null;
   return { best: best ? pctLabel(best) : null, worst: worst ? pctLabel(worst) : null };
@@ -467,7 +493,7 @@ export function crossSourceOverlap(leads: LeadJoinRow[], windowDays: number): Cr
     pairs: pairSet.size,
     note:
       people > 0
-        ? `Note: ${people} people appear as leads from 2+ sources in the last ${windowDays} days — each source counts its own sheet rows independently (no cross-source dedupe).`
+        ? `Note: ${people} ${people === 1 ? "person appears as a lead" : "people appear as leads"} from 2+ sources in the last ${windowDays} days — each source counts its own sheet rows independently (no cross-source dedupe).`
         : `Note: no person appears as a lead from 2+ sources in the last ${windowDays} days (no cross-source overlap in the window).`,
   };
 }
