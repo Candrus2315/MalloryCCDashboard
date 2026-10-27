@@ -828,19 +828,26 @@ function RepsPage() {
         </section>
       )}
 
-      {/* BOOKING SOURCES (ATTRIBUTED) — owner directive 2026-10-27, Step 3:
-          which sources the SELECTED rep's attributed bookings came from +
-          per-source conversion. Bookings counted ONLY through the attribution
-          verdict (bookingsByRep semantics — never raw sheet rows; no-rep
-          wins never a rep row, rev-13). Form-source conversion renders "—"
-          (owner rule: form-source leads are team totals, never rep metrics). */}
-      <section className="card card-dense" aria-label="Booking sources of attributed bookings">
+      {/* BOOKING SOURCES (REP COHORT) — owner directive 2026-10-27, part 2.
+          Primary numbers are the rep's ASSIGNED selected-period lead cohort
+          per source: Bookings = verdict wins whose matched lead is in the
+          cohort ("of the leads assigned to this rep from that source during
+          the period, how many booked"); Assigned Leads = the work-date
+          assigned cohort (UNCHANGED denominator); Conv % = cohort bookings ÷
+          assigned. Prior-period, later-period, truly-unattributed and
+          form-source wins live in the collapsed Attribution detail below —
+          the per-win attribution data stays complete underneath. Form-source
+          rows show Bookings 0 / Assigned — / Conv — BY THE OWNER'S RULE:
+          form-source leads are team totals, never rep metrics. COLUMN
+          CONTRACT (locked by test): Source | Bookings | Assigned Leads |
+          Conv % — every value renders directly beneath its header. */}
+      <section className="card card-dense" aria-label="Booking sources (rep cohort)">
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div className="min-w-0">
             <span className="inline-flex items-center gap-1.5">
-              <p className="section-heading">Booking Sources (Attributed)</p>
+              <p className="section-heading">Booking Sources</p>
               <InfoTip
-                label="How booking sources are attributed"
+                label="How booking sources are counted"
                 tip={data.repSourcePerformance.note}
               />
             </span>
@@ -855,7 +862,7 @@ function RepsPage() {
               <tr>
                 <th scope="col" className="text-left font-medium">Source</th>
                 <th scope="col" className="font-medium">Bookings</th>
-                <th scope="col" className="font-medium">Assigned leads</th>
+                <th scope="col" className="font-medium">Assigned Leads</th>
                 <th scope="col" className="font-medium">Conv %</th>
               </tr>
             </thead>
@@ -863,7 +870,7 @@ function RepsPage() {
               {data.repSourcePerformance.rows.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="text-left text-(--text-muted)">
-                    No attributed bookings or assigned leads in this range — nothing to attribute, never a guessed source.
+                    No cohort bookings or assigned leads in this range — nothing to attribute, never a guessed source.
                   </td>
                 </tr>
               ) : (
@@ -881,8 +888,63 @@ function RepsPage() {
             </tbody>
           </table>
         </div>
+        {/* ATTRIBUTION DETAIL (collapsed — mirrors the Weekly tab's detail
+            pattern): the full audit view of this rep's verdict wins. Prior-
+            period wins never enter the primary numerator; later-period wins
+            surface when nonzero; truly-unattributed wins belong to no cohort;
+            form-source wins are team-level metrics. */}
+        <details className="group/atd mt-4">
+          <summary className="inline-flex cursor-pointer select-none items-center gap-1 text-xs text-(--text-caption) transition-colors hover:text-(--text-primary)">
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              className="transition-transform group-open/atd:rotate-90"
+              aria-hidden="true"
+            >
+              <path d="M4 2.5L8 6L4 9.5" />
+            </svg>
+            Attribution detail — prior-period, no-link, team-level form-source wins
+          </summary>
+          <div className="mt-3 space-y-2 text-[13px] text-(--text-body)">
+            <p>
+              {data.repSourcePerformance.totalResolvedWins === 0
+                ? "No verdict wins for this rep in the selected range."
+                : `Wins booked through this rep's attribution verdict in the selected range: ${formatInt(
+                    data.repSourcePerformance.totalResolvedWins,
+                  )} total — ${formatInt(data.repSourcePerformance.totalCohortBookings)} cohort booking${data.repSourcePerformance.totalCohortBookings === 1 ? "" : "s"} in the table above (the card counts cohort wins, so its sums need not equal the period's total wins) and ${formatInt(
+                    data.repSourcePerformance.trulyUnattributedWins,
+                  )} with no reliable lead link (Truly Unattributed).`}
+            </p>
+            {data.repSourcePerformance.priorBySource.length > 0 && (
+              <p>
+                <span className="font-medium">Prior-period wins</span> (matched lead's sheet date before the selected range — never a primary
+                numerator):{" "}
+                {data.repSourcePerformance.priorBySource.map((c) => `${c.label} ${formatInt(c.count)}`).join(" · ")}
+              </p>
+            )}
+            {data.repSourcePerformance.laterBySource.length > 0 && (
+              <p>
+                <span className="font-medium">Later-period wins</span> (matched lead's sheet date after the selected range — surfaced, never
+                merged):{" "}
+                {data.repSourcePerformance.laterBySource.map((c) => `${c.label} ${formatInt(c.count)}`).join(" · ")}
+              </p>
+            )}
+            {data.repSourcePerformance.teamFormWins.length > 0 && (
+              <p>
+                <span className="font-medium">Form-source wins</span> (team-level: form-source leads carry no rep assignment, so these never
+                enter a rep cohort — volume and conversion live on the Weekly tab):{" "}
+                {data.repSourcePerformance.teamFormWins.map((c) => `${c.label} ${formatInt(c.count)}`).join(" · ")}
+              </p>
+            )}
+          </div>
+        </details>
       </section>
-      {/* ASSIGNED LEADS BY DAY (owner directive 2026-10-01) — presentation
+            {/* ASSIGNED LEADS BY DAY (owner directive 2026-10-01) — presentation
           redesign per owner spec: same payload, same CSV, zero math changes.
           Structured stack cells (count primary, genre label muted), Weekly
           Total as a separated rollup column, CC roster rows first, other lead

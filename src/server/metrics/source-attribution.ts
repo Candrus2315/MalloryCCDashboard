@@ -494,6 +494,198 @@ export function rollupRepSourceBookings(
   return out;
 }
 
+// ---------- rep-card COHORT scoping (owner directive 2026-10-27, part 2) ----------
+// ADDITIVE ONLY — the rollup above, the three-category engine and the frozen
+// selection rule are untouched. This builder re-scopes what the REP CARD
+// displays: primary Bookings = the rep's cohort wins (see below); everything
+// else (prior-period, later-period, truly-unattributed, form-source wins)
+// moves to the card's audit detail. No stored data changes; the per-win
+// attribution data stays complete underneath.
+
+export interface RepCohortSourceRow {
+  source: SourceBucket;
+  label: string;
+  /** PRIMARY numerator: the rep's cohort bookings for this source (see builder docblock). */
+  bookings: number;
+  /** Assigned leads of the rep's selected-period work-date cohort for this source — the UNCHANGED denominator. */
+  leadsAssigned: number;
+  /** bookings ÷ leadsAssigned; null when the denominator is 0 (renders "—", never a fabricated 0%). */
+  conv: number | null;
+  /** ALL of the rep's verdict wins resolved to this source, any category — detail/audit use. */
+  resolvedWins: number;
+  /** "cohort" = genre sources (rep-assigned leads exist); "team" = form sources (owner rule: team-level, never rep metrics). */
+  kind: "cohort" | "team";
+}
+
+export interface RepCohortCount {
+  source: SourceBucket;
+  label: string;
+  count: number;
+}
+
+export interface RepCohortDetail {
+  repId: string | null;
+  /** Primary rows in SOURCE_BUCKETS order: genre rows with cohort activity, then form rows with resolved wins. */
+  rows: RepCohortSourceRow[];
+  /** PRIOR-PERIOD verdict wins of this rep by resolved source — never a primary numerator. */
+  priorBySource: RepCohortCount[];
+  /** LATER-PERIOD verdict wins by resolved source — surfaced when nonzero, never merged. */
+  laterBySource: RepCohortCount[];
+  /** This rep's wins with NO reliable lead link — the only "Truly Unattributed" meaning. */
+  trulyUnattributedWins: number;
+  /** Verdict wins resolved to form-source leads — team-level metrics (no rep cohort exists for them). */
+  teamFormWins: RepCohortCount[];
+  totalCohortBookings: number;
+  /** All of this rep's verdict wins in the period (cohort + prior + later + team-form + truly unattributed). */
+  totalResolvedWins: number;
+  totalPriorWins: number;
+  totalLaterWins: number;
+}
+
+/**
+ * REP-CARD COHORT SCOPING (owner directive 2026-10-27, part 2 — the owner's
+ * formula, verbatim):
+ *   Bookings  = wins whose resolved/matched lead is in the rep's ASSIGNED
+ *               selected-period lead cohort for that source ("of the leads
+ *               assigned to this rep from that source during the period, how
+ *               many booked");
+ *   Assigned  = assigned leads from that source during the selected period
+ *               (work-date assigned cohort — UNCHANGED denominator);
+ *   Conv %    = cohort bookings ÷ assigned × 100.
+ * A win enters a rep row ONLY through its attribution verdict (rollup
+ * semantics above: manual overrides included, no-rep wins never a rep row).
+ * PRIOR-PERIOD wins (matched lead's source_date predates the period) NEVER
+ * enter the numerator — they surface in the detail; with production genre
+ * data (work_date == source_date) cohort membership and the current-period
+ * category coincide, and the category guard makes the prior exclusion hold
+ * unconditionally. Form-source leads carry no rep assignment (owner rule:
+ * team totals, never rep metrics) → their cohort is empty → bookings 0,
+ * leadsAssigned 0, conv "—"; the wins resolved to them surface as team-level
+ * counts. Truly Unattributed wins (no lead link) belong to no cohort and
+ * surface in the detail. The per-win attribution data is unchanged — this
+ * only scopes what the card displays, so the card's sums no longer need to
+ * equal the period's win total (the owner's stated, correct consequence).
+ */
+export function buildRepCohortSourcePerformance(args: {
+  repId: string | null;
+  wins: WinWithClients[];
+  attributions: AttributionRow[];
+  byWinSource: Map<string, { source: SourceBucket; leadId: string | null; sourceDate?: string | null }>;
+  /** The selected period's assigned-lead work-date cohort: leads with assigned_rep_id, form sheets excluded. */
+  assignedCohortLeads: LeadRow[];
+  period: { start: string; end: string };
+}): RepCohortDetail {
+  const { repId, wins, attributions, byWinSource, assignedCohortLeads, period } = args;
+
+  // The rep's assigned cohort per source — lead-ID sets (numerator membership)
+  // plus per-source counts (the denominator). UNCHANGED denominator filter:
+  // assigned rows only, form sheets excluded (owner rule), classifyLeadSource.
+  const cohortIdsBySource = new Map<SourceBucket, Set<string>>();
+  const assignedCountBySource = new Map<SourceBucket, number>();
+  for (const l of assignedCohortLeads) {
+    if (!repId || l.assigned_rep_id !== repId) continue;
+    const b = classifyLeadSource(l);
+    let ids = cohortIdsBySource.get(b);
+    if (!ids) {
+      ids = new Set<string>();
+      cohortIdsBySource.set(b, ids);
+    }
+    ids.add(l.id);
+    assignedCountBySource.set(b, (assignedCountBySource.get(b) ?? 0) + 1);
+  }
+
+  const byAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
+  const cohortBySource = new Map<SourceBucket, number>();
+  const resolvedBySource = new Map<SourceBucket, number>();
+  const priorBySource = new Map<SourceBucket, number>();
+  const laterBySource = new Map<SourceBucket, number>();
+  const teamFormBySource = new Map<SourceBucket, number>();
+  let trulyUnattributed = 0;
+  let totalResolved = 0;
+  // The rep's own cohort id set feeds sourceMatchCategory's defensive
+  // date-less branch only (a matched lead always carries a parsable
+  // source_date from the selection rule, so it is unreachable in practice).
+  const repCohortIds = new Set<string>();
+  for (const ids of cohortIdsBySource.values()) for (const id of ids) repCohortIds.add(id);
+
+  for (const w of wins) {
+    if (!isBookingWin(w)) continue;
+    const winRep = byAppt.get(w.id)?.rep_id ?? null;
+    if (!repId || winRep !== repId) continue; // verdict-only rep rows (rev-13), unchanged
+    const resolved = byWinSource.get(w.id);
+    const category = sourceMatchCategory(resolved, repCohortIds, period);
+    totalResolved += 1;
+    if (category === "unlinked" || !resolved) {
+      trulyUnattributed += 1;
+      continue;
+    }
+    const b = resolved.source;
+    resolvedBySource.set(b, (resolvedBySource.get(b) ?? 0) + 1);
+    if (category === "prior") {
+      priorBySource.set(b, (priorBySource.get(b) ?? 0) + 1);
+      continue; // never a primary numerator
+    }
+    if (category === "later") {
+      laterBySource.set(b, (laterBySource.get(b) ?? 0) + 1);
+      continue; // honest separate category, never merged
+    }
+    // CURRENT-period match: a primary numerator ONLY when the matched lead is
+    // in THIS rep's assigned selected-period cohort for that source.
+    if (cohortIdsBySource.get(b)?.has(resolved.leadId ?? "")) {
+      cohortBySource.set(b, (cohortBySource.get(b) ?? 0) + 1);
+    }
+    if ((FORM_SOURCE_SHEETS as readonly string[]).includes(b)) {
+      teamFormBySource.set(b, (teamFormBySource.get(b) ?? 0) + 1);
+    }
+  }
+
+  const asCounts = (m: Map<SourceBucket, number>): RepCohortCount[] =>
+    [...m.entries()]
+      .filter(([, count]) => count > 0)
+      .map(([source, count]) => ({ source, label: sourceBucketLabel(source), count }))
+      .sort((a, b2) => SOURCE_BUCKETS.indexOf(a.source) - SOURCE_BUCKETS.indexOf(b2.source));
+
+  const rows: RepCohortSourceRow[] = [];
+  for (const b of SOURCE_BUCKETS) {
+    if (b === "other") {
+      const anyOther =
+        (cohortBySource.get("other") ?? 0) > 0 ||
+        (assignedCountBySource.get("other") ?? 0) > 0 ||
+        (resolvedBySource.get("other") ?? 0) > 0;
+      if (!anyOther) continue;
+    }
+    const isForm = (FORM_SOURCE_SHEETS as readonly string[]).includes(b);
+    if (b === "unattributed") continue; // no lead link → detail, never a primary row
+    const bookings = isForm ? 0 : cohortBySource.get(b) ?? 0; // form cohorts are empty by owner rule
+    const leadsAssigned = isForm ? 0 : assignedCountBySource.get(b) ?? 0;
+    const resolvedWins = resolvedBySource.get(b) ?? 0;
+    if (bookings === 0 && leadsAssigned === 0 && resolvedWins === 0) continue;
+    rows.push({
+      source: b,
+      label: sourceBucketLabel(b),
+      bookings,
+      leadsAssigned,
+      conv: isForm ? null : sourceConversion(bookings, leadsAssigned),
+      resolvedWins,
+      kind: isForm ? "team" : "cohort",
+    });
+  }
+
+  const totalCohortBookings = [...cohortBySource.values()].reduce((s, n) => s + n, 0);
+  return {
+    repId,
+    rows,
+    priorBySource: asCounts(priorBySource),
+    laterBySource: asCounts(laterBySource),
+    trulyUnattributedWins: trulyUnattributed,
+    teamFormWins: asCounts(teamFormBySource),
+    totalCohortBookings,
+    totalResolvedWins: totalResolved,
+    totalPriorWins: [...priorBySource.values()].reduce((s, n) => s + n, 0),
+    totalLaterWins: [...laterBySource.values()].reduce((s, n) => s + n, 0),
+  };
+}
+
 // ---------- lead-cohort flavor (a): booked leads through today ----------
 
 export interface LeadCohortSourceRow {

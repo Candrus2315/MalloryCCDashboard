@@ -54,7 +54,7 @@ import {
   resolveRepGoal,
 } from "./metrics/compute";
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
-import { FORM_SOURCE_SHEETS, isFormSourceSheet } from "../components/lead-sources";
+import { isFormSourceSheet } from "../components/lead-sources";
 import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import {
@@ -87,19 +87,14 @@ import {
 import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "./metrics/weekly-report-text";
 import {
   bestWorstSourceLines,
+  buildRepCohortSourcePerformance,
   buildSourcePerformanceTable,
-  classifyLeadSource,
   computeLeadCohortOutcomes,
   crossSourceOverlap,
   resolveBookingSources,
-  rollupRepSourceBookings,
-  sourceBucketLabel,
-  sourceConversion,
-  SOURCE_BUCKETS,
   SOURCE_JOIN_LOOKBACK_DAYS,
   type CrossSourceOverlap,
   type LeadCohortSourceRow,
-  type SourceBucket,
   type SourcePerformanceTable,
 } from "./metrics/source-attribution";
 import { deriveWeeklyHoles, type DayHoleDetail } from "./commission/derive";
@@ -299,28 +294,26 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       isBookingWin(a) && appointmentInScope(a, settings.acuity),
     );
     const byWinSource = resolveBookingSources(winsJoin, leadsJoin);
-    const repSourceMap = rollupRepSourceBookings(winsJoin, attributionsEligible, byWinSource);
-    const assignedByRepSource = new Map<string, Map<SourceBucket, number>>();
-    for (const l of leads) {
-      if (!l.assigned_rep_id || isFormSourceSheet(l.source_sheet)) continue;
-      const b = classifyLeadSource(l);
-      let m = assignedByRepSource.get(l.assigned_rep_id);
-      if (!m) {
-        m = new Map();
-        assignedByRepSource.set(l.assigned_rep_id, m);
-      }
-      m.set(b, (m.get(b) ?? 0) + 1);
-    }
-    const buildRepSourceRows = (repId: string) =>
-      SOURCE_BUCKETS.filter((b) => b !== "other")
-        .map((b) => {
-          const bookings = repSourceMap.get(repId)?.get(b) ?? 0;
-          const leadsAssigned = b === "unattributed" ? 0 : assignedByRepSource.get(repId)?.get(b) ?? 0;
-          const formSource = (FORM_SOURCE_SHEETS as readonly string[]).includes(b);
-          const conv = b === "unattributed" || formSource ? null : sourceConversion(bookings, leadsAssigned);
-          return { source: b, label: sourceBucketLabel(b), bookings, leadsAssigned, conv };
-        })
-        .filter((r) => r.bookings > 0 || r.leadsAssigned > 0);
+    // REP-CARD COHORT SCOPING (owner directive 2026-10-27, part 2): the
+    // card's primary numbers are the rep's ASSIGNED selected-period lead
+    // cohort — Bookings = wins whose matched lead is in that cohort;
+    // Assigned Leads = the work-date cohort (UNCHANGED denominator: assigned
+    // rows only, form sheets excluded — owner rule: form-source leads are
+    // team totals, never rep metrics); Conv % = cohort bookings / assigned.
+    // Prior-period (and later / no-link / form-source) verdict wins move to
+    // the card's audit detail — the per-win attribution data stays complete
+    // underneath. The cohort slice is rep-agnostic; the builder filters by
+    // the selected rep's id internally (see buildRepSourcePerformanceInput).
+    const assignedCohortLeads = leads.filter((l) => l.assigned_rep_id && !isFormSourceSheet(l.source_sheet));
+    const buildRepSourcePerformanceInput = (id: string | null) =>
+      buildRepCohortSourcePerformance({
+        repId: id,
+        wins: winsJoin,
+        attributions: attributionsEligible,
+        byWinSource,
+        assignedCohortLeads,
+        period: { start: range.start, end: range.end },
+      });
 
     // selected rep: requested id when present in the active list, else first
     const requestedId = data?.rep;
@@ -350,11 +343,10 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const detail = rep && metrics ? buildRepDetail({ rep, metrics, goal, weeks }) : null;
     const comparisons = metrics ? compareWithTeam(metrics, teamAverages) : [];
     const repSourcePerformance = {
-      repId: rep?.id ?? null,
+      ...buildRepSourcePerformanceInput(rep?.id ?? null),
       repName: rep?.name ?? null,
-      rows: rep ? buildRepSourceRows(rep.id) : [],
       note:
-        "Bookings = attribution-verdict wins by source (the booking contact's nearest sheet lead — nearest sheet date to the booking's creation date, tie = most recently ingested, none = unattributed). These counts include prior-period leads: a booking keeps the source of its matched lead even when that lead's sheet date falls before the selected range, and such bookings never feed a conversion numerator anywhere. Conversion = the source's verdict wins ÷ that source's leads assigned to the rep (work-date cohort). Form-source leads carry no rep assignment (owner rule: team totals, never rep metrics) — their conversion renders —. Truly Unattributed = no reliable sheet-lead link.",
+        "Bookings = the rep's cohort wins: wins booked through the rep's attribution verdict whose matched sheet lead (nearest sheet date to the booking's creation date, tie = most recently ingested) is one of the leads ASSIGNED to this rep from that source during the selected period. Assigned Leads = the same work-date assigned cohort (unchanged denominator); Conv % = cohort bookings ÷ assigned. Prior-period wins (matched lead's sheet date before the selected range) never enter these numbers — they surface in the Attribution detail below, along with truly-unattributed wins and wins resolved to form-source leads. Form-source rows show no rep numbers by the owner's rule (form-source leads are team totals, never rep metrics): their volume and conversion live on the Weekly tab, so their cohort here is empty (Bookings 0, Assigned —). Because the card counts cohort wins, its sums need not equal the period's total wins.",
     };
 
     // missing-data warnings — never render a plausible number for absent data.
