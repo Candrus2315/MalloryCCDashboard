@@ -562,6 +562,29 @@ export interface LeadSummary {
   total: number;
 }
 
+/** The four form-workbook source counts (the LeadSummary keys MINUS the three genres + total). */
+export interface FormSourceLeadCounts {
+  auction_register_certificate: number;
+  google_ads_leads: number;
+  alliance_activate_certificate: number;
+  website_applications: number;
+}
+
+/** Read the four form-source buckets off a LeadSummary — no recomputation, the SAME counts. */
+export function formCountsOf(summary: LeadSummary): FormSourceLeadCounts {
+  return {
+    auction_register_certificate: summary.auction_register_certificate,
+    google_ads_leads: summary.google_ads_leads,
+    alliance_activate_certificate: summary.alliance_activate_certificate,
+    website_applications: summary.website_applications,
+  };
+}
+
+/** Combined form-source count of a LeadSummary / FormSourceLeadCounts. */
+export function formCountsTotal(c: FormSourceLeadCounts): number {
+  return c.auction_register_certificate + c.google_ads_leads + c.alliance_activate_certificate + c.website_applications;
+}
+
 /**
  * Manual lead-count corrections (Settings → Overrides). A delta adjusts the
  * sheet-synced count for one work_date + sheet — e.g. a duplicate row or a
@@ -688,6 +711,13 @@ export function assignedLeadsByRep(leads: LeadRow[], startWorkDate: string, endW
   for (const l of leads) {
     if (l.work_date < startWorkDate || l.work_date > endWorkDate) continue;
     if (!l.assigned_rep_id) continue;
+    // FORM-WORKBOOK SOURCES (owner directive 2026-10-27): form leads are TEAM
+    // totals, never rep metrics — the assigned-by-day grid excludes them from
+    // rep cells the same way. Their assigned_rep_id is null in practice (the
+    // workbook has no rep column), so this changes no live number — it makes
+    // the rule explicit so a future rep column on a form tab could never leak
+    // into per-rep conversion denominators.
+    if (isFormSourceSheet(l.source_sheet)) continue;
     m.set(l.assigned_rep_id, (m.get(l.assigned_rep_id) ?? 0) + 1);
   }
   return m;
@@ -1362,6 +1392,16 @@ export interface TrendPoint {
   animalia: number;
   /** Fairyland-sheet share of `leads` — third genre, same no-new-math split. */
   fairyland: number;
+  /**
+   * FOUR FORM-WORKBOOK SOURCES (owner directive 2026-10-27) — sheet-identity
+   * shares of the SAME `leads` total (splitLeadRows). Carried so every tooltip
+   * can explain the total; genre keys above stay genre-true (form leads are
+   * never folded into them).
+   */
+  auction_register_certificate: number;
+  google_ads_leads: number;
+  alliance_activate_certificate: number;
+  website_applications: number;
   /** Reference-line value: weekly lead budget per week, budget ÷ 7 per day. */
   budgetRef: number;
 }
@@ -1491,6 +1531,10 @@ export function buildTeamTrends(input: {
       family: leadSplit.family,
       animalia: leadSplit.animalia,
       fairyland: leadSplit.fairyland,
+      auction_register_certificate: leadSplit.auction_register_certificate,
+      google_ads_leads: leadSplit.google_ads_leads,
+      alliance_activate_certificate: leadSplit.alliance_activate_certificate,
+      website_applications: leadSplit.website_applications,
       budgetRef: mode === "week" ? weeklyBudget : weeklyBudget / 7,
     } satisfies TrendPoint;
   });
@@ -1977,6 +2021,15 @@ export interface DailyReportMetrics {
   animaliaLeadsToday: number;
   /** Third genre (owner directive 2026-10-22) — sibling of family/animalia everywhere. */
   fairylandLeadsToday: number;
+  /**
+   * FOUR FORM-WORKBOOK SOURCES (owner directive 2026-10-27) — per-source counts
+   * of the 10/27 "Forms Data" tabs, work-date cohort, sheet-identity buckets.
+   * Exposed so the Daily Report page + copy text can explain the total (which
+   * INCLUDES these sources) instead of leaving the genre lines short of it.
+   */
+  formLeadsToday: FormSourceLeadCounts;
+  /** Same four-source split over the weekly (work-date) cohort — budget context. */
+  formLeadsWeek: FormSourceLeadCounts;
   weeklyLeads: number;
   leadBudgetUsedPct: number | null;
   leadsRemaining: number;
@@ -2061,6 +2114,8 @@ export function buildDailyReportMetrics(input: {
     familyLeadsToday: todayCohort.family,
     animaliaLeadsToday: todayCohort.animalia,
     fairylandLeadsToday: todayCohort.fairyland,
+    formLeadsToday: formCountsOf(todayCohort),
+    formLeadsWeek: formCountsOf(weekly),
     weeklyLeads: weekly.total,
     leadBudgetUsedPct: leadBudgetUsage(weekly.total, input.weeklyLeadBudget),
     leadsRemaining: leadsRemaining(weekly.total, input.weeklyLeadBudget),

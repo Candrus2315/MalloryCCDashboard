@@ -7,6 +7,7 @@ import { formatDateHuman } from "~/server/date-logic";
 import { formatInt, formatPercent, anchorDayPhrase, bookingsAnchorLabel } from "~/server/metrics/report-text";
 import { InfoTip } from "~/components/InfoTip";
 import { GENRES, GENRE_BAR, GENRE_LABELS, type Genre } from "~/components/genres";
+import { FORM_SOURCE_SHEETS, LEAD_SOURCE_LABELS } from "~/components/lead-sources";
 import { CopyButton } from "~/components/CopyButton";
 // Harmonization Wave 1: Panel/Eyebrow/RatioBar live ONCE in the shared
 // page-primitives module (same markup they replaced here).
@@ -75,6 +76,8 @@ function DailyReportPage() {
     animalia: m.animaliaLeadsToday,
     fairyland: m.fairylandLeadsToday,
   };
+  // FORM-WORKBOOK SOURCES (10/27) inside today's cohort — the explainability line.
+  const todayFormTotal = FORM_SOURCE_SHEETS.reduce((n, s) => n + m.formLeadsToday[s], 0);
 
   const priorities: [string, string, (v: string) => void][] = [
     ["1", p1, setP1],
@@ -236,6 +239,18 @@ function DailyReportPage() {
                   </li>
                 ))}
               </ul>
+              {/* FOUR FORM-WORKBOOK SOURCES (10/27): Leads Today includes them;
+                  render the per-source line only when they exist, so the total
+                  is explainable on-screen (zero → no noise). */}
+              {todayFormTotal > 0 && (
+                <p className="mt-2 border-t border-(--table-border-weak) pt-2 text-[12px] leading-snug text-(--text-muted)">
+                  + {formatInt(todayFormTotal)} from Forms Data tabs —{" "}
+                  {FORM_SOURCE_SHEETS.filter((s) => m.formLeadsToday[s] > 0)
+                    .map((s) => `${LEAD_SOURCE_LABELS[s]} ${formatInt(m.formLeadsToday[s])}`)
+                    .join(" · ")}{" "}
+                  (team totals — no rep)
+                </p>
+              )}
               <div className="mt-4 border-t border-(--table-border-weak) pt-3">
                 <p className="text-[13px] font-medium text-(--text-body)">Daily Leads Needed</p>
                 <p className="mt-0.5 flex items-baseline gap-2">

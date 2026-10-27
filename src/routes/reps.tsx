@@ -951,6 +951,33 @@ function RepsPage() {
                 </td>
               </tr>
             </tbody>
+            {/* FORM-SOURCE TEAM ROW (owner directive 2026-10-27): form leads
+                have no rep, so they appear in NO rep row above — this labeled
+                team row accounts for them (per-day + week), keeping the grid
+                consistent with the totals elsewhere. Hidden when the week has
+                none (zero → no noise). */}
+            {assignedGrid.formSources.some((f) => f.total > 0) && (
+              <tbody>
+                <tr className="border-t border-(--table-border-weak) hover:bg-transparent">
+                  <td className="sticky left-0 z-[1] bg-(--card-bg) py-1.5 pr-3 text-[12px] text-(--text-muted)">
+                    Forms Data tabs <span className="font-normal">(no rep — team total)</span>
+                  </td>
+                  {assignedGrid.formTotals.map((n, i) => (
+                    <td key={i} className="bg-(--card-bg) py-1.5 pl-3 pr-2 text-[13px] tabular-nums text-(--text-body)">
+                      {n > 0 ? formatInt(n) : <span className="text-(--text-muted)">—</span>}
+                    </td>
+                  ))}
+                  <td className="sticky right-0 z-[1] border-l border-(--table-border-weak) bg-(--card-bg) py-1.5 pl-3 pr-2 text-[13px] font-semibold tabular-nums text-(--text-body)">
+                    {formatInt(assignedGrid.formTotals.reduce((n, x) => n + x, 0))}
+                  </td>
+                </tr>
+                <tr className="hover:bg-transparent">
+                  <td colSpan={assignedGrid.dates.length + 2} className="py-1 text-[12px] text-(--text-muted)">
+                    {assignedGrid.formSources.filter((f) => f.total > 0).map((f) => `${f.label} ${formatInt(f.total)}`).join(" · ")}
+                  </td>
+                </tr>
+              </tbody>
+            )}
           </table>
         </div>
         {assignedGrid.warnings.length > 0 && (

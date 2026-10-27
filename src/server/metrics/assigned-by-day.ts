@@ -24,7 +24,7 @@
  * the same grid, so the download can never disagree with the table.
  */
 import { addDays, etDateStrFromInstant, weekdayName } from "../date-logic";
-import { isFormSourceSheet } from "../../components/lead-sources";
+import { FORM_SOURCE_SHEETS, isFormSourceSheet, LEAD_SOURCE_LABELS, type FormSourceSheet } from "../../components/lead-sources";
 import { ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID, type ChannelLeadRow } from "./weekly";
 import type { LeadRow } from "./compute";
 
@@ -58,6 +58,22 @@ export interface AssignedByDayRow {
   total: AssignedByDayCell;
 }
 
+/**
+ * ONE FORM-SOURCE TEAM ROW (owner directive 2026-10-27 — propagation): form
+ * leads have NO rep (owner rule: sheet leads → team totals, never rep
+ * metrics), so they cannot land in a rep × day cell — but the grid must still
+ * account for them or its totals silently miss four live sources. One row per
+ * form source, per-day counts over the SAME work-date cohort (same bucketing
+ * as every cell), team-level, labeled "(no rep)" everywhere it renders.
+ */
+export interface AssignedByDayFormRow {
+  source: FormSourceSheet;
+  /** The source's display label (LEAD_SOURCE_LABELS — the owner's own tab names). */
+  label: string;
+  days: number[]; // 7 entries, index 0 = Monday
+  total: number;
+}
+
 /** The whole week's grid plus day/week totals and honesty warnings. */
 export interface AssignedByDayGrid {
   week_start: string;
@@ -69,6 +85,10 @@ export interface AssignedByDayGrid {
   dayTotals: AssignedByDayCell[];
   /** Sum across all reps and days. */
   weekTotal: AssignedByDayCell;
+  /** The four form-workbook sources as labeled TEAM rows (never rep cells). */
+  formSources: AssignedByDayFormRow[];
+  /** Combined form-source leads per day (sum of formSources) — one glanceable line. */
+  formTotals: number[];
   /** Missing-ownership notes — data that exists but cannot land in a row is never silently dropped. */
   warnings: string[];
 }
@@ -132,20 +152,20 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
 
   // ---- sheet leads (ASSIGNED only — the owner's definition) ----
   let formSourceAssigned = 0;
+  // FORM-SOURCE TEAM ROWS: per-source per-day counts over the SAME cohort —
+  // ALL form leads in the cohort count here (they have no rep by definition;
+  // counting only the assigned subset would understate the team row).
+  const formBySource = new Map<FormSourceSheet, number[]>(FORM_SOURCE_SHEETS.map((s) => [s, dates.map(() => 0)]));
   for (const l of leads) {
+    if (isFormSourceSheet(l.source_sheet)) {
+      const i = dateIndex.get(l.work_date);
+      if (i != null) formBySource.get(l.source_sheet as FormSourceSheet)![i] += 1;
+      if (l.assigned_rep_id != null) formSourceAssigned += 1;
+      continue; // never a rep cell — form leads are team totals (owner rule)
+    }
     if (l.assigned_rep_id == null) continue; // unassigned sheet leads are excluded
     const i = dateIndex.get(l.work_date);
     if (i == null) continue; // defensive: store fetch already scopes work dates
-    // FORM-WORKBOOK SOURCES (owner directive 2026-10-27): the grid's columns
-    // are the five established genres; a form lead (Auction/Alliance
-    // certificate, Google Ads, Website application) is counted by ITS SOURCE
-    // on the Weekly per-sheet breakdown — never guessed into a genre column
-    // here (a Google Ads "Family" row is not a Family session genre). The
-    // exclusion is surfaced in the warnings line below, not silent.
-    if (isFormSourceSheet(l.source_sheet)) {
-      formSourceAssigned += 1;
-      continue;
-    }
     // SHEET-IDENTITY FALLBACK (Fairyland wiring): a lead ingested from the
     // fairyland SHEET is fairyland even when its lead_type text doesn't
     // contain "fairyland". Text-first order keeps animalia/family outcomes
@@ -157,9 +177,16 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
         : "family";
     addInto(ensureRep(l.assigned_rep_id)[i], genre, 1);
   }
+  const formSources: AssignedByDayFormRow[] = FORM_SOURCE_SHEETS.map((s) => {
+    const days = formBySource.get(s)!;
+    return { source: s, label: LEAD_SOURCE_LABELS[s], days, total: days.reduce((n, x) => n + x, 0) };
+  });
+  const formTotals = dates.map((_, i) => formSources.reduce((n, f) => n + f.days[i], 0));
   if (formSourceAssigned > 0) {
     warnings.push(
-      `${formSourceAssigned} assigned form-workbook lead${formSourceAssigned === 1 ? "" : "s"} (Auction/Alliance certificates, Google Ads, Website) — counted per source on the Weekly breakdown, not in the genre columns.`,
+      `${formSourceAssigned} form-workbook lead${formSourceAssigned === 1 ? "" : "s"} (Auction/Alliance certificates, Google Ads, Website) ${
+        formSourceAssigned === 1 ? "carries" : "carry"
+      } a rep assignment — still excluded from rep cells (form leads are team totals) and counted in the form-source team rows below.`,
     );
   }
 
@@ -233,6 +260,8 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
     rows: visible,
     dayTotals,
     weekTotal,
+    formSources,
+    formTotals,
     warnings,
   };
 }
@@ -252,6 +281,11 @@ export function assignedByDayLabel(date: string): string {
  * shared files: header `rep,day,genre,assigned_leads`, one row per rep × day
  * × genre in day order (Mon..Sun) then fixed genre order; zero cells are
  * omitted (the owner's files list only non-zero counts). Deterministic.
+ *
+ * FORM-WORKBOOK SOURCES (owner directive 2026-10-27): after the rep rows, one
+ * row per form source × day with a non-zero count, rep labeled
+ * "(no rep — team total)" — form leads have no rep, and the export must
+ * account for all seven sources, not just the five genre/channel buckets.
  */
 export function assignedLeadsCsv(grid: AssignedByDayGrid): string {
   const lines: string[] = ["rep,day,genre,assigned_leads"];
@@ -262,6 +296,12 @@ export function assignedLeadsCsv(grid: AssignedByDayGrid): string {
         const n = cell[genre];
         if (n > 0) lines.push(`${csvField(row.rep_name)},${csvField(day)},${ASSIGNED_GENRE_LABELS[genre]},${n}`);
       }
+    });
+  }
+  const FORM_TEAM_REP = "(no rep — team total)";
+  for (const f of grid.formSources) {
+    f.days.forEach((n, i) => {
+      if (n > 0) lines.push(`${csvField(FORM_TEAM_REP)},${csvField(assignedByDayLabel(grid.dates[i]))},${csvField(f.label)},${n}`);
     });
   }
   return `${lines.join("\n")}\n`;
