@@ -653,11 +653,14 @@ function WeeklyPage() {
                   <>
                     A booking's source is the booking contact's sheet lead with the NEAREST sheet date
                     (source_date) to the booking's creation date; an exact tie is broken by most recently
-                    ingested. A booking with no sheet-lead link stays Unattributed — never assigned a
-                    source. Bookings here are the same in-scope paid wins every other figure counts; the
-                    Leads column classifies exactly like the Lead Composition panel (genre sheets by lead
-                    type, Forms Data tabs by sheet), so genre counts match it digit for digit. Conversion
-                    renders "—" when a source had no leads. Candidate leads are fetched
+                    ingested. THREE categories: Current-period — the matched lead's sheet date is inside the
+                    report week, the ONLY bookings that feed a conversion numerator; Prior-period — the matched
+                    lead predates the report week, the booking stays under that source and never enters a
+                    numerator; Truly Unattributed — no reliable sheet-lead link (the only meaning of
+                    "Unattributed" anywhere in the app). Bookings here are the same in-scope paid wins every
+                    other figure counts; the Leads column classifies exactly like the Lead Composition panel
+                    (genre sheets by lead type, Forms Data tabs by sheet), so genre counts match it digit for
+                    digit. Conversion renders "—" when a source had no leads. Candidate leads are fetched
                     {" "}{data.sourcePerformance.lookbackDays}{" "} days back — a contact whose only lead is
                     older than that resolves honestly to Unattributed rather than guessed. Rep verdicts
                     (who booked) come from the frozen attribution engine and are untouched by this join.
@@ -668,11 +671,15 @@ function WeeklyPage() {
             <p className="kpi-sub">report week · both conversion methodologies labeled</p>
           </div>
           <div className="mt-4 grid gap-6 lg:grid-cols-2">
-            {/* (b) booking-period flavor: wins of the week by source */}
+            {/* (b) booking-period flavor: wins of the week by source —
+                THREE-CATEGORY semantics (owner directive 10/27,
+                post-validation): current-period matches feed the conversion
+                numerators; prior-period matches keep their resolved source
+                (never Unattributed); only no-link wins are Truly Unattributed. */}
             <div>
               <p className="text-[13px] font-medium text-(--text-body)">Bookings won this week — by lead source</p>
               <p className="kpi-sub mt-0.5">
-                {formatInt(data.sourcePerformance.table.totalBookings)} paid bookings · conversion = bookings ÷ that source's leads this week
+                {formatInt(data.sourcePerformance.table.totalBookings)} paid bookings · cohort conversion = current-period bookings ÷ that source's leads this week
               </p>
               <div className="mt-2 overflow-x-auto">
                 <table className="w-full text-[13px]">
@@ -680,8 +687,13 @@ function WeeklyPage() {
                     <tr className="border-b border-(--table-border) text-left text-(--text-caption)">
                       <th scope="col" className="py-1.5 pr-3 font-medium">Source</th>
                       <th scope="col" className="py-1.5 pl-3 text-right font-medium">Leads</th>
-                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Bookings</th>
-                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Conv %</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Current-period</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Prior-period</th>
+                      {data.sourcePerformance.table.totalLaterBookings > 0 && (
+                        <th scope="col" className="py-1.5 pl-3 text-right font-medium">Later-period</th>
+                      )}
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">No link</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Cohort conv %</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -689,7 +701,22 @@ function WeeklyPage() {
                       <tr key={r.source} className={r.source === "total" ? "border-t border-(--table-border) font-semibold text-(--text-primary)" : "border-t border-(--table-border-weak)"}>
                         <td className="py-1.5 pr-3 text-(--text-body)">{r.label}</td>
                         <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.leads)}</td>
-                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.bookings)}</td>
+                        {/* The Truly Unattributed row is not a current/prior count — its
+                            no-link total lives in the No-link column. */}
+                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">
+                          {r.source === "unattributed" ? "—" : formatInt(r.bookings)}
+                        </td>
+                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">
+                          {r.source === "unattributed" ? "—" : formatInt(r.priorBookings)}
+                        </td>
+                        {data.sourcePerformance.table.totalLaterBookings > 0 && (
+                          <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">
+                            {r.source === "unattributed" ? "—" : formatInt(r.laterBookings)}
+                          </td>
+                        )}
+                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">
+                          {r.source === "unattributed" ? formatInt(data.sourcePerformance.table.trulyUnattributedBookings) : r.source === "total" ? formatInt(data.sourcePerformance.table.trulyUnattributedBookings) : "—"}
+                        </td>
                         <td className={"py-1.5 pl-3 text-right tabular-nums " + (r.conv == null ? "text-(--text-faint)" : "text-(--text-primary)")}>
                           {r.conv == null ? "—" : formatPercent(r.conv, 1)}
                         </td>
@@ -697,6 +724,26 @@ function WeeklyPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="mt-2 space-y-1 text-xs leading-snug text-(--text-muted)">
+                <p>
+                  Truly Unattributed = no reliable sheet-lead link. Prior-period = the booking's matched lead
+                  predates the report week — it stays under its source and NEVER enters a conversion numerator.
+                  {data.sourcePerformance.table.totalLaterBookings > 0 &&
+                    ` ${formatInt(data.sourcePerformance.table.totalLaterBookings)} booking(s) resolved to a lead with a sheet date AFTER the report week — shown as Later-period, not merged.`}
+                </p>
+                {data.sourcePerformance.table.coverage != null && (
+                  <p>
+                    Source-resolved {formatInt(data.sourcePerformance.table.sourceResolvedBookings)}/
+                    {formatInt(data.sourcePerformance.table.totalBookings)} paid bookings (
+                    {formatPercent(data.sourcePerformance.table.coverage, 2)} attribution coverage).
+                  </p>
+                )}
+                <p>
+                  Total conv % is the COHORT figure (current-period bookings ÷ leads) for consistency with the
+                  per-source rows; the overall funnel rate ({formatInt(data.funnel.wins)}/{formatInt(data.funnel.leads)}) is
+                  in Bookings from Leads above.
+                </p>
               </div>
             </div>
             {/* (a) lead-cohort flavor: the week's leads that produced a booking */}

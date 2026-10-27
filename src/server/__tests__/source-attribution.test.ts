@@ -20,6 +20,7 @@ import {
   resolveBookingSources,
   rollupRepSourceBookings,
   sourceConversion,
+  sourceMatchCategory,
   type LeadJoinRow,
   type WinWithClients,
 } from "../metrics/source-attribution";
@@ -119,7 +120,7 @@ describe("resolveBookingSources (join + fallback hierarchy)", () => {
     const l1 = lead({ id: "l1", contact_id: "c1", source_sheet: "google_ads_leads", lead_type: "X", source_date: "2026-10-19" });
     const l2 = lead({ id: "l2", contact_id: "c1", source_sheet: "family", source_date: "2026-10-01" });
     const r = resolveBookingSources([win({ contact_id: "c1", created_business_date: "2026-10-20" })], [l1, l2]);
-    expect(r.get("w1")).toEqual({ source: "google_ads_leads", leadId: "l1" });
+    expect(r.get("w1")).toEqual({ source: "google_ads_leads", leadId: "l1", sourceDate: "2026-10-19" });
   });
 
   test("no contact → phone fallback (normalized to 10 digits)", () => {
@@ -139,7 +140,7 @@ describe("resolveBookingSources (join + fallback hierarchy)", () => {
   test("no lead at all → unattributed (never invented); unknown sheet → other", () => {
     const w = win({ id: "wn", contact_id: null });
     const r = resolveBookingSources([w], [lead({ contact_id: "c9", phone: "9999999999" })]);
-    expect(r.get("wn")).toEqual({ source: "unattributed", leadId: null });
+    expect(r.get("wn")).toEqual({ source: "unattributed", leadId: null, sourceDate: null });
     const w2 = win({ id: "wm", contact_id: "c9" });
     const r2 = resolveBookingSources([w2], [lead({ contact_id: "c9", source_sheet: "mystery_sheet" })]);
     // classifyLeadSource mirrors splitLeadsByType: an unknown sheet's row falls into the family catch-all (never a separate invented bucket)
@@ -148,6 +149,8 @@ describe("resolveBookingSources (join + fallback hierarchy)", () => {
 });
 
 // ---------- table math ----------
+
+const PERIOD = { start: "2026-10-19", end: "2026-10-25" };
 
 describe("buildSourcePerformanceTable", () => {
   test("classification is BYTE-IDENTICAL to splitLeadsByType; conv null on zero leads; total row", () => {
@@ -158,12 +161,12 @@ describe("buildSourcePerformanceTable", () => {
       lead({ id: "3", contact_id: "c3", source_sheet: "google_ads_leads", lead_type: "Pet", source_date: "2026-10-20" }),
     ];
     const wins = [
-      win({ id: "tw1", contact_id: "c1" }), // → family lead
-      win({ id: "tw2", contact_id: "c3" }), // → google ads lead
-      win({ id: "tw3", contact_id: "c9" }), // → unattributed
+      win({ id: "tw1", contact_id: "c1" }), // → family lead (in cohort → current-period)
+      win({ id: "tw2", contact_id: "c3" }), // → google ads lead (in cohort → current-period)
+      win({ id: "tw3", contact_id: "c9" }), // → no lead link → Truly Unattributed
     ];
     const byWinSource = resolveBookingSources(wins, cohort);
-    const table = buildSourcePerformanceTable(cohort.map(asLeadRow), wins, byWinSource);
+    const table = buildSourcePerformanceTable(cohort.map(asLeadRow), wins, byWinSource, PERIOD);
     const split = splitLeadsByType(cohort.map(asLeadRow));
     const row = (s: string) => table.rows.find((r) => r.source === s)!;
     expect(row("family").leads).toBe(split.family);
@@ -172,13 +175,92 @@ describe("buildSourcePerformanceTable", () => {
     expect(row("google_ads_leads").leads).toBe(split.google_ads_leads);
     expect(row("family").bookings).toBe(1);
     expect(row("google_ads_leads").conv).toBe(1);
-    expect(row("unattributed").bookings).toBe(1);
+    // Truly Unattributed: not a per-source count, never a numerator
+    expect(row("unattributed").bookings).toBe(0);
     expect(row("unattributed").conv).toBeNull();
+    expect(table.trulyUnattributedBookings).toBe(1);
     expect(row("fairyland").conv).toBeNull(); // 0 leads → "—", never 0%
     expect(table.totalLeads).toBe(3);
     expect(table.totalBookings).toBe(3);
-    expect(table.totalConv).toBe(1);
+    expect(table.totalCurrentBookings).toBe(2);
+    expect(table.totalConv).toBe(2 / 3); // COHORT conversion, not 3/3
+    expect(table.sourceResolvedBookings).toBe(2);
+    expect(table.coverage).toBe(2 / 3);
     expect(table.rows[table.rows.length - 1].source).toBe("total");
+  });
+
+  test("THREE-CATEGORY split: prior-period matches keep their resolved source and never enter a numerator", () => {
+    // Cohort: one family lead inside the week. A second contact's ONLY lead is
+    // from the prior week — its booking must stay under Family, labeled
+    // prior-period, and NOT lift family's conversion numerator.
+    const inWeek = lead({ id: "in", contact_id: "c1", source_sheet: "family", lead_type: "Family", source_date: "2026-10-20" });
+    const prior = lead({ id: "prior", contact_id: "c2", source_sheet: "family", lead_type: "Family", source_date: "2026-10-11" });
+    const later = lead({ id: "later", contact_id: "c3", source_sheet: "animalia", lead_type: "Animalia", source_date: "2026-10-28" });
+    const wins = [
+      win({ id: "w-in", contact_id: "c1", created_business_date: "2026-10-21" }), // current-period
+      win({ id: "w-prior", contact_id: "c2", created_business_date: "2026-10-21" }), // prior-period → family
+      win({ id: "w-later", contact_id: "c3", created_business_date: "2026-10-21" }), // later-period → animalia
+      win({ id: "w-none", contact_id: "c9", created_business_date: "2026-10-21" }), // unlinked
+    ];
+    const leads = [inWeek, prior, later];
+    const byWinSource = resolveBookingSources(wins, leads);
+    const table = buildSourcePerformanceTable([asLeadRow(inWeek)], wins, byWinSource, PERIOD);
+    const row = (s: string) => table.rows.find((r) => r.source === s)!;
+    // family: 1 cohort lead; 1 current + 1 prior booking
+    expect(row("family").bookings).toBe(1);
+    expect(row("family").priorBookings).toBe(1);
+    expect(row("family").laterBookings).toBe(0);
+    expect(row("family").conv).toBe(1); // 1/1 — the prior match never entered the numerator
+    // animalia: zero cohort leads, but the later-period match keeps its source
+    expect(row("animalia").leads).toBe(0);
+    expect(row("animalia").bookings).toBe(0);
+    expect(row("animalia").priorBookings).toBe(0);
+    expect(row("animalia").laterBookings).toBe(1);
+    expect(row("animalia").conv).toBeNull(); // no leads → "—", never 0%
+    // totals: 4 wins = 1 current + 1 prior + 1 later + 1 unlinked
+    expect(table.totalLeads).toBe(1);
+    expect(table.totalBookings).toBe(4);
+    expect(table.totalCurrentBookings).toBe(1);
+    expect(table.totalPriorBookings).toBe(1);
+    expect(table.totalLaterBookings).toBe(1);
+    expect(table.trulyUnattributedBookings).toBe(1);
+    expect(table.sourceResolvedBookings).toBe(3);
+    expect(table.coverage).toBe(3 / 4);
+    // total conv = COHORT figure (1/1), never 1/4
+    expect(table.totalConv).toBe(1);
+    // label honesty: the unattributed row is "Truly Unattributed"
+    expect(row("unattributed").label).toBe("Truly Unattributed");
+  });
+
+  test("conversion-numerator isolation: prior-period wins never lift any source's conv or the total", () => {
+    // 1 google lead in cohort + 9 prior google matches → conv stays 1/1 = 100%,
+    // NOT 10/1; the funnel total stays 1/1, not 10/1.
+    const inWeek = lead({ id: "g-in", contact_id: "c1", source_sheet: "google_ads_leads", lead_type: "G", source_date: "2026-10-20" });
+    const priorLeads = Array.from({ length: 9 }, (_, i) =>
+      lead({ id: "g-prior" + i, contact_id: "cp" + i, source_sheet: "google_ads_leads", lead_type: "G", source_date: "2026-10-0" + (i + 1) }),
+    );
+    const wins = [win({ id: "w-in", contact_id: "c1" }), ...priorLeads.map((_, i) => win({ id: "w-p" + i, contact_id: "cp" + i }))];
+    const byWinSource = resolveBookingSources(wins, [inWeek, ...priorLeads]);
+    const table = buildSourcePerformanceTable([asLeadRow(inWeek)], wins, byWinSource, PERIOD);
+    const g = table.rows.find((r) => r.source === "google_ads_leads")!;
+    expect(g.bookings).toBe(1);
+    expect(g.priorBookings).toBe(9);
+    expect(g.conv).toBe(1);
+    expect(table.totalConv).toBe(1);
+    expect(table.totalBookings).toBe(10);
+    expect(table.coverage).toBe(1); // 10/10 wins resolved to a source
+    expect(table.trulyUnattributedBookings).toBe(0);
+  });
+
+  test("sourceMatchCategory: current/prior/later/unlinked against the period bounds", () => {
+    const cohortIds = new Set(["a"]);
+    expect(sourceMatchCategory({ leadId: null, sourceDate: null }, cohortIds, PERIOD)).toBe("unlinked");
+    expect(sourceMatchCategory(undefined, cohortIds, PERIOD)).toBe("unlinked");
+    expect(sourceMatchCategory({ leadId: "a", sourceDate: "2026-10-19" }, cohortIds, PERIOD)).toBe("current");
+    expect(sourceMatchCategory({ leadId: "a", sourceDate: "2026-10-25" }, cohortIds, PERIOD)).toBe("current");
+    expect(sourceMatchCategory({ leadId: "x", sourceDate: "2026-10-18" }, cohortIds, PERIOD)).toBe("prior");
+    expect(sourceMatchCategory({ leadId: "x", sourceDate: "2026-09-25" }, cohortIds, PERIOD)).toBe("prior");
+    expect(sourceMatchCategory({ leadId: "x", sourceDate: "2026-10-26" }, cohortIds, PERIOD)).toBe("later");
   });
 
   test("sourceConversion divide-by-zero → null; one win → exactly one source", () => {
@@ -187,16 +269,28 @@ describe("buildSourcePerformanceTable", () => {
     expect(sourceConversion(1, 4)).toBe(0.25);
   });
 
-  test("date-range filtering: cohort and wins come only from what the caller passes", () => {
+  test("date-range filtering: cohort and wins come only from what the caller passes; out-of-cohort matches keep their source", () => {
     const inRange = lead({ id: "in", contact_id: "c1", source_date: "2026-10-20" });
     const outOfRange = lead({ id: "out", contact_id: "c2", source_date: "2026-09-01" });
     const wins = [win({ id: "rw", contact_id: "c1" })];
     const byWinSource = resolveBookingSources(wins, [inRange]);
-    const table = buildSourcePerformanceTable([asLeadRow(inRange)], wins, byWinSource);
+    const table = buildSourcePerformanceTable([asLeadRow(inRange)], wins, byWinSource, PERIOD);
     expect(table.totalLeads).toBe(1); // the 09-01 lead was never in the cohort
-    const table2 = buildSourcePerformanceTable([asLeadRow(outOfRange)], wins, resolveBookingSources(wins, [outOfRange, inRange]));
+    // The win matched inRange (source_date 09-01 was never offered) → current-period
+    const table2 = buildSourcePerformanceTable([asLeadRow(outOfRange)], wins, resolveBookingSources(wins, [outOfRange, inRange]), PERIOD);
     expect(table2.totalLeads).toBe(1);
-    expect(table2.rows.find((r) => r.source === "unattributed")!.bookings).toBe(1);
+    // THREE-CATEGORY SEMANTICS: the win still matched inRange (Oct 20) — the
+    // caller's cohort is only outOfRange, but the category follows the matched
+    // lead's DATE (inside the period) → credited to its source as current.
+    const fam = table2.rows.find((r) => r.source === "family")!;
+    expect(fam.bookings).toBe(1);
+    expect(table2.trulyUnattributedBookings).toBe(0);
+    // A genuinely prior match (win resolved to the Sep 1 lead) keeps its source:
+    const priorWins = [win({ id: "pw", contact_id: "c2" })];
+    const table3 = buildSourcePerformanceTable([asLeadRow(inRange)], priorWins, resolveBookingSources(priorWins, [outOfRange]), PERIOD);
+    expect(table3.rows.find((r) => r.source === "family")!.priorBookings).toBe(1);
+    expect(table3.rows.find((r) => r.source === "family")!.bookings).toBe(0);
+    expect(table3.trulyUnattributedBookings).toBe(0);
   });
 
   test("bestWorstSourceLines", () => {
@@ -204,10 +298,27 @@ describe("buildSourcePerformanceTable", () => {
       [lead({ id: "1", contact_id: "c1", source_sheet: "family" }), lead({ id: "2", contact_id: "c2", source_sheet: "google_ads_leads", lead_type: "P" })].map(asLeadRow),
       [win({ id: "bw", contact_id: "c1" })],
       resolveBookingSources([win({ id: "bw", contact_id: "c1" })], [lead({ id: "1", contact_id: "c1", source_sheet: "family" }), lead({ id: "2", contact_id: "c2", source_sheet: "google_ads_leads", lead_type: "P" })]),
+      PERIOD,
     );
     const bw = bestWorstSourceLines(rows);
     expect(bw.best).toBe("Family (100.0%)");
     expect(bw.worst).toBe("Google Ads Leads (0.0%)");
+  });
+
+  test("coverage math: null when no wins; 77/80 → 0.9625 shape", () => {
+    const noWins = buildSourcePerformanceTable([asLeadRow(lead({ id: "nl", contact_id: "c1" }))], [], new Map(), PERIOD);
+    expect(noWins.totalBookings).toBe(0);
+    // Coverage is null with no wins at all (nothing to resolve); the cohort
+    // conversion is a DEFINED 0.0 (1 lead came in, none booked).
+    expect(noWins.coverage).toBeNull();
+    expect(noWins.totalConv).toBe(0);
+    const l1 = lead({ id: "cl1", contact_id: "d1", source_date: "2026-10-20" });
+    const l2 = lead({ id: "cl2", contact_id: "d2", source_date: "2026-10-21" });
+    const wins = [win({ id: "cw1", contact_id: "d1" }), win({ id: "cw2", contact_id: "d2" }), win({ id: "cw3", contact_id: "zz" })];
+    const t = buildSourcePerformanceTable([asLeadRow(l1), asLeadRow(l2)], wins, resolveBookingSources(wins, [l1, l2]), PERIOD);
+    expect(t.sourceResolvedBookings).toBe(2);
+    expect(t.trulyUnattributedBookings).toBe(1);
+    expect(t.coverage).toBe(2 / 3);
   });
 });
 
@@ -309,24 +420,30 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section", () => {
     expect(text).not.toContain("LEAD SOURCE PERFORMANCE");
   });
 
-  test("WITH the input: per-source lines after the Leads block, one-decimal, — on zero leads", () => {
+  test("WITH the input: three-category lines after the Leads block, one-decimal, — on zero leads", () => {
     const text = buildWeeklyCcReportText({
       ...base,
       sourcePerformance: {
         rows: [
-          { source: "family", label: "Family", leads: 10, bookings: 4, conv: 0.4 },
-          { source: "animalia", label: "Animalia", leads: 4, bookings: 0, conv: 0 },
-          { source: "fairyland", label: "Fairyland", leads: 1, bookings: 0, conv: 0 },
-          { source: "auction_register_certificate", label: "Auction Certificates", leads: 2, bookings: 1, conv: 0.5 },
-          { source: "google_ads_leads", label: "Google Ads Leads", leads: 6, bookings: 0, conv: 0 },
-          { source: "alliance_activate_certificate", label: "Alliance Certificates", leads: 0, bookings: 0, conv: null },
-          { source: "website_applications", label: "Website Applications", leads: 1, bookings: 0, conv: 0 },
-          { source: "unattributed", label: "Unattributed", leads: 0, bookings: 0, conv: null },
-          { source: "total", label: "Total", leads: 24, bookings: 5, conv: 5 / 24 },
+          { source: "family", label: "Family", leads: 10, bookings: 4, priorBookings: 2, laterBookings: 0, conv: 0.4 },
+          { source: "animalia", label: "Animalia", leads: 4, bookings: 0, priorBookings: 1, laterBookings: 0, conv: 0 },
+          { source: "fairyland", label: "Fairyland", leads: 1, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
+          { source: "auction_register_certificate", label: "Auction Certificates", leads: 2, bookings: 1, priorBookings: 0, laterBookings: 0, conv: 0.5 },
+          { source: "google_ads_leads", label: "Google Ads Leads", leads: 6, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
+          { source: "alliance_activate_certificate", label: "Alliance Certificates", leads: 0, bookings: 0, priorBookings: 0, laterBookings: 0, conv: null },
+          { source: "website_applications", label: "Website Applications", leads: 1, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
+          { source: "unattributed", label: "Truly Unattributed", leads: 0, bookings: 0, priorBookings: 0, laterBookings: 0, conv: null },
+          { source: "total", label: "Total", leads: 24, bookings: 5, priorBookings: 3, laterBookings: 0, conv: 5 / 24 },
         ],
         totalLeads: 24,
-        totalBookings: 5,
+        totalBookings: 8,
         totalConv: 5 / 24,
+        totalCurrentBookings: 5,
+        totalPriorBookings: 3,
+        totalLaterBookings: 0,
+        trulyUnattributedBookings: 3,
+        sourceResolvedBookings: 5,
+        coverage: 5 / 8,
         best: "Auction Certificates (50.0%)",
         worst: "Animalia (0.0%)",
         overlapNote: "Note: 7 people appear as leads from 2+ sources in the last 90 days — each source counts its own sheet rows independently (no cross-source dedupe).",
@@ -339,12 +456,48 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section", () => {
     expect(totalIdx).toBeGreaterThanOrEqual(0);
     expect(spIdx).toBeGreaterThan(totalIdx);
     expect(convIdx).toBeGreaterThan(spIdx);
-    expect(text).toContain("Family — Leads: 10 · Bookings: 4 · Conversion: 40.0%");
-    expect(text).toContain("Alliance Certificates — Leads: 0 · Bookings: 0 · Conversion: —");
-    expect(text).toContain("Total — Leads: 24 · Bookings: 5 · Conversion: 20.8%");
+    // per-source lines carry BOTH booking categories + the cohort conversion
+    expect(text).toContain("Family — Leads: 10 · Current-period: 4 · Prior-period: 2 · Cohort conversion: 40.0%");
+    expect(text).toContain("Alliance Certificates — Leads: 0 · Current-period: 0 · Prior-period: 0 · Cohort conversion: —");
+    // the three-category methodology sentence names every category
+    expect(text).toContain("Current-period = matched lead's sheet date inside the report week");
+    expect(text).toContain("Prior-period = matched lead predates the report week");
+    expect(text).toContain("Truly Unattributed = no reliable sheet-lead link");
+    // the unattributed row never renders as a per-source line; its own line:
+    expect(text).toContain("Truly Unattributed — Bookings: 3 (no sheet-lead link)");
+    expect(text).not.toContain("Unattributed — Leads: 0");
+    // totals: cohort conversion + coverage line
+    expect(text).toContain(
+      "Total — Leads: 24 · Paid bookings: 8 · Current-period: 5 · Prior-period: 3 · Cohort conversion: 20.8% · Source-resolved: 5/8 (62.50%)",
+    );
     expect(text).toContain("Best source: Auction Certificates (50.0%) · Worst source: Animalia (0.0%)");
     expect(text).toContain("7 people appear as leads from 2+ sources");
-    expect(text).toContain("Unattributed — Leads: 0 · Bookings: 0 · Conversion: —");
+  });
+
+  test("WITH the input: a later-period match renders its own figure, never merged", () => {
+    const text = buildWeeklyCcReportText({
+      ...base,
+      sourcePerformance: {
+        rows: [
+          { source: "family", label: "Family", leads: 10, bookings: 1, priorBookings: 0, laterBookings: 2, conv: 0.1 },
+          { source: "total", label: "Total", leads: 10, bookings: 1, priorBookings: 0, laterBookings: 2, conv: 0.1 },
+        ],
+        totalLeads: 10,
+        totalBookings: 5,
+        totalConv: 0.1,
+        totalCurrentBookings: 1,
+        totalPriorBookings: 0,
+        totalLaterBookings: 2,
+        trulyUnattributedBookings: 2,
+        sourceResolvedBookings: 3,
+        coverage: 3 / 5,
+        best: "Family (10.0%)",
+        worst: "Family (10.0%)",
+        overlapNote: null,
+      },
+    });
+    expect(text).toContain("Family — Leads: 10 · Current-period: 1 · Prior-period: 0 · Later-period: 2 · Cohort conversion: 10.0%");
+    expect(text).toContain("· Later-period: 2 · Cohort conversion: 10.0% · Source-resolved: 3/5 (60.00%)");
   });
 });
 
