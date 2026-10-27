@@ -7,7 +7,6 @@
  */
 
 import type {
-import { LEAD_SOURCE_SHEETS } from "../../components/lead-sources";
   AppointmentRow,
   AttributionRow,
   AvailabilityRule,
@@ -16,6 +15,7 @@ import { LEAD_SOURCE_SHEETS } from "../../components/lead-sources";
   LeadRow,
   RecurringBlock,
 } from "../metrics/compute";
+import { LEAD_SOURCE_SHEETS } from "../../components/lead-sources";
 import type { IngestOptions, RunDeadline } from "./ingest-batch";
 
 export interface UserRow {

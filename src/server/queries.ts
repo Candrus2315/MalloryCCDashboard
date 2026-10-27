@@ -9,8 +9,8 @@
  * loader, so it hides). See src/server/__tests__/typecheck.test.ts — it fails
  * on any "Cannot find name" (TS2304-class) error. If you reference a helper,
  * import it from its module (date-logic/metrics/compute) in the same commit.
-import { asLeadSourceSheet } from "../components/lead-sources";
  */
+import { asLeadSourceSheet } from "../components/lead-sources";
 import { createServerFn } from "@tanstack/react-start";
 import {
   addDays,
