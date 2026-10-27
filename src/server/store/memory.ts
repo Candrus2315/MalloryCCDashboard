@@ -84,6 +84,7 @@ import type {
   RetentionNoShowWrite,
   RetentionTransferRow,
   RetentionTransferWrite,
+  type LeadJoinRow,
 } from "./types";
 import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -607,6 +608,25 @@ export class MemoryStore implements Store {
       })
       .map((a) => this.stripAppt(a));
   }
+  async getWinsWithClientsBetween(start: string, end: string): Promise<(AppointmentRow & {
+    client_phone: string | null;
+    client_email: string | null;
+  })[]> {
+    // Mirrors the pg store: the win-bucket superset + client identity columns
+    // (per-source booking attribution's phone/email fallback tier).
+    return [...this.appointments.values()]
+      .filter((a) => {
+        const win = a.booking_win_business_date;
+        if (win != null && win !== "") return win >= start && win <= end;
+        const d = createdBusinessDateOf(a);
+        return d != null && d >= start && d <= end;
+      })
+      .map((a) => ({
+        ...this.stripAppt(a),
+        client_phone: a.client_phone ?? null,
+        client_email: a.client_email ?? null,
+      }));
+  }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
     // Availability path — mirrors pg.ts: carries the per-appointment duration,
     // calendar name (scope matching), acuity id AND the client contact fields
@@ -801,6 +821,23 @@ export class MemoryStore implements Store {
     return [...this.leads.values()]
       .filter((l) => set.has(l.source_date))
       .map(({ source_id: _s, provider: _p, phone: _p2, email: _e, ...rest }) => rest);
+  }
+  async getLeadsJoinRange(startSourceDate: string, endSourceDate: string): Promise<LeadJoinRow[]> {
+    // Mirrors the pg store: source-date slice with the join identity columns.
+    // Memory-store lead rows carry no created_at (never ingested via clock) —
+    // null keeps the nearest-rule tie-break deterministic by id.
+    return [...this.leads.values()]
+      .filter((l) => l.source_date >= startSourceDate && l.source_date <= endSourceDate)
+      .map((l) => ({
+        id: l.id,
+        contact_id: l.contact_id ?? null,
+        source_sheet: l.source_sheet,
+        lead_type: l.lead_type,
+        source_date: l.source_date,
+        phone: l.phone ?? null,
+        email: l.email ?? null,
+        created_at: (l as { created_at?: string | null }).created_at ?? null,
+      }));
   }
   async updateLeadWorkDate(id: string, workDate: string): Promise<void> {
     for (const [key, lead] of this.leads) {

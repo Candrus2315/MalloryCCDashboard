@@ -63,6 +63,24 @@ export interface WeeklyCcReportInput {
     alliance_activate_certificate: number; website_applications: number;
     total: number;
   };
+  /**
+   * LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, Step 5): per-source
+   * leads (the week's source_date cohort), bookings (the week's paid wins by
+   * the contact's NEAREST sheet lead — selection rule: nearest source_date
+   * to the booking's creation ET date, tie → most recently ingested, none →
+   * unattributed), conversion = bookings ÷ leads of the source. OPTIONAL:
+   * absent/null keeps the owner's template BYTE-IDENTICAL — the section
+   * only renders when the page passes it.
+   */
+  sourcePerformance?: {
+    rows: { label: string; leads: number; bookings: number; conv: number | null }[];
+    totalLeads: number;
+    totalBookings: number;
+    totalConv: number | null;
+    best: string | null;
+    worst: string | null;
+    overlapNote: string | null;
+  } | null;
   conversion: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
   /**
    * BOOKINGS FROM LEADS (owner request 2026-09-29): ALL paid bookings of the
@@ -155,6 +173,24 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   }
   lines.push(`Total: ${formatInt(leads.total)}`);
   lines.push("");
+  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27): per-source funnel
+  // of the report week — leads (sheet-date cohort) vs wins by source (the
+  // contact's nearest sheet lead), one-decimal conversion, "—" when a
+  // source had no leads (never a fabricated 0%). Renders ONLY when the page
+  // provides it — the template stays byte-identical otherwise.
+  if (input.sourcePerformance) {
+    const sp = input.sourcePerformance;
+    lines.push("LEAD SOURCE PERFORMANCE (report week):");
+    lines.push("Leads = sheet-date cohort. Bookings = the week's paid wins by the contact's nearest sheet lead (nearest sheet date to the booking's creation date; tie = most recently ingested; no lead = unattributed).");
+    for (const r of sp.rows) {
+      if (r.label === "Total") continue;
+      lines.push(`${r.label} — Leads: ${formatInt(r.leads)} · Bookings: ${formatInt(r.bookings)} · Conversion: ${r.conv == null ? NO_SOURCE : formatPercent(r.conv, 1)}`);
+    }
+    lines.push(`Total — Leads: ${formatInt(sp.totalLeads)} · Bookings: ${formatInt(sp.totalBookings)} · Conversion: ${sp.totalConv == null ? NO_SOURCE : formatPercent(sp.totalConv, 1)}`);
+    lines.push(`Best source: ${sp.best ?? NO_SOURCE} · Worst source: ${sp.worst ?? NO_SOURCE}`);
+    if (sp.overlapNote) lines.push(sp.overlapNote);
+    lines.push("");
+  }
   lines.push(
     `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)} · Fairyland ${formatPercent(input.conversion.fairyland)})`,
   );
