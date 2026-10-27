@@ -10,6 +10,7 @@
  * on any "Cannot find name" (TS2304-class) error. If you reference a helper,
  * import it from its module (date-logic/metrics/compute) in the same commit.
  */
+import { asLeadSourceSheet } from "../components/lead-sources";
 import { createServerFn } from "@tanstack/react-start";
 import {
   addDays,
@@ -682,10 +683,14 @@ export const saveWeeklyReportNotes = createServerFn({ method: "POST" })
 
 /** Sheet column mapping (persisted to app_settings). */
 export const saveSheetMapping = createServerFn({ method: "POST" })
-  .validator((input: unknown) => input as { sheet: "family" | "animalia" | "fairyland"; columns: Record<string, string>; mode?: string })
+  .validator((input: unknown) => input as { sheet: string; columns: Record<string, string>; mode?: string })
   .handler(async ({ data }) => {
     const store = await getStore();
-    const sheet = data.sheet === "animalia" ? "animalia" : data.sheet === "fairyland" ? "fairyland" : "family";
+    // SEVEN SOURCES (owner directive 2026-10-27): any lead-source sheet key is
+    // saveable; an unknown key fails honestly instead of landing on family.
+    const sheet = asLeadSourceSheet(data.sheet);
+    if (!sheet) throw new Error("Unknown sheet: " + String(data.sheet));
+
     const settings = await store.getSettings();
     const columns: Record<string, string> = { ...settings.sheets[sheet].columns, ...data.columns };
     const mode = isSheetMappingMode(data.mode) ? data.mode : settings.sheets[sheet].mode;
@@ -703,13 +708,14 @@ export const saveSheetMapping = createServerFn({ method: "POST" })
  * reachable yet — the actionable live error is returned either way.
  */
 export const testSheetMapping = createServerFn({ method: "POST" })
-  .validator((input: unknown) => input as { sheet: "family" | "animalia" | "fairyland"; columns: Record<string, string>; mode?: string })
+  .validator((input: unknown) => input as { sheet: string; columns: Record<string, string>; mode?: string })
   .handler(async ({ data }) => {
     const { applySheetMapping, sampleSheetRow } = await import("./sync/adapters");
     const { parseSheetDate } = await import("./sync/sheets-mapping");
     const { fetchSheetSampleLive } = await import("./sync/sheets-live");
     const { getWorkDate } = await import("./date-logic");
-    const sheet = data.sheet === "animalia" ? "animalia" : data.sheet === "fairyland" ? "fairyland" : "family";
+    const sheet = asLeadSourceSheet(data.sheet);
+    if (!sheet) throw new Error("Unknown sheet: " + String(data.sheet));
     const store = await getStore();
     const settings = await store.getSettings();
     const mode = isSheetMappingMode(data.mode) ? data.mode : settings.sheets[sheet].mode;

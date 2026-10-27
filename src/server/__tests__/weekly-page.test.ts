@@ -269,7 +269,7 @@ describe("weeklyPageData (MemoryStore, pinned today)", () => {
     const { store } = await seedWeeklyStore();
     const data = await weeklyPageData({ store, today: TODAY });
     // in-window (9/21..9/27): family l1,l2,l8,l9; animalia l3,l4,l7,l10 — l5 (Sun before) and l6 (Mon after) out
-    expect(data.leads).toEqual({ family: 4, animalia: 4, fairyland: 0, total: 8 });
+    expect(data.leads).toEqual({ family: 4, animalia: 4, fairyland: 0, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 8 });
   });
 
   test("MTD: month-start..today bucket — Aug 31 out, next-Monday in, top performer highlighted", async () => {

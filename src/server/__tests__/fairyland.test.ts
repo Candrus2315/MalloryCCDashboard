@@ -95,7 +95,7 @@ describe("three-way splits — Fairyland never silently counts as Family", () =>
       lead("l4", "Fairyland"), // case-insensitive
       lead("l5", "family"),
     ];
-    expect(splitLeadsByType(leads)).toEqual({ family: 2, animalia: 1, fairyland: 2, total: 5 });
+    expect(splitLeadsByType(leads)).toEqual({ family: 2, animalia: 1, fairyland: 2, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 5 });
   });
 
   test("splitLeadRows (trend split) covers fairyland; junk types still land in neither split", () => {
@@ -105,7 +105,7 @@ describe("three-way splits — Fairyland never silently counts as Family", () =>
       lead("l3", "animalia"),
       lead("l4", ""),
     ];
-    expect(splitLeadRows(leads)).toEqual({ family: 1, animalia: 1, fairyland: 1 });
+    expect(splitLeadRows(leads)).toEqual({ family: 1, animalia: 1, fairyland: 1, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0 });
   });
 });
 
@@ -131,7 +131,7 @@ describe("fairyland lead-count corrections flow through the metrics functions", 
     // sheet label in a stored adjustment is skipped, never folded into family.
     const stray: LeadCountAdjustment[] = [{ work_date: "2026-10-19", sheet: "fairies", delta: 5 }];
     const after = leadsToday(rows, "2026-10-19", stray);
-    expect(after).toEqual({ family: 1, animalia: 1, fairyland: 0, total: 2 });
+    expect(after).toEqual({ family: 1, animalia: 1, fairyland: 0, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 2 });
   });
 });
 

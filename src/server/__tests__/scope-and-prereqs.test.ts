@@ -205,8 +205,12 @@ describe("E1: TrendPoint carries the family/animalia lead split (no new math)", 
       family: 2,
       animalia: 1,
       fairyland: 0,
+      auction_register_certificate: 0,
+      google_ads_leads: 0,
+      alliance_activate_certificate: 0,
+      website_applications: 0,
     });
-    expect(splitLeadRows([])).toEqual({ family: 0, animalia: 0, fairyland: 0 });
+    expect(splitLeadRows([])).toEqual({ family: 0, animalia: 0, fairyland: 0, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0 });
   });
 
   test("buildTeamTrends points carry the split of the SAME leads the totals count", () => {

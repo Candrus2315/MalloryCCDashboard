@@ -141,12 +141,12 @@ describe("sheet-identity genre (fairyland SHEET leads are fairyland)", () => {
 
   test("leadsToday counts a fairyland-SHEET lead with neutral campaign text as fairyland", () => {
     const summary = leadsToday([lead({})], "2026-10-20");
-    expect(summary).toEqual({ family: 0, animalia: 0, fairyland: 1, total: 1 });
+    expect(summary).toEqual({ family: 0, animalia: 0, fairyland: 1, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 1 });
   });
 
   test("animalia text still wins (text-first order preserved) even on the fairyland sheet", () => {
     const summary = leadsToday([lead({ lead_type: "Animalia Collab" })], "2026-10-20");
-    expect(summary).toEqual({ family: 0, animalia: 1, fairyland: 0, total: 1 });
+    expect(summary).toEqual({ family: 0, animalia: 1, fairyland: 0, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 1 });
   });
 
   test("family/animalia SHEET leads classify exactly as before", () => {
@@ -155,7 +155,7 @@ describe("sheet-identity genre (fairyland SHEET leads are fairyland)", () => {
       lead({ source_sheet: "animalia", lead_type: "Animalia", work_date: "2026-10-20" }),
       lead({ source_sheet: "family", lead_type: "family", work_date: "2026-10-20" }),
     ], "2026-10-20");
-    expect(summary).toEqual({ family: 2, animalia: 1, fairyland: 0, total: 3 });
+    expect(summary).toEqual({ family: 2, animalia: 1, fairyland: 0, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 3 });
   });
 
   test("classifyLeadGenre: sheet-identity is the fallback, never a superseder", () => {

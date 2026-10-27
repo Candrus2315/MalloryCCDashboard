@@ -40,6 +40,7 @@ import {
   repOperatingState,
   weekStart,
 } from "../date-logic";
+import { isFormSourceSheet } from "../../components/lead-sources";
 // Availability engine (runtime import — availability.ts depends on this
 // module's TYPES only, so there is no cycle). One engine, two consumers.
 import { computeDayAvailability } from "./availability";
@@ -545,6 +546,19 @@ export interface LeadSummary {
   animalia: number;
   /** Third genre (owner directive 2026-10-22) — always a sibling of family/animalia, never a fork. */
   fairyland: number;
+  /**
+   * FOUR FORM-WORKBOOK SOURCES (owner directive 2026-10-27) — per-source
+   * counts of the "Forms Data - Mallory Portraits" tabs, ALWAYS classified by
+   * sheet identity (leads.source_sheet), never by lead_type text: a Google
+   * Ads row whose Project Name says "Family" is a Google Ads lead, not a
+   * genre vote — the three genre counts above stay byte-identical to their
+   * pre-forms behavior.
+   */
+  auction_register_certificate: number;
+  google_ads_leads: number;
+  alliance_activate_certificate: number;
+  website_applications: number;
+  /** Combined total: the three genres + the four form sources (all sheets, same work-date rules). */
   total: number;
 }
 
@@ -576,11 +590,22 @@ function applyLeadAdjustments(
     else if (a.sheet === "animalia") animalia += d;
     else if (a.sheet === "fairyland") fairyland += d;
     // An adjustment naming an UNCONFIGURED sheet (e.g. fairyland before the
-    // owner adds its sheet id) has nothing to correct — fail-honest: it is
-    // skipped here and the Settings count editor simply offers no such row.
-    // Never guessed, never folded into another genre's count.
+    // owner adds its sheet id, or a form-workbook source — the Settings count
+    // editor offers genre sheets only) has nothing to correct — fail-honest:
+    // it is skipped here. Never guessed, never folded into another count.
   }
-  return { family, animalia, fairyland, total: family + animalia + fairyland };
+  // Form-source buckets pass through from the base (corrections are a genre-
+  // sheet surface); the total stays the combined sum of all seven sources.
+  return {
+    family, animalia, fairyland,
+    auction_register_certificate: base.auction_register_certificate,
+    google_ads_leads: base.google_ads_leads,
+    alliance_activate_certificate: base.alliance_activate_certificate,
+    website_applications: base.website_applications,
+    total: family + animalia + fairyland
+      + base.auction_register_certificate + base.google_ads_leads
+      + base.alliance_activate_certificate + base.website_applications,
+  };
 }
 
 /** Leads the team works on reportDate (work_date = reportDate), by type. */
@@ -590,6 +615,15 @@ export function leadsToday(leads: LeadRow[], reportDate: string, adjustments?: L
 }
 
 function summarizeLeadRows(rows: LeadRow[]): LeadSummary {
+  // FORM-SOURCE-FIRST (owner directive 2026-10-27): a lead from one of the
+  // four form-workbook sheets counts under ITS source, by sheet identity —
+  // its lead_type text ("Family"/"Pet" project names on the Google Ads tab)
+  // is never a genre vote, so the three genre buckets below keep their
+  // pre-forms values byte-identical for every pre-existing row.
+  let auction_register_certificate = 0;
+  let google_ads_leads = 0;
+  let alliance_activate_certificate = 0;
+  let website_applications = 0;
   // Three-genre classifier (same convention as splitLeadsByType / the
   // assigned-by-day grid): /animalia/i → animalia, /fairyland/i → fairyland,
   // everything else family — Fairyland never silently counts as Family.
@@ -597,6 +631,13 @@ function summarizeLeadRows(rows: LeadRow[]): LeadSummary {
   let animalia = 0;
   let fairyland = 0;
   for (const l of rows) {
+    if (isFormSourceSheet(l.source_sheet)) {
+      if (l.source_sheet === "auction_register_certificate") auction_register_certificate += 1;
+      else if (l.source_sheet === "google_ads_leads") google_ads_leads += 1;
+      else if (l.source_sheet === "alliance_activate_certificate") alliance_activate_certificate += 1;
+      else website_applications += 1;
+      continue;
+    }
     if (/animalia/i.test(l.lead_type)) animalia += 1;
     // SHEET-IDENTITY FALLBACK (Fairyland wiring, owner directive): a lead
     // ingested from the fairyland SHEET is fairyland even when its lead_type
@@ -605,7 +646,12 @@ function summarizeLeadRows(rows: LeadRow[]): LeadSummary {
     else if (/fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland") fairyland += 1;
     else family += 1;
   }
-  return { family, animalia, fairyland, total: family + animalia + fairyland };
+  return {
+    family, animalia, fairyland,
+    auction_register_certificate, google_ads_leads, alliance_activate_certificate, website_applications,
+    total: family + animalia + fairyland
+      + auction_register_certificate + google_ads_leads + alliance_activate_certificate + website_applications,
+  };
 }
 
 /** Weekly leads: work_date within the operational week (Mon..Sun) containing reportDate. */
@@ -1334,30 +1380,45 @@ function shortDayLabel(dateStr: string): string {
   );
 }
 
-// ---------- lead-source split (Family / Animalia / Fairyland) ----------
+// ---------- lead-source split (three genres + four form-workbook sources) ----------
 export interface LeadSplit {
   family: number;
   animalia: number;
   fairyland: number;
+  /** Form-workbook sources (owner directive 2026-10-27) — sheet-identity buckets. */
+  auction_register_certificate: number;
+  google_ads_leads: number;
+  alliance_activate_certificate: number;
+  website_applications: number;
 }
 /**
  * Split ALREADY-COMPUTED lead rows by source sheet — no new math, no new
  * cohort logic: rows counted here are exactly the rows the caller already
- * aggregated into a `leads` total. A row counts as family/animalia when its
- * lead_type (source_sheet fallback) names that sheet; rows with any other or
- * blank type stay in the total but in NEITHER split (never guessed).
+ * aggregated into a `leads` total. A row from one of the four form-workbook
+ * sheets counts under ITS source (sheet identity — lead_type text is never a
+ * genre vote); any other row counts as family/animalia when its lead_type
+ * (source_sheet fallback) names that sheet; rows with any other or blank type
+ * stay in the total but in NEITHER split (never guessed).
  */
 export function splitLeadRows(leads: LeadRow[]): LeadSplit {
   let family = 0;
   let animalia = 0;
   let fairyland = 0;
+  let auction_register_certificate = 0;
+  let google_ads_leads = 0;
+  let alliance_activate_certificate = 0;
+  let website_applications = 0;
   for (const l of leads) {
+    if (l.source_sheet === "auction_register_certificate") { auction_register_certificate += 1; continue; }
+    if (l.source_sheet === "google_ads_leads") { google_ads_leads += 1; continue; }
+    if (l.source_sheet === "alliance_activate_certificate") { alliance_activate_certificate += 1; continue; }
+    if (l.source_sheet === "website_applications") { website_applications += 1; continue; }
     const t = (l.lead_type || l.source_sheet || "").trim().toLowerCase();
     if (t === "family") family += 1;
     else if (t === "animalia") animalia += 1;
     else if (t === "fairyland") fairyland += 1;
   }
-  return { family, animalia, fairyland };
+  return { family, animalia, fairyland, auction_register_certificate, google_ads_leads, alliance_activate_certificate, website_applications };
 }
 
 /**

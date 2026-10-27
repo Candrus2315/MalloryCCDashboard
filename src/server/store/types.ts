@@ -15,6 +15,7 @@ import type {
   LeadRow,
   RecurringBlock,
 } from "../metrics/compute";
+import { LEAD_SOURCE_SHEETS } from "../../components/lead-sources";
 import type { IngestOptions, RunDeadline } from "./ingest-batch";
 
 export interface UserRow {
@@ -536,6 +537,21 @@ export interface AppSettings {
      * don't apply). Never a guessed sheet id.
      */
     fairyland: SheetConfig;
+    /**
+     * FOUR FORM-WORKBOOK SOURCES (owner directive 2026-10-27): the "Forms
+     * Data - Mallory Portraits" workbook connects through the EXISTING sheets
+     * pipeline — one workbook, four tabs, each tab an INDEPENDENT lead source
+     * with its own config, its own identity segment (gs2#{key}#…) and its own
+     * per-source counts. Unlike Fairyland these ship CONFIGURED (the lead
+     * verified the workbook is shared with the service account; the tab names
+     * and column letters below are verified from the live Sheets API on
+     * 10/27). Key name = leads.source_sheet = the identity-key sheet segment
+     * (src/components/lead-sources.ts).
+     */
+    auction_register_certificate: SheetConfig;
+    google_ads_leads: SheetConfig;
+    alliance_activate_certificate: SheetConfig;
+    website_applications: SheetConfig;
   };
   acuity: {
     calendars_included: string[];
@@ -708,10 +724,18 @@ export interface SheetConfig {
 // The two SPEC'd Google Sheet IDs live in settings. Fairyland (third genre,
 // owner directive 2026-10-22) has NO default id: an empty string means "not
 // configured" — the sync skips it and no count/correction is ever invented.
+/** The "Forms Data - Mallory Portraits" workbook — one id, four source tabs (owner directive 2026-10-27). */
+export const FORMS_WORKBOOK_ID = "1ePTLKCpHVzvYo7zRUoAbE-rL3adXtkgjIsWXWtdf8Ms";
 export const DEFAULT_SHEET_IDS = {
   family: "1_5d1TDrOLg_E3RICEY6M7K9wnM97M9wkHLUN-C0oIvg",
   animalia: "1Zp_ghywl-u4e13NHMoPRubZ9DCZC-Khv1ePL6PVahZU",
   fairyland: "",
+  // FORM-WORKBOOK SOURCES: all four tabs live in ONE workbook, verified shared
+  // with the service account (Viewer) — the id is the owner's directive.
+  auction_register_certificate: FORMS_WORKBOOK_ID,
+  google_ads_leads: FORMS_WORKBOOK_ID,
+  alliance_activate_certificate: FORMS_WORKBOOK_ID,
+  website_applications: FORMS_WORKBOOK_ID,
 };
 
 // Configurable column mapping (column letters/names per sheet).
@@ -770,7 +794,7 @@ export function mergeSheetsSettings(
   const sheets = { ...current };
   const modeChanges: { sheet: keyof AppSettings["sheets"]; from: SheetMappingMode; to: SheetMappingMode }[] = [];
   if (patch) {
-    for (const key of ["family", "animalia", "fairyland"] as const) {
+    for (const key of LEAD_SOURCE_SHEETS) {
       const p = patch[key];
       if (!p) continue;
       // Normalize the saved config first so a legacy stored shape (mode
@@ -857,6 +881,14 @@ export function normalizeAppSettings(raw: unknown): AppSettings {
       // Third genre: absent on settings saved before 2026-10-22 → the default
       // (sheet_id "") applies — "not configured", never a guessed sheet id.
       fairyland: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.fairyland ?? base.sheets.fairyland, DEFAULT_SHEET_IDS.fairyland),
+      // Form-workbook sources (owner directive 2026-10-27): absent on settings
+      // saved before 10/27 → the verified defaults apply (configured tabs of
+      // the Forms workbook). The owner can re-point or blank any of them in
+      // Settings exactly like the genre sheets.
+      auction_register_certificate: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.auction_register_certificate ?? base.sheets.auction_register_certificate, DEFAULT_SHEET_IDS.auction_register_certificate),
+      google_ads_leads: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.google_ads_leads ?? base.sheets.google_ads_leads, DEFAULT_SHEET_IDS.google_ads_leads),
+      alliance_activate_certificate: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.alliance_activate_certificate ?? base.sheets.alliance_activate_certificate, DEFAULT_SHEET_IDS.alliance_activate_certificate),
+      website_applications: normalizeSheetConfig((r.sheets as Record<string, unknown> | undefined)?.website_applications ?? base.sheets.website_applications, DEFAULT_SHEET_IDS.website_applications),
     },
     acuity: { ...base.acuity, ...(r.acuity ?? {}) },
     unattributedQueue: normalizeUnattributedQueueSettings(r.unattributedQueue ?? base.unattributedQueue),
@@ -916,6 +948,35 @@ export const DEFAULT_SETTINGS: AppSettings = {
     // Third genre: sheet_id "" = NOT configured — the sync skips it honestly
     // until the owner saves the real Fairyland sheet in Settings.
     fairyland: { sheet_id: DEFAULT_SHEET_IDS.fairyland, mode: "row_per_day_count", columns: { ...DEFAULT_COLUMN_MAPPING_DAY_COUNT } },
+    // FORM-WORKBOOK SOURCES (owner directive 2026-10-27) — each tab INDEPENDENT:
+    // same workbook id, distinct tab_name, mode row_per_lead, column letters
+    // verified from the live API:
+    //   Auction/Alliance certificates: name A, last_name B, phone C, email H, date L
+    //   Google Ads leads: name A, last_name B, email C, phone D, date E, lead_type F
+    //   Website applications: name A, phone B, email C, date I
+    // lead_type for google_ads_leads mirrors the Fairyland mechanism (a mapped
+    // lead_type COLUMN feeds the raw cell value — "Family"/"Pet" project names;
+    // per-SOURCE counting classifies by sheet identity, never by this text).
+    auction_register_certificate: {
+      sheet_id: DEFAULT_SHEET_IDS.auction_register_certificate, mode: "row_per_lead",
+      columns: { source_date: "L", name: "A", last_name: "B", phone: "C", email: "H" },
+      tab_name: "Auction Register Certificate",
+    },
+    google_ads_leads: {
+      sheet_id: DEFAULT_SHEET_IDS.google_ads_leads, mode: "row_per_lead",
+      columns: { source_date: "E", name: "A", last_name: "B", email: "C", phone: "D", lead_type: "F" },
+      tab_name: "Google Ads Leads",
+    },
+    alliance_activate_certificate: {
+      sheet_id: DEFAULT_SHEET_IDS.alliance_activate_certificate, mode: "row_per_lead",
+      columns: { source_date: "L", name: "A", last_name: "B", phone: "C", email: "H" },
+      tab_name: "Alliance Activate Certificate",
+    },
+    website_applications: {
+      sheet_id: DEFAULT_SHEET_IDS.website_applications, mode: "row_per_lead",
+      columns: { source_date: "I", name: "A", phone: "B", email: "C" },
+      tab_name: "Website Applications",
+    },
   },
   acuity: { calendars_included: [], types_included: [] },
 };

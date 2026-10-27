@@ -22,6 +22,7 @@ import { isFetchTimeoutError, syncFetchTimeoutMs, timedFetch, type TimedFetchImp
 import { raceBodyRead } from "./body-read";
 import type { AppSettings } from "../store/types";
 import type { GoogleSheetsAdapter } from "./adapters";
+import { LEAD_SOURCE_SHEETS } from "../../components/lead-sources";
 import {
   detectSheetMapping,
   LEAD_BACKFILL_DAYS,
@@ -287,10 +288,13 @@ export interface SheetsLiveRunReport {
 }
 
 /**
- * Live adapter for both configured sheets. fetchLeads() returns the leads of
- * every sheet that synced; if EVERY sheet fails it throws (the sync runner
- * falls back to the demo seed and records the error). Per-sheet outcomes +
- * mapping suggestions land in lastRun for the connection note.
+ * Live adapter for every configured lead sheet (SEVEN sources since the
+ * 10/27 form-workbook directive — family/animalia/fairyland + the four
+ * "Forms Data - Mallory Portraits" tabs; see src/components/lead-sources.ts).
+ * fetchLeads() returns the leads of every sheet that synced; if EVERY sheet
+ * fails it throws (the sync runner falls back to the demo seed and records
+ * the error). Per-sheet outcomes + mapping suggestions land in lastRun for
+ * the connection note.
  */
 export class LiveSheetsAdapter implements GoogleSheetsAdapter {
   provider = "google_sheets" as const;
@@ -313,11 +317,13 @@ export class LiveSheetsAdapter implements GoogleSheetsAdapter {
     const warnings: string[] = [];
     const suggestions: string[] = [];
 
-    for (const sheet of ["family", "animalia", "fairyland"] as const) {
+    for (const sheet of LEAD_SOURCE_SHEETS) {
       const conf = this.cfg[sheet];
-      // Third genre (owner directive 2026-10-22): the Fairyland sheet stays
-      // UNCONFIGURED (empty id) until the owner saves one in Settings —
-      // fail-honest skip with a visible note, never a guessed sheet id.
+      // Not-configured skip (Fairyland pattern, owner directive 2026-10-22):
+      // an empty sheet id means "not configured" — fail-honest skip with a
+      // visible note, never a guessed sheet id. The four form-workbook sources
+      // (owner directive 2026-10-27) ship CONFIGURED via defaults, so they
+      // ingest on the first sync after this ships.
       if (!conf?.sheet_id?.trim()) {
         warnings.push(`${sheet}: no sheet id configured — skipped (set one in Settings → Sheets)`);
         continue;
