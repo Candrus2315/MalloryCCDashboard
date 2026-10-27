@@ -354,7 +354,7 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       repName: rep?.name ?? null,
       rows: rep ? buildRepSourceRows(rep.id) : [],
       note:
-        "Bookings = attribution-verdict wins by source (the booking contact's nearest sheet lead — nearest sheet date to the booking's creation date, tie = most recently ingested, none = unattributed). Conversion = those wins ÷ that source's leads assigned to the rep (work-date cohort). Form-source leads carry no rep assignment (owner rule: team totals, never rep metrics) — their conversion renders —.",
+        "Bookings = attribution-verdict wins by source (the booking contact's nearest sheet lead — nearest sheet date to the booking's creation date, tie = most recently ingested, none = unattributed). These counts include prior-period leads: a booking keeps the source of its matched lead even when that lead's sheet date falls before the selected range, and such bookings never feed a conversion numerator anywhere. Conversion = the source's verdict wins ÷ that source's leads assigned to the rep (work-date cohort). Form-source leads carry no rep assignment (owner rule: team totals, never rep metrics) — their conversion renders —. Truly Unattributed = no reliable sheet-lead link.",
     };
 
     // missing-data warnings — never render a plausible number for absent data.
@@ -1822,7 +1822,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     (a) => isBookingWin(a) && appointmentInScope(a, scope),
   );
   const byWinSource = resolveBookingSources(winsJoin, leadsJoin);
-  const sourceTable = buildSourcePerformanceTable(leadsWeek, winsJoin, byWinSource);
+  // THREE-CATEGORY SEMANTICS (owner directive 10/27, post-validation): the
+  // report week [lwMon, lwSun] is the period — current-period matches feed
+  // the conversion numerators; prior-period matches keep their resolved
+  // source (never Unattributed); only no-link wins are Truly Unattributed.
+  const sourceTable = buildSourcePerformanceTable(leadsWeek, winsJoin, byWinSource, { start: lwMon, end: lwSun });
   const sourceBestWorst = bestWorstSourceLines(sourceTable.rows);
   const sourceCohort = computeLeadCohortOutcomes(
     leadsJoin.filter((l) => l.source_date >= lwMon && l.source_date <= lwSun),
@@ -1980,6 +1984,12 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     totalLeads: sourceTable.totalLeads,
     totalBookings: sourceTable.totalBookings,
     totalConv: sourceTable.totalConv,
+    totalCurrentBookings: sourceTable.totalCurrentBookings,
+    totalPriorBookings: sourceTable.totalPriorBookings,
+    totalLaterBookings: sourceTable.totalLaterBookings,
+    trulyUnattributedBookings: sourceTable.trulyUnattributedBookings,
+    sourceResolvedBookings: sourceTable.sourceResolvedBookings,
+    coverage: sourceTable.coverage,
     best: sourceBestWorst.best,
     worst: sourceBestWorst.worst,
     overlapNote: sourceOverlap.note,
