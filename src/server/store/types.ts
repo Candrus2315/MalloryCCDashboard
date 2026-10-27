@@ -144,6 +144,26 @@ export interface ContactIdentityRow {
   email: string | null;
   assigned_rep_id: string | null;
 }
+/**
+ * PER-SOURCE BOOKING ATTRIBUTION join row (owner directive 2026-10-27, Steps
+ * 3–5): a lead with exactly the identity columns the read-only booking→source
+ * join needs — contact_id (primary), phone/email (the ingest-matching
+ * fallback), source_sheet (THE source bucket), source_date (THE nearest-rule
+ * key) and created_at (the exact-tie "most recently ingested" break). Pure
+ * read materialization; nothing here is ever written back.
+ */
+export interface LeadJoinRow {
+  id: string;
+  contact_id: string | null;
+  source_sheet: string;
+  lead_type: string;
+  /** YYYY-MM-DD — the sheet date. */
+  source_date: string;
+  phone: string | null;
+  email: string | null;
+  /** Ingest instant (leads.created_at, ISO). */
+  created_at: string | null;
+}
 /** Raw joined call record for the audit endpoint (source = normalized DB). */
 export interface AuditCallRow {
   /** HighLevel call-message id (the calls table's external_call_id). */
@@ -2058,6 +2078,16 @@ export interface Store {
    * rows in the result never count.
    */
   getAppointmentsByWinBusinessDateBetween(start: string, end: string): Promise<AppointmentRow[]>;
+  /**
+   * THE SAME win-bucket superset as getAppointmentsByWinBusinessDateBetween,
+   * with the client identity columns (client_phone/client_email, stored
+   * normalized) joined in — the per-source booking attribution's phone/email
+   * fallback tier reads them. READ-ONLY; win filters stay in the metrics layer.
+   */
+  getWinsWithClientsBetween(start: string, end: string): Promise<(AppointmentRow & {
+    client_phone: string | null;
+    client_email: string | null;
+  })[]>;
   getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]>;
   getAllAppointmentsSince(startUtc: string): Promise<AppointmentRow[]>;
   /** Appointments with client contact fields joined (unattributed-bookings queue).
@@ -2151,6 +2181,14 @@ export interface Store {
    * work-date fetch cannot substitute. Presentation reads only; never written.
    */
   getLeadsBySourceDates(dates: string[]): Promise<LeadRow[]>;
+  /**
+   * PER-SOURCE ATTRIBUTION join fetch: leads whose source_date falls in the
+   * INCLUSIVE range [startSourceDate, endSourceDate], with the identity
+   * columns (contact_id/phone/email/created_at) the booking→source join and
+   * the lead-cohort outcomes read. READ-ONLY materialization of stored rows;
+   * the metric-layer filters stay in metrics/source-attribution.ts.
+   */
+  getLeadsJoinRange(startSourceDate: string, endSourceDate: string): Promise<LeadJoinRow[]>;
   /**
    * Cheap count of a provider's stored leads (no row materialization). Used by
    * the Sheets sync's demo-seed guard: demo rows may only ever seed a dataset

@@ -54,7 +54,7 @@ import {
   resolveRepGoal,
 } from "./metrics/compute";
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
-import { isFormSourceSheet } from "../components/lead-sources";
+import { FORM_SOURCE_SHEETS, isFormSourceSheet } from "../components/lead-sources";
 import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import {
@@ -84,7 +84,24 @@ import {
   type WeeklyDayByRepGrid,
   type WeeklyRepRow,
 } from "./metrics/weekly";
-import { buildWeeklyCcReportText } from "./metrics/weekly-report-text";
+import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "./metrics/weekly-report-text";
+import {
+  bestWorstSourceLines,
+  buildSourcePerformanceTable,
+  classifyLeadSource,
+  computeLeadCohortOutcomes,
+  crossSourceOverlap,
+  resolveBookingSources,
+  rollupRepSourceBookings,
+  sourceBucketLabel,
+  sourceConversion,
+  SOURCE_BUCKETS,
+  SOURCE_JOIN_LOOKBACK_DAYS,
+  type CrossSourceOverlap,
+  type LeadCohortSourceRow,
+  type SourceBucket,
+  type SourcePerformanceTable,
+} from "./metrics/source-attribution";
 import { deriveWeeklyHoles, type DayHoleDetail } from "./commission/derive";
 import { kickAvailabilityTopUp } from "./sync/availability-feed";
 import { buildAvailabilityView } from "./availability-view";
@@ -165,7 +182,7 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const assignedMon = weekParam ? weekStart(weekParam) : lastCompletedWeekStart(today);
     const assignedSun = addDays(assignedMon, 6);
 
-    const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers, assignedWeekLeads, channelOpps] = await Promise.all([
+    const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers, assignedWeekLeads, channelOpps, winsJoinRaw, leadsJoin] = await Promise.all([
       store.getUsers(),
       store.getCallsBetween(startUtc, endUtc),
       // REV 12 WIN BUCKET: wins count on booking_win_business_date (the ET
@@ -187,6 +204,11 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       // … and the channel opportunities (owner-verified pipeline ids; the
       // builder buckets by ET created date exactly like splitChannelLeads).
       store.getOpportunitiesByPipelines([ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID]),
+      // PER-SOURCE BOOKING ATTRIBUTION (owner directive 10/27, Step 3): wins
+      // with client identity for the join + candidate leads 90 days back (the
+      // documented lookback). READ-ONLY.
+      store.getWinsWithClientsBetween(range.start, range.end),
+      store.getLeadsJoinRange(addDays(range.start, -SOURCE_JOIN_LOOKBACK_DAYS), range.end),
     ]);
     const repGoalRows = await Promise.all(weeks.map((w) => store.getRepGoals(w)));
     const teamGoalRows = await Promise.all(weeks.map((w) => store.getTeamGoal(w)));
@@ -265,6 +287,41 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       sun: assignedSun,
     });
 
+    // PER-SOURCE BOOKING ATTRIBUTION (owner directive 2026-10-27, Step 3):
+    // which sources a rep's ATTRIBUTED bookings came from — bookings counted
+    // ONLY through the attribution verdict (bookingsByRep semantics; manual
+    // overrides are rep bookings, no-rep wins never a rep row — rev-13), the
+    // source from the contact's NEAREST sheet lead. Conversion denominators =
+    // the range's assigned leads per source (this page's work-date cohort),
+    // form sources EXCLUDED per the standing owner rule (form-source leads
+    // are team totals, never rep metrics) — their conversion renders "—".
+    const winsJoin = filterApptsInWinBucketRange(winsJoinRaw, range.start, range.end).filter((a) =>
+      isBookingWin(a) && appointmentInScope(a, settings.acuity),
+    );
+    const byWinSource = resolveBookingSources(winsJoin, leadsJoin);
+    const repSourceMap = rollupRepSourceBookings(winsJoin, attributionsEligible, byWinSource);
+    const assignedByRepSource = new Map<string, Map<SourceBucket, number>>();
+    for (const l of leads) {
+      if (!l.assigned_rep_id || isFormSourceSheet(l.source_sheet)) continue;
+      const b = classifyLeadSource(l);
+      let m = assignedByRepSource.get(l.assigned_rep_id);
+      if (!m) {
+        m = new Map();
+        assignedByRepSource.set(l.assigned_rep_id, m);
+      }
+      m.set(b, (m.get(b) ?? 0) + 1);
+    }
+    const buildRepSourceRows = (repId: string) =>
+      SOURCE_BUCKETS.filter((b) => b !== "other")
+        .map((b) => {
+          const bookings = repSourceMap.get(repId)?.get(b) ?? 0;
+          const leadsAssigned = b === "unattributed" ? 0 : assignedByRepSource.get(repId)?.get(b) ?? 0;
+          const formSource = (FORM_SOURCE_SHEETS as readonly string[]).includes(b);
+          const conv = b === "unattributed" || formSource ? null : sourceConversion(bookings, leadsAssigned);
+          return { source: b, label: sourceBucketLabel(b), bookings, leadsAssigned, conv };
+        })
+        .filter((r) => r.bookings > 0 || r.leadsAssigned > 0);
+
     // selected rep: requested id when present in the active list, else first
     const requestedId = data?.rep;
     const rep = reps.find((r) => r.id === requestedId) ?? reps[0];
@@ -292,6 +349,13 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       : null;
     const detail = rep && metrics ? buildRepDetail({ rep, metrics, goal, weeks }) : null;
     const comparisons = metrics ? compareWithTeam(metrics, teamAverages) : [];
+    const repSourcePerformance = {
+      repId: rep?.id ?? null,
+      repName: rep?.name ?? null,
+      rows: rep ? buildRepSourceRows(rep.id) : [],
+      note:
+        "Bookings = attribution-verdict wins by source (the booking contact's nearest sheet lead — nearest sheet date to the booking's creation date, tie = most recently ingested, none = unattributed). Conversion = those wins ÷ that source's leads assigned to the rep (work-date cohort). Form-source leads carry no rep assignment (owner rule: team totals, never rep metrics) — their conversion renders —.",
+    };
 
     // missing-data warnings — never render a plausible number for absent data.
     // A "Not Yet Active" rep (call_start_date in the future) EXPECTS zero
@@ -359,6 +423,7 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       warnings,
       teamGoalDefault: teamGoalByWeek.get(weeks[0]) ?? 79,
       assignedByDay,
+      repSourcePerformance,
       assignedWeek: {
         mon: assignedMon,
         sun: assignedSun,
@@ -1540,6 +1605,8 @@ export interface WeeklyPageData {
     celebrateDefault: string | null;
     /** The full CC Report text COPY REPORT emits (owner's template order). */
     reportText: string;
+    /** The LEAD SOURCE PERFORMANCE section input reportText carries (owner directive 10/27, Step 5). */
+    sourcePerformance: NonNullable<WeeklyCcReportInput["sourcePerformance"]>;
   };
   /**
    * BOOKINGS FROM LEADS (owner funnel, 2026-09-29): ALL paid bookings of the
@@ -1550,6 +1617,23 @@ export interface WeeklyPageData {
   funnel: { wins: number; leads: number; pct: number | null };
   /** The same funnel for the last 5 COMPLETED Mon–Sun weeks, oldest first — never the in-progress week. */
   funnelSeries: WeekFunnelRow[];
+  /**
+   * PER-SOURCE BOOKING ATTRIBUTION + CONVERSION (owner directive 2026-10-27,
+   * Steps 3–5). table = booking-period flavor (b): the week's in-scope wins by
+   * the source of the contact's NEAREST sheet lead vs the week's source_date
+   * lead cohort (splitLeadsByType-identical counts), conv = bookings ÷ leads.
+   * cohort = lead-cohort flavor (a): of the week's leads per source, how many
+   * produced a booking won through today (creation on/after the lead's sheet
+   * date). overlap = cross-source duplicate magnitude (report note only —
+   * NEVER a dedupe). Both flavors labeled wherever rendered.
+   */
+  sourcePerformance: {
+    table: SourcePerformanceTable;
+    cohort: LeadCohortSourceRow[];
+    overlap: CrossSourceOverlap;
+    /** Candidate-lead lookback (days before the week) the join window fetched. */
+    lookbackDays: number;
+  };
   warnings: string[];
 }
 
@@ -1593,7 +1677,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // recent-completed-weeks strip (report week included — one fetch serves both).
   const seriesMon = addDays(lwMon, -7 * (FUNNEL_SERIES_WEEKS - 1));
 
-  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, reportWeekSessions, channelLeadOpps] =
+  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, reportWeekSessions, channelLeadOpps, winsJoinRaw, leadsJoin] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -1630,6 +1714,12 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       // ALLIANCE/AUCTION LEADS (owner-verified 2026-09-29): GHL opportunities
       // on the channels' pipelines; ET created-date bucketing slices the week.
       store.getOpportunitiesByPipelines([ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID]),
+      // PER-SOURCE BOOKING ATTRIBUTION (owner directive 10/27, Steps 3–5):
+      // wins with client identity from the report week THROUGH TODAY (serves
+      // both conversion flavors) + candidate leads 90 days back (the
+      // documented lookback the nearest-rule selects within). READ-ONLY.
+      store.getWinsWithClientsBetween(lwMon, today),
+      store.getLeadsJoinRange(addDays(lwMon, -SOURCE_JOIN_LOOKBACK_DAYS), lwSun),
     ]);
 
   const scope = settings.acuity;
@@ -1717,6 +1807,28 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // week) — stored note overrides it in the narrative editor.
   const lwTop = lwRepRows.find((r) => r.total > 0) ?? null;
   const celebrateDefault = celebrateDefaultLine(lwTop ? { repName: lwTop.rep_name, total: lwTop.total } : null);
+
+  // ---- PER-SOURCE BOOKING ATTRIBUTION + CONVERSION (owner directive 10/27, Steps 3–5) ----
+  // Booking-period flavor (b): the report week's in-scope wins by the source
+  // of the contact's NEAREST sheet lead vs the week's source_date lead cohort
+  // (splitLeadsByType-identical counts — genre numbers byte-identical).
+  // Lead-cohort flavor (a): of the week's leads per source, how many produced
+  // a booking won through today (creation on/after the lead's sheet date —
+  // causality guard). A win with no lead link = Unattributed (never invented).
+  const winsJoin = filterApptsInWinBucketRange(winsJoinRaw, lwMon, lwSun).filter(
+    (a) => isBookingWin(a) && appointmentInScope(a, scope),
+  );
+  const winsJoinThroughToday = filterApptsInWinBucketRange(winsJoinRaw, lwMon, today).filter(
+    (a) => isBookingWin(a) && appointmentInScope(a, scope),
+  );
+  const byWinSource = resolveBookingSources(winsJoin, leadsJoin);
+  const sourceTable = buildSourcePerformanceTable(leadsWeek, winsJoin, byWinSource);
+  const sourceBestWorst = bestWorstSourceLines(sourceTable.rows);
+  const sourceCohort = computeLeadCohortOutcomes(
+    leadsJoin.filter((l) => l.source_date >= lwMon && l.source_date <= lwSun),
+    winsJoinThroughToday,
+  );
+  const sourceOverlap = crossSourceOverlap(leadsJoin, SOURCE_JOIN_LOOKBACK_DAYS);
 
   // ---- CALENDAR FILL ----
   // studio hours: availability_rules is the runtime mirror; fall back to the
@@ -1860,6 +1972,18 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   };
 
   const reportNotes = reportNotesRow?.notes ?? {};
+  // The LEAD SOURCE PERFORMANCE section input the copy carries (directive
+  // 10/27, Step 5). Exposed on data.report so the byte-identity tests (and the
+  // UI) can see exactly what the report renders without re-deriving it.
+  const reportSourcePerformance: NonNullable<WeeklyCcReportInput["sourcePerformance"]> = {
+    rows: sourceTable.rows,
+    totalLeads: sourceTable.totalLeads,
+    totalBookings: sourceTable.totalBookings,
+    totalConv: sourceTable.totalConv,
+    best: sourceBestWorst.best,
+    worst: sourceBestWorst.worst,
+    overlapNote: sourceOverlap.note,
+  };
   const reportText = buildWeeklyCcReportText({
     week: { start: lwMon, end: lwSun },
     monthKey,
@@ -1868,6 +1992,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     channels,
     channelLeads,
     leads: splitLeadsByType(leadsWeek),
+    sourcePerformance: reportSourcePerformance,
     conversion: {
       overall: conversionRate(lwOwnership.repWins.length, assigned.length),
       family: conversionRate(repWinsFam, assignedFam.length),
@@ -1917,6 +2042,12 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     leads: splitLeadsByType(leadsWeek),
     funnel,
     funnelSeries,
+    sourcePerformance: {
+      table: sourceTable,
+      cohort: sourceCohort,
+      overlap: sourceOverlap,
+      lookbackDays: SOURCE_JOIN_LOOKBACK_DAYS,
+    },
     mtd: {
       total: winsMtd.length,
       repRows: mtdRepRows,
@@ -1930,6 +2061,8 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       notes: reportNotes,
       celebrateDefault,
       reportText,
+      /** The Lead Source Performance section input reportText was built with. */
+      sourcePerformance: reportSourcePerformance,
     },
     warnings,
   };

@@ -282,6 +282,12 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       },
       notes: data.report.notes,
       celebrateDefault: data.report.celebrateDefault,
+      // The page's copy carries the owner-directed LEAD SOURCE PERFORMANCE
+      // section (directive 10/27, Step 5) — the legacy baseline must include
+      // the SAME section input, so this comparison isolates the Holes line as
+      // the ONLY difference (its documented intent: "every other line …
+      // untouched").
+      sourcePerformance: data.report.sourcePerformance,
       holes: null,
     }).split("\n");
     const actual = data.report.reportText.split("\n");

@@ -79,6 +79,7 @@ import type {
   RetentionNoShowWrite,
   RetentionTransferRow,
   RetentionTransferWrite,
+  type LeadJoinRow,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {
@@ -1914,6 +1915,25 @@ export class PgStore implements Store {
     const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source FROM appointments WHERE (booking_win_business_date >= ${start}::date AND booking_win_business_date <= ${end}::date) OR (booking_win_business_date IS NULL AND created_business_date >= ${start}::date AND created_business_date <= ${end}::date)`;
     return rows.map((r) => this.apptRow(r as Record<string, unknown>));
   }
+  async getWinsWithClientsBetween(start: string, end: string): Promise<(AppointmentRow & {
+    client_phone: string | null;
+    client_email: string | null;
+  })[]> {
+    return this.cache.wrap("getWinsWithClientsBetween:" + JSON.stringify([start, end]), async () => {
+      await this.ensureSchema();
+      // Per-source booking attribution (owner directive 2026-10-27): the SAME
+      // win-bucket superset as getAppointmentsByWinBusinessDateBetween, plus
+      // the stored normalized client identity (phone/email fallback tier of
+      // the booking→lead join). READ-ONLY — no filters applied here; the
+      // metrics layer owns isBookingWin/scope/win rules.
+      const rows = await this.sql`SELECT id, contact_id, calendar_id, acuity_appointment_id::text AS acuity_appointment_id, client_name, client_phone, client_email, appointment_type, appointment_datetime, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source FROM appointments WHERE (booking_win_business_date >= ${start}::date AND booking_win_business_date <= ${end}::date) OR (booking_win_business_date IS NULL AND created_business_date >= ${start}::date AND created_business_date <= ${end}::date)`;
+      return rows.map((r) => ({
+        ...this.apptRow(r as Record<string, unknown>),
+        client_phone: r.client_phone ? String(r.client_phone) : null,
+        client_email: r.client_email ? String(r.client_email) : null,
+      }));
+    });
+  }
   async getAppointmentsOverlapping(startUtc: string, endUtc: string): Promise<AppointmentRow[]> {
     return this.cache.wrap("getAppointmentsOverlapping:" + JSON.stringify([startUtc, endUtc]), () => this.getAppointmentsOverlappingCached(startUtc, endUtc));
   }
@@ -2309,6 +2329,24 @@ export class PgStore implements Store {
       source_sheet: String(r.source_sheet),
       name: r.name == null ? null : String(r.name),
     }));
+  }
+  async getLeadsJoinRange(startSourceDate: string, endSourceDate: string): Promise<LeadJoinRow[]> {
+    return this.cache.wrap("getLeadsJoinRange:" + JSON.stringify([startSourceDate, endSourceDate]), async () => {
+      await this.ensureSchema();
+      // Per-source booking attribution (owner directive 2026-10-27): the
+      // source-date slice WITH the join identity columns. READ-ONLY.
+      const rows = await this.sql`SELECT id::text, lead_type, source_date::text, contact_id::text, source_sheet, name, phone, email, created_at FROM leads WHERE source_date >= ${startSourceDate}::date AND source_date <= ${endSourceDate}::date ORDER BY source_date, id`;
+      return rows.map((r) => ({
+        id: String(r.id),
+        contact_id: r.contact_id ? String(r.contact_id) : null,
+        source_sheet: String(r.source_sheet),
+        lead_type: String(r.lead_type),
+        source_date: String(r.source_date),
+        phone: r.phone ?? null,
+        email: r.email ?? null,
+        created_at: r.created_at == null ? null : new Date(r.created_at as string).toISOString(),
+      }));
+    });
   }
   async updateLeadWorkDate(id: string, workDate: string): Promise<void> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache

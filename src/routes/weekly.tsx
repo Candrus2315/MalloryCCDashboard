@@ -633,6 +633,105 @@ function WeeklyPage() {
         </div>
       </section>
 
+      {/* 5b — LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, Steps 3–5):
+          the per-source funnel of the report week. TWO LABELED METHODOLOGIES,
+          never mixed: (b) booking-period — of the week's paid wins, which
+          source the booking contact's NEAREST sheet lead came from, against
+          the week's lead cohort; (a) lead-cohort — of the week's leads per
+          source, how many produced a booking won through today. Existing
+          numbers untouched: the Leads column classifies exactly like the
+          Lead Composition panel above (genre sheets by lead type, Forms
+          Data tabs by sheet identity). */}
+      <section aria-label="Lead source performance">
+        <Panel className="p-5 sm:p-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <p className="kpi-label flex items-center gap-1.5">
+              Lead Source Performance
+              <InfoTip
+                label="How a booking gets its lead source"
+                tip={
+                  <>
+                    A booking's source is the booking contact's sheet lead with the NEAREST sheet date
+                    (source_date) to the booking's creation date; an exact tie is broken by most recently
+                    ingested. A booking with no sheet-lead link stays Unattributed — never assigned a
+                    source. Bookings here are the same in-scope paid wins every other figure counts; the
+                    Leads column classifies exactly like the Lead Composition panel (genre sheets by lead
+                    type, Forms Data tabs by sheet), so genre counts match it digit for digit. Conversion
+                    renders "—" when a source had no leads. Candidate leads are fetched
+                    {" "}{data.sourcePerformance.lookbackDays}{" "} days back — a contact whose only lead is
+                    older than that resolves honestly to Unattributed rather than guessed. Rep verdicts
+                    (who booked) come from the frozen attribution engine and are untouched by this join.
+                  </>
+                }
+              />
+            </p>
+            <p className="kpi-sub">report week · both conversion methodologies labeled</p>
+          </div>
+          <div className="mt-4 grid gap-6 lg:grid-cols-2">
+            {/* (b) booking-period flavor: wins of the week by source */}
+            <div>
+              <p className="text-[13px] font-medium text-(--text-body)">Bookings won this week — by lead source</p>
+              <p className="kpi-sub mt-0.5">
+                {formatInt(data.sourcePerformance.table.totalBookings)} paid bookings · conversion = bookings ÷ that source's leads this week
+              </p>
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-(--table-border) text-left text-(--text-caption)">
+                      <th scope="col" className="py-1.5 pr-3 font-medium">Source</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Leads</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Bookings</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Conv %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.sourcePerformance.table.rows.map((r) => (
+                      <tr key={r.source} className={r.source === "total" ? "border-t border-(--table-border) font-semibold text-(--text-primary)" : "border-t border-(--table-border-weak)"}>
+                        <td className="py-1.5 pr-3 text-(--text-body)">{r.label}</td>
+                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.leads)}</td>
+                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.bookings)}</td>
+                        <td className={"py-1.5 pl-3 text-right tabular-nums " + (r.conv == null ? "text-(--text-faint)" : "text-(--text-primary)")}>
+                          {r.conv == null ? "—" : formatPercent(r.conv, 1)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {/* (a) lead-cohort flavor: the week's leads that produced a booking */}
+            <div>
+              <p className="text-[13px] font-medium text-(--text-body)">Leads received this week — producing a booking</p>
+              <p className="kpi-sub mt-0.5">of each source's leads, how many produced a paid booking won through today (booking created on/after the lead's sheet date)</p>
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="border-b border-(--table-border) text-left text-(--text-caption)">
+                      <th scope="col" className="py-1.5 pr-3 font-medium">Source</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Leads</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">Produced</th>
+                      <th scope="col" className="py-1.5 pl-3 text-right font-medium">%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.sourcePerformance.cohort.map((r) => (
+                      <tr key={r.source} className={r.source === "total" ? "border-t border-(--table-border) font-semibold text-(--text-primary)" : "border-t border-(--table-border-weak)"}>
+                        <td className="py-1.5 pr-3 text-(--text-body)">{r.label}</td>
+                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.leads)}</td>
+                        <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.bookedLeads)}</td>
+                        <td className={"py-1.5 pl-3 text-right tabular-nums " + (r.conv == null ? "text-(--text-faint)" : "text-(--text-primary)")}>
+                          {r.conv == null ? "—" : formatPercent(r.conv, 1)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-(--text-muted)">{data.sourcePerformance.overlap.note}</p>
+        </Panel>
+      </section>
       {/* 6 — SECONDARY BAND: calendar fill + Alliance/Auction/Website (quieter) */}
       <section aria-label="Calendar fill and channels" className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
         <Panel className="p-5 sm:p-6">

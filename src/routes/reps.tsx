@@ -828,6 +828,60 @@ function RepsPage() {
         </section>
       )}
 
+      {/* BOOKING SOURCES (ATTRIBUTED) — owner directive 2026-10-27, Step 3:
+          which sources the SELECTED rep's attributed bookings came from +
+          per-source conversion. Bookings counted ONLY through the attribution
+          verdict (bookingsByRep semantics — never raw sheet rows; no-rep
+          wins never a rep row, rev-13). Form-source conversion renders "—"
+          (owner rule: form-source leads are team totals, never rep metrics). */}
+      <section className="card card-dense" aria-label="Booking sources of attributed bookings">
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <span className="inline-flex items-center gap-1.5">
+              <p className="section-heading">Booking Sources (Attributed)</p>
+              <InfoTip
+                label="How booking sources are attributed"
+                tip={data.repSourcePerformance.note}
+              />
+            </span>
+            <p className="kpi-sub mt-0.5">
+              {data.repSourcePerformance.repName ? `${data.repSourcePerformance.repName} · selected range` : ""}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 overflow-x-auto scroll-x">
+          <table className="data-table min-w-[560px] [&_td]:py-2 [&_td]:text-right [&_td:first-child]:text-left">
+            <thead>
+              <tr>
+                <th scope="col" className="text-left font-medium">Source</th>
+                <th scope="col" className="font-medium">Bookings</th>
+                <th scope="col" className="font-medium">Assigned leads</th>
+                <th scope="col" className="font-medium">Conv %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.repSourcePerformance.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="text-left text-(--text-muted)">
+                    No attributed bookings or assigned leads in this range — nothing to attribute, never a guessed source.
+                  </td>
+                </tr>
+              ) : (
+                data.repSourcePerformance.rows.map((r) => (
+                  <tr key={r.source}>
+                    <td className="text-left text-(--text-body)">{r.label}</td>
+                    <td className="font-medium text-(--text-primary)">{formatInt(r.bookings)}</td>
+                    <td className="text-(--text-caption)">{r.leadsAssigned > 0 ? formatInt(r.leadsAssigned) : "—"}</td>
+                    <td className={"font-medium " + (r.conv == null ? "text-(--text-faint)" : "text-(--text-primary)")}>
+                      {r.conv == null ? "—" : formatPercent(r.conv, 1)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
       {/* ASSIGNED LEADS BY DAY (owner directive 2026-10-01) — presentation
           redesign per owner spec: same payload, same CSV, zero math changes.
           Structured stack cells (count primary, genre label muted), Weekly
