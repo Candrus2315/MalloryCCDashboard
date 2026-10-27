@@ -92,9 +92,11 @@ export interface GoogleSheetsAdapter {
 /**
  * Demo raw rows as the Google Sheets API would return them (header + one data
  * row per sheet). Used by the Settings "test mapping" action to demonstrate
- * the mapping → parse pipeline on realistic data.
+ * the mapping → parse pipeline on realistic data. The four form-workbook
+ * sources (10/27) return rows shaped like their REAL verified headers so the
+ * demo fallback teaches the same mapping the live tab needs.
  */
-export function sampleSheetRow(sheet: "family" | "animalia" | "fairyland"): { header: string[]; rows: string[][] } {
+export function sampleSheetRow(sheet: string): { header: string[]; rows: string[][] } {
   if (sheet === "family") {
     return {
       header: ["Date", "Name", "Phone", "Email", "Lead Type"],
@@ -105,6 +107,24 @@ export function sampleSheetRow(sheet: "family" | "animalia" | "fairyland"): { he
     return {
       header: ["Date", "Name", "Phone", "Email", "Lead Type"],
       rows: [["2026-09-24", "Ava Bell", "+19175550177", "ava.bell@example.com", "fairyland"]],
+    };
+  }
+  if (sheet === "auction_register_certificate" || sheet === "alliance_activate_certificate") {
+    return {
+      header: ["First Name", "Last Name", "Phone", "Street Address", "City", "Postal Code", "State", "Email", "Certificate Number", "Address", "Timezone", "Submission Date", "URL"],
+      rows: [["Sam", "River", "(555) 201-8842", "1 Demo Way", "Springfield", "1105", "MA", "sam.river@example.com", "02-DEMO-0826", "1 Demo Way, Springfield", "EST", "Feb 1st 2026, 4:14 pm", "https://www.malloryportraits.c"]],
+    };
+  }
+  if (sheet === "google_ads_leads") {
+    return {
+      header: ["First Name", "Last Name", "Email", "Phone", "Date Entered", "Project Name", "Source"],
+      rows: [["Alex", "Doe", "alex.doe@example.com", "(555) 313-7788", "10/7/2026", "Family", "Lead Intake Form"]],
+    };
+  }
+  if (sheet === "website_applications") {
+    return {
+      header: ["Full Name", "Phone", "Email", "Why do you want a portrait session?", "Who would be in the portrait?", "How did you find us?", "I agree…", "Timezone", "Submission Date", "URL"],
+      rows: [["Robin Fox", "15552014444", "robin.fox@example.com", "Demo reason", "My dog", "Facebook", "I agree", "America/New_York (GMT-05:00)", "Jan 31st 2026, 10:50 am", "https://www.malloryportraits.c"]],
     };
   }
   return {

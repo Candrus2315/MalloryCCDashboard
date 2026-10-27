@@ -242,17 +242,43 @@ export function assignedLeadsInRange(leads: LeadRow[], start: string, end: strin
   return leads.filter((l) => l.source_date >= start && l.source_date <= end && l.assigned_rep_id != null);
 }
 
-/** Lead counts by sheet type over the fetched lead rows (no date filter — callers pass the window). */
-export function splitLeadsByType(leads: LeadRow[]): { family: number; animalia: number; fairyland: number; total: number } {
+/**
+ * Per-SOURCE lead counts over the fetched lead rows (no date filter — callers
+ * pass the window). Seven sources since the 10/27 form-workbook directive:
+ * the three genre sheets classify by lead_type text EXACTLY as before
+ * (/animalia/i → animalia, /fairyland/i → fairyland, else family); the four
+ * "Forms Data" workbook sheets classify by SHEET IDENTITY — their lead_type
+ * text ("Family"/"Pet" project names on the Google Ads tab) is never a genre
+ * vote, so genre counts stay byte-identical to their pre-forms behavior.
+ * `total` is the combined lead count (all seven sources).
+ */
+export function splitLeadsByType(leads: LeadRow[]): {
+  family: number; animalia: number; fairyland: number;
+  auction_register_certificate: number; google_ads_leads: number;
+  alliance_activate_certificate: number; website_applications: number;
+  total: number;
+} {
   let family = 0;
   let animalia = 0;
   let fairyland = 0;
+  let auction_register_certificate = 0;
+  let google_ads_leads = 0;
+  let alliance_activate_certificate = 0;
+  let website_applications = 0;
   for (const l of leads) {
+    if (l.source_sheet === "auction_register_certificate") { auction_register_certificate += 1; continue; }
+    if (l.source_sheet === "google_ads_leads") { google_ads_leads += 1; continue; }
+    if (l.source_sheet === "alliance_activate_certificate") { alliance_activate_certificate += 1; continue; }
+    if (l.source_sheet === "website_applications") { website_applications += 1; continue; }
     if (/animalia/i.test(l.lead_type)) animalia += 1;
     else if (/fairyland/i.test(l.lead_type)) fairyland += 1;
     else family += 1;
   }
-  return { family, animalia, fairyland, total: leads.length };
+  return {
+    family, animalia, fairyland,
+    auction_register_certificate, google_ads_leads, alliance_activate_certificate, website_applications,
+    total: leads.length,
+  };
 }
 
 /** Format "X/Goal (±N)" — the weekly bookings-vs-goal string (−/±/+, goal "—" when unset). */

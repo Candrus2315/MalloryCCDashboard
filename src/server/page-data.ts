@@ -1506,7 +1506,12 @@ export interface WeeklyPageData {
     denominator: { overall: number; family: number; animalia: number; fairyland: number };
   };
   /** Sheet leads by source_date in the week. */
-  leads: { family: number; animalia: number; fairyland: number; total: number };
+    leads: {
+      family: number; animalia: number; fairyland: number;
+      auction_register_certificate: number; google_ads_leads: number;
+      alliance_activate_certificate: number; website_applications: number;
+      total: number;
+    };
   /** Month-to-date paid wins (current ET calendar month through today). */
   mtd: {
     total: number;

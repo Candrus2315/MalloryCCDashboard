@@ -105,6 +105,11 @@
   /* genres — Fairyland's violet (owner directive 2026-10-22; the one
      dark-mode-proven hue: same value already used by --ret-purple-dot) */
   --genre-fairyland: #8b5cf6; /* violet-500 */
+  /* Form-workbook source segments (Weekly per-sheet breakdown, 10/27) — muted, distinct from the genre trio. */
+  --src-auction: #b45309; /* amber-700 */
+  --src-ads: #2563eb; /* blue-600 */
+  --src-alliance: #0d9488; /* teal-600 */
+  --src-website: #db2777; /* pink-600 */
 
   /* accent (nav pill, primary buttons, strong badge) */
   --accent-solid: #1c1917; /* stone-900 */
@@ -228,6 +233,10 @@
   --bar-fill-hit: #34d399;
   /* genres — Fairyland violet brightens one step in dark mode (proven pair) */
   --genre-fairyland: #a78bfa; /* violet-400 */
+  --src-auction: #d97706; /* amber-500 */
+  --src-ads: #60a5fa; /* blue-400 */
+  --src-alliance: #2dd4bf; /* teal-400 */
+  --src-website: #f472b6; /* pink-400 */
 
   /* accent — primary buttons + selected nav are a REFINED ELEVATED state
      (one step above Level 3), never a glaring white rectangle (owner

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { LEAD_SOURCE_LABELS, LEAD_SOURCE_SHEETS, type LeadSourceSheet } from "../components/lead-sources";
 import { useAppearance } from "~/components/appearance";
 import { Segmented } from "~/components/Segmented";
 import { useRouter } from "@tanstack/react-router";
@@ -249,21 +250,21 @@ function SettingsPage() {
             </span>
             <span>
               <span className="block text-[15px] font-semibold tracking-tight text-(--text-primary)">Google Sheets Mapping</span>
-              <span className="mt-0.5 block text-[13px] text-(--text-caption)">Where the Family + Animalia + Fairyland lead counts come from and how each column is read.</span>
+              <span className="mt-0.5 block text-[13px] text-(--text-caption)">Where the seven lead-source sheets (Family · Animalia · Fairyland + the four Forms Data workbook tabs) come from and how each column is read.</span>
             </span>
           </span>
           <span className="flex items-center gap-3">
-            <span className="hidden text-xs text-(--text-muted) sm:inline">{(["family", "animalia", "fairyland"] as const).map((s) => data.settings.sheets[s].mode === "row_per_lead" ? `${s} row-per-lead` : `${s} day+count`).join(" · ")}</span>
+            <span className="hidden text-xs text-(--text-muted) sm:inline">{LEAD_SOURCE_SHEETS.map((s) => `${LEAD_SOURCE_LABELS[s]} ${data.settings.sheets[s].mode === "row_per_lead" ? "row-per-lead" : "day+count"}`).join(" · ")}</span>
             <span className="text-(--text-muted) transition-transform group-open:rotate-180" aria-hidden="true">
               ▾
             </span>
           </span>
         </summary>
         <div className="space-y-3 border-t border-(--table-border-weak) p-5">
-          <p className="text-[13px] text-(--text-caption)">Which columns of the Family / Animalia / Fairyland sheets hold each field, and whether each row is a day+count or a single lead. Test mapping fetches a REAL sample row from Google Sheets and parses it with the same code a live sync uses.</p>
+          <p className="text-[13px] text-(--text-caption)">Which columns of each of the seven lead-source sheets hold each field, and whether each row is a day+count or a single lead. The four Forms Data workbook tabs (Auction certificates · Google Ads leads · Alliance certificates · Website applications) each count as an INDEPENDENT source — the same person in two tabs counts in each. Test mapping fetches a REAL sample row from Google Sheets and parses it with the same code a live sync uses.</p>
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            {(["family", "animalia", "fairyland"] as const).map((sheet) => (
-              <SheetMappingCard key={sheet} sheet={sheet} columns={data.settings.sheets[sheet].columns} mode={data.settings.sheets[sheet].mode} sheetId={data.settings.sheets[sheet].sheet_id} busy={busy} onSave={(columns, mode) => run(`${sheet} mapping saved`, () => saveSheetMapping({ data: { sheet, columns, mode } }))} />
+            {LEAD_SOURCE_SHEETS.map((sheet) => (
+              <SheetMappingCard key={sheet} sheet={sheet} columns={data.settings.sheets[sheet].columns} mode={data.settings.sheets[sheet].mode} sheetId={data.settings.sheets[sheet].sheet_id} busy={busy} onSave={(columns, mode) => run(`${LEAD_SOURCE_LABELS[sheet]} mapping saved`, () => saveSheetMapping({ data: { sheet, columns, mode } }))} />
             ))}
           </div>
         </div>
@@ -1200,7 +1201,7 @@ function BlockedTimesCard({ data, busy, onAdd, onRemove }: {
 /* ================= 5 — sheet mapping ================= */
 
 function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, onSave }: {
-  sheet: "family" | "animalia" | "fairyland";
+  sheet: LeadSourceSheet;
   columns: Record<string, string>;
   mode: SheetMappingMode;
   sheetId: string;
@@ -1228,7 +1229,7 @@ function SheetMappingCard({ sheet, columns, mode: initialMode, sheetId, busy, on
   return (
     <div className="card card-nest card-dense space-y-3">
       <div>
-        <p className="section-title">{({ family: "Family sheet", animalia: "Animalia sheet", fairyland: "Fairyland sheet" } as const)[sheet]}</p>
+        <p className="section-title">{LEAD_SOURCE_LABELS[sheet]} sheet</p>
         <p className="mt-1 truncate text-xs text-(--text-muted)">Sheet ID {sheetId}</p>
         <p className="mt-0.5 text-xs text-(--text-muted)">
           Default mapping: {defaultNote} (editable below)

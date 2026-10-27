@@ -581,19 +581,23 @@ function WeeklyPage() {
               Leads
               <InfoTip
                 label="How weekly leads are dated"
-                tip="Leads logged (sheet date) from the Family · Animalia · Fairyland sheets, by the date in each sheet's Date column (source_date), Mon–Sun of the report week, America/New_York. Not a per-source intake count — only these three genre sheets are ingested."
+                tip="Leads logged (sheet date) — the date in each sheet's date column (source_date), Mon–Sun of the report week, America/New_York. Seven sources: the Family / Animalia / Fairyland sheets plus the four Forms Data tabs (Auction certificates, Google Ads leads, Alliance certificates, Website applications). Per-source counts below; a person appearing in two sheets counts in each source, duplicates within one sheet collapse."
               />
             </p>
             <p className="mt-3 flex items-baseline gap-2">
               <span className="text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
                 {formatInt(data.leads.total)}
               </span>
-              <span className="kpi-sub">leads logged (sheet date) · Family · Animalia · Fairyland sheets</span>
+              <span className="kpi-sub">leads logged (sheet date) · 7 sources — 3 genre sheets + 4 Forms Data tabs</span>
             </p>
             <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
               <div className="bg-(--bar-fill)" style={{ width: `${leadMixSeg(data.leads.animalia)}%` }} />
               <div className="bg-(--text-muted)" style={{ width: `${leadMixSeg(data.leads.family)}%` }} />
               <div className="bg-(--genre-fairyland)" style={{ width: `${leadMixSeg(data.leads.fairyland)}%` }} />
+              <div className="bg-(--src-auction)" style={{ width: `${leadMixSeg(data.leads.auction_register_certificate)}%` }} />
+              <div className="bg-(--src-ads)" style={{ width: `${leadMixSeg(data.leads.google_ads_leads)}%` }} />
+              <div className="bg-(--src-alliance)" style={{ width: `${leadMixSeg(data.leads.alliance_activate_certificate)}%` }} />
+              <div className="bg-(--src-website)" style={{ width: `${leadMixSeg(data.leads.website_applications)}%` }} />
             </div>
             <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
               <li className="flex items-center gap-1.5">
@@ -607,6 +611,22 @@ function WeeklyPage() {
               <li className="flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--genre-fairyland)" aria-hidden="true" />
                 <span className="tabular-nums">{formatInt(data.leads.fairyland)}</span> Fairyland
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--src-auction)" aria-hidden="true" />
+                <span className="tabular-nums">{formatInt(data.leads.auction_register_certificate)}</span> Auction Certificates
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--src-ads)" aria-hidden="true" />
+                <span className="tabular-nums">{formatInt(data.leads.google_ads_leads)}</span> Google Ads
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--src-alliance)" aria-hidden="true" />
+                <span className="tabular-nums">{formatInt(data.leads.alliance_activate_certificate)}</span> Alliance Certificates
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--src-website)" aria-hidden="true" />
+                <span className="tabular-nums">{formatInt(data.leads.website_applications)}</span> Website Applications
               </li>
             </ul>
           </Panel>

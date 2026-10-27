@@ -169,14 +169,20 @@ export function parseSheetDate(raw: unknown): string | null {
     }
     return us; // null — unchanged for every other rejected shape
   }
-  // "Sep 24, 2026" / "September 24 2026"
-  m = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/.exec(s);
+  // "Sep 24, 2026" / "September 24 2026" — with an OPTIONAL trailing part
+  // (FORM WORKBOOK, owner directive 2026-10-27: the certificates/website tabs
+  // write submission timestamps like "Feb 1st 2026, 4:14 pm" — ordinal day +
+  // comma + clock time; the time part is ignored, the ET calendar date is the
+  // answer). The trailing group must start with whitespace or a comma so the
+  // year stays the year ("Sep 24, 2026" still ends at the year, byte-identical
+  // to the pre-extension behavior).
+  m = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})(?:[\s,].*)?$/.exec(s);
   if (m) {
     const mo = MONTHS[m[1].toLowerCase()];
     if (mo) return validDateStr(+m[3], mo, +m[2]);
   }
-  // "24 Sep 2026" / "24 September 2026"
-  m = /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})$/.exec(s);
+  // "24 Sep 2026" / "24 September 2026" (same optional trailing part)
+  m = /^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})(?:[\s,].*)?$/.exec(s);
   if (m) {
     const mo = MONTHS[m[2].toLowerCase()];
     if (mo) return validDateStr(+m[3], mo, +m[1]);
@@ -305,7 +311,15 @@ const MAX_PLAUSIBLE_DAY_COUNT = 10_000;
  * expansion for row-per-day sheets, and deterministic source_ids.
  */
 export function parseSheetRows(opts: {
-  sheet: "family" | "animalia" | "fairyland";
+  /**
+   * The logical sheet key — settings.sheets key, leads.source_sheet AND the
+   * identity-key segment (gs2#{sheet}#…). WIDENED from the three-genre union
+   * to any configured sheet label (owner directive 2026-10-27: the four
+   * form-workbook tabs are sources with their own keys —
+   * src/components/lead-sources.ts); the label passes through verbatim so the
+   * identity and per-source splits need no translation.
+   */
+  sheet: string;
   sheetId: string;
   mapping: SheetMapping;
   rows: string[][];

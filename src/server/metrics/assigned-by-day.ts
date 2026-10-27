@@ -8,7 +8,10 @@
  *    (getLeadsByWorkDates — the ET work-date cohort every operational page
  *    uses) with an assigned rep. Unassigned sheet leads are EXCLUDED (owner:
  *    ASSIGNED leads only). Genre: /animalia/i → animalia, everything else
- *    family — the splitLeadsByType rule verbatim.
+ *    family — the splitLeadsByType rule verbatim. The four FORM-WORKBOOK
+ *    sources (10/27) are excluded from the genre columns (never guessed into
+ *    Family) and surfaced in the warnings line — per-source counts live on
+ *    the Weekly breakdown.
  *  - ALLIANCE/AUCTION: GHL opportunities on the channel pipelines (owner-
  *    verified 2026-09-29 ids), bucketed by the ET calendar date of
  *    source_created_at — the EXACT splitChannelLeads semantics (every
@@ -21,6 +24,7 @@
  * the same grid, so the download can never disagree with the table.
  */
 import { addDays, etDateStrFromInstant, weekdayName } from "../date-logic";
+import { isFormSourceSheet } from "../../components/lead-sources";
 import { ALLIANCE_PIPELINE_ID, AUCTION_PIPELINE_ID, type ChannelLeadRow } from "./weekly";
 import type { LeadRow } from "./compute";
 
@@ -127,10 +131,21 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
   for (const r of rosterReps) ensureRep(r.id);
 
   // ---- sheet leads (ASSIGNED only — the owner's definition) ----
+  let formSourceAssigned = 0;
   for (const l of leads) {
     if (l.assigned_rep_id == null) continue; // unassigned sheet leads are excluded
     const i = dateIndex.get(l.work_date);
     if (i == null) continue; // defensive: store fetch already scopes work dates
+    // FORM-WORKBOOK SOURCES (owner directive 2026-10-27): the grid's columns
+    // are the five established genres; a form lead (Auction/Alliance
+    // certificate, Google Ads, Website application) is counted by ITS SOURCE
+    // on the Weekly per-sheet breakdown — never guessed into a genre column
+    // here (a Google Ads "Family" row is not a Family session genre). The
+    // exclusion is surfaced in the warnings line below, not silent.
+    if (isFormSourceSheet(l.source_sheet)) {
+      formSourceAssigned += 1;
+      continue;
+    }
     // SHEET-IDENTITY FALLBACK (Fairyland wiring): a lead ingested from the
     // fairyland SHEET is fairyland even when its lead_type text doesn't
     // contain "fairyland". Text-first order keeps animalia/family outcomes
@@ -141,6 +156,11 @@ export function buildAssignedLeadsByDay(input: AssignedByDayInput): AssignedByDa
         ? "fairyland"
         : "family";
     addInto(ensureRep(l.assigned_rep_id)[i], genre, 1);
+  }
+  if (formSourceAssigned > 0) {
+    warnings.push(
+      `${formSourceAssigned} assigned form-workbook lead${formSourceAssigned === 1 ? "" : "s"} (Auction/Alliance certificates, Google Ads, Website) — counted per source on the Weekly breakdown, not in the genre columns.`,
+    );
   }
 
   // ---- Alliance/Auction channel leads (per-rep, per-day) ----
