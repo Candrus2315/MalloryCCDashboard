@@ -54,7 +54,7 @@ import {
   resolveRepGoal,
 } from "./metrics/compute";
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
-import { isFormSourceSheet } from "../components/lead-sources";
+import { FORM_SOURCE_SHEETS, isFormSourceSheet } from "../components/lead-sources";
 import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import {
@@ -321,13 +321,6 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
           return { source: b, label: sourceBucketLabel(b), bookings, leadsAssigned, conv };
         })
         .filter((r) => r.bookings > 0 || r.leadsAssigned > 0);
-    const repSourcePerformance = {
-      repId: rep?.id ?? null,
-      repName: rep?.name ?? null,
-      rows: rep ? buildRepSourceRows(rep.id) : [],
-      note:
-        "Bookings = attribution-verdict wins by source (the booking contact's nearest sheet lead — nearest sheet date to the booking's creation date, tie = most recently ingested, none = unattributed). Conversion = those wins ÷ that source's leads assigned to the rep (work-date cohort). Form-source leads carry no rep assignment (owner rule: team totals, never rep metrics) — their conversion renders —.",
-    };
 
     // selected rep: requested id when present in the active list, else first
     const requestedId = data?.rep;
@@ -356,6 +349,13 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       : null;
     const detail = rep && metrics ? buildRepDetail({ rep, metrics, goal, weeks }) : null;
     const comparisons = metrics ? compareWithTeam(metrics, teamAverages) : [];
+    const repSourcePerformance = {
+      repId: rep?.id ?? null,
+      repName: rep?.name ?? null,
+      rows: rep ? buildRepSourceRows(rep.id) : [],
+      note:
+        "Bookings = attribution-verdict wins by source (the booking contact's nearest sheet lead — nearest sheet date to the booking's creation date, tie = most recently ingested, none = unattributed). Conversion = those wins ÷ that source's leads assigned to the rep (work-date cohort). Form-source leads carry no rep assignment (owner rule: team totals, never rep metrics) — their conversion renders —.",
+    };
 
     // missing-data warnings — never render a plausible number for absent data.
     // A "Not Yet Active" rep (call_start_date in the future) EXPECTS zero
