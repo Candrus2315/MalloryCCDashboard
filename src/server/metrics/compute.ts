@@ -1456,7 +1456,10 @@ export function splitLeadRows(leads: LeadRow[]): LeadSplit {
     const t = (l.lead_type || l.source_sheet || "").trim().toLowerCase();
     if (t === "family") family += 1;
     else if (t === "animalia") animalia += 1;
-    else if (t === "fairyland") fairyland += 1;
+    // SHEET-IDENTITY FALLBACK (owner directive 2026-10-27, item 4): same rule
+    // as splitLeadsByType — a row from the fairyland sheet is fairyland even
+    // when its lead_type text ("Fairies") never matches the genre word.
+    else if (t === "fairyland" || l.source_sheet === "fairyland") fairyland += 1;
   }
   return { family, animalia, fairyland, auction_register_certificate, google_ads_leads, alliance_activate_certificate, website_applications };
 }

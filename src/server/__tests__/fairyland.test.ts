@@ -109,6 +109,46 @@ describe("three-way splits — Fairyland never silently counts as Family", () =>
   });
 });
 
+// ---- 2b. sheet-identity fallback (owner directive 2026-10-27, item 4) ----
+// The LIVE Fairyland sheet's Campaign Name column says "Fairies" on 100% of
+// rows (verified 2026-10-27), which /fairyland/i never matches — production
+// data. Sheet identity is the deterministic identifier; text stays first so
+// a fairyland WORD on another sheet's row is still honored, and a fairy-ish
+// TEXT on a family/animalia-sheet row can never re-bucket it.
+describe("sheet-identity fallback — fairyland-sheet rows typed \"Fairies\" report as Fairyland", () => {
+  test("splitLeadsByType: fairyland-sheet 'Fairies' rows are fairyland; family-sheet rows stay family", () => {
+    const leads = [
+      lead("f1", "Fairies", { source_sheet: "fairyland" }),
+      lead("f2", "Fairies", { source_sheet: "fairyland" }),
+      lead("f3", "Fairies", { source_sheet: "family" }), // family sheet: identity governs
+      lead("f4", "family", { source_sheet: "family" }),
+      lead("f5", "animalia", { source_sheet: "animalia" }),
+    ];
+    expect(splitLeadsByType(leads)).toEqual({ family: 2, animalia: 1, fairyland: 2, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 5 });
+  });
+
+  test("splitLeadRows (trend split) applies the same sheet-identity fallback", () => {
+    const leads = [
+      lead("f1", "Fairies", { source_sheet: "fairyland" }),
+      lead("f2", "Fairies", { source_sheet: "family" }), // unrecognized text → NEITHER split (no family catch-all — never guessed)
+      lead("f3", "fairyland", { source_sheet: "fairyland" }),
+    ];
+    expect(splitLeadRows(leads)).toEqual({ family: 0, animalia: 0, fairyland: 2, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0 });
+  });
+
+  test("leadsToday already fell back by sheet identity (PR #94) — 'Fairies' text included", () => {
+    const summary = leadsToday([lead("f1", "Fairies", { source_sheet: "fairyland" }), lead("f2", "family", { source_sheet: "family" })], "2026-10-19");
+    expect(summary.fairyland).toBe(1);
+    expect(summary.family).toBe(1);
+    expect(summary.total).toBe(2);
+  });
+
+  test("form-source rows are never genre votes even from a fairyland-named text", () => {
+    const leads = [lead("g1", "Fairies", { source_sheet: "google_ads_leads" })];
+    expect(splitLeadsByType(leads)).toEqual({ family: 0, animalia: 0, fairyland: 0, auction_register_certificate: 0, google_ads_leads: 1, alliance_activate_certificate: 0, website_applications: 0, total: 1 });
+  });
+});
+
 // ---- 3. lead-count corrections ----
 describe("fairyland lead-count corrections flow through the metrics functions", () => {
   test("a fairyland delta adjusts the fairyland count and total — never family/animalia", () => {

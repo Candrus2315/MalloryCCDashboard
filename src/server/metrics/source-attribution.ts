@@ -116,10 +116,12 @@ function dayDistance(a: string, b: string): number | null {
 /**
  * ONE lead row's source bucket — the EXACT splitLeadsByType classification:
  * the four form-workbook sheets by SHEET identity (their lead_type text is
- * never a genre vote), the genre sheets by lead_type text
- * (/animalia/i → animalia, /fairyland/i → fairyland, else family), an unknown
- * sheet → "other". Reused everywhere so per-source lead counts are
- * digit-identical to every existing genre number.
+ * never a genre vote), the genre sheets by lead_type text with the
+ * SHEET-IDENTITY FALLBACK for Fairyland (/animalia/i → animalia,
+ * /fairyland/i → fairyland, OR the row was ingested from the fairyland sheet
+ * → fairyland — its Campaign Name says "Fairies", which /fairyland/i never
+ * matches, else family), an unknown sheet → "other". Reused everywhere so
+ * per-source lead counts are digit-identical to every existing genre number.
  */
 export function classifyLeadSource(l: Pick<LeadRow, "lead_type" | "source_sheet">): SourceBucket {
   if (l.source_sheet === "auction_register_certificate") return "auction_register_certificate";
@@ -127,8 +129,8 @@ export function classifyLeadSource(l: Pick<LeadRow, "lead_type" | "source_sheet"
   if (l.source_sheet === "alliance_activate_certificate") return "alliance_activate_certificate";
   if (l.source_sheet === "website_applications") return "website_applications";
   if (/animalia/i.test(l.lead_type)) return "animalia";
-  if (/fairyland/i.test(l.lead_type)) return "fairyland";
-  return "family"; // splitLeadsByType's exact catch-all — genre counts stay byte-identical
+  if (/fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland") return "fairyland";
+  return "family"; // splitLeadsByType's exact catch-all — genre counts stay digit-identical
 }
 
 // ---------- indexes + selection rule ----------
