@@ -132,6 +132,11 @@ function big3Lines(big3: Big3Input): string[] {
 
 /** The base report — EXACT format from the SPEC example. */
 export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): string {
+  const formToday =
+    (m.formLeadsToday?.auction_register_certificate ?? 0)
+    + (m.formLeadsToday?.google_ads_leads ?? 0)
+    + (m.formLeadsToday?.alliance_activate_certificate ?? 0)
+    + (m.formLeadsToday?.website_applications ?? 0);
   return [
     "Daily CC Report",
     "",
@@ -150,6 +155,17 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     `Family: ${formatInt(m.familyLeadsToday)}`,
     `Animalia: ${formatInt(m.animaliaLeadsToday)}`,
     `Fairyland: ${formatInt(m.fairylandLeadsToday)}`,
+    // FOUR FORM-WORKBOOK SOURCES (owner directive 2026-10-27): Leads Today
+    // includes them, so when any exist the copy names them — otherwise the
+    // owner's SPEC template stays byte-identical.
+    ...(formToday > 0
+      ? [
+          `Auction Certificates: ${formatInt(m.formLeadsToday.auction_register_certificate)}`,
+          `Google Ads Leads: ${formatInt(m.formLeadsToday.google_ads_leads)}`,
+          `Alliance Certificates: ${formatInt(m.formLeadsToday.alliance_activate_certificate)}`,
+          `Website Applications: ${formatInt(m.formLeadsToday.website_applications)}`,
+        ]
+      : []),
     `Total Weekly Leads: ${formatInt(m.weeklyLeads)}`,
     `% of Budget Used: ${formatPercent(m.leadBudgetUsedPct)}`,
     `Leads Remaining: ${formatInt(m.leadsRemaining)}`,

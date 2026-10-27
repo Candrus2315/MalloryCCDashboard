@@ -50,7 +50,19 @@ export interface WeeklyCcReportInput {
   channels: ChannelSplitLine;
   /** Alliance/Auction LEADS from GHL opportunities (ET created-date week); website null (no synced source). */
   channelLeads: ChannelSplitLine;
-  leads: { family: number; animalia: number; fairyland: number; total: number };
+  /**
+   * Leads of the report week — ALL SEVEN sources (owner directive 2026-10-27):
+   * the three genre sheets (classified by lead_type text exactly as before)
+   * plus the four "Forms Data" workbook tabs (classified by SHEET identity).
+   * `total` is the combined count of all seven; the four form-source lines
+   * below the genre lines keep the total explainable in the copied report.
+   */
+  leads: {
+    family: number; animalia: number; fairyland: number;
+    auction_register_certificate: number; google_ads_leads: number;
+    alliance_activate_certificate: number; website_applications: number;
+    total: number;
+  };
   conversion: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
   /**
    * BOOKINGS FROM LEADS (owner request 2026-09-29): ALL paid bookings of the
@@ -117,11 +129,31 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   lines.push(`Auction — Leads: ${formatInt(input.channelLeads.auction)} · Bookings: ${formatInt(input.channels.auction)}`);
   lines.push(`Website — Leads: ${input.channelLeads.website == null ? NO_SOURCE : formatInt(input.channelLeads.website)} · Bookings: ${input.channels.website == null ? NO_SOURCE : formatInt(input.channels.website)}`);
   lines.push("");
-  lines.push("Leads (week — synced Family/Animalia/Fairyland sheets):");
-  lines.push(`Family: ${formatInt(input.leads.family)}`);
-  lines.push(`Animalia: ${formatInt(input.leads.animalia)}`);
-  lines.push(`Fairyland: ${formatInt(input.leads.fairyland)}`);
-  lines.push(`Total: ${formatInt(input.leads.total)}`);
+  const leads = input.leads;
+  // FOUR FORM-WORKBOOK SOURCES (owner directive 2026-10-27): the total INCLUDES
+  // them. Lines render only when the week actually has form-source leads — the
+  // owner's template stays byte-stable otherwise (the "—" convention covers a
+  // not-yet-synced source, a zero-form week needs no extra lines).
+  const formLeadsWeek =
+    (leads.auction_register_certificate ?? 0)
+    + (leads.google_ads_leads ?? 0)
+    + (leads.alliance_activate_certificate ?? 0)
+    + (leads.website_applications ?? 0);
+  lines.push(
+    formLeadsWeek > 0
+      ? "Leads (week — synced sheets: Family/Animalia/Fairyland + 4 Forms Data tabs):"
+      : "Leads (week — synced Family/Animalia/Fairyland sheets):",
+  );
+  lines.push(`Family: ${formatInt(leads.family)}`);
+  lines.push(`Animalia: ${formatInt(leads.animalia)}`);
+  lines.push(`Fairyland: ${formatInt(leads.fairyland)}`);
+  if (formLeadsWeek > 0) {
+    lines.push(`Auction Certificates: ${formatInt(leads.auction_register_certificate)}`);
+    lines.push(`Google Ads Leads: ${formatInt(leads.google_ads_leads)}`);
+    lines.push(`Alliance Certificates: ${formatInt(leads.alliance_activate_certificate)}`);
+    lines.push(`Website Applications: ${formatInt(leads.website_applications)}`);
+  }
+  lines.push(`Total: ${formatInt(leads.total)}`);
   lines.push("");
   lines.push(
     `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)} · Fairyland ${formatPercent(input.conversion.fairyland)})`,

@@ -54,6 +54,7 @@ import {
   resolveRepGoal,
 } from "./metrics/compute";
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
+import { isFormSourceSheet } from "../components/lead-sources";
 import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import {
@@ -791,7 +792,7 @@ export async function todayPageData(deps?: PageDeps) {
     pendingPayments,
     connections: serializableConnections(connections),
     staleWarnings: await withHeartbeatWarning(syncStaleWarnings(connections)),
-    cohortNote: `Today's cohort = leads logged (sheet date) on ${metrics.leadCohortSourceDates.join(", ")} · Family · Animalia · Fairyland sheets — worked today under work-date logic`,
+    cohortNote: `Today's cohort = leads logged (sheet date) on ${metrics.leadCohortSourceDates.join(", ")} · Family · Animalia · Fairyland sheets + 4 Forms Data tabs (Auction certificates, Google Ads, Alliance certificates, Website applications) — worked today under work-date logic`,
   };
 }
 
@@ -898,7 +899,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
     reportText,
     emailText: buildDailyReportEmail(metrics, saved),
     slackText: buildDailyReportSlack(metrics, saved),
-    cohortNote: `Today's cohort = leads logged (sheet date) on ${metrics.leadCohortSourceDates.join(", ")} · Family · Animalia · Fairyland sheets — worked today under work-date logic`,
+    cohortNote: `Today's cohort = leads logged (sheet date) on ${metrics.leadCohortSourceDates.join(", ")} · Family · Animalia · Fairyland sheets + 4 Forms Data tabs (Auction certificates, Google Ads, Alliance certificates, Website applications) — worked today under work-date logic`,
   };
 }
 
@@ -1661,7 +1662,13 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const weeklyGoal = teamGoal?.booking_goal ?? 79; // the app-wide team-goal default (Today/Daily Report convention)
 
   // ---- LAST WEEK: assigned-lead conversion (source-dated denominators) ----
-  const assigned = assignedLeadsInRange(leadsWeek, lwMon, lwSun);
+  // FORM-WORKBOOK SOURCES (owner directive 2026-10-27): form leads are TEAM
+  // totals, never rep metrics — excluded from the assigned-lead conversion
+  // denominators exactly as the assigned-by-day grid excludes them from rep
+  // cells, so the section's 'Family + Animalia + Fairyland' label matches
+  // what the denominator counts. The four form sources have assigned_rep_id
+  // null in practice (the workbook has no rep column) — no live number moves.
+  const assigned = assignedLeadsInRange(leadsWeek, lwMon, lwSun).filter((l) => !isFormSourceSheet(l.source_sheet));
   // THREE-GENRE assigned-lead conversion split (owner directive 2026-10-22):
   // Fairyland is a sibling of Family/Animalia — never silently Family.
   const isAniLead = (l: { lead_type: string }) => /animalia/i.test(l.lead_type);

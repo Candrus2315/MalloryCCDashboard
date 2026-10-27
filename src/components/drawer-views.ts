@@ -129,7 +129,17 @@ export function leadSplitLine(p: TrendPoint, bucketMode: TrendBucketMode): strin
     bucketMode === "week"
       ? `budget ${formatInt(p.budgetRef)}/wk`
       : `budget pace ${formatInt(p.budgetRef)}/day`;
-  return `Total ${formatInt(p.leads)} · Family ${formatInt(p.family)} · Animalia ${formatInt(p.animalia)} · Fairyland ${formatInt(p.fairyland)} · ${pace}`;
+  const base = `Total ${formatInt(p.leads)} · Family ${formatInt(p.family)} · Animalia ${formatInt(p.animalia)} · Fairyland ${formatInt(p.fairyland)}`;
+  // FOUR FORM-WORKBOOK SOURCES (owner directive 2026-10-27): the total includes
+  // them; when any form lead is in the bucket the tooltip names its sources so
+  // the split sums to the total. No form leads → the line is byte-identical
+  // to the pre-forms format.
+  const formTotal = (p.auction_register_certificate ?? 0) + (p.google_ads_leads ?? 0)
+    + (p.alliance_activate_certificate ?? 0) + (p.website_applications ?? 0);
+  const forms = formTotal > 0
+    ? ` · Forms Data: Auction ${formatInt(p.auction_register_certificate ?? 0)} · Ads ${formatInt(p.google_ads_leads ?? 0)} · Alliance ${formatInt(p.alliance_activate_certificate ?? 0)} · Web ${formatInt(p.website_applications ?? 0)}`
+    : "";
+  return `${base}${forms} · ${pace}`;
 }
 
 // ---------- drawer heading + context (§3 context preservation) ----------

@@ -8,6 +8,7 @@ import { InfoTip } from "~/components/InfoTip";
 import { StatusChip } from "~/components/StatusChip";
 import { Segmented } from "~/components/Segmented";
 import { GENRES, GENRE_BAR, GENRE_LABELS, genresForFilter, type Genre } from "~/components/genres";
+import { FORM_SOURCE_SHEETS, LEAD_SOURCE_LABELS } from "~/components/lead-sources";
 // Harmonization Wave 1: Today composes the SAME page primitives as Daily
 // Report / Weekly (Panel / Eyebrow / RatioBar).
 import { Eyebrow, KpiMid, num, Panel, RatioBar } from "~/components/page-panel";
@@ -217,6 +218,8 @@ function TodayPage() {
   const leadBudgetOver = m.leads.percentUsed != null && m.leads.percentUsed > 1;
   const todayMixTotal = m.leads.today.total;
   const todayMixPct = (n: number) => (todayMixTotal > 0 ? Math.min(100, (n / todayMixTotal) * 100) : 0);
+  // FORM-WORKBOOK SOURCES (10/27) inside today's cohort — the explainability line.
+  const todayFormTotal = FORM_SOURCE_SHEETS.reduce((n, s) => n + m.leads.today[s], 0);
   // Filter chips (net-new, owner 10/22): "All | Family | Animalia | Fairyland"
   // — display-layer only; the presented mix/legend narrows, stored data does not.
   const [todayGenre, setTodayGenre] = useState<Genre | "all">("all");
@@ -563,6 +566,17 @@ function TodayPage() {
                   </li>
                 ))}
               </ul>
+              {/* FOUR FORM-WORKBOOK SOURCES (10/27): the total above includes
+                  them; the genre legend alone would fall short of it. A compact
+                  per-source line renders only when form leads exist today, so
+                  the total stays explainable on-screen (zero → no noise). */}
+              {todayFormTotal > 0 && (
+                <p className="mt-2 border-t border-(--table-border-weak) pt-2 text-[12px] leading-snug text-(--text-muted)">
+                  + {todayFormTotal} from Forms Data tabs —{" "}
+                  {FORM_SOURCE_SHEETS.filter((s) => m.leads.today[s] > 0).map((s) => `${LEAD_SOURCE_LABELS[s]} ${m.leads.today[s]}`).join(" · ")}{" "}
+                  (team totals — no rep)
+                </p>
+              )}
             </div>
           </div>
         </Panel>
