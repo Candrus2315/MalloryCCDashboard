@@ -27,6 +27,8 @@ export interface NormalizedLead {
   leadType: string;
   sourceDate: string;
   workDate: string;
+  /** The sheet's Date-column cell EXACTLY as the sheet wrote it (audit fidelity — parseSheetDate output lives in sourceDate). */
+  sourceRawDate?: string | null;
   name: string | null;
   phone: string | null;
   email: string | null;
@@ -378,6 +380,7 @@ export function parseSheetRows(opts: {
           sourceDate: d,
           workDate: getWorkDate(d),
           name: null, phone: null, email: null,
+          sourceRawDate: rawDate || null,
           sheet,
         });
       }
@@ -417,6 +420,7 @@ export function parseSheetRows(opts: {
       sourceDate: d,
       workDate: getWorkDate(d),
       name: fullName, phone, email,
+      sourceRawDate: rawDate || null,
       sheet,
     });
     stats.usedRows++;

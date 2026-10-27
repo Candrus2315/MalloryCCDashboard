@@ -581,14 +581,14 @@ function WeeklyPage() {
               Leads
               <InfoTip
                 label="How weekly leads are dated"
-                tip="Sheet leads by the date they entered the sheet (source_date), Mon–Sun of the report week — family, animalia and fairyland sheets, America/New_York."
+                tip="Leads logged (sheet date) from the Family · Animalia · Fairyland sheets, by the date in each sheet's Date column (source_date), Mon–Sun of the report week, America/New_York. Not a per-source intake count — only these three genre sheets are ingested."
               />
             </p>
             <p className="mt-3 flex items-baseline gap-2">
               <span className="text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
                 {formatInt(data.leads.total)}
               </span>
-              <span className="kpi-sub">sheet leads in the week</span>
+              <span className="kpi-sub">leads logged (sheet date) · Family · Animalia · Fairyland sheets</span>
             </p>
             <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
               <div className="bg-(--bar-fill)" style={{ width: `${leadMixSeg(data.leads.animalia)}%` }} />

@@ -2059,7 +2059,7 @@ export interface Store {
 
   // leads
   upsertLeads(
-    rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null })[],
+    rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null; source_raw_date?: string | null })[],
     opts?: IngestOptions,
   ): Promise<number>;
   /**
@@ -2077,7 +2077,7 @@ export interface Store {
    * sync's drift guard read these. Heavier than getLeadsByWorkDates; not for
    * per-request page paths.
    */
-  getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null })[]>;
+  getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null; source_raw_date?: string | null })[]>;
   /** Delete stored leads by exact provider + source_id (re-key migration, demo purge). Returns rows deleted. */
   deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number>;
   getLeadsByWorkDates(dates: string[]): Promise<LeadRow[]>;
