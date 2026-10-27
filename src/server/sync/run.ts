@@ -586,6 +586,7 @@ export async function runSheetsSync(
             contact_id: contactId2,
             assigned_rep_id: contact?.assigned_rep_id ?? null,
             source_sheet: l.sheet,
+            source_raw_date: l.sourceRawDate ?? null,
           };
         }),
         { deadline: ingestDeadline },

@@ -202,6 +202,8 @@ const DDL: string[] = [
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS payment_state text`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS booking_win_business_date date`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS payment_business_date_source text`,
+  // AUDIT FIDELITY (10/23): the sheet's raw Date-column text, nullable, populated going forward only — never backfilled.
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS source_raw_date text`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS first_seen_paid_at timestamptz`,
   // PENDING PAYMENT DISMISSAL (owner request 2026-09-30): the owner's ✕ on the
   // Today page's Pending Payments list. Written ONLY by the dismiss endpoint;
@@ -2191,7 +2193,7 @@ export class PgStore implements Store {
     await this.sql`DELETE FROM booking_attributions WHERE appointment_id = ${appointmentId}::uuid`;
   }
 
-  async upsertLeads(rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null })[], opts?: IngestOptions): Promise<number> {
+  async upsertLeads(rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null; source_raw_date?: string | null })[], opts?: IngestOptions): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     // INGEST BATCHING (10/23 wedge fix): the sheets run's dominant cost was
@@ -2216,15 +2218,15 @@ export class PgStore implements Store {
       const values = chunk.map((r) => [
         r.provider, r.source_id, r.lead_type, r.source_date, r.work_date,
         r.name ?? null, r.phone ?? null, r.email ?? null, r.contact_id,
-        r.assigned_rep_id, r.source_sheet,
+        r.assigned_rep_id, r.source_sheet, r.source_raw_date ?? null,
       ]);
       await this.sql`
-        INSERT INTO leads (provider, source_id, lead_type, source_date, work_date, name, phone, email, contact_id, assigned_rep_id, source_sheet)
+        INSERT INTO leads (provider, source_id, lead_type, source_date, work_date, name, phone, email, contact_id, assigned_rep_id, source_sheet, source_raw_date)
         VALUES ${this.sql(values)}
         ON CONFLICT (provider, source_id) DO UPDATE SET
           lead_type = EXCLUDED.lead_type, source_date = EXCLUDED.source_date, work_date = EXCLUDED.work_date,
           name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email,
-          contact_id = EXCLUDED.contact_id, assigned_rep_id = EXCLUDED.assigned_rep_id, source_sheet = EXCLUDED.source_sheet, updated_at = now()
+          contact_id = EXCLUDED.contact_id, assigned_rep_id = EXCLUDED.assigned_rep_id, source_sheet = EXCLUDED.source_sheet, source_raw_date = EXCLUDED.source_raw_date, updated_at = now()
       `;
     }
     return rows.length;
@@ -2234,9 +2236,9 @@ export class PgStore implements Store {
     await this.ensureSchema();
     await this.sql`DELETE FROM leads WHERE provider = 'google_sheets' AND source_sheet = ${sourceSheet}`;
   }
-  async getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null })[]> {
+  async getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null; source_raw_date?: string | null })[]> {
     await this.ensureSchema();
-    const rows = await this.sql`SELECT id::text, provider, source_id, lead_type, source_date::text, work_date::text, name, phone, email, contact_id::text, assigned_rep_id::text, source_sheet FROM leads WHERE provider = ${provider} ORDER BY id`;
+    const rows = await this.sql`SELECT id::text, provider, source_id, lead_type, source_date::text, work_date::text, name, phone, email, contact_id::text, assigned_rep_id::text, source_sheet, source_raw_date FROM leads WHERE provider = ${provider} ORDER BY id`;
     return rows.map((r) => ({
       id: String(r.id),
       source_id: String(r.source_id),
@@ -2250,6 +2252,7 @@ export class PgStore implements Store {
       contact_id: r.contact_id ? String(r.contact_id) : null,
       assigned_rep_id: r.assigned_rep_id ? String(r.assigned_rep_id) : null,
       source_sheet: String(r.source_sheet),
+      source_raw_date: r.source_raw_date ?? null,
     }));
   }
   async deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number> {

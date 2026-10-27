@@ -506,7 +506,7 @@ function TodayPage() {
                 Leads — worked today
                 <InfoTip tip={`${data.cohortNote} (America/New_York)`} label="How today's lead counts are dated" />
               </p>
-              <p className="kpi-label mt-5">Weekly Leads</p>
+              <p className="kpi-label mt-5">Leads Worked (Week)</p>
               <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                 <span className="text-5xl font-semibold leading-none tracking-tight text-(--text-primary)">
                   {m.leads.weekly.total}
@@ -535,7 +535,7 @@ function TodayPage() {
             </div>
             {/* right — today's work-date cohort: one mix bar, one legend */}
             <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
-              <p className="kpi-label">Total Leads Today</p>
+              <p className="kpi-label">Leads Worked Today</p>
               <p className="mt-2 text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
                 {m.leads.today.total}
               </p>
@@ -559,7 +559,7 @@ function TodayPage() {
                 {todayMixGenres.map((g) => (
                   <li key={g} className="flex items-center gap-1.5">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: GENRE_BAR[g] }} aria-hidden="true" />
-                    <span className="tabular-nums">{m.leads.today[g]}</span> {GENRE_LABELS[g]} Leads Today
+                    <span className="tabular-nums">{m.leads.today[g]}</span> {GENRE_LABELS[g]} Worked Today
                   </li>
                 ))}
               </ul>

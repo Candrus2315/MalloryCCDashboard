@@ -119,6 +119,7 @@ interface LeadExt extends LeadRow {
   name?: string | null;
   phone?: string | null;
   email?: string | null;
+  source_raw_date?: string | null;
 }
 interface BlockedExt extends BlockedTimeRow {
   provider: string;
@@ -746,7 +747,7 @@ export class MemoryStore implements Store {
       if (lead.provider === "google_sheets" && lead.source_sheet === sourceSheet) this.leads.delete(key);
     }
   }
-  async getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null })[]> {
+  async getLeadsByProvider(provider: string): Promise<(LeadRow & { source_id: string; provider: string; name: string | null; phone: string | null; email: string | null; source_raw_date?: string | null })[]> {
     return [...this.leads.values()]
       .filter((l) => l.provider === provider)
       .map((l) => ({
@@ -762,6 +763,7 @@ export class MemoryStore implements Store {
         contact_id: l.contact_id,
         assigned_rep_id: l.assigned_rep_id,
         source_sheet: l.source_sheet,
+        source_raw_date: l.source_raw_date ?? null,
       }));
   }
   async deleteLeadsBySourceIds(provider: string, sourceIds: string[]): Promise<number> {

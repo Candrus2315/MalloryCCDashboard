@@ -87,6 +87,7 @@ export async function migrateSheetsLeadKeys(store: Store): Promise<SheetsRekeyRe
         contact_id: lead.contact_id,
         assigned_rep_id: lead.assigned_rep_id,
         source_sheet: lead.source_sheet,
+        source_raw_date: lead.source_raw_date ?? null,
       }]);
       await store.deleteLeadsBySourceIds("google_sheets", [lead.source_id]);
       res.rekeyed++;

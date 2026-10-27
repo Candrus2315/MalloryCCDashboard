@@ -196,7 +196,7 @@ function DailyReportPage() {
                 Lead Health
                 <InfoTip tip={`${data.cohortNote} (America/New_York)`} label="How today's lead counts are dated" />
               </h2>
-              <p className="kpi-label mt-5">Weekly Leads / Weekly Lead Budget</p>
+              <p className="kpi-label mt-5">Leads Worked (Week) / Budget</p>
               <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                 <span className="text-5xl font-semibold leading-none tracking-tight text-(--text-primary)">
                   {formatInt(m.weeklyLeads)}
@@ -213,7 +213,7 @@ function DailyReportPage() {
             </div>
             {/* right — today's cohort: one mix bar, one legend, the needed pace */}
             <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
-              <p className="kpi-label">Leads Today</p>
+              <p className="kpi-label">Leads Worked Today</p>
               <p className="mt-2 flex items-baseline gap-2">
                 <span className="text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
                   {formatInt(m.leadsToday)}

@@ -791,7 +791,7 @@ export async function todayPageData(deps?: PageDeps) {
     pendingPayments,
     connections: serializableConnections(connections),
     staleWarnings: await withHeartbeatWarning(syncStaleWarnings(connections)),
-    cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")}`,
+    cohortNote: `Today's cohort = leads logged (sheet date) on ${metrics.leadCohortSourceDates.join(", ")} · Family · Animalia · Fairyland sheets — worked today under work-date logic`,
   };
 }
 
@@ -898,7 +898,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
     reportText,
     emailText: buildDailyReportEmail(metrics, saved),
     slackText: buildDailyReportSlack(metrics, saved),
-    cohortNote: `Today's cohort = leads received on ${metrics.leadCohortSourceDates.join(", ")} (work-date logic)`,
+    cohortNote: `Today's cohort = leads logged (sheet date) on ${metrics.leadCohortSourceDates.join(", ")} · Family · Animalia · Fairyland sheets — worked today under work-date logic`,
   };
 }
 
