@@ -393,7 +393,7 @@ describe("crossSourceOverlap (report note — never a dedupe)", () => {
 
 // ---------- weekly report text ----------
 
-describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section", () => {
+describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section (simplified)", () => {
   const base: WeeklyCcReportInput = {
     week: { start: "2026-10-19", end: "2026-10-25" },
     monthKey: "2026-10",
@@ -415,12 +415,14 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section", () => {
     celebrateDefault: null,
   };
 
-  test("WITHOUT the input the template stays BYTE-IDENTICAL (no section line)", () => {
+  test("WITHOUT the input the template stays BYTE-IDENTICAL (no section, no footnote)", () => {
     const text = buildWeeklyCcReportText(base);
     expect(text).not.toContain("LEAD SOURCE PERFORMANCE");
+    expect(text).not.toContain("Prior-period bookings:");
+    expect(text).not.toContain("No reliable link:");
   });
 
-  test("WITH the input: three-category lines after the Leads block, one-decimal, — on zero leads", () => {
+  test("WITH the input: simple per-source lines (Leads / Bookings / Conversion) + Total + ONE auditability footnote", () => {
     const text = buildWeeklyCcReportText({
       ...base,
       sourcePerformance: {
@@ -456,25 +458,29 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section", () => {
     expect(totalIdx).toBeGreaterThanOrEqual(0);
     expect(spIdx).toBeGreaterThan(totalIdx);
     expect(convIdx).toBeGreaterThan(spIdx);
-    // per-source lines carry BOTH booking categories + the cohort conversion
-    expect(text).toContain("Family — Leads: 10 · Current-period: 4 · Prior-period: 2 · Cohort conversion: 40.0%");
-    expect(text).toContain("Alliance Certificates — Leads: 0 · Current-period: 0 · Prior-period: 0 · Cohort conversion: —");
-    // the three-category methodology sentence names every category
-    expect(text).toContain("Current-period = matched lead's sheet date inside the report week");
-    expect(text).toContain("Prior-period = matched lead predates the report week");
-    expect(text).toContain("Truly Unattributed = no reliable sheet-lead link");
-    // the unattributed row never renders as a per-source line; its own line:
-    expect(text).toContain("Truly Unattributed — Bookings: 3 (no sheet-lead link)");
-    expect(text).not.toContain("Unattributed — Leads: 0");
-    // totals: cohort conversion + coverage line
+    // the SIMPLIFIED per-source lines: Leads / Bookings / Conversion (same
+    // cohort rules — Bookings = current-period cohort wins; — on zero leads)
+    expect(text).toContain("Family — Leads: 10 · Bookings: 4 · Conversion: 40.0%");
+    expect(text).toContain("Alliance Certificates — Leads: 0 · Bookings: 0 · Conversion: —");
+    expect(text).toContain("Total — Leads: 24 · Bookings: 5 · Conversion: 20.8%");
+    // the shortened methodology sentence
+    expect(text).toContain("Bookings = those leads that produced a qualifying paid booking");
+    // the ONE compact auditability footnote (prior / no-link / coverage)
     expect(text).toContain(
-      "Total — Leads: 24 · Paid bookings: 8 · Current-period: 5 · Prior-period: 3 · Cohort conversion: 20.8% · Source-resolved: 5/8 (62.50%)",
+      "Prior-period bookings: 3 · No reliable link: 3 · Attribution coverage: 5/8 (62.50%) — detail on the Weekly tab",
     );
-    expect(text).toContain("Best source: Auction Certificates (50.0%) · Worst source: Animalia (0.0%)");
-    expect(text).toContain("7 people appear as leads from 2+ sources");
+    // the old multi-category lines are GONE from the report
+    expect(text).not.toContain("Current-period:");
+    expect(text).not.toContain("· Prior-period:");
+    expect(text).not.toContain("Cohort conversion:");
+    expect(text).not.toContain("Source-resolved:");
+    expect(text).not.toContain("Truly Unattributed — Bookings:");
+    // best/worst + the overlap note moved off the report (Weekly tab detail view)
+    expect(text).not.toContain("Best source:");
+    expect(text).not.toContain("2+ sources");
   });
 
-  test("WITH the input: a later-period match renders its own figure, never merged", () => {
+  test("WITH the input: a later-period match surfaces in the footnote, never merged", () => {
     const text = buildWeeklyCcReportText({
       ...base,
       sourcePerformance: {
@@ -496,8 +502,57 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section", () => {
         overlapNote: null,
       },
     });
-    expect(text).toContain("Family — Leads: 10 · Current-period: 1 · Prior-period: 0 · Later-period: 2 · Cohort conversion: 10.0%");
-    expect(text).toContain("· Later-period: 2 · Cohort conversion: 10.0% · Source-resolved: 3/5 (60.00%)");
+    expect(text).toContain("Family — Leads: 10 · Bookings: 1 · Conversion: 10.0%");
+    expect(text).toContain(
+      "Prior-period bookings: 0 · Later-period: 2 · No reliable link: 2 · Attribution coverage: 3/5 (60.00%) — detail on the Weekly tab",
+    );
+  });
+});
+
+// ---------- primary table shape (Weekly tab, simplified presentation) ----------
+
+describe("primary source-performance table (Weekly tab simplified shape)", () => {
+  test("primary view = the seven canonical sources + Total (no Unattributed row); detail fields stay intact", () => {
+    // The three-category fixture: one in-week family lead, one prior-week
+    // family lead, one later-week animalia lead, and four wins (current,
+    // prior, later, no-link).
+    const inWeek = lead({ id: "in", contact_id: "c1", source_sheet: "family", lead_type: "Family", source_date: "2026-10-20" });
+    const prior = lead({ id: "prior", contact_id: "c2", source_sheet: "family", lead_type: "Family", source_date: "2026-10-11" });
+    const later = lead({ id: "later", contact_id: "c3", source_sheet: "animalia", lead_type: "Animalia", source_date: "2026-10-28" });
+    const wins = [
+      win({ id: "w-in", contact_id: "c1", created_business_date: "2026-10-21" }), // current-period
+      win({ id: "w-prior", contact_id: "c2", created_business_date: "2026-10-21" }), // prior-period → family
+      win({ id: "w-later", contact_id: "c3", created_business_date: "2026-10-21" }), // later-period → animalia
+      win({ id: "w-none", contact_id: "c9", created_business_date: "2026-10-21" }), // unlinked
+    ];
+    const leads = [inWeek, prior, later];
+    const byWinSource = resolveBookingSources(wins, leads);
+    const table = buildSourcePerformanceTable([asLeadRow(inWeek)], wins, byWinSource, PERIOD);
+    // THE PRIMARY-VIEW SELECTION RULE the Weekly tab renders: drop ONLY the
+    // Truly Unattributed row — the seven canonical sources (display order),
+    // "other" when nonzero, then Total.
+    const primary = table.rows.filter((r) => r.source !== "unattributed");
+    expect(primary.map((r) => r.source)).toEqual([
+      "family",
+      "animalia",
+      "fairyland",
+      "auction_register_certificate",
+      "google_ads_leads",
+      "alliance_activate_certificate",
+      "website_applications",
+      "total",
+    ]);
+    // Bookings = current-period cohort wins (the SAME validated numerator);
+    // Conversion % = current-period ÷ leads ("—" never fabricated).
+    expect(primary.find((r) => r.source === "family")).toMatchObject({ leads: 1, bookings: 1, conv: 1 });
+    expect(primary.find((r) => r.source === "animalia")).toMatchObject({ leads: 0, bookings: 0, conv: null });
+    expect(primary.find((r) => r.source === "total")).toMatchObject({ leads: 1, bookings: 1, conv: 1 });
+    // The detail view still has every three-category field per row + totals.
+    expect(table.rows.find((r) => r.source === "family")).toMatchObject({ priorBookings: 1, laterBookings: 0 });
+    expect(table.rows.find((r) => r.source === "animalia")).toMatchObject({ priorBookings: 0, laterBookings: 1 });
+    expect(table.trulyUnattributedBookings).toBe(1);
+    expect(table.sourceResolvedBookings).toBe(3);
+    expect(table.coverage).toBe(3 / 4);
   });
 });
 

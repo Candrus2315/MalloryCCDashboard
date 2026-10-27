@@ -64,17 +64,21 @@ export interface WeeklyCcReportInput {
     total: number;
   };
   /**
-   * LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, Step 5; three-category
-   * semantics per the post-validation directive): per-source leads (the week's
-   * source_date cohort), CURRENT-PERIOD bookings (matched lead's sheet date
-   * inside the week — the only conversion-numerator feed) and PRIOR-PERIOD
-   * bookings (matched lead predates the week — kept under its resolved source,
-   * never in a numerator). Selection rule unchanged: the contact's NEAREST
-   * sheet lead (nearest source_date to the booking's creation ET date, tie →
-   * most recently ingested). Truly Unattributed = no reliable lead link —
-   * the ONLY meaning of Unattributed. OPTIONAL:
-   * absent/null keeps the owner's template BYTE-IDENTICAL — the section
-   * only renders when the page passes it.
+   * LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, Step 5; SIMPLIFIED
+   * report presentation — same table as the Weekly tab): per-source leads (the
+   * week's source_date cohort), CURRENT-PERIOD bookings (matched lead's sheet
+   * date inside the week — the only conversion-numerator feed) and one-decimal
+   * cohort conversion (Bookings ÷ Leads). The report prints ONLY the simple
+   * per-source lines + Total + ONE compact auditability footnote (prior-period
+   * / later-period / no-link / coverage) — the three-category fields below all
+   * stay complete for the Weekly tab's detail view; nothing in the data layer
+   * changed. Selection rule unchanged: the contact's NEAREST sheet lead
+   * (nearest source_date to the booking's creation ET date, tie → most
+   * recently ingested). Truly Unattributed = no reliable lead link — the ONLY
+   * meaning of Unattributed. `best`/`worst`/`overlapNote` are carried for the
+   * Weekly tab's detail view (the report section no longer prints them).
+   * OPTIONAL: absent/null keeps the owner's template BYTE-IDENTICAL — the
+   * section only renders when the page passes it.
    */
   sourcePerformance?: {
     rows: {
@@ -199,38 +203,41 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   }
   lines.push(`Total: ${formatInt(leads.total)}`);
   lines.push("");
-  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27; three-category
-  // semantics per the post-validation directive): per-source funnel of the
-  // report week — leads (sheet-date cohort), CURRENT-PERIOD bookings (the
-  // conversion numerators) and PRIOR-PERIOD bookings (kept under their
-  // resolved source, never a numerator), one-decimal cohort conversion, "—"
-  // when a source had no leads (never a fabricated 0%). Only "no reliable
-  // lead link" is Truly Unattributed. Renders ONLY when the page provides it
-  // — the template stays byte-identical otherwise.
+  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED — same
+  // presentation the Weekly tab shows): per source "Leads / Bookings /
+  // Conversion %" + a Total row. Bookings = the week's leads that produced a
+  // qualifying paid booking (the CURRENT-PERIOD cohort — the same validated
+  // numerator as before; conversion math stays strict-cohort: Bookings ÷
+  // Leads). Auditability stays, in ONE compact footnote: prior-period bookings
+  // (kept under their resolved source, never a numerator), later-period
+  // matches when nonzero, Truly Unattributed (no reliable sheet-lead link —
+  // the only "Unattributed" meaning) and attribution coverage; the full
+  // three-category breakdown lives on the Weekly tab. Renders ONLY when the
+  // page provides the input — the template stays byte-identical otherwise.
   if (input.sourcePerformance) {
     const sp = input.sourcePerformance;
     lines.push("LEAD SOURCE PERFORMANCE (report week):");
     lines.push(
-      "Leads = the week's sheet-date cohort. A booking's source = the booking contact's nearest sheet lead (nearest sheet date to the booking's creation date; tie = most recently ingested). Categories: Current-period = matched lead's sheet date inside the report week (the only bookings in conversion numerators); Prior-period = matched lead predates the report week (kept under its source, never in a numerator); Truly Unattributed = no reliable sheet-lead link.",
+      "Leads = the source's sheet leads received this week. Bookings = those leads that produced a qualifying paid booking (current-period cohort). Conversion = Bookings ÷ Leads.",
     );
     for (const r of sp.rows) {
       if (r.source === "total" || r.source === "unattributed") continue;
-      const later = r.laterBookings > 0 ? ` · Later-period: ${formatInt(r.laterBookings)}` : "";
       lines.push(
-        `${r.label} — Leads: ${formatInt(r.leads)} · Current-period: ${formatInt(r.bookings)} · Prior-period: ${formatInt(r.priorBookings)}${later} · Cohort conversion: ${r.conv == null ? NO_SOURCE : formatPercent(r.conv, 1)}`,
+        `${r.label} — Leads: ${formatInt(r.leads)} · Bookings: ${formatInt(r.bookings)} · Conversion: ${r.conv == null ? NO_SOURCE : formatPercent(r.conv, 1)}`,
       );
     }
-    lines.push(`Truly Unattributed — Bookings: ${formatInt(sp.trulyUnattributedBookings)} (no sheet-lead link)`);
-    const laterTotal = sp.totalLaterBookings > 0 ? ` · Later-period: ${formatInt(sp.totalLaterBookings)}` : "";
-    const coverage =
-      sp.coverage == null
-        ? ""
-        : ` · Source-resolved: ${formatInt(sp.sourceResolvedBookings)}/${formatInt(sp.totalBookings)} (${(sp.coverage * 100).toFixed(2)}%)`;
     lines.push(
-      `Total — Leads: ${formatInt(sp.totalLeads)} · Paid bookings: ${formatInt(sp.totalBookings)} · Current-period: ${formatInt(sp.totalCurrentBookings)} · Prior-period: ${formatInt(sp.totalPriorBookings)}${laterTotal} · Cohort conversion: ${sp.totalConv == null ? NO_SOURCE : formatPercent(sp.totalConv, 1)}${coverage}`,
+      `Total — Leads: ${formatInt(sp.totalLeads)} · Bookings: ${formatInt(sp.totalCurrentBookings)} · Conversion: ${sp.totalConv == null ? NO_SOURCE : formatPercent(sp.totalConv, 1)}`,
     );
-    lines.push(`Best source: ${sp.best ?? NO_SOURCE} · Worst source: ${sp.worst ?? NO_SOURCE}`);
-    if (sp.overlapNote) lines.push(sp.overlapNote);
+    const foot: string[] = [`Prior-period bookings: ${formatInt(sp.totalPriorBookings)}`];
+    if (sp.totalLaterBookings > 0) foot.push(`Later-period: ${formatInt(sp.totalLaterBookings)}`);
+    foot.push(`No reliable link: ${formatInt(sp.trulyUnattributedBookings)}`);
+    if (sp.coverage != null) {
+      foot.push(
+        `Attribution coverage: ${formatInt(sp.sourceResolvedBookings)}/${formatInt(sp.totalBookings)} (${(sp.coverage * 100).toFixed(2)}%)`,
+      );
+    }
+    lines.push(`${foot.join(" · ")} — detail on the Weekly tab`);
     lines.push("");
   }
   lines.push(
