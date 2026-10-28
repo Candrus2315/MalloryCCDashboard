@@ -21,7 +21,11 @@ import { runDemoSync } from "../sync/run";
 import { demoAwarenessLine, syncStaleWarnings } from "../queries";
 import { etToday, getWorkDate, addDays } from "../date-logic";
 
-const WINDOW_START = addDays(etToday(), -35);
+// Frozen window: the fixtures below use fixed September 2026 dates, and a
+// clock-relative window rots as real time passes (the moving 35-day window
+// silently re-bucketed the 09/22 missing-count row from skippedBad to
+// skippedOld on 2026-10-28, and would drop the 09/24 rows on 2026-10-30).
+const WINDOW_START = "2026-09-01";
 
 describe("parseSheetDate robustness", () => {
   const cases: [unknown, string | null][] = [
@@ -183,7 +187,7 @@ describe("parseSheetRows — row_per_day_count", () => {
     expect(a.leads.map((l) => l.source_id)).toEqual(b.leads.map((l) => l.source_id));
   });
   test("rows before the backfill window are skipped and counted", () => {
-    const oldDate = addDays(etToday(), -60);
+    const oldDate = "2026-08-15"; // frozen — must stay before WINDOW_START regardless of the clock
     const res = parseSheetRows({
       sheet: "family", sheetId: "S", mapping,
       rows: [[oldDate, "4"], ["09/24/2026", "2"]],

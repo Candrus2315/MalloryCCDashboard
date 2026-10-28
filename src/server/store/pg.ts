@@ -2335,7 +2335,7 @@ export class PgStore implements Store {
       await this.ensureSchema();
       // Per-source booking attribution (owner directive 2026-10-27): the
       // source-date slice WITH the join identity columns. READ-ONLY.
-      const rows = await this.sql`SELECT id::text, lead_type, source_date::text, contact_id::text, source_sheet, name, phone, email, created_at FROM leads WHERE source_date >= ${startSourceDate}::date AND source_date <= ${endSourceDate}::date ORDER BY source_date, id`;
+      const rows = await this.sql`SELECT id::text, lead_type, source_date::text, work_date::text, assigned_rep_id::text, contact_id::text, source_sheet, name, phone, email, created_at FROM leads WHERE source_date >= ${startSourceDate}::date AND source_date <= ${endSourceDate}::date ORDER BY source_date, id`;
       return rows.map((r) => ({
         id: String(r.id),
         contact_id: r.contact_id ? String(r.contact_id) : null,
@@ -2345,6 +2345,11 @@ export class PgStore implements Store {
         phone: r.phone ?? null,
         email: r.email ?? null,
         created_at: r.created_at == null ? null : new Date(r.created_at as string).toISOString(),
+        // WORK-DATE COHORT projection (owner directive 2026-10-27): the
+        // ingest-applied getWorkDate(source_date) key + the lead's assigned
+        // rep — read-only, additive, no date logic here.
+        work_date: r.work_date == null ? null : String(r.work_date),
+        assigned_rep_id: r.assigned_rep_id == null ? null : String(r.assigned_rep_id),
       }));
     });
   }

@@ -463,15 +463,16 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section (simplifie
     expect(text).toContain("Family — Leads: 10 · Bookings: 4 · Conversion: 40.0%");
     expect(text).toContain("Alliance Certificates — Leads: 0 · Bookings: 0 · Conversion: —");
     expect(text).toContain("Total — Leads: 24 · Bookings: 5 · Conversion: 20.8%");
-    // the shortened methodology sentence
-    expect(text).toContain("Bookings = those leads that produced a qualifying paid booking");
-    // the ONE compact auditability footnote (prior / no-link / coverage)
+    // the shortened cohort-doctrine methodology sentence (work-date alignment)
+    expect(text).toContain("Cohort = leads received for this work week (work-date). Bookings = those cohort leads that have produced a qualifying paid booking, counted to date. Conversion = Bookings ÷ Leads.");
+    // the ONE compact auditability footnote (booking-period audit: wins in
+    // week / prior / no-link / coverage — the prior bookings stay audit-only)
     expect(text).toContain(
-      "Prior-period bookings: 3 · No reliable link: 3 · Attribution coverage: 5/8 (62.50%) — detail on the Weekly tab",
+      "Booking-period audit: 8 wins in week · Prior-period: 3 · No reliable link: 3 · Coverage: 5/8 (62.50%) — detail on the Weekly tab",
     );
     // the old multi-category lines are GONE from the report
     expect(text).not.toContain("Current-period:");
-    expect(text).not.toContain("· Prior-period:");
+    expect(text).not.toContain("Prior-period bookings:");
     expect(text).not.toContain("Cohort conversion:");
     expect(text).not.toContain("Source-resolved:");
     expect(text).not.toContain("Truly Unattributed — Bookings:");
@@ -504,7 +505,7 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section (simplifie
     });
     expect(text).toContain("Family — Leads: 10 · Bookings: 1 · Conversion: 10.0%");
     expect(text).toContain(
-      "Prior-period bookings: 0 · Later-period: 2 · No reliable link: 2 · Attribution coverage: 3/5 (60.00%) — detail on the Weekly tab",
+      "Booking-period audit: 5 wins in week · Prior-period: 0 · Later-period: 2 · No reliable link: 2 · Coverage: 3/5 (60.00%) — detail on the Weekly tab",
     );
   });
 });

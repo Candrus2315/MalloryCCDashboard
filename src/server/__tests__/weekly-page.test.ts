@@ -109,10 +109,10 @@ async function seedWeeklyStore(): Promise<{ store: MemoryStore; idOf: (name: str
   const all = await store.getAllUsers();
   const idOf = (name: string) => all.find((u) => u.name === name)!.id;
 
-  const win = (id: string, winDate: string | null, type: string, createdDate: string, paid = true) => ({
+  const win = (id: string, winDate: string | null, type: string, createdDate: string, paid = true, contactId = "k1") => ({
     id,
     acuity_appointment_id: id,
-    contact_id: "k1",
+    contact_id: contactId,
     calendar_id: "cal-1",
     appointment_type: type,
     appointment_datetime: H(createdDate, "14:00"),
@@ -124,12 +124,13 @@ async function seedWeeklyStore(): Promise<{ store: MemoryStore; idOf: (name: str
     cancelled: false,
   });
   await store.upsertAppointments([
-    // LAST WEEK (9/21..9/27)
-    win("w-mon-1", LW_MON, "Portrait Session", LW_MON),
-    win("w-mon-2", LW_MON, "Animalia Session", LW_MON),
-    win("w-tue-1", "2026-09-22", "Animalia Session", "2026-09-22"),
-    win("w-sun-1", LW_SUN, "Portrait Session", LW_SUN), // Sunday — the last day IN
-    win("w-unattr-1", "2026-09-24", "Portrait Session", "2026-09-24"), // no attribution → online/unattributed
+    // LAST WEEK (9/21..9/27) — the identity-marked wins wire the cohort-produced
+    // conversion numerator: mon-1→l1, mon-2→l10, tue-1→l7, sun-1→l8.
+    win("w-mon-1", LW_MON, "Portrait Session", LW_MON, true, "k-l1"),
+    win("w-mon-2", LW_MON, "Animalia Session", LW_MON, true, "k-l10"),
+    win("w-tue-1", "2026-09-22", "Animalia Session", "2026-09-22", true, "k-l7"),
+    win("w-sun-1", LW_SUN, "Portrait Session", LW_SUN, true, "k-l8"), // Sunday — the last day IN
+    win("w-unattr-1", "2026-09-24", "Portrait Session", "2026-09-24"), // no attribution → online/unattributed; k1 matches no lead identity
     // boundary rows
     win("w-next-mon-1", NEXT_MON, "Portrait Session", NEXT_MON), // Monday after — out of last week, IN MTD
     win("w-aug-31", "2026-08-31", "Portrait Session", "2026-08-31"), // before September — out of MTD
@@ -160,23 +161,25 @@ async function seedWeeklyStore(): Promise<{ store: MemoryStore; idOf: (name: str
   await store.upsertLeads(
     (
       [
-        ["l1", "family", LW_MON, true],
-        ["l2", "family", "2026-09-22", true],
-        ["l3", "animalia", "2026-09-25", true],
-        ["l4", "animalia", "2026-09-26", false],
-        ["l5", "family", "2026-09-20", true], // Sunday before the week — out
-        ["l6", "animalia", NEXT_MON, true], // Monday after — out
-        ["l7", "animalia", "2026-09-23", true],
-        ["l8", "family", "2026-09-24", true],
-        ["l9", "family", "2026-09-26", false],
-        ["l10", "animalia", LW_MON, true],
+        // contact ids wire the cohort-produced identity join: l1, l8 (family)
+        // and l7, l10 (animalia) share identity with the week's wins below.
+        ["l1", "family", LW_MON, true, "k-l1"],
+        ["l2", "family", "2026-09-22", true, null],
+        ["l3", "animalia", "2026-09-25", true, null],
+        ["l4", "animalia", "2026-09-26", false, null],
+        ["l5", "family", "2026-09-20", true, null], // Sunday before the week — out
+        ["l6", "animalia", NEXT_MON, true, null], // Monday after — out
+        ["l7", "animalia", "2026-09-22", true, "k-l7"],
+        ["l8", "family", "2026-09-24", true, "k-l8"],
+        ["l9", "family", "2026-09-26", false, null],
+        ["l10", "animalia", LW_MON, true, "k-l10"],
       ] as const
-    ).map(([id, type, source, assigned]) => ({
+    ).map(([id, type, source, assigned, contact]) => ({
       id,
       lead_type: type,
       source_date: source,
       work_date: source,
-      contact_id: null,
+      contact_id: contact,
       assigned_rep_id: assigned ? idOf("Allison Wittner") : null,
       source_sheet: type,
       source_id: id,
@@ -253,22 +256,26 @@ describe("weeklyPageData (MemoryStore, pinned today)", () => {
     expect(rows.reduce((s, r) => s + r.total, 0) + data.bookings.unattributed).toBe(data.bookings.total);
   });
 
-  test("CONVERSION: numerator = rep-attributed wins; denominator = source-dated assigned leads", async () => {
+  test("CONVERSION: numerator = cohort leads PRODUCED (identity join, credited by lead assignment); denominator = the assigned work-date cohort", async () => {
     const { store } = await seedWeeklyStore();
     const data = await weeklyPageData({ store, today: TODAY });
     // assigned leads in 9/21..9/27: l1,l2,l8 (family) + l3,l7,l10 (animalia) — l4/l9 unassigned, l5/l6 out of window
     expect(data.conversion.denominator).toEqual({ overall: 6, family: 3, animalia: 3, fairyland: 0 });
-    // rep wins last week: mon-1,sun-1 (family) + mon-2,tue-1 (animalia) — unattr-1 excluded
+    // cohort-to-date produced: l1 (w-mon-1), l8 (w-sun-1) family + l10 (w-mon-2), l7 (w-tue-1)
+    // animalia — DISTINCT leads, credited by LEAD ASSIGNMENT (the wins' verdict
+    // reps Allison/Allison/Carmine/Jennifer no longer decide the numerator).
+    // unattr-1 (k1) matches no lead identity; pending never counts.
     expect(data.conversion.numerator).toEqual({ overall: 4, family: 2, animalia: 2, fairyland: 0 });
     expect(data.conversion.overall).toBeCloseTo(4 / 6, 6);
     expect(data.conversion.family).toBeCloseTo(2 / 3, 6);
     expect(data.conversion.animalia).toBeCloseTo(2 / 3, 6);
   });
 
-  test("LEADS: sheet leads by source_date in the week (in/out boundaries respected)", async () => {
+  test("LEADS: the week's WORK-DATE cohort (in/out boundaries respected)", async () => {
     const { store } = await seedWeeklyStore();
     const data = await weeklyPageData({ store, today: TODAY });
-    // in-window (9/21..9/27): family l1,l2,l8,l9; animalia l3,l4,l7,l10 — l5 (Sun before) and l6 (Mon after) out
+    // work-date cohort (9/21..9/27): family l1,l2,l8,l9; animalia l3,l4,l7,l10 — l5 (Sun before) and l6 (Mon after) out
+    // (work_date == source_date in this fixture, so the slice equals the old source-date one)
     expect(data.leads).toEqual({ family: 4, animalia: 4, fairyland: 0, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 8 });
   });
 

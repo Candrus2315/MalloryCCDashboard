@@ -85,19 +85,20 @@ export interface WeeklyCcReportInput {
       source: string;
       label: string;
       leads: number;
-      /** CURRENT-PERIOD (cohort) bookings — the conversion numerator for the source. */
+      /** COHORT-TO-DATE (work-date alignment): cohort leads that produced a qualifying paid booking — the conversion numerator. */
       bookings: number;
-      /** PRIOR-PERIOD matches kept under the resolved source (never a numerator). */
+      /** Unused on the cohort rows (always 0) — the prior/later audit lives in the footnote aggregates. */
       priorBookings: number;
-      /** LATER-PERIOD matches (matched lead's sheet date after the week) — honest separate bucket. */
+      /** Unused on the cohort rows (always 0) — see priorBookings. */
       laterBookings: number;
       conv: number | null;
     }[];
     totalLeads: number;
     /** ALL paid wins of the week = current + prior + later + truly unattributed. */
     totalBookings: number;
-    /** COHORT conversion (current-period bookings ÷ leads) — the table-consistent total. */
+    /** COHORT conversion (cohort-to-date produced ÷ cohort leads) — the table-consistent total. */
     totalConv: number | null;
+    /** Cohort-to-date produced bookings (the table-consistent numerator). */
     totalCurrentBookings: number;
     totalPriorBookings: number;
     totalLaterBookings: number;
@@ -113,9 +114,10 @@ export interface WeeklyCcReportInput {
   } | null;
   conversion: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
   /**
-   * BOOKINGS FROM LEADS (owner request 2026-09-29): ALL paid bookings of the
-   * week ÷ ALL sheet leads — the overall funnel rate. pct is null when the
-   * week had no sheet leads ("—" is rendered, never a fabricated 0%).
+   * BOOKINGS FROM LEADS (owner request 2026-09-29; work-date alignment): the
+   * week's work-date lead cohort ÷ its cohort-to-date produced bookings —
+   * the SAME doctrine as the tab's primary table. pct is null when the week
+   * had no cohort leads ("—" is rendered, never a fabricated 0%).
    */
   funnel: { wins: number; leads: number; pct: number | null };
   calendar: {
@@ -203,22 +205,25 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   }
   lines.push(`Total: ${formatInt(leads.total)}`);
   lines.push("");
-  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED — same
-  // presentation the Weekly tab shows): per source "Leads / Bookings /
-  // Conversion %" + a Total row. Bookings = the week's leads that produced a
-  // qualifying paid booking (the CURRENT-PERIOD cohort — the same validated
-  // numerator as before; conversion math stays strict-cohort: Bookings ÷
-  // Leads). Auditability stays, in ONE compact footnote: prior-period bookings
-  // (kept under their resolved source, never a numerator), later-period
-  // matches when nonzero, Truly Unattributed (no reliable sheet-lead link —
-  // the only "Unattributed" meaning) and attribution coverage; the full
-  // three-category breakdown lives on the Weekly tab. Renders ONLY when the
-  // page provides the input — the template stays byte-identical otherwise.
+  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED; WORK-DATE
+  // ALIGNMENT amendment): per source "Leads / Bookings / Conversion %" + a
+  // Total row — the SAME lines the Weekly tab's primary table shows. Leads =
+  // the source's WORK-DATE cohort for the week; Bookings = those cohort leads
+  // that have produced a qualifying paid booking, COUNTED TO DATE (a booking
+  // made weeks later still credits the original week); Conversion = Bookings
+  // ÷ Leads (strict cohort, numerator and denominator the same cohort).
+  // Auditability stays, in ONE compact footnote: the booking-period audit
+  // (wins won in the week, prior-period bookings kept under their resolved
+  // source — never a numerator, later-period when nonzero, Truly Unattributed
+  // (no reliable sheet-lead link — the only "Unattributed" meaning) and
+  // attribution coverage); the full three-category breakdown lives on the
+  // Weekly tab. Renders ONLY when the page provides the input — the template
+  // stays byte-identical otherwise.
   if (input.sourcePerformance) {
     const sp = input.sourcePerformance;
     lines.push("LEAD SOURCE PERFORMANCE (report week):");
     lines.push(
-      "Leads = the source's sheet leads received this week. Bookings = those leads that produced a qualifying paid booking (current-period cohort). Conversion = Bookings ÷ Leads.",
+      "Cohort = leads received for this work week (work-date). Bookings = those cohort leads that have produced a qualifying paid booking, counted to date. Conversion = Bookings ÷ Leads.",
     );
     for (const r of sp.rows) {
       if (r.source === "total" || r.source === "unattributed") continue;
@@ -229,17 +234,21 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
     lines.push(
       `Total — Leads: ${formatInt(sp.totalLeads)} · Bookings: ${formatInt(sp.totalCurrentBookings)} · Conversion: ${sp.totalConv == null ? NO_SOURCE : formatPercent(sp.totalConv, 1)}`,
     );
-    const foot: string[] = [`Prior-period bookings: ${formatInt(sp.totalPriorBookings)}`];
+    const foot: string[] = [`Booking-period audit: ${formatInt(sp.totalBookings)} wins in week`];
+    foot.push(`Prior-period: ${formatInt(sp.totalPriorBookings)}`);
     if (sp.totalLaterBookings > 0) foot.push(`Later-period: ${formatInt(sp.totalLaterBookings)}`);
     foot.push(`No reliable link: ${formatInt(sp.trulyUnattributedBookings)}`);
     if (sp.coverage != null) {
       foot.push(
-        `Attribution coverage: ${formatInt(sp.sourceResolvedBookings)}/${formatInt(sp.totalBookings)} (${(sp.coverage * 100).toFixed(2)}%)`,
+        `Coverage: ${formatInt(sp.sourceResolvedBookings)}/${formatInt(sp.totalBookings)} (${(sp.coverage * 100).toFixed(2)}%)`,
       );
     }
     lines.push(`${foot.join(" · ")} — detail on the Weekly tab`);
     lines.push("");
   }
+  // WORK-DATE ALIGNMENT: the assigned cohort is the week's work-date cohort
+  // and the bookings are cohort-to-date produced (credited by lead
+  // assignment) — same doctrine as the LEAD SOURCE PERFORMANCE lines above.
   lines.push(
     `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)} · Fairyland ${formatPercent(input.conversion.fairyland)})`,
   );

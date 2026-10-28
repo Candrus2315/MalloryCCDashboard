@@ -837,6 +837,9 @@ export class MemoryStore implements Store {
         phone: l.phone ?? null,
         email: l.email ?? null,
         created_at: (l as { created_at?: string | null }).created_at ?? null,
+        // WORK-DATE COHORT projection — mirrors the pg store (see types.ts).
+        work_date: l.work_date ?? null,
+        assigned_rep_id: l.assigned_rep_id ?? null,
       }));
   }
   async updateLeadWorkDate(id: string, workDate: string): Promise<void> {

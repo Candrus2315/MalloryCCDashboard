@@ -49,7 +49,8 @@
 import type { AppointmentRow, AttributionRow, LeadRow } from "./compute";
 import { createdBusinessDateOf, isBookingWin } from "./compute";
 import { FORM_SOURCE_SHEETS, GENRE_SOURCE_SHEETS, LEAD_SOURCE_LABELS, type LeadSourceSheet } from "../../components/lead-sources";
-import { splitLeadsByType } from "./weekly";
+import { conversionRate, splitLeadsByType, type WeekFunnelRow } from "./weekly";
+import { addDays } from "../date-logic";
 import type { LeadJoinRow } from "../store/types";
 export type { LeadJoinRow };
 
@@ -83,6 +84,18 @@ export type WinWithClients = AppointmentRow & { client_phone?: string | null; cl
 
 /** How far before the analyzed window candidate leads are fetched (the join's lookback). */
 export const SOURCE_JOIN_LOOKBACK_DAYS = 90;
+/**
+ * HOW FAR BACK the cohort-to-date wins fetch reaches (win-bucket days before
+ * the cohort window's start). The causality guard inside leadProducedWin does
+ * the real filtering (a win only counts when its created ET date is on/after
+ * the lead's own source_date — reuse of the existing cohort-outcomes rule);
+ * this margin just guarantees the raw fetch CONTAINS every possibly-causal
+ * win: a work-date cohort's source dates can start up to 3 days before the
+ * window's Monday (Fri/Sat/Sun sheet dates map to Monday), and a deposit can
+ * lag creation. Nothing before the earliest source_date can pass causality,
+ * so 7 days is comfortable headroom — no date logic here, only fetch scope.
+ */
+export const COHORT_WIN_LOOKBACK_DAYS = 7;
 
 /** Total lead row (TOTAL table row) — "source" is a display marker, never a bucket. */
 export interface SourceTotalRow {
@@ -535,6 +548,10 @@ export interface RepCohortDetail {
   trulyUnattributedWins: number;
   /** Verdict wins resolved to form-source leads — team-level metrics (no rep cohort exists for them). */
   teamFormWins: RepCohortCount[];
+  /** COHORT-TO-DATE split: produced cohort leads with ≥1 causal win CREATED on/before the period end. */
+  producedInPeriodBySource: RepCohortCount[];
+  /** COHORT-TO-DATE split: produced cohort leads whose causal wins ALL fall after the period end (booked later). */
+  producedLaterBySource: RepCohortCount[];
   totalCohortBookings: number;
   /** All of this rep's verdict wins in the period (cohort + prior + later + team-form + truly unattributed). */
   totalResolvedWins: number;
@@ -552,8 +569,16 @@ export interface RepCohortDetail {
  *   Assigned  = assigned leads from that source during the selected period
  *               (work-date assigned cohort — UNCHANGED denominator);
  *   Conv %    = cohort bookings ÷ assigned × 100.
- * A win enters a rep row ONLY through its attribution verdict (rollup
- * semantics above: manual overrides included, no-rep wins never a rep row).
+ * WORK-DATE ALIGNMENT AMENDMENT (owner directive): the PRIMARY Bookings
+ * numerator is now the cohort-to-date doctrine — DISTINCT assigned cohort
+ * leads (per source) that produced ≥1 qualifying paid booking EVER, credited
+ * by LEAD ASSIGNMENT (whichever rep or channel later worked the booking).
+ * The verdict rollup below no longer feeds the primary number; it stays as
+ * the card's audit detail (prior/later/unlinked/team-form) so nothing is
+ * hidden. The denominator and Conv % math are unchanged.
+ * A verdict win enters the AUDIT detail only through its attribution verdict
+ * (rollup semantics above: manual overrides included, no-rep wins never a
+ * rep row).
  * PRIOR-PERIOD wins (matched lead's source_date predates the period) NEVER
  * enter the numerator — they surface in the detail; with production genre
  * data (work_date == source_date) cohort membership and the current-period
@@ -574,8 +599,19 @@ export function buildRepCohortSourcePerformance(args: {
   /** The selected period's assigned-lead work-date cohort: leads with assigned_rep_id, form sheets excluded. */
   assignedCohortLeads: LeadRow[];
   period: { start: string; end: string };
+  /**
+   * COHORT-TO-DATE NUMERATOR (owner directive, work-date alignment): ids of
+   * THIS rep's assigned cohort leads that produced ≥1 qualifying paid
+   * booking EVER (computeAssignedCohortProduced — shared cohort-outcomes
+   * machinery, causality-guarded). Credit is by LEAD ASSIGNMENT: whichever
+   * rep or channel later worked the booking. Replaces the PR #110
+   * period-wins numerator; the verdict audit below stays for the detail.
+   */
+  cohortProducedLeadIds: Map<SourceBucket, Set<string>>;
+  /** Same, restricted to leads with ≥1 causal win CREATED on/before the period end. */
+  cohortProducedInPeriodLeadIds: Map<SourceBucket, Set<string>>;
 }): RepCohortDetail {
-  const { repId, wins, attributions, byWinSource, assignedCohortLeads, period } = args;
+  const { repId, wins, attributions, byWinSource, assignedCohortLeads, period, cohortProducedLeadIds, cohortProducedInPeriodLeadIds } = args;
 
   // The rep's assigned cohort per source — lead-ID sets (numerator membership)
   // plus per-source counts (the denominator). UNCHANGED denominator filter:
@@ -595,7 +631,6 @@ export function buildRepCohortSourcePerformance(args: {
   }
 
   const byAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
-  const cohortBySource = new Map<SourceBucket, number>();
   const resolvedBySource = new Map<SourceBucket, number>();
   const priorBySource = new Map<SourceBucket, number>();
   const laterBySource = new Map<SourceBucket, number>();
@@ -629,11 +664,9 @@ export function buildRepCohortSourcePerformance(args: {
       laterBySource.set(b, (laterBySource.get(b) ?? 0) + 1);
       continue; // honest separate category, never merged
     }
-    // CURRENT-period match: a primary numerator ONLY when the matched lead is
-    // in THIS rep's assigned selected-period cohort for that source.
-    if (cohortIdsBySource.get(b)?.has(resolved.leadId ?? "")) {
-      cohortBySource.set(b, (cohortBySource.get(b) ?? 0) + 1);
-    }
+    // The PRIMARY numerator no longer comes from verdict wins (work-date
+    // alignment: cohort-to-date produced leads, credited by assignment) —
+    // the verdict machinery above stays purely as the card's audit detail.
     if ((FORM_SOURCE_SHEETS as readonly string[]).includes(b)) {
       teamFormBySource.set(b, (teamFormBySource.get(b) ?? 0) + 1);
     }
@@ -649,14 +682,18 @@ export function buildRepCohortSourcePerformance(args: {
   for (const b of SOURCE_BUCKETS) {
     if (b === "other") {
       const anyOther =
-        (cohortBySource.get("other") ?? 0) > 0 ||
+        (cohortProducedLeadIds.get("other")?.size ?? 0) > 0 ||
         (assignedCountBySource.get("other") ?? 0) > 0 ||
         (resolvedBySource.get("other") ?? 0) > 0;
       if (!anyOther) continue;
     }
     const isForm = (FORM_SOURCE_SHEETS as readonly string[]).includes(b);
     if (b === "unattributed") continue; // no lead link → detail, never a primary row
-    const bookings = isForm ? 0 : cohortBySource.get(b) ?? 0; // form cohorts are empty by owner rule
+    // PRIMARY NUMERATOR (work-date alignment): DISTINCT assigned cohort
+    // leads of this source that produced ≥1 qualifying paid booking EVER —
+    // credited by lead assignment, no verdict filter. Form cohorts are empty
+    // by owner rule (their rows are skipped by computeAssignedCohortProduced).
+    const bookings = isForm ? 0 : cohortProducedLeadIds.get(b)?.size ?? 0;
     const leadsAssigned = isForm ? 0 : assignedCountBySource.get(b) ?? 0;
     const resolvedWins = resolvedBySource.get(b) ?? 0;
     if (bookings === 0 && leadsAssigned === 0 && resolvedWins === 0) continue;
@@ -671,7 +708,21 @@ export function buildRepCohortSourcePerformance(args: {
     });
   }
 
-  const totalCohortBookings = [...cohortBySource.values()].reduce((s, n) => s + n, 0);
+  // Total = the table's genre rows exactly (form buckets are skipped by the
+  // produced sets, and their rendered bookings are 0 by owner rule).
+  const totalCohortBookings = rows.reduce((acc, r) => (r.kind === "cohort" ? acc + r.bookings : acc), 0);
+  // COHORT-TO-DATE split (nothing hidden): a produced lead with an in-period
+  // win is "in period"; produced leads whose wins ALL fall after the period
+  // end are the honest later bucket (a lead never appears in both).
+  const producedLaterBySource = new Map<SourceBucket, Set<string>>();
+  for (const [b, ids] of cohortProducedLeadIds) {
+    const inPeriod = cohortProducedInPeriodLeadIds.get(b);
+    const laterIds = new Set<string>();
+    for (const id of ids) if (!inPeriod?.has(id)) laterIds.add(id);
+    if (laterIds.size > 0) producedLaterBySource.set(b, laterIds);
+  }
+  const asCountMap = (m: Map<SourceBucket, Set<string>>): Map<SourceBucket, number> =>
+    new Map([...m.entries()].map(([b, ids]) => [b, ids.size] as const));
   return {
     repId,
     rows,
@@ -679,6 +730,8 @@ export function buildRepCohortSourcePerformance(args: {
     laterBySource: asCounts(laterBySource),
     trulyUnattributedWins: trulyUnattributed,
     teamFormWins: asCounts(teamFormBySource),
+    producedInPeriodBySource: asCounts(asCountMap(cohortProducedInPeriodLeadIds)),
+    producedLaterBySource: asCounts(asCountMap(producedLaterBySource)),
     totalCohortBookings,
     totalResolvedWins: totalResolved,
     totalPriorWins: [...priorBySource.values()].reduce((s, n) => s + n, 0),
@@ -708,11 +761,16 @@ export interface LeadCohortSourceRow {
  * cohort leads credits each of them (cross-source duplication is NOT deduped
  * — existing totals stay digit-identical; the overlap note quantifies it).
  */
-export function computeLeadCohortOutcomes(
-  cohortLeadJoinRows: LeadJoinRow[],
+/**
+ * Identity → win CREATION dates (ET) for the given in-scope qualifying wins.
+ * THE shared engine of the cohort-to-date "Produced" doctrine — extracted
+ * VERBATIM from computeLeadCohortOutcomes (owner directive, work-date
+ * alignment) so the Weekly primary table, funnel series and rep cards reuse
+ * ONE machinery instead of duplicating matching logic.
+ */
+export function buildWinDatesByIdentity(
   winsThroughToday: WinWithClients[],
-): LeadCohortSourceRow[] {
-  // identity → set of win CREATION dates (ET) for wins through today
+): Map<string, string[]> {
   const winDatesByIdentity = new Map<string, string[]>();
   const pushWin = (key: string, created: string) => {
     const arr = winDatesByIdentity.get(key);
@@ -729,20 +787,38 @@ export function computeLeadCohortOutcomes(
     const e = emailNorm(w.client_email);
     if (e) pushWin("e:" + e, created);
   }
-  const producedLead = (l: LeadJoinRow): boolean => {
-    const identities: string[] = [];
-    if (l.contact_id) identities.push("c:" + l.contact_id);
-    const p = phone10(l.phone);
-    if (p) identities.push("p:" + p);
-    const e = emailNorm(l.email);
-    if (e) identities.push("e:" + e);
-    for (const key of identities) {
-      for (const created of winDatesByIdentity.get(key) ?? []) {
-        if (created >= l.source_date) return true; // causality guard
-      }
+  return winDatesByIdentity;
+}
+/**
+ * Did THIS lead produce a qualifying paid booking? True when any win whose
+ * CREATION ET date is on/after the lead's own source_date shares an identity
+ * with it (contact_id first, then phone10, then email — the ingest
+ * hierarchy). VERBATIM extract of computeLeadCohortOutcomes' producedLead —
+ * the causality guard is the same, so every consumer agrees digit for digit.
+ */
+export function leadProducedWin(
+  lead: Pick<LeadJoinRow, "contact_id" | "source_date"> & { phone?: string | null; email?: string | null },
+  winDatesByIdentity: Map<string, string[]>,
+): boolean {
+  const identities: string[] = [];
+  if (lead.contact_id) identities.push("c:" + lead.contact_id);
+  const p = phone10(lead.phone);
+  if (p) identities.push("p:" + p);
+  const e = emailNorm(lead.email);
+  if (e) identities.push("e:" + e);
+  for (const key of identities) {
+    for (const created of winDatesByIdentity.get(key) ?? []) {
+      if (created >= lead.source_date) return true; // causality guard
     }
-    return false;
-  };
+  }
+  return false;
+}
+export function computeLeadCohortOutcomes(
+  cohortLeadJoinRows: LeadJoinRow[],
+  winsThroughToday: WinWithClients[],
+): LeadCohortSourceRow[] {
+  const winDatesByIdentity = buildWinDatesByIdentity(winsThroughToday);
+  const producedLead = (l: LeadJoinRow): boolean => leadProducedWin(l, winDatesByIdentity);
 
   const countsByBucket = new Map<SourceBucket, { leads: number; booked: number }>();
   for (const l of cohortLeadJoinRows) {
@@ -773,7 +849,111 @@ export function computeLeadCohortOutcomes(
   rows.push({ source: "total", label: "Total", leads: totalLeads, bookedLeads: totalBooked, conv: sourceConversion(totalBooked, totalLeads) });
   return rows;
 }
-
+// ---------- funnel series on the work-date cohort (owner directive: one weekly lead definition) ----------
+/**
+ * FUNNEL SERIES, COHORT DOCTRINE (owner directive, work-date alignment).
+ * Same WeekFunnelRow shape as weekFunnelRows, but per week:
+ *   leads = the week's WORK-DATE cohort (rows whose work_date falls in the
+ *   Mon–Sun window — the same 957-consistent definition the primary table,
+ *   Lead Composition and rep cohorts use), and
+ *   wins  = cohort-to-date produced: DISTINCT cohort leads with ≥1
+ *   qualifying paid booking EVER (the shared leadProducedWin machinery).
+ * Once a lead is in a weekly cohort it STAYS there — a booking made weeks
+ * later bumps the ORIGINAL week's count, never the later week's. pct =
+ * produced ÷ cohort leads; a zero-lead week renders "—" (never fabricated).
+ * weekFunnelRows (booking-period wins ÷ source-date leads) stays untouched
+ * for callers that still need the booking-period flavor.
+ */
+export function weekCohortFunnelRows(
+  weekStarts: string[],
+  cohortJoinRows: LeadJoinRow[],
+  winsThroughToday: WinWithClients[],
+): WeekFunnelRow[] {
+  const winDatesByIdentity = buildWinDatesByIdentity(winsThroughToday);
+  return weekStarts.map((mon) => {
+    const sun = addDays(mon, 6);
+    const weekRows = cohortJoinRows.filter((l) => l.work_date != null && l.work_date >= mon && l.work_date <= sun);
+    let produced = 0;
+    for (const l of weekRows) if (leadProducedWin(l, winDatesByIdentity)) produced += 1;
+    return { weekStart: mon, weekEnd: sun, leads: weekRows.length, wins: produced, pct: conversionRate(produced, weekRows.length) };
+  });
+}
+// ---------- assigned-cohort produced sets, credited by lead ASSIGNMENT ----------
+export interface AssignedCohortProduced {
+  /** rep id → source → ids of THAT rep's assigned cohort leads that produced ≥1 qualifying paid booking ever. */
+  producedByRep: Map<string, Map<SourceBucket, Set<string>>>;
+  /** Same sets restricted to leads with ≥1 causal win CREATED on/before the period end. */
+  producedInPeriodByRep: Map<string, Map<SourceBucket, Set<string>>>;
+}
+/**
+ * PER-REP COHORT-TO-DATE NUMBERS (owner directive, work-date alignment —
+ * rep-card numerator doctrine). Credit is by LEAD ASSIGNMENT: a lead counts
+ * for the rep it was ASSIGNED to in the period, whichever rep or channel
+ * later worked the booking (no verdict filter on the numerator — the
+ * verdict-based audit detail stays for exactly that audit). Input rows are
+ * the period's work-date cohort join rows (work_date + assigned_rep_id +
+ * identity columns — the getLeadsJoinRange projection); wins are the
+ * in-scope qualifying wins through today. Form-source rows are SKIPPED
+ * (owner rule: form leads are team totals, never rep metrics). The split
+ * key is the period END: a lead with any causal win created on/before
+ * period end is "in period"; produced leads whose wins ALL fall later are
+ * the honest "booked after the week closed" bucket.
+ */
+export function computeAssignedCohortProduced(
+  cohortJoinRows: LeadJoinRow[],
+  winsThroughToday: WinWithClients[],
+  period: { start: string; end: string },
+): AssignedCohortProduced {
+  const winDatesByIdentity = buildWinDatesByIdentity(winsThroughToday);
+  const producedByRep = new Map<string, Map<SourceBucket, Set<string>>>();
+  const producedInPeriodByRep = new Map<string, Map<SourceBucket, Set<string>>>();
+  for (const l of cohortJoinRows) {
+    const rep = l.assigned_rep_id;
+    if (!rep) continue;
+    const b = classifyLeadSource(l);
+    if ((FORM_SOURCE_SHEETS as readonly string[]).includes(b)) continue; // team totals, never rep metrics
+    // Causal win dates for THIS lead (same identity join + causality guard
+    // as leadProducedWin — dates kept so the in-period/later split is exact).
+    const identities: string[] = [];
+    if (l.contact_id) identities.push("c:" + l.contact_id);
+    const p = phone10(l.phone);
+    if (p) identities.push("p:" + p);
+    const e = emailNorm(l.email);
+    if (e) identities.push("e:" + e);
+    const causalDates: string[] = [];
+    for (const key of identities) {
+      for (const created of winDatesByIdentity.get(key) ?? []) {
+        if (created >= l.source_date) causalDates.push(created);
+      }
+    }
+    if (causalDates.length === 0) continue;
+    let bySource = producedByRep.get(rep);
+    if (!bySource) {
+      bySource = new Map();
+      producedByRep.set(rep, bySource);
+    }
+    let ids = bySource.get(b);
+    if (!ids) {
+      ids = new Set();
+      bySource.set(b, ids);
+    }
+    ids.add(l.id);
+    if (causalDates.some((d) => d <= period.end)) {
+      let inSource = producedInPeriodByRep.get(rep);
+      if (!inSource) {
+        inSource = new Map();
+        producedInPeriodByRep.set(rep, inSource);
+      }
+      let inIds = inSource.get(b);
+      if (!inIds) {
+        inIds = new Set();
+        inSource.set(b, inIds);
+      }
+      inIds.add(l.id);
+    }
+  }
+  return { producedByRep, producedInPeriodByRep };
+}
 // ---------- cross-source duplicate magnitude (report-only data note) ----------
 
 export interface CrossSourceOverlap {
