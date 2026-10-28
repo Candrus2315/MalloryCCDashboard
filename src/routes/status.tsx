@@ -2,7 +2,8 @@
  * STATUS — the in-app Status/Health view (the last unshipped reliability item).
  *
  * ONE read-only page surfacing the reliability stack's EXISTING signals, all
- * read fresh at page load through statusHealthPageData():
+ * read fresh at page load through the getStatusHealthData server fn
+ * (queries.ts) → statusHealthPageData():
  *
  *   • Overall status + version/commit — the SAME /health payload serve.ts
  *     answers with (buildHealthPayload), rendered in-app — never a fork.
@@ -28,14 +29,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { etSyncStamp } from "~/server/date-logic";
-import { formatAgeMinutes, statusHealthPageData } from "~/server/status-health";
+import { formatAgeMinutes } from "~/server/status-format";
+import { getStatusHealthData } from "~/server/queries";
 import type { HealthProviderReport } from "~/server/health";
 import { formatInt } from "~/server/metrics/report-text";
 import { Eyebrow, Panel } from "~/components/page-panel";
 import { CopyButton } from "~/components/CopyButton";
 
 export const Route = createFileRoute("/status")({
-  loader: () => statusHealthPageData(),
+  loader: () => getStatusHealthData(),
   component: StatusPage,
 });
 

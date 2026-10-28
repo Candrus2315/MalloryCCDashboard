@@ -143,26 +143,13 @@ export function defaultServerLockPath(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (unit-pinned)
+// Pure helpers (unit-pinned; defined in the dependency-free status-format.ts —
+// the route's component imports them from THERE, because importing this
+// module from the client would drag the store graph into the browser bundle)
 // ---------------------------------------------------------------------------
 
-/** Minutes between an ISO start and `nowMs`; null when unparsable — never a guess. */
-export function minutesSince(iso: string | null | undefined, nowMs: number): number | null {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return null;
-  return Math.max(0, Math.round(((nowMs - t) / 60_000) * 10) / 10);
-}
-
-/** Honest duration label: "—" for missing, "<1 min" for a real zero. */
-export function formatAgeMinutes(minutes: number | null): string {
-  if (minutes == null || !Number.isFinite(minutes)) return "—";
-  if (minutes < 1) return "<1 min";
-  if (minutes < 120) return `${Math.round(minutes)} min`;
-  const h = Math.floor(minutes / 60);
-  const m = Math.round(minutes % 60);
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
+export { formatAgeMinutes, minutesSince } from "./status-format";
+import { minutesSince } from "./status-format";
 
 export const emptySupervisorView = (): SupervisorView => ({
   available: false,
