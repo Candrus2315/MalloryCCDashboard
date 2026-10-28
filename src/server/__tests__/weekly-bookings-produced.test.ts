@@ -18,7 +18,8 @@
  *  4. THE PRODUCTION BLOCK (owner Final Booking Logic 10/28): gross /
  *     cancellations / net together — Oct 19–25 pins 84 / 5 / 79 (Vallee's
  *     cancelled row dedupes out of BOTH gross and cancellations — a
- *     reschedule, never a cancellation), computeWeeklyCancellations'
+ *     cancel-and-rebook, never a cancellation; the 10/28 lineage audit
+ *     confirmed Acuity never represents a reschedule as cancel+new), computeWeeklyCancellations'
  *     convenience form, and the four-number CC Report hero (which suppresses
  *     the legacy Bookings Produced line); byte-identity of the template when
  *     the inputs are absent.
