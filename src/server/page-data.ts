@@ -58,14 +58,11 @@ import { isFormSourceSheet } from "../components/lead-sources";
 import { derivePaymentState } from "./payments";
 import { appointmentInScope, computeDayAvailability, type DayAvailability } from "./metrics/availability";
 import {
-  assignedLeadsInRange,
   buildWeeklyRepRows,
   celebrateDefaultLine,
   conversionRate,
   FUNNEL_SERIES_WEEKS,
   goalVsActual,
-  isAnimaliaSession,
-  isFairylandSession,
   lastCompletedWeekStart,
   monthKeyOf,
   monthStartDate,
@@ -75,7 +72,6 @@ import {
   splitWinOwnership,
   splitWinsByChannel,
   splitWinsBySessionType,
-  weekFunnelRows,
   weeklyDayByRepGrid,
   winsByDate,
   ALLIANCE_PIPELINE_ID,
@@ -89,12 +85,16 @@ import {
   bestWorstSourceLines,
   buildRepCohortSourcePerformance,
   buildSourcePerformanceTable,
+  computeAssignedCohortProduced,
   computeLeadCohortOutcomes,
   crossSourceOverlap,
   resolveBookingSources,
+  COHORT_WIN_LOOKBACK_DAYS,
   SOURCE_JOIN_LOOKBACK_DAYS,
+  weekCohortFunnelRows,
   type CrossSourceOverlap,
   type LeadCohortSourceRow,
+  type SourceBucket,
   type SourcePerformanceTable,
 } from "./metrics/source-attribution";
 import { deriveWeeklyHoles, type DayHoleDetail } from "./commission/derive";
@@ -202,7 +202,10 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       // PER-SOURCE BOOKING ATTRIBUTION (owner directive 10/27, Step 3): wins
       // with client identity for the join + candidate leads 90 days back (the
       // documented lookback). READ-ONLY.
-      store.getWinsWithClientsBetween(range.start, range.end),
+      // Widened to today + COHORT_WIN_LOOKBACK_DAYS for the rep cards'
+      // cohort-to-date numerator (see computeAssignedCohortProduced) — the
+      // booking-period audit slice below is unchanged.
+      store.getWinsWithClientsBetween(addDays(range.start, -COHORT_WIN_LOOKBACK_DAYS), today),
       store.getLeadsJoinRange(addDays(range.start, -SOURCE_JOIN_LOOKBACK_DAYS), range.end),
     ]);
     const repGoalRows = await Promise.all(weeks.map((w) => store.getRepGoals(w)));
@@ -294,17 +297,24 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       isBookingWin(a) && appointmentInScope(a, settings.acuity),
     );
     const byWinSource = resolveBookingSources(winsJoin, leadsJoin);
-    // REP-CARD COHORT SCOPING (owner directive 2026-10-27, part 2): the
-    // card's primary numbers are the rep's ASSIGNED selected-period lead
-    // cohort — Bookings = wins whose matched lead is in that cohort;
-    // Assigned Leads = the work-date cohort (UNCHANGED denominator: assigned
-    // rows only, form sheets excluded — owner rule: form-source leads are
-    // team totals, never rep metrics); Conv % = cohort bookings / assigned.
-    // Prior-period (and later / no-link / form-source) verdict wins move to
-    // the card's audit detail — the per-win attribution data stays complete
-    // underneath. The cohort slice is rep-agnostic; the builder filters by
-    // the selected rep's id internally (see buildRepSourcePerformanceInput).
+    // REP-CARD COHORT SCOPING (owner directive 2026-10-27, part 2, AMENDED by
+    // the work-date alignment directive): Assigned Leads stays the work-date
+    // cohort (UNCHANGED denominator: assigned rows only, form sheets
+    // excluded — owner rule: form-source leads are team totals, never rep
+    // metrics); Bookings is now the COHORT-TO-DATE numerator — DISTINCT
+    // assigned cohort leads that produced ≥1 qualifying paid booking EVER,
+    // credited by LEAD ASSIGNMENT (whichever rep or channel later worked the
+    // booking). Verdict-based prior/later/no-link/form wins stay in the
+    // card's collapsed detail so nothing is hidden.
     const assignedCohortLeads = leads.filter((l) => l.assigned_rep_id && !isFormSourceSheet(l.source_sheet));
+    // The produced sets ride the same getLeadsJoinRange projection
+    // (work_date + assigned_rep_id + identity columns). Wins through today
+    // (fetch widened above); causality inside the shared machinery.
+    const winsCohortReps = filterApptsInWinBucketRange(winsJoinRaw, addDays(range.start, -COHORT_WIN_LOOKBACK_DAYS), today).filter(
+      (a) => isBookingWin(a) && appointmentInScope(a, settings.acuity),
+    );
+    const wdCohortJoinRows = leadsJoin.filter((l) => l.work_date != null && l.work_date >= range.start && l.work_date <= range.end);
+    const repProduced = computeAssignedCohortProduced(wdCohortJoinRows, winsCohortReps, { start: range.start, end: range.end });
     const buildRepSourcePerformanceInput = (id: string | null) =>
       buildRepCohortSourcePerformance({
         repId: id,
@@ -313,6 +323,8 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
         byWinSource,
         assignedCohortLeads,
         period: { start: range.start, end: range.end },
+        cohortProducedLeadIds: (id ? repProduced.producedByRep.get(id) : undefined) ?? new Map(),
+        cohortProducedInPeriodLeadIds: (id ? repProduced.producedInPeriodByRep.get(id) : undefined) ?? new Map(),
       });
 
     // selected rep: requested id when present in the active list, else first
@@ -346,7 +358,7 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       ...buildRepSourcePerformanceInput(rep?.id ?? null),
       repName: rep?.name ?? null,
       note:
-        "Bookings = the rep's cohort wins: wins booked through the rep's attribution verdict whose matched sheet lead (nearest sheet date to the booking's creation date, tie = most recently ingested) is one of the leads ASSIGNED to this rep from that source during the selected period. Assigned Leads = the same work-date assigned cohort (unchanged denominator); Conv % = cohort bookings ÷ assigned. Prior-period wins (matched lead's sheet date before the selected range) never enter these numbers — they surface in the Attribution detail below, along with truly-unattributed wins and wins resolved to form-source leads. Form-source rows show no rep numbers by the owner's rule (form-source leads are team totals, never rep metrics): their volume and conversion live on the Weekly tab, so their cohort here is empty (Bookings 0, Assigned —). Because the card counts cohort wins, its sums need not equal the period's total wins.",
+        "Bookings = COHORT-TO-DATE produced (work-date alignment): the DISTINCT leads assigned to this rep from that source during the selected period that have produced a qualifying paid booking, counted to date and credited by LEAD ASSIGNMENT (whichever rep or channel later worked the booking — the attribution verdict is not part of this numerator). Assigned Leads = the same work-date assigned cohort (unchanged denominator); Conv % = produced ÷ assigned. The card's Attribution detail below distinguishes produced-in-period vs produced-later and keeps the verdict-based audit (prior-period, later-period, truly-unattributed, team-level form-source wins) so nothing is hidden. Form-source rows show no rep numbers by the owner's rule (form-source leads are team totals, never rep metrics): their volume and conversion live on the Weekly tab, so their cohort here is empty (Bookings 0, Assigned —).",
     };
 
     // missing-data warnings — never render a plausible number for absent data.
@@ -1606,7 +1618,7 @@ export interface WeeklyPageData {
    * rate, NOT strict attribution (online bookings, repeat clients and
    * Alliance/Auction members never appear in the sheets).
    */
-  funnel: { wins: number; leads: number; pct: number | null };
+  funnel: { wins: number; leads: number; pct: number | null; produced: number };
   /** The same funnel for the last 5 COMPLETED Mon–Sun weeks, oldest first — never the in-progress week. */
   funnelSeries: WeekFunnelRow[];
   /**
@@ -1669,7 +1681,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // recent-completed-weeks strip (report week included — one fetch serves both).
   const seriesMon = addDays(lwMon, -7 * (FUNNEL_SERIES_WEEKS - 1));
 
-  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, reportWeekSessions, channelLeadOpps, winsJoinRaw, leadsJoin] =
+  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, monthlyGoalRow, reportWeekSessions, channelLeadOpps, winsJoinRaw, leadsJoin, leadsSeries, leadsCohort] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -1683,9 +1695,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       store.getUsers(),
       // ALL users — attribution rep_ids resolve names even off-roster.
       store.getAllUsers(),
-      // Sheet leads for the WHOLE funnel window (source_date) — the report week
-      // is sliced out below; no rep filter (the funnel counts ALL sheets).
-      store.getLeadsBySourceDates(dateRange(seriesMon, lwSun)),
+      // BOOKING-PERIOD AUDIT slice only now (source_date, unchanged
+      // semantics): the funnel no longer uses source-date leads.
+      store.getLeadsBySourceDates(dateRange(lwMon, lwSun)),
       store.getTeamGoal(lwMon),
       // calendar fill: every session from this week's Monday onward (this
       // week + next week + beyond — nothing silently dropped)
@@ -1710,8 +1722,20 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       // wins with client identity from the report week THROUGH TODAY (serves
       // both conversion flavors) + candidate leads 90 days back (the
       // documented lookback the nearest-rule selects within). READ-ONLY.
-      store.getWinsWithClientsBetween(lwMon, today),
+      // COHORT-TO-DATE WINS (work-date alignment): the join fetch is widened
+      // past the series floor by COHORT_WIN_LOOKBACK_DAYS so EVERY possibly
+      // causal win is present (a work-date cohort's source dates start up to
+      // 3 days before its Monday; the causality guard inside the shared
+      // cohort-outcomes machinery does the real filtering). The booking-period
+      // audit table still slices [lwMon..lwSun] out of the same rows below.
+      store.getWinsWithClientsBetween(addDays(seriesMon, -COHORT_WIN_LOOKBACK_DAYS), today),
       store.getLeadsJoinRange(addDays(lwMon, -SOURCE_JOIN_LOOKBACK_DAYS), lwSun),
+      // WORK-DATE COHORT (owner directive, work-date alignment): the report
+      // week's leads by WORK_DATE — the same cohort Team trends, the Reps
+      // page, Today and the Daily Report already use. One weekly lead
+      // definition everywhere (week labeled Mon 10/19 ⇒ work_date 10/19–10/25
+      // ⇒ sheet dates Fri 10/16–Thu 10/22).
+      store.getLeadsByWorkDates(dateRange(seriesMon, lwSun)),
     ]);
 
   const scope = settings.acuity;
@@ -1722,7 +1746,27 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     (a) => isBookingWin(a) && appointmentInScope(a, scope),
   );
   // Report week's sheet leads (the series fetch covers more weeks — slice it).
-  const leadsWeek = leadsSeries.filter((l) => l.source_date >= lwMon && l.source_date <= lwSun);
+  // WORK-DATE COHORT slice (alignment): work_date in [lwMon..lwSun] — NOT the
+  // sheet-date window. Feeds the Leads panel/composition, the funnel and the
+  // report's lead counts; the booking-period audit table keeps its own
+  // source-date slice below (unchanged semantics).
+  const leadsWeek = leadsCohort.filter((l) => l.work_date >= lwMon && l.work_date <= lwSun);
+  // The WORK-DATE cohort in join-row form (identity columns for the shared
+  // produced-lead machinery). Same rows as leadsWeek — the weekly-page test
+  // pins the id-set equality of the two slices.
+  const cohortJoinWeek = leadsJoin.filter((l) => l.work_date != null && l.work_date >= lwMon && l.work_date <= lwSun);
+  // COHORT-TO-DATE WINS through today (the fetch reaches past the series
+  // floor; causality is enforced inside the machinery, so a booking made
+  // weeks later credits the ORIGINAL cohort — never a later week's).
+  const winsCohort = filterApptsInWinBucketRange(winsJoinRaw, addDays(seriesMon, -COHORT_WIN_LOOKBACK_DAYS), today).filter(
+    (a) => isBookingWin(a) && appointmentInScope(a, scope),
+  );
+  // PRIMARY per-source table (owner directive, work-date alignment): the
+  // work-date cohort through computeLeadCohortOutcomes — Leads Received =
+  // cohort leads per source; Bookings = DISTINCT cohort leads that produced
+  // a qualifying paid booking AT ANY TIME; Conversion % = produced ÷ leads.
+  const sourceCohort = computeLeadCohortOutcomes(cohortJoinWeek, winsCohort);
+  const cohortTotalRow = sourceCohort.find((r) => r.source === "total") ?? null;
 
   const nameById = new Map(allUsers.map((u) => [u.id, u.name]));
   // HISTORICAL REPS (owner directive 2026-10-20): the Weekly report's rep rows
@@ -1750,21 +1794,19 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // cells, so the section's 'Family + Animalia + Fairyland' label matches
   // what the denominator counts. The four form sources have assigned_rep_id
   // null in practice (the workbook has no rep column) — no live number moves.
-  const assigned = assignedLeadsInRange(leadsWeek, lwMon, lwSun).filter((l) => !isFormSourceSheet(l.source_sheet));
-  // THREE-GENRE assigned-lead conversion split (owner directive 2026-10-22):
-  // Fairyland is a sibling of Family/Animalia — never silently Family. The
-  // SHEET-IDENTITY FALLBACK (owner directive 2026-10-27, item 4) matches
-  // splitLeadsByType: a fairyland-sheet lead is fairyland even when its
-  // lead_type text ("Fairies" — the sheet's Campaign Name) lacks the genre word.
-  const isAniLead = (l: { lead_type: string }) => /animalia/i.test(l.lead_type);
-  const isFaiLead = (l: { lead_type: string; source_sheet: string }) =>
-    /fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland";
-  const assignedFam = assigned.filter((l) => !isAniLead(l) && !isFaiLead(l));
-  const assignedAni = assigned.filter(isAniLead);
-  const assignedFai = assigned.filter((l) => !isAniLead(l) && isFaiLead(l));
-  const repWinsFam = lwOwnership.repWins.filter((a) => !isAnimaliaSession(a.appointment_type) && !isFairylandSession(a.appointment_type)).length;
-  const repWinsAni = lwOwnership.repWins.filter((a) => isAnimaliaSession(a.appointment_type)).length;
-  const repWinsFai = lwOwnership.repWins.filter((a) => isFairylandSession(a.appointment_type)).length;
+  // WORK-DATE COHORT denominators (alignment): assigned rows of the week's
+  // work-date cohort (form sheets excluded — owner rule: form leads are team
+  // totals, never rep metrics). Same cohort definition as the Reps page.
+  const assigned = leadsWeek.filter((l) => l.assigned_rep_id != null && !isFormSourceSheet(l.source_sheet));
+  // COHORT-TO-DATE assigned conversion: bookings produced by these leads AT
+  // ANY TIME (shared produced-lead machinery), credited by lead assignment —
+  // numerator and denominator are the same cohort.
+  const assignedCohortOutcomes = computeLeadCohortOutcomes(assigned, winsCohort);
+  const assignedTotal = assignedCohortOutcomes.find((r) => r.source === "total") ?? { leads: assigned.length, bookedLeads: 0 };
+  const genreOutcome = (b: SourceBucket) => assignedCohortOutcomes.find((r) => r.source === b) ?? { leads: 0, bookedLeads: 0 };
+  const assignedFamOutcome = genreOutcome("family");
+  const assignedAniOutcome = genreOutcome("animalia");
+  const assignedFaiOutcome = genreOutcome("fairyland");
 
   // ---- MTD ----
   const mtdOwnership = splitWinOwnership(winsMtd, attributions);
@@ -1794,11 +1836,17 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // construction (its % would be meaningless mid-week). Weeks with zero sheet
   // leads carry pct null → the UI renders "—" (Sheets data begins 2026-08-24).
   const seriesStarts = recentCompletedWeekStarts(today, FUNNEL_SERIES_WEEKS);
-  const winsSeries = filterApptsInWinBucketRange(winsWindowRaw, seriesStarts[0], lwSun).filter(
-    (a) => isBookingWin(a) && appointmentInScope(a, scope),
-  );
-  const funnelSeries = weekFunnelRows(seriesStarts, winsSeries, leadsSeries);
-  const funnel = { wins: winsLw.length, leads: leadsWeek.length, pct: conversionRate(winsLw.length, leadsWeek.length) };
+  // FUNNEL (work-date alignment): Leads = the week's work-date cohort;
+  // Bookings-from-Leads % = cohort-to-date produced ÷ cohort leads (the SAME
+  // numbers as the primary table's Total row). The OPERATIONAL "Bookings
+  // (Week) vs goal" tracker (deposit-week wins) stays exactly as it was.
+  const funnelSeries = weekCohortFunnelRows(seriesStarts, leadsJoin, winsCohort);
+  const funnel = {
+    wins: winsLw.length, // operational deposit-week wins (goal tracker) — unchanged
+    leads: cohortJoinWeek.length, // the work-date cohort (same rows as leadsWeek)
+    pct: cohortTotalRow ? conversionRate(cohortTotalRow.bookedLeads, cohortTotalRow.leads) : null,
+    produced: cohortTotalRow?.bookedLeads ?? 0, // cohort-to-date produced — the pct numerator
+  };
   // Celebrate prefill: LAST WEEK's top performer (the report is about the
   // week) — stored note overrides it in the narrative editor.
   const lwTop = lwRepRows.find((r) => r.total > 0) ?? null;
@@ -1814,20 +1862,18 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const winsJoin = filterApptsInWinBucketRange(winsJoinRaw, lwMon, lwSun).filter(
     (a) => isBookingWin(a) && appointmentInScope(a, scope),
   );
-  const winsJoinThroughToday = filterApptsInWinBucketRange(winsJoinRaw, lwMon, today).filter(
-    (a) => isBookingWin(a) && appointmentInScope(a, scope),
-  );
   const byWinSource = resolveBookingSources(winsJoin, leadsJoin);
   // THREE-CATEGORY SEMANTICS (owner directive 10/27, post-validation): the
   // report week [lwMon, lwSun] is the period — current-period matches feed
   // the conversion numerators; prior-period matches keep their resolved
   // source (never Unattributed); only no-link wins are Truly Unattributed.
-  const sourceTable = buildSourcePerformanceTable(leadsWeek, winsJoin, byWinSource, { start: lwMon, end: lwSun });
+  // BOOKING-PERIOD AUDIT TABLE (collapsed Attribution detail — UNTOUCHED
+  // data): wins won IN the week by the nearest lead's source, against the
+  // week's SOURCE-DATE cohort — the exact input it always had, so the
+  // three-category audit (current/prior/no-link/coverage) stays byte-stable.
+  const leadsSdAudit = leadsSeries.filter((l) => l.source_date >= lwMon && l.source_date <= lwSun);
+  const sourceTable = buildSourcePerformanceTable(leadsSdAudit, winsJoin, byWinSource, { start: lwMon, end: lwSun });
   const sourceBestWorst = bestWorstSourceLines(sourceTable.rows);
-  const sourceCohort = computeLeadCohortOutcomes(
-    leadsJoin.filter((l) => l.source_date >= lwMon && l.source_date <= lwSun),
-    winsJoinThroughToday,
-  );
   const sourceOverlap = crossSourceOverlap(leadsJoin, SOURCE_JOIN_LOOKBACK_DAYS);
 
   // ---- CALENDAR FILL ----
@@ -1975,12 +2021,27 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // The LEAD SOURCE PERFORMANCE section input the copy carries (directive
   // 10/27, Step 5). Exposed on data.report so the byte-identity tests (and the
   // UI) can see exactly what the report renders without re-deriving it.
+  // LEAD SOURCE PERFORMANCE input (work-date alignment): the SAME cohort
+  // lines the Weekly tab's primary table shows (work-date cohort leads,
+  // cohort-to-date bookings, produced÷leads conversion). The auditability
+  // footnote's aggregates (wins in week, prior, later, no-link, coverage)
+  // still come from the UNTOUCHED booking-period audit table.
   const reportSourcePerformance: NonNullable<WeeklyCcReportInput["sourcePerformance"]> = {
-    rows: sourceTable.rows,
-    totalLeads: sourceTable.totalLeads,
+    rows: sourceCohort
+      .filter((r) => r.source !== "total")
+      .map((r) => ({
+        source: r.source as string,
+        label: r.label,
+        leads: r.leads,
+        bookings: r.bookedLeads,
+        priorBookings: 0,
+        laterBookings: 0,
+        conv: r.conv,
+      })),
+    totalLeads: cohortTotalRow?.leads ?? 0,
     totalBookings: sourceTable.totalBookings,
-    totalConv: sourceTable.totalConv,
-    totalCurrentBookings: sourceTable.totalCurrentBookings,
+    totalConv: cohortTotalRow?.conv ?? null,
+    totalCurrentBookings: cohortTotalRow?.bookedLeads ?? 0,
     totalPriorBookings: sourceTable.totalPriorBookings,
     totalLaterBookings: sourceTable.totalLaterBookings,
     trulyUnattributedBookings: sourceTable.trulyUnattributedBookings,
@@ -2038,12 +2099,25 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     channels,
     channelLeads,
     conversion: {
-      overall: conversionRate(lwOwnership.repWins.length, assigned.length),
-      family: conversionRate(repWinsFam, assignedFam.length),
-      animalia: conversionRate(repWinsAni, assignedAni.length),
-      fairyland: conversionRate(repWinsFai, assignedFai.length),
-      numerator: { overall: lwOwnership.repWins.length, family: repWinsFam, animalia: repWinsAni, fairyland: repWinsFai },
-      denominator: { overall: assigned.length, family: assignedFam.length, animalia: assignedAni.length, fairyland: assignedFai.length },
+      // COHORT-TO-DATE doctrine (work-date alignment): bookings produced by
+      // the week's assigned work-date cohort leads (to date, credited by
+      // lead assignment) ÷ that cohort.
+      overall: conversionRate(assignedTotal.bookedLeads, assignedTotal.leads),
+      family: conversionRate(assignedFamOutcome.bookedLeads, assignedFamOutcome.leads),
+      animalia: conversionRate(assignedAniOutcome.bookedLeads, assignedAniOutcome.leads),
+      fairyland: conversionRate(assignedFaiOutcome.bookedLeads, assignedFaiOutcome.leads),
+      numerator: {
+        overall: assignedTotal.bookedLeads,
+        family: assignedFamOutcome.bookedLeads,
+        animalia: assignedAniOutcome.bookedLeads,
+        fairyland: assignedFaiOutcome.bookedLeads,
+      },
+      denominator: {
+        overall: assignedTotal.leads,
+        family: assignedFamOutcome.leads,
+        animalia: assignedAniOutcome.leads,
+        fairyland: assignedFaiOutcome.leads,
+      },
     },
     leads: splitLeadsByType(leadsWeek),
     funnel,

@@ -163,6 +163,18 @@ export interface LeadJoinRow {
   email: string | null;
   /** Ingest instant (leads.created_at, ISO). */
   created_at: string | null;
+  /**
+   * WORK-DATE COHORT fields (owner directive 2026-10-27, work-date alignment —
+   * ADDITIVE projection). `work_date` is the ingest-applied
+   * getWorkDate(source_date) — the lead's work-date cohort key (Team trends /
+   * Reps / Today / Daily already consume it); `assigned_rep_id` credits the
+   * lead to its assigned rep. Optional so existing literals stay valid; both
+   * stores set them, letting the Weekly/REP cohort consumers slice the SAME
+   * join rows by work_date and credit by lead assignment WITHOUT a second
+   * fetch — matching engine and date logic untouched.
+   */
+  work_date?: string | null;
+  assigned_rep_id?: string | null;
 }
 /** Raw joined call record for the audit endpoint (source = normalized DB). */
 export interface AuditCallRow {

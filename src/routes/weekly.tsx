@@ -309,8 +309,8 @@ function WeeklyPage() {
       title,
       lines:
         w.pct == null
-          ? ["No sheet leads this week", "(Sheets sync begins 2026-08-24)"]
-          : [`${formatInt(w.wins)} bookings / ${formatInt(w.leads)} leads`, `${formatPercent(w.pct)} of leads`],
+          ? ["No cohort leads this week (work-date)", "(Sheets sync begins 2026-08-24)"]
+          : [`${formatInt(w.wins)} produced / ${formatInt(w.leads)} leads (to date)`, `${formatPercent(w.pct)} of cohort`],
     };
   };
 
@@ -466,16 +466,19 @@ function WeeklyPage() {
 
           <Panel className="p-5 sm:p-6">
             <Eyebrow>Conversion Efficiency</Eyebrow>
-            {/* PRIMARY: assigned-lead conversion (owner definition) */}
+            {/* PRIMARY: assigned-lead cohort conversion (work-date, cohort-to-date) */}
             <p className="kpi-label mt-5 flex items-center gap-1.5">
               Assigned Lead Conversion
               <InfoTip
                 label="How assigned-lead conversion is computed"
                 tip={
                   <>
-                    Numerator: paid bookings attributed to a rep that week (manual overrides included). Denominator:
-                    leads with an assigned rep whose SHEET date (source_date) falls in the week — the cohorts the team
-                    worked from the Family/Animalia/Fairyland sheets. Conversion is shown only when the denominator is nonzero.
+                    Numerator: the week's assigned work-date cohort leads that have produced a qualifying paid booking,
+                    COUNTED TO DATE and credited by lead assignment (whichever rep or channel later worked the booking).
+                    Denominator: the same week's assigned work-date cohort (leads with an assigned rep worked into the
+                    week, Family/Animalia/Fairyland sheets — form-source leads are team totals, never rep metrics).
+                    Numerator and denominator are the same cohort; a booking made weeks later still counts toward its
+                    original week. Conversion is shown only when the denominator is nonzero.
                   </>
                 }
               />
@@ -489,7 +492,7 @@ function WeeklyPage() {
               {formatPercent(c.overall)}
             </p>
             <p className="kpi-sub mt-2 tabular-nums">
-              {formatInt(c.numerator.overall)}/{formatInt(c.denominator.overall)} leads
+              {formatInt(c.numerator.overall)}/{formatInt(c.denominator.overall)} cohort leads produced · to date
             </p>
             {/* the three genre splits of the SAME numerator/denominator definition */}
             <dl className="mt-4 space-y-2.5 border-t border-(--table-border-weak) pt-4">
@@ -529,11 +532,12 @@ function WeeklyPage() {
                   label="How bookings from leads is computed"
                   tip={
                     <>
-                      Numerator: ALL paid bookings of the week (booking wins — online/unattributed included).
-                      Denominator: ALL sheet leads (Family + Animalia + Fairyland) whose SHEET date (source_date) falls in the
-                      week. Caveat: some bookings never came from sheet leads — online bookings, repeat clients,
-                      Alliance/Auction members — so this is the overall funnel rate, not a strict lead→booking
-                      attribution.
+                      Numerator: the week's work-date cohort leads that have produced a qualifying paid booking, COUNTED
+                      TO DATE (a booking made weeks later still counts toward its original week). Denominator: the SAME
+                      week's work-date lead cohort (all seven sources — the Leads panel's definition; form tabs included).
+                      Numerator and denominator are the same cohort — this is the cohort-to-date rate, not a
+                      booking-period count. The operational Bookings (Week) vs goal tracker counts deposit-week wins and
+                      is intentionally different.
                     </>
                   }
                 />
@@ -547,7 +551,7 @@ function WeeklyPage() {
                 {formatPercent(f.pct)}
               </p>
               <p className="kpi-sub mt-1 tabular-nums">
-                {formatInt(f.wins)}/{formatInt(f.leads)} leads · overall funnel rate
+                {formatInt(f.produced)}/{formatInt(f.leads)} cohort leads produced · counted to date
               </p>
             </div>
           </Panel>
@@ -568,7 +572,7 @@ function WeeklyPage() {
             points={funnelPoints}
             unit="pct"
             formatValue={formatPercent}
-            info="The last 5 completed Mon–Sun weeks, oldest first — all paid bookings ÷ all sheet leads (the same counts as the conversion block). The in-progress week is excluded — its % would be meaningless mid-week. A week with zero sheet leads renders “—” (the Google Sheets sync begins 2026-08-24), never a fabricated 0%."
+            info="The last 5 completed Mon–Sun weeks, oldest first — each week's work-date cohort ÷ its cohort-to-date produced bookings (the same doctrine as the conversion block; a booking made weeks later counts toward the ORIGINAL week). The in-progress week is excluded — its % would be meaningless mid-week. A week with zero cohort leads renders “—” (the Google Sheets sync begins 2026-08-24), never a fabricated 0%."
             tooltip={funnelTooltip}
             // P1-5 (mobile): at 390 the plot is a ~55px flat line with illegible
             // labels; phones get the compact per-week stat list instead (same
@@ -581,14 +585,14 @@ function WeeklyPage() {
               Leads
               <InfoTip
                 label="How weekly leads are dated"
-                tip="Leads logged (sheet date) — the date in each sheet's date column (source_date), Mon–Sun of the report week, America/New_York. Seven sources: the Family / Animalia / Fairyland sheets plus the four Forms Data tabs (Auction certificates, Google Ads leads, Alliance certificates, Website applications). Per-source counts below; a person appearing in two sheets counts in each source, duplicates within one sheet collapse."
+                tip="Leads received for this WORK week — the work-date cohort (getWorkDate maps each sheet's date column to the day the team works it: Fri/Sat/Sun sheet dates land on Monday, Mon–Thu on the next day), so the week labeled Mon 10/19 holds sheet dates Fri 10/16–Thu 10/22. The SAME cohort Team trends, the Reps page and Today use. Seven sources: the Family / Animalia / Fairyland sheets plus the four Forms Data tabs (Auction certificates, Google Ads leads, Alliance certificates, Website applications). Per-source counts below; a person appearing in two sheets counts in each source, duplicates within one sheet collapse."
               />
             </p>
             <p className="mt-3 flex items-baseline gap-2">
               <span className="text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
                 {formatInt(data.leads.total)}
               </span>
-              <span className="kpi-sub">leads logged (sheet date) · 7 sources — 3 genre sheets + 4 Forms Data tabs</span>
+              <span className="kpi-sub">leads received (work-date cohort) · 7 sources — 3 genre sheets + 4 Forms Data tabs</span>
             </p>
             <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
               <div className="bg-(--bar-fill)" style={{ width: `${leadMixSeg(data.leads.animalia)}%` }} />
@@ -633,15 +637,15 @@ function WeeklyPage() {
         </div>
       </section>
 
-      {/* 5b — LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED
-          presentation): the primary table answers ONE question — of the leads
-          that came in from each source during the report week, how many
-          produced a qualifying paid booking and what percentage converted
-          (Bookings = the CURRENT-PERIOD cohort, the same validated numerator;
-          Conversion % = Bookings ÷ Leads). The full three-category audit view
-          (prior-period, no-link, later-period, coverage) plus the lead-cohort
-          flavor (a) live in the collapsed Attribution detail — data unchanged,
-          the UI just stops showing the extra categories as primary columns. */}
+      {/* 5b — LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED;
+          WORK-DATE ALIGNMENT): the primary table answers ONE question — of the
+          leads received for this WORK week (the work-date cohort, the same
+          definition Team trends / Reps / Today use), how many have produced a
+          qualifying paid booking SO FAR and what percentage converted
+          (Bookings = cohort-to-date produced, credited to the ORIGINAL week;
+          Conversion % = produced ÷ cohort leads). The booking-period
+          three-category audit (prior-period, no-link, later-period, coverage,
+          win-week view) lives unchanged in the collapsed Attribution detail. */}
       <section aria-label="Lead source performance">
         <Panel className="p-5 sm:p-6">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -651,37 +655,32 @@ function WeeklyPage() {
                 label="How a booking gets its lead source"
                 tip={
                   <>
-                    A booking's source is the booking contact's sheet lead with the NEAREST sheet date
-                    (source_date) to the booking's creation date; an exact tie is broken by most recently
-                    ingested. The table answers one question: of the leads that came in from each source during
-                    the report week, how many produced a paid booking (the CURRENT-PERIOD cohort — the only
-                    bookings that feed a conversion numerator) and what percentage converted. Bookings here are
-                    the same in-scope paid wins every other figure counts; the Leads column classifies exactly
-                    like the Lead Composition panel (genre sheets by lead type, Forms Data tabs by sheet), so
-                    genre counts match it digit for digit. Conversion renders "—" when a source had no leads.
-                    Attribution detail below keeps the full audit view: prior-period matches (matched lead
-                    predates the week — kept under its source, never a numerator), Truly Unattributed (no
-                    reliable sheet-lead link — the only meaning of "Unattributed" anywhere in the app),
-                    later-period matches, attribution coverage, and the lead-cohort flavor (of each source's
-                    leads, how many produced a booking won through today). Candidate leads are fetched
-                    {" "}{data.sourcePerformance.lookbackDays}{" "} days back — a contact whose only lead is
-                    older than that resolves honestly to Unattributed rather than guessed. Rep verdicts
-                    (who booked) come from the frozen attribution engine and are untouched by this join.
+                    Leads Received = the source's leads in the week's WORK-DATE cohort (sheet dates the team
+                    works Mon–Fri of the report week — Fri/Sat/Sun sheet dates land on Monday; the same cohort
+                    Team trends, the Reps page and Today use). Bookings = DISTINCT cohort leads that have
+                    produced a qualifying paid booking, COUNTED TO DATE — a booking made weeks later still
+                    counts toward its ORIGINAL week, never the later week's. Conversion % = Bookings ÷ Leads
+                    (numerator and denominator are the same cohort); renders "—" when a source had no leads.
+                    The Leads column classifies exactly like the Lead Composition panel (genre sheets by lead
+                    type, Forms Data tabs by sheet). Attribution detail below keeps the booking-period audit
+                    untouched: the week's WINS by the nearest-lead source rule (prior-period matches kept under
+                    their source, never a numerator; Truly Unattributed = no reliable sheet-lead link — the only
+                    meaning of "Unattributed" anywhere in the app; later-period; coverage).
                   </>
                 }
               />
             </p>
             <p className="kpi-sub">report week · audit detail below</p>
           </div>
-          {/* PRIMARY TABLE (owner directive 10/27, simplified): exactly
-              Lead Source | Leads Received | Bookings | Conversion % — one row
-              per production source + Total. Bookings = the current-period
-              cohort wins (r.bookings), Conversion % = cohort conversion
-              (r.conv) — the SAME validated numbers the three-category table
-              fed, minus the prior/no-link/later columns. The Truly
-              Unattributed row is NOT primary (it is not a source's
-              conversion); its count lives in the Attribution detail. "Other
-              sheet" renders only when nonzero (never merged away). */}
+          {/* PRIMARY TABLE (owner directive 10/27 simplified; work-date
+              alignment): exactly Lead Source | Leads Received | Bookings |
+              Conversion % — one row per production source + Total, straight
+              from the work-date cohort (computeLeadCohortOutcomes).
+              Bookings = cohort-to-date produced (r.bookedLeads), Conversion %
+              = produced ÷ cohort leads (r.conv). The booking-period audit
+              (Truly Unattributed, prior/later, coverage) lives in the
+              Attribution detail below. "Other sheet" renders only when
+              nonzero (never merged away). */}
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -693,13 +692,12 @@ function WeeklyPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.sourcePerformance.table.rows
-                  .filter((r) => r.source !== "unattributed")
+                {data.sourcePerformance.cohort
                   .map((r) => (
                     <tr key={r.source} className={r.source === "total" ? "border-t border-(--table-border) font-semibold text-(--text-primary)" : "border-t border-(--table-border-weak)"}>
                       <td className="py-1.5 pr-3 text-(--text-body)">{r.label}</td>
                       <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.leads)}</td>
-                      <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.bookings)}</td>
+                      <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.bookedLeads)}</td>
                       <td className={"py-1.5 pl-3 text-right tabular-nums " + (r.conv == null ? "text-(--text-faint)" : "text-(--text-primary)")}>
                         {r.conv == null ? "—" : formatPercent(r.conv, 1)}
                       </td>
@@ -710,15 +708,18 @@ function WeeklyPage() {
           </div>
           <div className="mt-2 space-y-1 text-xs leading-snug text-(--text-muted)">
             <p>
-              Bookings = leads received this week that produced a qualifying paid booking (the current-period cohort —
-              the same validated numerator); Conversion % = Bookings ÷ Leads. Prior-period bookings, the no-link count
-              and attribution coverage are in the Attribution detail below — they never enter a conversion numerator.
+              Leads Received = the week's work-date cohort. Bookings = those cohort leads that have produced a
+              qualifying paid booking, counted to date (as of today — a booking made weeks later still counts toward
+              its original week); Conversion % = Bookings ÷ Leads. The booking-period audit (wins won in the week,
+              prior-period, no-link, coverage) is in the Attribution detail below.
             </p>
           </div>
           {/* ATTRIBUTION DETAIL (audit view — the owner directive keeps this
-              out of the primary table but never deletes it): (b) the full
-              three-category booking-period table; (a) the lead-cohort flavor;
-              best/worst; the honest no-link count and coverage. */}
+              out of the primary table but never deletes it): the full
+              three-category BOOKING-PERIOD table (wins won in the week by the
+              nearest-lead source — untouched data) plus best/worst and the
+              honest no-link count and coverage. The work-date cohort table
+              itself is the primary table above. */}
           <details className="group/atd mt-4">
             <summary className="inline-flex cursor-pointer select-none items-center gap-1 text-xs text-(--text-caption) transition-colors hover:text-(--text-primary)">
               <svg
@@ -734,7 +735,7 @@ function WeeklyPage() {
               >
                 <path d="M4 2.5L8 6L4 9.5" />
               </svg>
-              Attribution detail — prior-period, no-link, coverage, lead-cohort flavor
+              Attribution detail — booking-period audit: prior-period, no-link, coverage
             </summary>
             <div className="mt-4 grid gap-6 lg:grid-cols-2">
               {/* (b) booking-period flavor: wins of the week by source —
@@ -806,39 +807,10 @@ function WeeklyPage() {
                     </p>
                   )}
                   <p>
-                    Total conv % is the COHORT figure (current-period bookings ÷ leads) for consistency with the
-                    per-source rows; the overall funnel rate ({formatInt(data.funnel.wins)}/{formatInt(data.funnel.leads)}) is
-                    in Bookings from Leads above.
+                    Total conv % here is the audit table's own cohort figure (current-period bookings ÷ that source's
+                    sheet-date leads this week); the primary table above is the WORK-DATE cohort counted to date — a
+                    deliberately different, auditable view.
                   </p>
-                </div>
-              </div>
-              {/* (a) lead-cohort flavor: the week's leads that produced a booking */}
-              <div>
-                <p className="text-[13px] font-medium text-(--text-body)">Leads received this week — producing a booking</p>
-                <p className="kpi-sub mt-0.5">of each source's leads, how many produced a paid booking won through today (booking created on/after the lead's sheet date)</p>
-                <div className="mt-2 overflow-x-auto">
-                  <table className="w-full text-[13px]">
-                    <thead>
-                      <tr className="border-b border-(--table-border) text-left text-(--text-caption)">
-                        <th scope="col" className="py-1.5 pr-3 font-medium">Source</th>
-                        <th scope="col" className="py-1.5 pl-3 text-right font-medium">Leads</th>
-                        <th scope="col" className="py-1.5 pl-3 text-right font-medium">Produced</th>
-                        <th scope="col" className="py-1.5 pl-3 text-right font-medium">%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.sourcePerformance.cohort.map((r) => (
-                        <tr key={r.source} className={r.source === "total" ? "border-t border-(--table-border) font-semibold text-(--text-primary)" : "border-t border-(--table-border-weak)"}>
-                          <td className="py-1.5 pr-3 text-(--text-body)">{r.label}</td>
-                          <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.leads)}</td>
-                          <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.bookedLeads)}</td>
-                          <td className={"py-1.5 pl-3 text-right tabular-nums " + (r.conv == null ? "text-(--text-faint)" : "text-(--text-primary)")}>
-                            {r.conv == null ? "—" : formatPercent(r.conv, 1)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
                 </div>
               </div>
             </div>

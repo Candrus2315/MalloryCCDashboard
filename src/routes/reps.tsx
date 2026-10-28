@@ -828,19 +828,21 @@ function RepsPage() {
         </section>
       )}
 
-      {/* BOOKING SOURCES (REP COHORT) — owner directive 2026-10-27, part 2.
-          Primary numbers are the rep's ASSIGNED selected-period lead cohort
-          per source: Bookings = verdict wins whose matched lead is in the
-          cohort ("of the leads assigned to this rep from that source during
-          the period, how many booked"); Assigned Leads = the work-date
-          assigned cohort (UNCHANGED denominator); Conv % = cohort bookings ÷
-          assigned. Prior-period, later-period, truly-unattributed and
-          form-source wins live in the collapsed Attribution detail below —
-          the per-win attribution data stays complete underneath. Form-source
-          rows show Bookings 0 / Assigned — / Conv — BY THE OWNER'S RULE:
-          form-source leads are team totals, never rep metrics. COLUMN
-          CONTRACT (locked by test): Source | Bookings | Assigned Leads |
-          Conv % — every value renders directly beneath its header. */}
+      {/* BOOKING SOURCES (REP COHORT) — owner directive 2026-10-27, part 2,
+          AMENDED by the work-date alignment directive. Primary numbers ride
+          the rep's ASSIGNED selected-period lead cohort per source:
+          Bookings = COHORT-TO-DATE produced — DISTINCT assigned cohort leads
+          that have produced a qualifying paid booking, counted to date and
+          credited by LEAD ASSIGNMENT (whichever rep or channel later worked
+          the booking); Assigned Leads = the work-date assigned cohort
+          (UNCHANGED denominator); Conv % = produced ÷ assigned. The
+          collapsed Attribution detail distinguishes produced-in-period vs
+          produced-later and keeps the verdict audit (prior-period,
+          no-link, team-level form-source wins) so nothing is hidden.
+          Form-source rows show Bookings 0 / Assigned — / Conv — BY THE
+          OWNER'S RULE: form-source leads are team totals, never rep metrics.
+          COLUMN CONTRACT (locked by test): Source | Bookings | Assigned
+          Leads | Conv % — every value renders directly beneath its header. */}
       <section className="card card-dense" aria-label="Booking sources (rep cohort)">
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div className="min-w-0">
@@ -908,18 +910,30 @@ function RepsPage() {
             >
               <path d="M4 2.5L8 6L4 9.5" />
             </svg>
-            Attribution detail — prior-period, no-link, team-level form-source wins
+            Attribution detail — produced in-period vs later, prior-period, no-link, form-source wins
           </summary>
           <div className="mt-3 space-y-2 text-[13px] text-(--text-body)">
             <p>
-              {data.repSourcePerformance.totalResolvedWins === 0
-                ? "No verdict wins for this rep in the selected range."
-                : `Wins booked through this rep's attribution verdict in the selected range: ${formatInt(
-                    data.repSourcePerformance.totalResolvedWins,
-                  )} total — ${formatInt(data.repSourcePerformance.totalCohortBookings)} cohort booking${data.repSourcePerformance.totalCohortBookings === 1 ? "" : "s"} in the table above (the card counts cohort wins, so its sums need not equal the period's total wins) and ${formatInt(
-                    data.repSourcePerformance.trulyUnattributedWins,
-                  )} with no reliable lead link (Truly Unattributed).`}
+              `Verdict audit — wins booked through this rep's attribution verdict in the selected range: ${formatInt(
+                data.repSourcePerformance.totalResolvedWins,
+              )} total (the primary Bookings above count cohort leads produced to date, so the two views need not match) and ${formatInt(
+                data.repSourcePerformance.trulyUnattributedWins,
+              )} with no reliable lead link (Truly Unattributed).`}
             </p>
+            {data.repSourcePerformance.producedInPeriodBySource.length > 0 && (
+              <p>
+                <span className="font-medium">Produced in period</span> (cohort leads with a qualifying booking created on/before the period end —
+                the to-date numerator's in-window share):{" "}
+                {data.repSourcePerformance.producedInPeriodBySource.map((c) => `${c.label} ${formatInt(c.count)}`).join(" · ")}
+              </p>
+            )}
+            {data.repSourcePerformance.producedLaterBySource.length > 0 && (
+              <p>
+                <span className="font-medium">Produced later</span> (cohort leads whose qualifying bookings ALL fall after the period end — counted in
+                the primary Bookings above, toward the ORIGINAL period):{" "}
+                {data.repSourcePerformance.producedLaterBySource.map((c) => `${c.label} ${formatInt(c.count)}`).join(" · ")}
+              </p>
+            )}
             {data.repSourcePerformance.priorBySource.length > 0 && (
               <p>
                 <span className="font-medium">Prior-period wins</span> (matched lead's sheet date before the selected range — never a primary
