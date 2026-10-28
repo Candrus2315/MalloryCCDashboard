@@ -3,10 +3,10 @@
  *
  * ONE pure builder assembles the full "CC Report" the owner posts every
  * Monday, in the owner's template order:
- *   Bookings (Week ± goal) · Bookings (Month-to-Date ± goal) ·
+ *   Bookings (Week — Gross / Cancellations / Net ± goal) ·
+ *   Bookings (Month-to-Date, gross ± goal) ·
  *   Alliance/Auction/Website (leads + bookings) · Leads ·
- *   Lead Conversion (+ by genre) · Bookings from Leads (overall funnel) ·
- *   Calendar/booked-out ·
+ *   Lead Conversion (+ by genre) · Calendar/booked-out ·
  *   placeholder fields (Empty appointments / Holes / 1st Call Completed) ·
  *   the narrative sections (editable, persisted per week).
  *
@@ -47,14 +47,34 @@ export interface WeeklyCcReportInput {
   bookingsWeek: { total: number; goal: number | null };
   bookingsMonth: { total: number; goal: number | null };
   /**
-   * WEEKLY BOOKINGS PRODUCED (Mon–Sun) (owner directive 2026-10-28, formal
-   * audit audit-79v84): paid deposits on bookings CREATED in the Mon–Sun
-   * report week, identity-deduped per client (cancel-and-rebook counted once),
-   * CANCELLATIONS INCLUDED — the owner's production count, reconciled exactly
-   * (Oct 19–25 = 84). A SEPARATE count from Bookings (Week) above (paid-AND-
-   * ACTIVE wins) and from the cohort table's Bookings column (cohort-to-date
-   * produced); the same figure the Weekly tab renders beside the cohort table.
-   * OPTIONAL: absent/null keeps the template BYTE-IDENTICAL.
+   * THE OWNER'S FOUR-NUMBER VIEW (Final Booking Logic 10/28, audit-79v84).
+   * When provided, the Bookings (Week) hero line renders
+   * "Gross / Cancellations / Net" — gross = qualifying (paid-deposit) bookings
+   * ORIGINALLY CREATED in the Mon–Sun week, identity-deduped per client,
+   * cancellations INCLUDED (Oct 19–25 = 84, audit-exact); cancellations = true
+   * cancellations among that gross (= 5); net = gross − cancellations (= 79).
+   * Credit is permanently tied to the original creation business date —
+   * reschedules never move a booking between weeks and never count as
+   * cancellations. While present, the standalone "Bookings Produced (Mon–Sun)"
+   * line is SUPPRESSED (gross IS the produced figure, now the hero) — the
+   * Weekly tab ↔ Report digit identity holds for all four numbers.
+   * OPTIONAL: absent/null keeps the legacy "Bookings (Week)" line (and the
+   * legacy Bookings Produced line when bookingsProduced is provided) — the
+   * template stays byte-identical for callers that don't pass it.
+   */
+  productionWeek?: { gross: number; cancellations: number; net: number; goal: number | null } | null;
+  /**
+   * GROSS MTD (owner Final Booking Logic 10/28 — one production basis with the
+   * weekly hero): qualifying paid bookings ORIGINALLY CREATED month-to-date,
+   * identity-deduped, cancellations included. When provided, the MTD line
+   * renders the gross figure vs the monthly goal. OPTIONAL: absent keeps the
+   * legacy MTD line byte-identical.
+   */
+  productionMonth?: { gross: number; goal: number | null } | null;
+  /**
+   * LEGACY fallback (superseded by productionWeek — kept so the template stays
+   * tolerant of missing inputs and old callers stay byte-identical): the
+   * standalone produced line only renders when productionWeek is ABSENT.
    */
   bookingsProduced?: number | null;
   /** Alliance/Auction BOOKINGS counted from Acuity types; website always null (no such Acuity type). */
@@ -126,9 +146,11 @@ export interface WeeklyCcReportInput {
   conversion: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
   /**
    * BOOKINGS FROM LEADS (owner request 2026-09-29; work-date alignment): the
-   * week's work-date lead cohort ÷ its cohort-to-date produced bookings —
-   * the SAME doctrine as the tab's primary table. pct is null when the week
-   * had no cohort leads ("—" is rendered, never a fabricated 0%).
+   * week's work-date lead cohort ÷ its cohort-to-date produced bookings.
+   * NO LONGER RENDERED — Final Booking Logic 10/28 §6 removes the
+   * cohort-produced funnel from the tab AND this report (production reports
+   * as Gross / Cancellations / Net). Kept on the interface only so existing
+   * callers compile unchanged.
    */
   funnel: { wins: number; leads: number; pct: number | null };
   calendar: {
@@ -183,17 +205,33 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
 
   lines.push(`CC Report — Week of ${formatDateHumanFull(input.week.start)} – ${formatDateHumanFull(input.week.end)}`);
   lines.push("");
-  lines.push(`Bookings (Week): ${goalVsActual(input.bookingsWeek.total, input.bookingsWeek.goal)}`);
-  // WEEKLY BOOKINGS PRODUCED (owner directive 2026-10-28, audit-79v84): ONE
-  // line — figure + the definition footnote (the same number the Weekly tab
-  // shows beside the cohort table; Weekly tab ↔ Report digit identity).
-  // Absent input keeps the template byte-identical.
-  if (input.bookingsProduced != null) {
+  // THE OWNER'S FOUR-NUMBER HERO (Final Booking Logic 10/28): Gross /
+  // Cancellations / Net on the produced (created-in-week) basis, + goal.
+  // Digit identity with the Weekly tab's production block is structural — the
+  // page passes the SAME payload numbers it renders.
+  if (input.productionWeek != null) {
+    const pw = input.productionWeek;
     lines.push(
-      `Bookings Produced (Mon–Sun): ${formatInt(input.bookingsProduced)} — paid deposits on bookings created in the Mon–Sun week · per client (cancel-and-rebook counted once) · cancellations included`,
+      `Bookings (Week): ${goalVsActual(pw.gross, pw.goal)} gross · Cancellations: ${formatInt(pw.cancellations)} · Net: ${formatInt(pw.net)}`,
     );
+  } else {
+    lines.push(`Bookings (Week): ${goalVsActual(input.bookingsWeek.total, input.bookingsWeek.goal)}`);
+    // LEGACY (pre-Final-Booking-Logic callers only): the standalone produced
+    // line — figure + footnote. Superseded by the four-number hero above and
+    // suppressed whenever productionWeek is provided (gross IS produced).
+    if (input.bookingsProduced != null) {
+      lines.push(
+        `Bookings Produced (Mon–Sun): ${formatInt(input.bookingsProduced)} — paid deposits on bookings created in the Mon–Sun week · per client (cancel-and-rebook counted once) · cancellations included`,
+      );
+    }
   }
-  lines.push(`Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.bookingsMonth.total, input.bookingsMonth.goal)}`);
+  // GROSS MTD — one production basis with the hero (created-in-month gross
+  // vs the monthly goal). Absent input keeps the legacy MTD line.
+  lines.push(
+    input.productionMonth != null
+      ? `Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.productionMonth.gross, input.productionMonth.goal)} gross`
+      : `Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.bookingsMonth.total, input.bookingsMonth.goal)}`,
+  );
   lines.push("");
   lines.push(`Alliance — Leads: ${formatInt(input.channelLeads.alliance)} · Bookings: ${formatInt(input.channels.alliance)}`);
   lines.push(`Auction — Leads: ${formatInt(input.channelLeads.auction)} · Bookings: ${formatInt(input.channels.auction)}`);
@@ -225,36 +263,33 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   }
   lines.push(`Total: ${formatInt(leads.total)}`);
   lines.push("");
-  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED; WORK-DATE
-  // ALIGNMENT amendment): per source "Leads / Bookings / Conversion %" + a
-  // Total row — the SAME lines the Weekly tab's primary table shows. Leads =
-  // the source's WORK-DATE cohort for the week; Bookings = those cohort leads
-  // that have produced a qualifying paid booking, COUNTED TO DATE (a booking
-  // made weeks later still credits the original week); Conversion = Bookings
-  // ÷ Leads (strict cohort, numerator and denominator the same cohort).
-  // Auditability stays, in ONE compact footnote: the booking-period audit
-  // (wins won in the week, prior-period bookings kept under their resolved
-  // source — never a numerator, later-period when nonzero, Truly Unattributed
-  // (no reliable sheet-lead link — the only "Unattributed" meaning) and
-  // attribution coverage); the full three-category breakdown lives on the
+  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED; Final
+  // Booking Logic 10/28): per source "Leads" ONLY — the work-date cohort
+  // counts (957 basis). The cohort-produced Bookings / Conversion columns
+  // LEAVE the report with the Weekly tab's panel (owner §6: cohort-produced
+  // bookings are no longer displayed; production reports as Gross /
+  // Cancellations / Net in the hero line). Auditability stays, in ONE compact
+  // footnote relabeled audit-only: the booking-period audit's active paid
+  // wins (later cancellations excluded — production = Gross/Net above),
+  // prior/later-period bookings kept under their resolved source, Truly
+  // Unattributed (no reliable sheet-lead link — the only "Unattributed"
+  // meaning) and coverage; the full three-category breakdown lives on the
   // Weekly tab. Renders ONLY when the page provides the input — the template
   // stays byte-identical otherwise.
   if (input.sourcePerformance) {
     const sp = input.sourcePerformance;
     lines.push("LEAD SOURCE PERFORMANCE (report week):");
     lines.push(
-      "Cohort = leads received for this work week (work-date). Bookings = those cohort leads that have produced a qualifying paid booking, counted to date. Conversion = Bookings ÷ Leads.",
+      "Leads = leads received for this work week (work-date cohort, all seven sources). Production reports as Gross / Cancellations / Net in the hero line.",
     );
     for (const r of sp.rows) {
       if (r.source === "total" || r.source === "unattributed") continue;
-      lines.push(
-        `${r.label} — Leads: ${formatInt(r.leads)} · Bookings: ${formatInt(r.bookings)} · Conversion: ${r.conv == null ? NO_SOURCE : formatPercent(r.conv, 1)}`,
-      );
+      lines.push(`${r.label} — Leads: ${formatInt(r.leads)}`);
     }
-    lines.push(
-      `Total — Leads: ${formatInt(sp.totalLeads)} · Bookings: ${formatInt(sp.totalCurrentBookings)} · Conversion: ${sp.totalConv == null ? NO_SOURCE : formatPercent(sp.totalConv, 1)}`,
-    );
-    const foot: string[] = [`Booking-period audit: ${formatInt(sp.totalBookings)} wins in week`];
+    lines.push(`Total — Leads: ${formatInt(sp.totalLeads)}`);
+    const foot: string[] = [
+      `Booking-period audit: ${formatInt(sp.totalBookings)} active paid wins — audit view (excludes later cancellations; production = Gross/Net above)`,
+    ];
     foot.push(`Prior-period: ${formatInt(sp.totalPriorBookings)}`);
     if (sp.totalLaterBookings > 0) foot.push(`Later-period: ${formatInt(sp.totalLaterBookings)}`);
     foot.push(`No reliable link: ${formatInt(sp.trulyUnattributedBookings)}`);
@@ -268,14 +303,16 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   }
   // WORK-DATE ALIGNMENT: the assigned cohort is the week's work-date cohort
   // and the bookings are cohort-to-date produced (credited by lead
-  // assignment) — same doctrine as the LEAD SOURCE PERFORMANCE lines above.
+  // assignment) — the rep-cohort doctrine the owner's standing directive
+  // protects (rep-level detail keeps its own basis, labeled in the UI).
   lines.push(
     `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)} · Fairyland ${formatPercent(input.conversion.fairyland)})`,
   );
-  // BOOKINGS FROM LEADS (owner request 2026-09-29) — the overall funnel rate
-  // right after the assigned-lead conversion; the owner edits it out freely.
-  // Zero sheet leads → "—" (never a fabricated 0%).
-  lines.push(`Bookings from Leads: ${formatPercent(input.funnel.pct)}`);
+  // "Bookings from Leads" (the overall cohort funnel rate) REMOVED — Final
+  // Booking Logic 10/28 §6: cohort-produced bookings leave the Weekly tab's
+  // panel AND this report; production reports as Gross / Cancellations / Net
+  // in the hero line. The `funnel` input stays on the interface (template
+  // tolerance for existing callers) but is no longer rendered.
   lines.push("");
   lines.push("Calendar / Booked-out:");
   lines.push(`This week: ${fillSummary(input.calendar.thisWeek.slotsOccupied, input.calendar.thisWeek.capacity, input.calendar.thisWeek.appointments)}`);

@@ -6,7 +6,6 @@ import { monthKeyLabel, WEEKLY_CC_SECTIONS } from "~/server/metrics/weekly";
 import { WarningList } from "~/components/warnings";
 import { InfoTip } from "~/components/InfoTip";
 import { CopyButton } from "~/components/CopyButton";
-import { TrendCard, type TrendTooltipView } from "~/components/trend-chart";
 // Harmonization Wave 1: Panel/Eyebrow/RatioBar live ONCE in the shared
 // page-primitives module (same markup they replaced here).
 import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
@@ -19,26 +18,38 @@ export const Route = createFileRoute("/weekly")({
 });
 
 /* ---------------------------------------------------------------------------
-   COMMAND-CENTER COMPOSITION (owner redesign spec 2026-10-01 §2 — presentation
-   only; every number below renders through the SAME server formatters on the
-   SAME payload, so all values are identical to the previous page):
+   COMMAND-CENTER COMPOSITION (owner redesign spec 2026-10-01 §2; Final Booking
+   Logic revision 2026-10-28 — presentation only; every number below renders
+   through the SAME server formatters on the SAME payload):
      1. compact page header (title + scope chip; timezone demoted to metadata)
-     2. WEEK RESULT HERO      — the week's outcome anchored on the goal + mix
-     3. DAILY BOOKING RHYTHM  — one proportional Mon–Sun strip
+     2. WEEK RESULT HERO      — GROSS / CANCELLATIONS / NET on the produced
+                                (created-in-week) basis, anchored on the goal
+     3. DAILY BOOKING RHYTHM  — one proportional Mon–Sun strip (active-wins
+                                basis, deposit dates — labeled)
      4. REP CONTRIBUTION      — ranked table | CONVERSION EFFICIENCY (one block)
-     5. FUNNEL TREND (chart)  | LEAD COMPOSITION (compact)
+     5. LEAD COMPOSITION      — the work-date cohort (Leads-only)
      6. SECONDARY BAND        — calendar fill + Alliance/Auction/Website
-     7. MONTH TO DATE         — quieter secondary analysis
+     7. MONTH TO DATE         — GROSS basis tracker
      8. CC REPORT             — management action: narrative + COPY REPORT
+   OWNER'S FOUR OPERATIONAL QUESTIONS (Final Booking Logic 10/28): Weekly
+   Leads (work-date cohort) · Gross Bookings · Cancellations · Net Bookings.
+   Gross = qualifying (paid-deposit) bookings ORIGINALLY CREATED in the
+   Mon–Sun week, identity-deduped, cancellations INCLUDED (Oct 19–25 = 84,
+   audit-79v84); Cancellations = true cancellations among that gross (= 5);
+   Net = Gross − Cancellations (= 79). Reschedules never move a booking
+   between weeks and never count as cancellations. The cohort-produced
+   "Bookings from leads" panel and the per-source Bookings / Conversion %
+   columns LEAVE the page (owner §6); rep-level detail (By-Rep table,
+   per-day grid, channel splits) stays on the protected active-wins/
+   attribution basis, labeled so it cannot be mistaken for the headline.
    Surfaces: LEVEL 2 panels on the LEVEL 1 canvas (shared --surface-1/2/3
    tokens), hairline internal dividers, LEVEL 3 for inputs — depth from tone
    + spacing, not borders.
    HONESTY: no week selector exists (the loader is fixed to the last completed
    week) — the scope chip + caption state that; per-rep weekly goals are not
    part of this payload and render "—" (never invented goal math); Website
-   keeps its "—" (no synced source); the copied report text keeps every
-   existing line byte-identical — the only change is the Holes line, now
-   computed from the owner's 9/30 definition (was a blank placeholder).
+   keeps its "—" (no synced source); the copied report text carries the same
+   four-number view (tab ↔ report digit identity).
 --------------------------------------------------------------------------- */
 
 /** Presentation sign helper (same convention as the payload's goalVsActual). */
@@ -266,7 +277,6 @@ function WeeklyPage() {
   const router = useRouter();
   const b = data.bookings;
   const c = data.conversion;
-  const f = data.funnel;
   const mtd = data.mtd;
   const cal = data.calendar;
 
@@ -294,25 +304,14 @@ function WeeklyPage() {
   };
 
   // ---- hero geometry (presentation-only ratios of payload numbers) ----
-  const achievement = b.goal > 0 ? b.total / b.goal : null;
-  const diff = b.total - b.goal;
+  // GROSS basis (owner Final Booking Logic 10/28): the hero tracks the
+  // production block — Gross / Cancellations / Net; the mix segments are
+  // shares of the gross. `b.total` (paid-AND-active wins) remains the basis
+  // of the rep-level detail below (By-Rep table, per-day grid, MTD reps).
+  const achievement = b.goal > 0 ? b.production.gross / b.goal : null;
+  const diff = b.production.gross - b.goal;
   const deltaPhrase = diff < 0 ? `${formatInt(Math.abs(diff))} below goal` : diff > 0 ? `${formatInt(diff)} above goal` : "at goal";
-  const mixSeg = (n: number) => (b.total > 0 ? Math.min(100, (n / b.total) * 100) : 0);
-
-  // ---- funnel trend (§F): the 5 completed weeks, chart-standard scrubbing ----
-  const funnelPoints = data.funnelSeries.map((w) => ({ label: formatDateShort(w.weekStart), value: w.pct }));
-  const funnelTooltip = (i: number): TrendTooltipView | null => {
-    const w = data.funnelSeries[i];
-    if (!w) return null;
-    const title = `${formatDateShort(w.weekStart)} – ${formatDateShort(w.weekEnd)}`;
-    return {
-      title,
-      lines:
-        w.pct == null
-          ? ["No cohort leads this week (work-date)", "(Sheets sync begins 2026-08-24)"]
-          : [`${formatInt(w.wins)} produced / ${formatInt(w.leads)} leads (to date)`, `${formatPercent(w.pct)} of cohort`],
-    };
-  };
+  const mixSeg = (n: number) => (b.production.gross > 0 ? Math.min(100, (n / b.production.gross) * 100) : 0);
 
   // ---- lead composition mix bar (§E) ----
   const leadMixSeg = (n: number) => (data.leads.total > 0 ? Math.min(100, (n / data.leads.total) * 100) : 0);
@@ -345,7 +344,14 @@ function WeeklyPage() {
       {/* missing-data warnings — never a plausible number */}
       <WarningList items={data.warnings} />
 
-      {/* 2 — WEEK RESULT HERO: the week's outcome anchored on the goal + the mix */}
+      {/* 2 — WEEK RESULT HERO (owner Final Booking Logic 10/28): GROSS /
+          CANCELLATIONS / NET on the produced basis, anchored on the goal.
+          Gross = qualifying (paid-deposit) bookings ORIGINALLY CREATED in the
+          Mon–Sun week — identity-deduped, cancellations INCLUDED (Oct 19–25 =
+          84, audit-79v84); the mix column splits the SAME gross rows. The
+          superseded "Bookings Produced (Mon–Sun)" additive figure is gone —
+          gross IS that figure. Rep-level detail below stays on the protected
+          active-wins/attribution basis, labeled. */}
       <section aria-label="Week result">
         <Panel className="overflow-hidden">
           <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)] lg:divide-x lg:divide-(--table-border-weak)">
@@ -354,22 +360,25 @@ function WeeklyPage() {
               <Eyebrow>
                 Booking Result
                 <InfoTip
-                  label="How the weekly report counts bookings"
+                  label="How Gross Bookings, Cancellations and Net are counted"
                   tip={
                     <>
-                      Paid Bookings (Booking Wins): appointments whose required deposit was paid, counted on the ET date the
-                      deposit was received — the same rule every page uses. Session type: "animalia" in the Acuity type name →
-                      Animalia, "fairyland" → Fairyland, everything else Family. Rep rows join stored attributions; owner manual
-                      overrides count as rep bookings. Online / unattributed wins count toward the team total only — never a
-                      rep's row.
+                      Gross Bookings: qualifying (paid-deposit) appointments ORIGINALLY CREATED in the Mon–Sun report week
+                      (ET creation business date), identity-deduped per client (a cancel-and-rebook counts once),
+                      cancellations INCLUDED — Oct 19–25 = 84 (record-level audit, audit-79v84). Credit is permanently tied
+                      to the original creation date: a reschedule never moves a booking between weeks and never counts as a
+                      cancellation. Cancellations: true cancellations among that gross (cancelled bookings with no active
+                      rebook in the week) — Oct 19–25 = 5. Net = Gross − Cancellations — Oct 19–25 = 79. The session-type mix
+                      splits the same gross rows; the rep-level detail below counts attributed ACTIVE paid wins
+                      (attribution basis) and is labeled as such.
                     </>
                   }
                 />
               </Eyebrow>
-              <p className="kpi-label mt-5">Paid Bookings / Weekly Goal</p>
+              <p className="kpi-label mt-5">Gross Bookings / Weekly Goal</p>
               <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                 <span className="text-6xl font-semibold leading-none tracking-tight text-(--text-primary)">
-                  {formatInt(b.total)}
+                  {formatInt(b.production.gross)}
                 </span>
                 <span className="text-3xl font-medium text-(--text-muted)">/ {formatInt(b.goal)}</span>
               </p>
@@ -379,42 +388,63 @@ function WeeklyPage() {
                   {formatPercent(achievement)} of goal · {deltaPhrase}
                 </p>
               </div>
+              {/* owner §4 layout: Cancellations + Net directly underneath */}
+              <div className="mt-6 flex gap-10 border-t border-(--table-border-weak) pt-4">
+                <div>
+                  <p className="kpi-label">Cancellations</p>
+                  <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
+                    {formatInt(b.production.cancellations)}
+                  </p>
+                </div>
+                <div>
+                  <p className="kpi-label">Net Bookings</p>
+                  <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
+                    {formatInt(b.production.net)}
+                  </p>
+                  <p className="kpi-sub mt-1 tabular-nums">gross − cancellations</p>
+                </div>
+              </div>
+              <p className="mt-4 border-t border-(--table-border-weak) pt-3 text-xs leading-snug text-(--text-muted)">
+                Gross = qualifying paid bookings originally created Mon–Sun of the report week (identity-deduped per client;
+                cancellations included). Reschedules never move a booking between weeks and never count as cancellations —
+                credit stays on the original booking week. Cancellations are shown separately; the goal line tracks Gross.
+              </p>
             </div>
-            {/* right / supporting — the week's booking mix as one visual system.
-                Session type covers EVERY win (family + animalia = total exactly);
+            {/* right / supporting — the week's GROSS booking mix as one visual system.
+                Session type covers EVERY gross row (family + animalia = gross exactly);
                 online/unattributed is an attribution property that overlaps the
                 genres — so the bar splits by session type only, and the
-                unattributed count is stated as INSIDE the total (never a third
+                unattributed count is stated as INSIDE the gross (never a third
                 segment that would double-count it). */}
             <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
               <p className="kpi-label">Booking Mix</p>
               <p className="mt-2 flex items-baseline gap-2">
                 <span className="text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
-                  {formatInt(b.total)}
+                  {formatInt(b.production.gross)}
                 </span>
-                <span className="kpi-sub">paid bookings</span>
+                <span className="kpi-sub">gross bookings</span>
               </p>
               <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
-                <div className="bg-(--bar-fill)" style={{ width: `${mixSeg(b.animalia)}%` }} />
-                <div className="bg-(--text-muted)" style={{ width: `${mixSeg(b.family)}%` }} />
-                <div className="bg-(--genre-fairyland)" style={{ width: `${mixSeg(b.fairyland)}%` }} />
+                <div className="bg-(--bar-fill)" style={{ width: `${mixSeg(b.grossMix.animalia)}%` }} />
+                <div className="bg-(--text-muted)" style={{ width: `${mixSeg(b.grossMix.family)}%` }} />
+                <div className="bg-(--genre-fairyland)" style={{ width: `${mixSeg(b.grossMix.fairyland)}%` }} />
               </div>
               <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
                 <li className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--bar-fill)" aria-hidden="true" />
-                  <span className="tabular-nums">{formatInt(b.animalia)}</span> Animalia
+                  <span className="tabular-nums">{formatInt(b.grossMix.animalia)}</span> Animalia
                 </li>
                 <li className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--text-muted)" aria-hidden="true" />
-                  <span className="tabular-nums">{formatInt(b.family)}</span> Family
+                  <span className="tabular-nums">{formatInt(b.grossMix.family)}</span> Family
                 </li>
                 <li className="flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--genre-fairyland)" aria-hidden="true" />
-                  <span className="tabular-nums">{formatInt(b.fairyland)}</span> Fairyland
+                  <span className="tabular-nums">{formatInt(b.grossMix.fairyland)}</span> Fairyland
                 </li>
               </ul>
               <p className="kpi-sub mt-3 border-t border-(--table-border-weak) pt-3">
-                {formatInt(b.unattributed)} online / unattributed (inside the {formatInt(b.total)}) — team total only, never a rep row.
+                {formatInt(b.grossUnattributed)} online / unattributed (inside the {formatInt(b.production.gross)}) — team total only, never a rep row.
               </p>
             </div>
           </div>
@@ -444,7 +474,9 @@ function WeeklyPage() {
                     The week's paid bookings split by the ET calendar day the DEPOSIT was received
                     (booking_win_business_date) and the attributed rep — the same win set and the same
                     attribution join as the By-Rep table. A session held Monday whose deposit paid Saturday
-                    counts under Saturday. Online / unattributed wins stay team-total only.
+                    counts under Saturday. Online / unattributed wins stay team-total only. This counts
+                    active paid wins (attribution basis); later cancellations excluded — the production block
+                    above shows Gross/Net.
                   </>
                 }
               />
@@ -460,7 +492,13 @@ function WeeklyPage() {
       <section aria-label="Rep contribution and conversion">
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
           <Panel className="overflow-hidden p-5 sm:p-6">
-            <p className="kpi-label mb-4">By Rep — Attributed Paid Bookings</p>
+            <p className="kpi-label mb-4 flex items-center gap-1.5">
+              By Rep — Attributed Paid Bookings
+              <InfoTip
+                label="Why rep rows may not sum to Gross"
+                tip="Counts active paid wins (attribution basis); later cancellations excluded — the production block above shows Gross/Net. Rep rows join stored attributions; owner manual overrides count as rep bookings; online/unattributed wins stay team-total only."
+              />
+            </p>
             <RankedRepTable rows={b.repRows} unattributed={b.unattributed} total={b.total} />
           </Panel>
 
@@ -478,7 +516,8 @@ function WeeklyPage() {
                     Denominator: the same week's assigned work-date cohort (leads with an assigned rep worked into the
                     week, Family/Animalia/Fairyland sheets — form-source leads are team totals, never rep metrics).
                     Numerator and denominator are the same cohort; a booking made weeks later still counts toward its
-                    original week. Conversion is shown only when the denominator is nonzero.
+                    original week. Conversion is shown only when the denominator is nonzero. Rep-cohort doctrine —
+                    distinct from the production block, which reports Gross/Cancellations/Net on the created-in-week basis.
                   </>
                 }
               />
@@ -524,63 +563,24 @@ function WeeklyPage() {
                 </dd>
               </div>
             </dl>
-            {/* clearly differentiated denominator: the overall funnel rate */}
-            <div className="mt-4 border-t border-(--table-border-weak) pt-4">
-              <p className="kpi-label flex items-center gap-1.5">
-                Bookings from leads
-                <InfoTip
-                  label="How bookings from leads is computed"
-                  tip={
-                    <>
-                      Numerator: the week's work-date cohort leads that have produced a qualifying paid booking, COUNTED
-                      TO DATE (a booking made weeks later still counts toward its original week). Denominator: the SAME
-                      week's work-date lead cohort (all seven sources — the Leads panel's definition; form tabs included).
-                      Numerator and denominator are the same cohort — this is the cohort-to-date rate, not a
-                      booking-period count. The operational Bookings (Week) vs goal tracker counts deposit-week wins and
-                      is intentionally different.
-                    </>
-                  }
-                />
-              </p>
-              <p
-                className={
-                  "mt-2 flex items-baseline gap-2 text-2xl font-semibold tracking-tight tabular-nums " +
-                  (f.pct != null ? "text-(--text-primary)" : "text-(--text-muted)")
-                }
-              >
-                {formatPercent(f.pct)}
-              </p>
-              <p className="kpi-sub mt-1 tabular-nums">
-                {formatInt(f.produced)}/{formatInt(f.leads)} cohort leads produced · counted to date
-              </p>
-            </div>
+            {/* "Bookings from leads" (the overall cohort funnel block) REMOVED —
+                owner Final Booking Logic 10/28 §6: cohort-produced bookings are
+                no longer displayed on the Weekly UI; production reports as
+                Gross / Cancellations / Net in the hero. The cohort machinery
+                stays internal (payload `funnel` field + builders unchanged). */}
           </Panel>
         </div>
       </section>
 
-      {/* 5 — FUNNEL TREND (chart standard) + LEAD COMPOSITION (compact) */}
-      <section aria-label="Recent-weeks trend and lead composition">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,320px)]">
-          {/* BOOKINGS FROM LEADS — recent completed weeks (owner request 2026-09-29),
-              now on the dashboard's interactive chart standard (trend-chart.tsx):
-              hover scrub, snapped guide + active dot, exact tooltip. The
-              in-progress week is never shown (its % is meaningless mid-week);
-              zero-leads weeks leave an honest gap (Sheets sync begins 2026-08-24). */}
-          <TrendCard
-            wide
-            title="Bookings from leads — recent weeks"
-            points={funnelPoints}
-            unit="pct"
-            formatValue={formatPercent}
-            info="The last 5 completed Mon–Sun weeks, oldest first — each week's work-date cohort ÷ its cohort-to-date produced bookings (the same doctrine as the conversion block; a booking made weeks later counts toward the ORIGINAL week). The in-progress week is excluded — its % would be meaningless mid-week. A week with zero cohort leads renders “—” (the Google Sheets sync begins 2026-08-24), never a fabricated 0%."
-            tooltip={funnelTooltip}
-            // P1-5 (mobile): at 390 the plot is a ~55px flat line with illegible
-            // labels; phones get the compact per-week stat list instead (same
-            // funnelPoints/formatPercent props). The unit-aware y-scale logic
-            // (PR #56) is untouched — it keeps running for ≥768.
-            mobileStats
-          />
-          <Panel className="overflow-hidden p-5 sm:p-6">
+      {/* 5 — LEAD COMPOSITION (compact; full width). The "Bookings from leads —
+          recent weeks" cohort funnel chart REMOVED — owner Final Booking Logic
+          10/28 §6: cohort-produced bookings are no longer displayed on the
+          Weekly UI (the week-by-week series plotted cohort-to-date produced ÷
+          cohort leads). The cohort machinery stays internal — the payload's
+          funnelSeries field and the weekCohortFunnelRows builder are untouched;
+          only this rendering left the page. */}
+      <section aria-label="Lead composition">
+        <Panel className="overflow-hidden p-5 sm:p-6">
             <p className="kpi-label flex items-center gap-1.5">
               Leads
               <InfoTip
@@ -633,62 +633,59 @@ function WeeklyPage() {
                 <span className="tabular-nums">{formatInt(data.leads.website_applications)}</span> Website Applications
               </li>
             </ul>
-          </Panel>
-        </div>
+        </Panel>
       </section>
 
       {/* 5b — LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED;
-          WORK-DATE ALIGNMENT): the primary table answers ONE question — of the
-          leads received for this WORK week (the work-date cohort, the same
-          definition Team trends / Reps / Today use), how many have produced a
-          qualifying paid booking SO FAR and what percentage converted
-          (Bookings = cohort-to-date produced, credited to the ORIGINAL week;
-          Conversion % = produced ÷ cohort leads). The booking-period
+          Final Booking Logic 10/28): Leads-only — the table answers ONE
+          question: how many leads did each source contribute to this WORK
+          week's cohort (the same definition Team trends / Reps / Today use).
+          The cohort-produced Bookings / Conversion % columns LEAVE the table
+          (owner §6: cohort-produced bookings no longer displayed; production
+          reports as Gross / Cancellations / Net in the hero). The booking-period
           three-category audit (prior-period, no-link, later-period, coverage,
-          win-week view) lives unchanged in the collapsed Attribution detail. */}
+          win-week view) lives unchanged in the collapsed Attribution detail,
+          relabeled audit-only. */}
       <section aria-label="Lead source performance">
         <Panel className="p-5 sm:p-6">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <p className="kpi-label flex items-center gap-1.5">
               Lead Source Performance
               <InfoTip
-                label="How a booking gets its lead source"
+                label="What the per-source counts mean"
                 tip={
                   <>
                     Leads Received = the source's leads in the week's WORK-DATE cohort (sheet dates the team
                     works Mon–Fri of the report week — Fri/Sat/Sun sheet dates land on Monday; the same cohort
-                    Team trends, the Reps page and Today use). Bookings = DISTINCT cohort leads that have
-                    produced a qualifying paid booking, COUNTED TO DATE — a booking made weeks later still
-                    counts toward its ORIGINAL week, never the later week's. Conversion % = Bookings ÷ Leads
-                    (numerator and denominator are the same cohort); renders "—" when a source had no leads.
-                    The Leads column classifies exactly like the Lead Composition panel (genre sheets by lead
-                    type, Forms Data tabs by sheet). Attribution detail below keeps the booking-period audit
-                    untouched: the week's WINS by the nearest-lead source rule (prior-period matches kept under
-                    their source, never a numerator; Truly Unattributed = no reliable sheet-lead link — the only
-                    meaning of "Unattributed" anywhere in the app; later-period; coverage).
+                    Team trends, the Reps page and Today use). The Leads column classifies exactly like the
+                    Lead Composition panel (genre sheets by lead type, Forms Data tabs by sheet). The former
+                    cohort-produced Bookings / Conversion % columns left this table (owner Final Booking
+                    Logic 10/28 §6: cohort-produced bookings are no longer displayed — production reports as
+                    Gross / Cancellations / Net in the hero). Attribution detail below keeps the booking-period
+                    audit untouched, relabeled audit-only: the week's WINS by the nearest-lead source rule
+                    (prior-period matches kept under their source, never a numerator; Truly Unattributed = no
+                    reliable sheet-lead link — the only meaning of "Unattributed" anywhere in the app;
+                    later-period; coverage).
                   </>
                 }
               />
             </p>
             <p className="kpi-sub">report week · audit detail below</p>
           </div>
-          {/* PRIMARY TABLE (owner directive 10/27 simplified; work-date
-              alignment): exactly Lead Source | Leads Received | Bookings |
-              Conversion % — one row per production source + Total, straight
-              from the work-date cohort (computeLeadCohortOutcomes).
-              Bookings = cohort-to-date produced (r.bookedLeads), Conversion %
-              = produced ÷ cohort leads (r.conv). The booking-period audit
-              (Truly Unattributed, prior/later, coverage) lives in the
-              Attribution detail below. "Other sheet" renders only when
-              nonzero (never merged away). */}
+          {/* PRIMARY TABLE (owner directive 10/27 simplified; Final Booking Logic
+              10/28): exactly Lead Source | Leads Received — one row per
+              production source + Total, straight from the work-date cohort
+              (computeLeadCohortOutcomes). The cohort-produced Bookings /
+              Conversion % columns left with the "Bookings from leads" panel
+              (owner §6); the booking-period audit (Truly Unattributed,
+              prior/later, coverage) lives in the Attribution detail below.
+              "Other sheet" renders only when nonzero (never merged away). */}
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-(--table-border) text-left text-(--text-caption)">
                   <th scope="col" className="py-1.5 pr-3 font-medium">Lead Source</th>
                   <th scope="col" className="py-1.5 pl-3 text-right font-medium">Leads Received</th>
-                  <th scope="col" className="py-1.5 pl-3 text-right font-medium">Bookings</th>
-                  <th scope="col" className="py-1.5 pl-3 text-right font-medium">Conversion %</th>
                 </tr>
               </thead>
               <tbody>
@@ -697,10 +694,6 @@ function WeeklyPage() {
                     <tr key={r.source} className={r.source === "total" ? "border-t border-(--table-border) font-semibold text-(--text-primary)" : "border-t border-(--table-border-weak)"}>
                       <td className="py-1.5 pr-3 text-(--text-body)">{r.label}</td>
                       <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.leads)}</td>
-                      <td className="py-1.5 pl-3 text-right tabular-nums text-(--text-body)">{formatInt(r.bookedLeads)}</td>
-                      <td className={"py-1.5 pl-3 text-right tabular-nums " + (r.conv == null ? "text-(--text-faint)" : "text-(--text-primary)")}>
-                        {r.conv == null ? "—" : formatPercent(r.conv, 1)}
-                      </td>
                     </tr>
                   ))}
               </tbody>
@@ -708,36 +701,18 @@ function WeeklyPage() {
           </div>
           <div className="mt-2 space-y-1 text-xs leading-snug text-(--text-muted)">
             <p>
-              Leads Received = the week's work-date cohort. Bookings = those cohort leads that have produced a
-              qualifying paid booking, counted to date (as of today — a booking made weeks later still counts toward
-              its original week); Conversion % = Bookings ÷ Leads. The booking-period audit (wins won in the week,
-              prior-period, no-link, coverage) is in the Attribution detail below.
+              Leads Received = the week's work-date cohort (all seven sources). Production — Gross /
+              Cancellations / Net — is the hero block above; this table carries leads only. The
+              booking-period audit (active paid wins, prior-period, no-link, coverage) is in the
+              Attribution detail below.
             </p>
           </div>
-          {/* WEEKLY BOOKINGS PRODUCED (Mon–Sun) — owner directive 2026-10-28
-              (formal audit audit-79v84): ONE additive figure beside the
-              untouched cohort table. The owner's production count — paid
-              deposits on bookings CREATED in the Mon–Sun week, identity-deduped
-              per client (cancel-and-rebook counted once), CANCELLATIONS
-              INCLUDED — deliberately SEPARATE from the hero total (paid-AND-
-              active wins) and from the cohort table's Bookings column
-              (cohort-to-date produced). The SAME number the copied CC Report
-              carries (tab ↔ report digit identity). */}
-          <div className="mt-4 border-t border-(--table-border) pt-4">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <Eyebrow>Bookings Produced (Mon–Sun)</Eyebrow>
-              <p className="text-2xl font-semibold tabular-nums text-(--text-primary)">
-                {formatInt(data.bookings.producedMonSun)}
-              </p>
-            </div>
-            <p className="mt-1 text-xs leading-snug text-(--text-muted)">
-              Paid deposits on bookings created in the Mon–Sun week · per client (cancel-and-rebook counted once) ·
-              cancellations included — a separate count from the cohort Bookings column above and from the week's
-              win total.
-            </p>
-          </div>
+          {/* The additive "Bookings Produced (Mon–Sun)" figure REMOVED — superseded
+              by the hero: gross IS that produced figure, now the page's primary
+              number with Cancellations/Net underneath. */}
           {/* ATTRIBUTION DETAIL (audit view — the owner directive keeps this
-              out of the primary table but never deletes it): the full
+              out of the primary table but never deletes it; relabeled audit-only
+              per Final Booking Logic 10/28 item 7): the full
               three-category BOOKING-PERIOD table (wins won in the week by the
               nearest-lead source — untouched data) plus best/worst and the
               honest no-link count and coverage. The work-date cohort table
@@ -768,7 +743,9 @@ function WeeklyPage() {
               <div>
                 <p className="text-[13px] font-medium text-(--text-body)">Bookings won this week — by lead source (full breakdown)</p>
                 <p className="kpi-sub mt-0.5">
-                  {formatInt(data.sourcePerformance.table.totalBookings)} paid bookings · cohort conversion = current-period bookings ÷ that source's leads this week
+                  {formatInt(data.sourcePerformance.table.totalBookings)} active paid wins — audit view (excludes later
+                  cancellations; production = Gross/Net above) · cohort conversion = current-period bookings ÷ that
+                  source's leads this week
                 </p>
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-[13px]">
@@ -1003,7 +980,8 @@ function WeeklyPage() {
                   (Alliance / Alliance Booking Calls, Auction / Auction Booking Calls) whose created date falls in the week,
                   America/New_York — synced from GoHighLevel, every pipeline status counts (open, won, lost, abandoned).
                   Website shows "—" on both: no distinct Website booking type exists in Acuity and no Website lead source is
-                  synced — nothing is invented meanwhile.
+                  synced — nothing is invented meanwhile. Bookings here count active paid wins (attribution basis); later
+                  cancellations excluded — the production block above shows Gross/Net.
                 </>
               }
             />
@@ -1037,7 +1015,10 @@ function WeeklyPage() {
         </Panel>
       </section>
 
-      {/* 7 — MONTH TO DATE (secondary analysis) */}
+      {/* 7 — MONTH TO DATE (secondary analysis; GROSS basis — owner Final
+          Booking Logic 10/28: one production basis page-wide). The rep rows and
+          Top performer stay on the protected active-wins/attribution basis,
+          labeled in the InfoTip. */}
       <section aria-label="Month to date">
         <div className="mb-3 flex flex-wrap items-center gap-1.5">
           <Eyebrow>
@@ -1046,25 +1027,30 @@ function WeeklyPage() {
           </Eyebrow>
           <InfoTip
             label="How month to date is counted"
-            tip="Paid bookings whose deposit date falls in the current calendar month through today (ET). Rep rows use the same attribution join as the weekly section; online/unattributed wins stay team-total only."
+            tip="Gross bookings MTD: qualifying (paid-deposit) bookings ORIGINALLY CREATED in the current calendar month through today (ET) — identity-deduped per client, cancellations included; reschedules never move credit. Same produced basis as the hero's Gross. Rep rows and Top performer count active paid wins (attribution basis); later cancellations excluded."
           />
         </div>
         <Panel className="overflow-hidden">
           <div className="grid sm:grid-cols-[minmax(0,1fr)_minmax(0,280px)] sm:divide-x sm:divide-(--table-border-weak)">
             <div className="p-5">
-              <p className="kpi-label">Paid bookings MTD</p>
+              <p className="kpi-label">Gross bookings MTD</p>
               <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                 <span className="text-4xl font-semibold leading-none tracking-tight text-(--text-primary)">
-                  {formatInt(mtd.total)}
+                  {formatInt(mtd.gross)}
                 </span>
                 {mtd.goal != null && <span className="text-xl font-medium text-(--text-muted)">/ {formatInt(mtd.goal)}</span>}
               </p>
               <div className="mt-3 max-w-md">
-                <RatioBar ratio={mtd.goal != null && mtd.goal > 0 ? mtd.total / mtd.goal : null} height="h-1" max="max-w-none" />
+                <RatioBar ratio={mtd.goal != null && mtd.goal > 0 ? mtd.gross / mtd.goal : null} height="h-1" max="max-w-none" />
               </div>
               <p className="kpi-sub mt-2 tabular-nums">
-                {mtd.goal != null ? `${signedDelta(mtd.total, mtd.goal)} vs goal · ` : ""}
+                {mtd.goal != null ? `${signedDelta(mtd.gross, mtd.goal)} vs goal · ` : ""}
                 {formatDateHuman(data.month.start)} – {formatDateHuman(data.month.end)}
+              </p>
+              <p className="mt-1 text-xs leading-snug text-(--text-muted)">
+                Gross = qualifying paid bookings originally created {formatDateHuman(data.month.start)} –{" "}
+                {formatDateHuman(data.month.end)} (identity-deduped; cancellations included). Cancellations MTD:{" "}
+                {formatInt(mtd.cancellations)} · Net MTD: {formatInt(mtd.net)}.
               </p>
             </div>
             <div className="border-t border-(--table-border-weak) p-5 sm:border-t-0">
@@ -1099,7 +1085,7 @@ function WeeklyPage() {
                 ) : (
                   <p className="mt-2 text-2xl font-semibold tracking-tight text-(--text-muted)">—</p>
                 )}
-                {mtd.topPerformer && <p className="kpi-sub mt-1">paid bookings MTD</p>}
+                {mtd.topPerformer && <p className="kpi-sub mt-1">active paid wins MTD (attribution basis)</p>}
               </div>
             </div>
           </div>

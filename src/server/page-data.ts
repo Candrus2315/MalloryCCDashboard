@@ -87,7 +87,7 @@ import {
   buildSourcePerformanceTable,
   computeAssignedCohortProduced,
   computeLeadCohortOutcomes,
-  computeWeeklyBookingsProduced,
+  computeWeeklyProduction,
   crossSourceOverlap,
   resolveBookingSources,
   COHORT_WIN_LOOKBACK_DAYS,
@@ -1556,16 +1556,25 @@ export interface WeeklyPageData {
      */
     dayByRep: WeeklyDayByRepGrid;
     /**
-     * WEEKLY BOOKINGS PRODUCED (Mon–Sun) (owner directive 2026-10-28,
-     * formal audit audit-79v84): paid deposits on bookings CREATED in the
-     * Mon–Sun report week, identity-deduped per client (cancel-and-rebook
-     * counted once), CANCELLATIONS INCLUDED — the owner's production count
-     * (Oct 19–25 = 84, audit-exact). A SEPARATE count from `total` (the
-     * paid-AND-ACTIVE wins) and from the cohort table's Bookings column
-     * (cohort-to-date produced); computed from the SAME
-     * getWinsWithClientsBetween fetch — no new store query.
+     * THE PRODUCTION BLOCK (owner Final Booking Logic 10/28, audit-79v84) —
+     * the hero's four-number view: gross = qualifying (paid-deposit) bookings
+     * ORIGINALLY CREATED in the Mon–Sun report week, identity-deduped per
+     * client (cancel-and-rebook counted once), CANCELLATIONS INCLUDED —
+     * Oct 19–25 = 84 (audit-exact). cancellations = true cancellations among
+     * that gross (cancelled produced members with NO active paid sibling) —
+     * Oct 19–25 = 5. net = gross − cancellations — Oct 19–25 = 79. Credit is
+     * permanently tied to the original creation business date: reschedules
+     * never move a booking between weeks and never count as cancellations.
+     * Computed from the SAME getWinsWithClientsBetween fetch — no new store
+     * query. `total` above stays the paid-AND-ACTIVE wins count that repRows,
+     * daily, dayByRep reconcile to — the rep-level detail is the protected
+     * attribution basis, labeled as such in the UI.
      */
-    producedMonSun: number;
+    production: { gross: number; cancellations: number; net: number };
+    /** Session-type mix of the GROSS produced rows (sums to production.gross). */
+    grossMix: { family: number; animalia: number; fairyland: number };
+    /** Wins with no attribution rep INSIDE the gross — team total only, never a rep row. */
+    grossUnattributed: number;
   };
   /**
    * Previous week's Alliance/Auction/Website split (owner CC Report template).
@@ -1605,6 +1614,17 @@ export interface WeeklyPageData {
     goal: number | null;
     /** "X/Goal (±N)" — goalVsActual(total, goal); "X/—" when no goal is stored. */
     goalLine: string;
+    /**
+     * GROSS MTD (owner Final Booking Logic 10/28 — one production basis with
+     * the weekly hero): qualifying paid bookings ORIGINALLY CREATED in the
+     * month through today, identity-deduped, cancellations INCLUDED.
+     * cancellations/net are the same true-cancellation split.
+     */
+    gross: number;
+    cancellations: number;
+    net: number;
+    /** "X/Goal (±N)" on the GROSS basis — goalVsActual(gross, goal). */
+    grossGoalLine: string;
   };
   calendar: {
     thisWeek: WeeklyCalendarBucket;
@@ -1773,13 +1793,24 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const winsCohort = filterApptsInWinBucketRange(winsJoinRaw, addDays(seriesMon, -COHORT_WIN_LOOKBACK_DAYS), today).filter(
     (a) => isBookingWin(a) && appointmentInScope(a, scope),
   );
-  // WEEKLY BOOKINGS PRODUCED (Mon–Sun) (owner directive 2026-10-28, formal
-  // audit audit-79v84): the SAME getWinsWithClientsBetween fetch (no new
-  // store query), sliced by ET CREATION date inside the week — paid
-  // deposit, identity-deduped per client, cancellations INCLUDED. A
-  // SEPARATE count: nothing above moves (winsLw/funnel/cohort chains are
-  // byte-untouched — the directive's hard constraints).
-  const bookingsProducedMonSun = computeWeeklyBookingsProduced(winsJoinRaw, lwMon, lwSun, scope);
+  // THE PRODUCTION BLOCK (owner Final Booking Logic 10/28, audit-79v84): the
+  // SAME getWinsWithClientsBetween fetch (no new store query), sliced by ET
+  // CREATION date inside the window — gross = paid deposit, identity-deduped
+  // per client, cancellations INCLUDED; cancellations = TRUE cancellations
+  // among the gross (no active paid sibling); net = gross − cancellations.
+  // Oct 19–25 pins 84 / 5 / 79. The MTD tracker reuses the SAME fetch for
+  // gross month-to-date: the fetch floor (seriesMon − COHORT_WIN_LOOKBACK_DAYS,
+  // ≤ today − 48) always sits more than a month back (monthStart ≥ today − 30),
+  // and a row's win-bucket date is never earlier than its creation date —
+  // every created-in-month row is inside the fetch. ONE production basis
+  // page-wide (hero + MTD gross); the win/funnel/cohort chains stay untouched.
+  const productionWeek = computeWeeklyProduction(winsJoinRaw, lwMon, lwSun, scope);
+  const productionMtd = computeWeeklyProduction(winsJoinRaw, monthStart, today, scope);
+  // The hero's Booking Mix renders the GROSS basis (one production basis in
+  // the hero section): session-type split + the unattributed-inside count of
+  // the produced rows (same attribution join as every ownership split).
+  const grossSplit = splitWinsBySessionType(productionWeek.rows);
+  const grossOwnership = splitWinOwnership(productionWeek.rows, attributions);
   // PRIMARY per-source table (owner directive, work-date alignment): the
   // work-date cohort through computeLeadCohortOutcomes — Leads Received =
   // cohort leads per source; Bookings = DISTINCT cohort leads that produced
@@ -2096,9 +2127,17 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     monthKey,
     bookingsWeek: { total: winsLw.length, goal: weeklyGoal },
     bookingsMonth: { total: winsMtd.length, goal: monthlyGoal },
-    // WEEKLY BOOKINGS PRODUCED — the SAME number the payload returns beside
-    // the cohort table (tab <-> report digit identity invariant).
-    bookingsProduced: bookingsProducedMonSun.count,
+    // THE PRODUCTION BLOCK — the SAME numbers the payload's hero renders
+    // (tab <-> report digit identity): Gross / Cancellations / Net for the
+    // week + gross MTD. The standalone Bookings Produced line is superseded —
+    // gross IS the produced figure, now the hero.
+    productionWeek: {
+      gross: productionWeek.gross,
+      cancellations: productionWeek.cancellations,
+      net: productionWeek.net,
+      goal: weeklyGoal,
+    },
+    productionMonth: { gross: productionMtd.gross, goal: monthlyGoal },
     channels,
     channelLeads,
     leads: splitLeadsByType(leadsWeek),
@@ -2136,7 +2175,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       daily: lwDates.map((d) => ({ date: d, count: dailyMap.get(d) ?? 0 })),
       repRows: lwRepRows,
       dayByRep: lwDayByRep,
-      producedMonSun: bookingsProducedMonSun.count,
+      production: { gross: productionWeek.gross, cancellations: productionWeek.cancellations, net: productionWeek.net },
+      grossMix: grossSplit,
+      grossUnattributed: grossOwnership.unattributed,
       unattributed: lwOwnership.unattributed,
     },
     channels,
@@ -2158,6 +2199,10 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       topPerformer: top ? { repId: top.rep_id, repName: top.rep_name, total: top.total } : null,
       goal: monthlyGoal,
       goalLine: goalVsActual(winsMtd.length, monthlyGoal),
+      gross: productionMtd.gross,
+      cancellations: productionMtd.cancellations,
+      net: productionMtd.net,
+      grossGoalLine: goalVsActual(productionMtd.gross, monthlyGoal),
     },
     calendar,
     report: {

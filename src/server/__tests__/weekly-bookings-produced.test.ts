@@ -15,16 +15,27 @@
  *  3. The separate-count guard: the SAME input through the UNTOUCHED existing
  *     chain (filterApptsInWinBucketRange + isBookingWin) still yields 79 —
  *     the new builder must never move the win/funnel/cohort numbers.
- *  4. The report line: figure + one-line footnote, and byte-identity of the
- *     template when the input is absent.
+ *  4. THE PRODUCTION BLOCK (owner Final Booking Logic 10/28): gross /
+ *     cancellations / net together — Oct 19–25 pins 84 / 5 / 79 (Vallee's
+ *     cancelled row dedupes out of BOTH gross and cancellations — a
+ *     reschedule, never a cancellation), computeWeeklyCancellations'
+ *     convenience form, and the four-number CC Report hero (which suppresses
+ *     the legacy Bookings Produced line); byte-identity of the template when
+ *     the inputs are absent.
  *  5. The page payload (MemoryStore seam): bookings.total counts only paid-AND-
- *     active wins while bookings.producedMonSun includes the cancelled paid
- *     row minus the dedupe — and the copied report carries the SAME digit.
+ *     active wins while bookings.production (gross/cancellations/net) carries
+ *     the owner's production view — and the copied report's hero carries the
+ *     SAME digits (tab ↔ report identity).
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { computeWeeklyBookingsProduced, type ApptWithClientIdentity } from "../metrics/source-attribution";
+import {
+  computeWeeklyBookingsProduced,
+  computeWeeklyCancellations,
+  computeWeeklyProduction,
+  type ApptWithClientIdentity,
+} from "../metrics/source-attribution";
 import { filterApptsInWinBucketRange, isBookingWin, type AppointmentRow } from "../metrics/compute";
 import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "../metrics/weekly-report-text";
 import { weeklyPageData } from "../page-data";
@@ -242,6 +253,45 @@ describe("audit pin — Oct 19–25 Weekly Bookings Produced = 84 (audit-79v84)"
     expect(wins79.length).toBe(79); // the system's win count — byte-unchanged
     expect(computeWeeklyBookingsProduced(input, WEEK_MON, WEEK_SUN).count).toBe(84); // the new, separate count
   });
+
+  test("PRODUCTION BLOCK audit pin — Oct 19–25: gross 84 · cancellations 5 · net 79", () => {
+    const input = [
+      ...candidateAppts(),
+      appt(VALLEE_CANCELLED_ID, "2026-10-20", { phone: VALLEE_PHONE, cancelled: true, winDate: "2026-10-20" }),
+      appt("unpaid-1", "2026-10-21", { paid: false }),
+      appt("unpaid-cancelled-1", "2026-10-23", { paid: false, cancelled: true }),
+      appt("paid-next-week", "2026-10-26", { phone: "5550009999" }),
+    ];
+    const out = computeWeeklyProduction(input, WEEK_MON, WEEK_SUN);
+    expect(out.gross).toBe(84); // the owner's Gross Bookings
+    expect(out.cancellations).toBe(5); // Kucera, Samuelson, Buckholz, Simmons, Kelly
+    expect(out.net).toBe(79); // gross − cancellations
+    // the five cancellations ARE the cancelled members of the gross
+    expect(out.rows.filter((r) => r.cancelled || r.status === "cancelled")).toHaveLength(5);
+    // Vallee's cancelled row is NOT among them — deduped out of gross entirely
+    // (a reschedule against her same-week active rebook, never a cancellation)
+    expect(out.rows.some((r) => r.id === VALLEE_CANCELLED_ID)).toBe(false);
+    // net = gross − cancellations, structurally
+    expect(out.net).toBe(out.gross - out.cancellations);
+  });
+
+  test("computeWeeklyCancellations — convenience form agrees; scope honored; unpaid cancellations never count", () => {
+    const rows = [
+      appt("kucera", WEEK_MON, { phone: "5550001111", cancelled: true }),
+      appt("samuelson", "2026-10-21", { phone: "5550002222", cancelled: true }),
+      appt("vallee-active", WEEK_MON, { phone: VALLEE_PHONE }),
+      appt("vallee-cancelled-dup", "2026-10-20", { phone: VALLEE_PHONE, cancelled: true }),
+      appt("unpaid-cancelled", "2026-10-22", { paid: false, cancelled: true }),
+    ];
+    expect(computeWeeklyCancellations(rows, WEEK_MON, WEEK_SUN)).toBe(2); // Kucera + Samuelson only
+    const out = computeWeeklyProduction(rows, WEEK_MON, WEEK_SUN);
+    expect(out.gross).toBe(3); // vallee-active + the two cancelled-only groups
+    expect(out.cancellations).toBe(2);
+    expect(out.net).toBe(1);
+    // scope filter applies (same appointmentInScope rule as gross)
+    const scope = { calendars_included: ["other"], types_included: [] };
+    expect(computeWeeklyCancellations(rows, WEEK_MON, WEEK_SUN, scope)).toBe(0);
+  });
 });
 
 // ---------- 4. report line ----------
@@ -272,7 +322,7 @@ const REPORT_BASE: WeeklyCcReportInput = {
   celebrateDefault: null,
 };
 
-describe("CC Report — Bookings Produced line (tab ↔ report digit identity)", () => {
+describe("CC Report — LEGACY Bookings Produced line (pre-production callers; template tolerance)", () => {
   test("one line: figure + definition footnote, right after Bookings (Week)", () => {
     const text = buildWeeklyCcReportText({ ...REPORT_BASE, bookingsProduced: 84 });
     const lines = text.split("\n");
@@ -291,13 +341,45 @@ describe("CC Report — Bookings Produced line (tab ↔ report digit identity)",
   });
 });
 
+describe("CC Report — FOUR-NUMBER HERO (Final Booking Logic 10/28: Gross / Cancellations / Net)", () => {
+  test("hero renders gross vs goal + Cancellations + Net; the standalone produced line is SUPPRESSED", () => {
+    const text = buildWeeklyCcReportText({
+      ...REPORT_BASE,
+      productionWeek: { gross: 84, cancellations: 5, net: 79, goal: 69 },
+      productionMonth: { gross: 246, goal: 316 },
+      bookingsProduced: 84, // present but suppressed — gross IS the produced figure
+    });
+    const lines = text.split("\n");
+    const i = lines.indexOf("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
+    expect(i).toBeGreaterThanOrEqual(0);
+    // the very next line is the gross MTD — no standalone produced line between
+    expect(lines[i! + 1]).toBe("Bookings (Month-to-Date, October 2026): 246/316 (−70) gross");
+    expect(text).not.toContain("Bookings Produced (Mon–Sun):");
+  });
+
+  test("missing goal renders honestly: '84/— gross'; absent production inputs keep the legacy lines", () => {
+    const noGoal = buildWeeklyCcReportText({
+      ...REPORT_BASE,
+      productionWeek: { gross: 84, cancellations: 5, net: 79, goal: null },
+      productionMonth: { gross: 246, goal: null },
+    });
+    expect(noGoal).toContain("Bookings (Week): 84/— gross · Cancellations: 5 · Net: 79");
+    expect(noGoal).toContain("Bookings (Month-to-Date, October 2026): 246/— gross");
+    // absent inputs → legacy lines (template tolerance)
+    const legacy = buildWeeklyCcReportText({ ...REPORT_BASE, bookingsProduced: 84 });
+    expect(legacy).toContain("Bookings (Week): 79/79 (±0)");
+    expect(legacy).toContain("Bookings Produced (Mon–Sun): 84");
+    expect(legacy).not.toContain("gross · Cancellations:");
+  });
+});
+
 // ---------- 5. page payload (MemoryStore seam) ----------
 
 const PAGE_TODAY = "2026-10-28"; // Tue → report week Mon 10/19 .. Sun 10/25
 const H = (date: string, time: string) => new Date(`${date}T${time}:00.000-04:00`).toISOString();
 
-describe("weekly page payload — bookings.producedMonSun (separate count, additive)", () => {
-  test("total counts paid-AND-active wins only; producedMonSun includes the cancelled paid row minus the dedupe; report carries the same digit", async () => {
+describe("weekly page payload — bookings.production (the owner's four-number view)", () => {
+  test("total counts paid-AND-active wins only; production carries gross/cancellations/net; the report hero carries the SAME digits", async () => {
     const store = new MemoryStore();
     await store.saveSettings({ acuity: { calendars_included: [], types_included: [] } });
     await store.upsertAppointments([
@@ -318,7 +400,7 @@ describe("weekly page payload — bookings.producedMonSun (separate count, addit
         raw: { paid: "yes", amountPaid: "300.00" }, status: "cancelled", cancelled: true,
         client_phone: "5085554874", client_email: null,
       },
-      // cancelled-after-payment with NO active sibling — still produced
+      // cancelled-after-payment with NO active sibling — still produced AND a cancellation
       {
         id: "cancelled-only", acuity_appointment_id: "cancelled-only", contact_id: null, calendar_id: "cal-1",
         appointment_type: "Portrait Session", appointment_datetime: H("2026-10-21", "14:00"),
@@ -343,10 +425,22 @@ describe("weekly page payload — bookings.producedMonSun (separate count, addit
     expect(data.week.end).toBe(WEEK_SUN);
     // UNTOUCHED count: only the active win (cancelled rows and pending never count)
     expect(data.bookings.total).toBe(1);
-    // NEW separate count: 3 paid created in-week − 1 deduped cancel-and-rebook = 2
-    expect(data.bookings.producedMonSun).toBe(2);
-    // The copied report carries the SAME digit (tab ↔ report identity)
-    expect(data.report.reportText).toContain("Bookings Produced (Mon–Sun): 2");
-    expect(data.report.reportText).toContain("Bookings (Week): 1/");
+    // THE PRODUCTION BLOCK: gross = 3 paid created in-week − 1 deduped
+    // cancel-and-rebook = 2; cancellations = the one cancelled-only group
+    // (the deduped Vallee-style row is NOT a cancellation); net = gross − cancellations.
+    expect(data.bookings.production).toEqual({ gross: 2, cancellations: 1, net: 1 });
+    // the hero's mix splits the GROSS rows (both Portrait → family)
+    expect(data.bookings.grossMix).toEqual({ family: 2, animalia: 0, fairyland: 0 });
+    expect(data.bookings.grossUnattributed).toBe(2); // no attributions stored — team-total line
+    // gross MTD on the SAME fetch (October covers all three created rows)
+    expect(data.mtd.gross).toBe(2);
+    expect(data.mtd.cancellations).toBe(1);
+    expect(data.mtd.net).toBe(1);
+    // The copied report's hero carries the SAME digits (tab ↔ report identity);
+    // goal 79 = the app-wide default (no team goal stored); MTD goal unset → "2/—"
+    expect(data.report.reportText).toContain("Bookings (Week): 2/79 (−77) gross · Cancellations: 1 · Net: 1");
+    expect(data.report.reportText).toContain("Bookings (Month-to-Date, October 2026): 2/— gross");
+    expect(data.report.reportText).not.toContain("Bookings Produced (Mon–Sun):");
+    expect(data.report.reportText).not.toContain("Bookings (Week): 1/"); // legacy hero line gone — replaced by the gross hero
   });
 });

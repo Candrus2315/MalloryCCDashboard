@@ -212,17 +212,20 @@ describe("weeklyPageData funnel wiring (MemoryStore, pinned today)", () => {
     expect(rows[4].pct).toBe(data.funnel.pct);
   });
 
-  test("COPY REPORT: 'Bookings from Leads: X%' directly after the assigned-lead conversion line", async () => {
+  test("COPY REPORT: the cohort 'Bookings from Leads' line is GONE (Final Booking Logic 10/28 §6) — the assigned-lead conversion line stays", async () => {
     const store = await seedFunnelStore();
     const data = await weeklyPageData({ store, today: TODAY });
     const lines = data.report.reportText.split("\n");
     const i = lines.findIndex((l) => l.startsWith("Conversion of Assigned Leads:"));
     expect(i).toBeGreaterThan(-1);
-    expect(lines[i + 1]).toBe("Bookings from Leads: 50.00%"); // 2 produced / 4 cohort leads
+    // the cohort funnel line left the report with the tab's panel; the next
+    // line is the blank separator before Calendar / Booked-out
+    expect(lines[i + 1]).toBe("");
+    expect(lines.some((l) => l.startsWith("Bookings from Leads:"))).toBe(false);
   });
 });
 
-describe("buildWeeklyCcReportText funnel line (pure)", () => {
+describe("buildWeeklyCcReportText funnel line (pure) — REMOVED (Final Booking Logic 10/28 §6)", () => {
   const baseInput = (): WeeklyCcReportInput => ({
     week: { start: "2026-09-21", end: "2026-09-27" },
     monthKey: "2026-09",
@@ -243,17 +246,17 @@ describe("buildWeeklyCcReportText funnel line (pure)", () => {
     celebrateDefault: null,
   });
 
-  test("the line sits directly after 'Conversion of Assigned Leads' and shows the funnel %", () => {
-    const lines = buildWeeklyCcReportText(baseInput()).split("\n");
+  test("the cohort funnel rate renders NOWHERE — not even after 'Conversion of Assigned Leads'", () => {
+    const text = buildWeeklyCcReportText(baseInput());
+    expect(text).not.toContain("Bookings from Leads");
+    const lines = text.split("\n");
     const i = lines.findIndex((l) => l.startsWith("Conversion of Assigned Leads:"));
-    expect(lines[i + 1]).toBe("Bookings from Leads: 50.00%");
-    expect(lines[i + 2]).toBe(""); // the blank separator stays after it
+    expect(lines[i + 1]).toBe(""); // the blank separator stays
   });
-  test("zero sheet leads → 'Bookings from Leads: —' (never a fabricated 0%)", () => {
+  test("zero sheet leads → no fabricated funnel line either", () => {
     const input = baseInput();
     input.funnel = { wins: 5, leads: 0, pct: null };
     const text = buildWeeklyCcReportText(input);
-    expect(text).toContain("Bookings from Leads: —");
-    expect(text).not.toContain("Bookings from Leads: 0");
+    expect(text).not.toContain("Bookings from Leads");
   });
 });
