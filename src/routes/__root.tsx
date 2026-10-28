@@ -45,6 +45,11 @@ const NAV: NavItem[] = [
   { to: "/retention", label: "Retention" },
   { to: "/settings", label: "Settings" },
   { to: "/audit", label: "Audit" },
+  // STATUS (reliability item): the in-app Status/Health view — one read-only
+  // place for the /health payload, provider freshness, heartbeat and the
+  // supervisor/running-guard/wedge states. Desktop reach here; mobile reach =
+  // the MobileNav drawer (auto-includes NAV entries, like Retention/Audit).
+  { to: "/status", label: "Status" },
 ];
 
 /** Factual nav count badge (Wave 1) — same pill language as the Performance/Settings SubNav counts; hidden when 0. */

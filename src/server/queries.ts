@@ -45,6 +45,7 @@ import { withDbRetry } from "./store/pg-retry";
 import { withHeartbeatWarning } from "./heartbeat-freshness";
 import type { Store } from "./store/types";
 import { availabilityPageData, type AvailabilityViewRawSearch, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
+import type { StatusHealthPageData } from "./status-health";
 import { resolveAvailabilityViewArgs } from "./availability-wiring";
 import { getRequest } from "@tanstack/react-start/server";
 import { matchAppointmentsToCalls } from "./metrics/attribution";
@@ -80,6 +81,18 @@ async function loadPageMeta(): Promise<PageMeta> {
 
 /** TODAY page — payload built in page-data.ts todayPageData (PageDeps test seam). */
 export const getTodayData = createServerFn().handler(() => withDbRetry(() => todayPageData()));
+/**
+ * STATUS page (reliability item) — payload built in status-health.ts
+ * statusHealthPageData. LAZY import inside the handler (the getAuditData
+ * pattern): handler bodies are stripped client-side, so a static import would
+ * retain the status module — and through it the whole store graph — in the
+ * browser bundle. The builder itself never throws: every read fails honestly
+ * into its own section's error field.
+ */
+export const getStatusHealthData = createServerFn().handler(async (): Promise<StatusHealthPageData> => {
+  const { statusHealthPageData } = await import("./status-health");
+  return statusHealthPageData();
+});
 
 /** SETTINGS page data — every editable surface loads its rows here. */
 export const getSettingsData = createServerFn().handler(() => withDbRetry(async () => {
