@@ -393,7 +393,13 @@ describe("crossSourceOverlap (report note — never a dedupe)", () => {
 
 // ---------- weekly report text ----------
 
-describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section (simplified)", () => {
+describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE ERASED (owner directive 10/28)", () => {
+  // The report no longer ACCEPTS a sourcePerformance input (the field is gone
+  // from WeeklyCcReportInput — page-data.ts stopped passing it) and can never
+  // render the section: no header, no methodology sentence, no per-source lead
+  // lines, no "Total — Leads", no booking-period audit footnote. The per-source
+  // tables keep living on the WEEKLY TAB only — their builders are tested in
+  // the describe blocks below this one.
   const base: WeeklyCcReportInput = {
     week: { start: "2026-10-19", end: "2026-10-25" },
     monthKey: "2026-10",
@@ -415,103 +421,50 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section (simplifie
     celebrateDefault: null,
   };
 
-  test("WITHOUT the input the template stays BYTE-IDENTICAL (no section, no footnote)", () => {
-    const text = buildWeeklyCcReportText(base);
+  test("the erased section renders NOWHERE — even on the fullest template (hero + gross MTD + holes + form-source lead lines)", () => {
+    const text = buildWeeklyCcReportText({
+      ...base,
+      productionWeek: { gross: 84, cancellations: 5, net: 79, goal: 69 },
+      productionMonth: { gross: 246, goal: 316 },
+    });
+    // header + methodology sentence
     expect(text).not.toContain("LEAD SOURCE PERFORMANCE");
-    expect(text).not.toContain("Prior-period bookings:");
+    expect(text).not.toContain("Leads = leads received for this work week");
+    // ALL seven per-source lead lines (the kept channel lines use the
+    // "Alliance — Leads: N · Bookings: N" shape — distinct from "<Label> — Leads:")
+    for (const label of ["Family", "Animalia", "Fairyland", "Auction Certificates", "Google Ads Leads", "Alliance Certificates", "Website Applications"]) {
+      expect(text).not.toContain(`${label} — Leads:`);
+    }
+    // the Total — Leads line and the trailing audit footnote, every fragment
+    expect(text).not.toContain("Total — Leads:");
+    expect(text).not.toContain("Booking-period audit:");
+    expect(text).not.toContain("Prior-period:");
+    expect(text).not.toContain("Later-period:");
     expect(text).not.toContain("No reliable link:");
+    expect(text).not.toContain("Coverage:");
+    expect(text).not.toContain("detail on the Weekly tab");
+    // the kept sections survive intact around the erasure
+    expect(text).toContain("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
+    expect(text).toContain("Bookings (Month-to-Date, October 2026): 246/316 (−70) gross");
+    expect(text).toContain("Auction Certificates: 2");
+    expect(text).toContain("Total: 24");
+    expect(text).toContain("Holes (empty slots): 3");
+    expect(text).toContain("Conversion of Assigned Leads: 50.00%");
   });
 
-  test("WITH the input: simple per-source lines (Leads / Bookings / Conversion) + Total + ONE auditability footnote", () => {
-    const text = buildWeeklyCcReportText({
+  test("template tolerance preserved: the render differs ONLY by the provided optional inputs — never by a source section", () => {
+    const legacy = buildWeeklyCcReportText(base); // no production inputs → legacy lines
+    const withHero = buildWeeklyCcReportText({
       ...base,
-      sourcePerformance: {
-        rows: [
-          { source: "family", label: "Family", leads: 10, bookings: 4, priorBookings: 2, laterBookings: 0, conv: 0.4 },
-          { source: "animalia", label: "Animalia", leads: 4, bookings: 0, priorBookings: 1, laterBookings: 0, conv: 0 },
-          { source: "fairyland", label: "Fairyland", leads: 1, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
-          { source: "auction_register_certificate", label: "Auction Certificates", leads: 2, bookings: 1, priorBookings: 0, laterBookings: 0, conv: 0.5 },
-          { source: "google_ads_leads", label: "Google Ads Leads", leads: 6, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
-          { source: "alliance_activate_certificate", label: "Alliance Certificates", leads: 0, bookings: 0, priorBookings: 0, laterBookings: 0, conv: null },
-          { source: "website_applications", label: "Website Applications", leads: 1, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
-          { source: "unattributed", label: "Truly Unattributed", leads: 0, bookings: 0, priorBookings: 0, laterBookings: 0, conv: null },
-          { source: "total", label: "Total", leads: 24, bookings: 5, priorBookings: 3, laterBookings: 0, conv: 5 / 24 },
-        ],
-        totalLeads: 24,
-        totalBookings: 8,
-        totalConv: 5 / 24,
-        totalCurrentBookings: 5,
-        totalPriorBookings: 3,
-        totalLaterBookings: 0,
-        trulyUnattributedBookings: 3,
-        sourceResolvedBookings: 5,
-        coverage: 5 / 8,
-        best: "Auction Certificates (50.0%)",
-        worst: "Animalia (0.0%)",
-        overlapNote: "Note: 7 people appear as leads from 2+ sources in the last 90 days — each source counts its own sheet rows independently (no cross-source dedupe).",
-      },
+      productionWeek: { gross: 84, cancellations: 5, net: 79, goal: 69 },
+      productionMonth: { gross: 246, goal: 316 },
     });
-    const lines = text.split("\n");
-    const totalIdx = lines.findIndex((l) => l === "Total: 24");
-    const convIdx = lines.findIndex((l) => l.startsWith("Conversion of Assigned Leads:"));
-    const spIdx = lines.findIndex((l) => l === "LEAD SOURCE PERFORMANCE (report week):");
-    expect(totalIdx).toBeGreaterThanOrEqual(0);
-    expect(spIdx).toBeGreaterThan(totalIdx);
-    expect(convIdx).toBeGreaterThan(spIdx);
-    // LEADS-ONLY per-source lines (Final Booking Logic 10/28 §6): the
-    // cohort-produced Bookings / Conversion columns left the report —
-    // production reports as Gross / Cancellations / Net in the hero line
-    expect(text).toContain("Family — Leads: 10");
-    expect(text).toContain("Alliance Certificates — Leads: 0");
-    expect(text).toContain("Total — Leads: 24");
-    expect(text).not.toContain("Family — Leads: 10 · Bookings:");
-    // the Leads-only methodology sentence
-    expect(text).toContain(
-      "Leads = leads received for this work week (work-date cohort, all seven sources). Production reports as Gross / Cancellations / Net in the hero line.",
-    );
-    // the ONE compact auditability footnote, relabeled AUDIT-ONLY (item 7:
-    // active paid wins — excludes later cancellations; production = Gross/Net)
-    expect(text).toContain(
-      "Booking-period audit: 8 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 3 · No reliable link: 3 · Coverage: 5/8 (62.50%) — detail on the Weekly tab",
-    );
-    // the old multi-category lines are GONE from the report
-    expect(text).not.toContain("Current-period:");
-    expect(text).not.toContain("Prior-period bookings:");
-    expect(text).not.toContain("Cohort conversion:");
-    expect(text).not.toContain("Source-resolved:");
-    expect(text).not.toContain("Truly Unattributed — Bookings:");
-    // best/worst + the overlap note moved off the report (Weekly tab detail view)
-    expect(text).not.toContain("Best source:");
-    expect(text).not.toContain("2+ sources");
-  });
-
-  test("WITH the input: a later-period match surfaces in the footnote, never merged", () => {
-    const text = buildWeeklyCcReportText({
-      ...base,
-      sourcePerformance: {
-        rows: [
-          { source: "family", label: "Family", leads: 10, bookings: 1, priorBookings: 0, laterBookings: 2, conv: 0.1 },
-          { source: "total", label: "Total", leads: 10, bookings: 1, priorBookings: 0, laterBookings: 2, conv: 0.1 },
-        ],
-        totalLeads: 10,
-        totalBookings: 5,
-        totalConv: 0.1,
-        totalCurrentBookings: 1,
-        totalPriorBookings: 0,
-        totalLaterBookings: 2,
-        trulyUnattributedBookings: 2,
-        sourceResolvedBookings: 3,
-        coverage: 3 / 5,
-        best: "Family (10.0%)",
-        worst: "Family (10.0%)",
-        overlapNote: null,
-      },
-    });
-    expect(text).toContain("Family — Leads: 10");
-    expect(text).not.toContain("· Bookings: 1 ·");
-    expect(text).toContain(
-      "Booking-period audit: 5 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 0 · Later-period: 2 · No reliable link: 2 · Coverage: 3/5 (60.00%) — detail on the Weekly tab",
-    );
+    expect(legacy).toContain("Bookings (Week): 5/79 (−74)");
+    expect(legacy).not.toContain("LEAD SOURCE PERFORMANCE");
+    expect(withHero).not.toContain("LEAD SOURCE PERFORMANCE");
+    // no per-source line in either render
+    expect(legacy).not.toContain("Family — Leads:");
+    expect(withHero).not.toContain("Family — Leads:");
   });
 });
 

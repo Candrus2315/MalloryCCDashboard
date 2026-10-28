@@ -283,16 +283,19 @@ describe("GROUP 4 — funnel/report alignment (one cohort definition everywhere)
     expect(last).toMatchObject({ weekStart: "2026-10-19", leads: 2, wins: 2, pct: 1 });
   });
 
-  test("the CC report's 'Bookings from Leads' line is GONE (Final Booking Logic 10/28 §6); the section is Leads-only with the audit-only footnote", async () => {
+  test("the CC report's 'Bookings from Leads' line is GONE (Final Booking Logic 10/28 §6) and LEAD SOURCE PERFORMANCE is ERASED (owner directive 10/28) — no per-source section survives anywhere", async () => {
     const { store } = await seedAlignmentStore();
     const data = await weeklyPageData({ store, today: TODAY });
     const lines = data.report.reportText.split("\n");
     expect(lines.some((l) => l.startsWith("Bookings from Leads:"))).toBe(false); // cohort funnel removed
-    // Leads-only source lines (work-date cohort counts), no Bookings/Conversion
-    expect(lines).toContain("Family — Leads: 1");
-    expect(lines).toContain("Animalia — Leads: 1");
-    expect(lines).toContain("Total — Leads: 2");
-    expect(lines.some((l) => l.includes("· Bookings:") && l.includes("Conversion:"))).toBe(false);
+    // ERASED section (owner directive 10/28): no per-source lead lines of any
+    // shape — the genre counts render ONLY in the kept "Leads (week…)" block
+    // ("Family: 1"), never as "<Label> — Leads: N"
+    expect(lines.some((l) => l.startsWith("LEAD SOURCE PERFORMANCE"))).toBe(false);
+    expect(lines).toContain("Family: 1");
+    expect(lines).toContain("Animalia: 1");
+    expect(lines.some((l) => l.startsWith("Total — Leads:"))).toBe(false);
+    expect(lines.some((l) => l.startsWith("Booking-period audit:"))).toBe(false);
     // the four-number hero rides the SAME produced machinery (tab ↔ report
     // identity) — goalVsActual formatting (±N suffix) on the gross
     const gross = data.bookings.production.gross;
@@ -319,22 +322,27 @@ describe("GROUP 6 — Weekly tab ↔ CC Report digit identity (cohort rows)", ()
       expect(reportRows[i].bookings).toBe(tabRows[i].bookedLeads); // cohort-to-date produced
       expect(reportRows[i].conv).toBe(tabRows[i].conv);
     }
-    // totals digit-identical: the report's Total line = the tab's Total row
+    // totals digit-identical: the (former) report section input's Total line = the tab's Total row.
+    // NOTE (owner directive 10/28): the CC Report no longer RENDERS this
+    // section — data.report.sourcePerformance survives as the Weekly tab's
+    // Attribution detail input; these identity pins guard the payload, not the
+    // copied text.
     const tabTotal = data.sourcePerformance.cohort.find((r) => r.source === "total")!;
     expect(data.report.sourcePerformance!.totalLeads).toBe(tabTotal.leads);
     expect(data.report.sourcePerformance!.totalCurrentBookings).toBe(tabTotal.bookedLeads);
     expect(data.report.sourcePerformance!.totalConv).toBe(tabTotal.conv);
-    // the methodology sentence the report shows matches the tab's Leads-only definition
-    expect(data.report.reportText).toContain(
-      "Leads = leads received for this work week (work-date cohort, all seven sources). Production reports as Gross / Cancellations / Net in the hero line.",
+    // the methodology sentence is ERASED from the report text (owner directive 10/28)
+    expect(data.report.reportText).not.toContain(
+      "Leads = leads received for this work week",
     );
     // the footnote's audit aggregates come from the UNTOUCHED booking-period
     // audit table (deposit-week wins, source-date slice): w-f resolved to its
     // lead whose sheet date (10/16) predates the week → prior-period; w-later
-    // (deposit 10/26) is outside the audit's win window entirely. The 79-basis
-    // figure is relabeled AUDIT-ONLY (Final Booking Logic 10/28 item 7).
+    // (deposit 10/26) is outside the audit's win window entirely. The audit
+    // line itself is ERASED from the report text (owner directive 10/28) —
+    // the aggregates stay pinned on the payload object.
     expect(data.report.sourcePerformance!.totalBookings).toBe(data.sourcePerformance.table.totalBookings);
-    expect(data.report.reportText).toContain("Booking-period audit: 1 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 1 · No reliable link: 0 · Coverage: 1/1 (100.00%) — detail on the Weekly tab");
+    expect(data.report.reportText).not.toContain("Booking-period audit:");
     // and the three-category audit table itself keeps its source-date slice:
     // its lead counts count SHEET dates in the week (A only), not the rolled F.
     expect(data.sourcePerformance.table.rows.find((r) => r.source === "family")?.leads).toBe(0);

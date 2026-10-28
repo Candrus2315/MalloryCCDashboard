@@ -283,12 +283,11 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       },
       notes: data.report.notes,
       celebrateDefault: data.report.celebrateDefault,
-      // The page's copy carries the owner-directed LEAD SOURCE PERFORMANCE
-      // section (directive 10/27, Step 5) — the legacy baseline must include
-      // the SAME section input, so this comparison isolates the Holes line as
-      // the ONLY difference (its documented intent: "every other line …
-      // untouched").
-      sourcePerformance: data.report.sourcePerformance,
+      // LEAD SOURCE PERFORMANCE: ERASED from the report (owner directive
+      // 10/28) — the builder no longer accepts a sourcePerformance input and
+      // the page's copy carries NO per-source section, so the baseline needs
+      // nothing here; this comparison still isolates the Holes line as the
+      // ONLY difference.
       // Same doctrine for the owner's PRODUCTION BLOCK (Final Booking Logic
       // 10/28, audit-79v84): the page's copy renders the four-number hero
       // (Gross / Cancellations / Net) + gross MTD + the Leads-only source
