@@ -159,6 +159,7 @@ describe("store round-trips", () => {
 
 describe("commissionCloseTick — idempotent Sunday close", () => {
   test("lastCompletedCommissionWeekStart — Monday of the most recent COMPLETED Mon–Sun week", () => {
+    // ANCHOR 2026-09-21: W4 of the owner-ratified backfill cycle (Aug 31 – Sep 27, RULING 4) and a pinned lastCompletedCommissionWeekStart case — every clock here is injected (`now` closures, `calcDateIso`), never real time, so the 9/21 expectations cannot drift.
     expect(lastCompletedCommissionWeekStart("2026-09-29")).toBe("2026-09-21"); // Tue → previous week
     expect(lastCompletedCommissionWeekStart("2026-10-05")).toBe("2026-09-28"); // Mon — the week that closed Sunday night
     expect(lastCompletedCommissionWeekStart("2026-09-28")).toBe("2026-09-21"); // its own Monday morning → not yet complete
