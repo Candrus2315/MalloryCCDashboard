@@ -173,7 +173,6 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
         "Total: 392",
         "",
         "Conversion of Assigned Leads: 21.05% (Family 18.18% · Animalia 23.81% · Fairyland —)",
-        "Bookings from Leads: 8.83%",
         "",
         "Calendar / Booked-out:",
         "This week: 34/63 filled (54%)",
@@ -223,9 +222,52 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
     const text = buildWeeklyCcReportText(input);
     expect(text).toContain("Bookings (Month-to-Date, September 2026): 239/—");
     expect(text).toContain("Conversion of Assigned Leads: — (Family — · Animalia — · Fairyland —)");
-    expect(text).toContain("Bookings from Leads: —");
+    expect(text).not.toContain("Bookings from Leads:"); // cohort funnel line REMOVED (Final Booking Logic 10/28 §6)
     expect(text).toContain("This week: 5/— filled");
     expect(text).toContain("First fully open day: —");
+  });
+
+  test("FOUR-NUMBER HERO (Final Booking Logic 10/28): productionWeek renders Gross / Cancellations / Net + goal and suppresses the legacy produced line; productionMonth renders gross MTD", () => {
+    const input: WeeklyCcReportInput = {
+      ...baseInput(),
+      productionWeek: { gross: 84, cancellations: 5, net: 79, goal: 69 },
+      productionMonth: { gross: 246, goal: 316 },
+      bookingsProduced: 84, // present but SUPPRESSED — gross IS the produced figure
+    };
+    const text = buildWeeklyCcReportText(input);
+    expect(text).toContain("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
+    expect(text).toContain("Bookings (Month-to-Date, September 2026): 246/316 (−70) gross");
+    expect(text).not.toContain("Bookings Produced (Mon–Sun):"); // superseded by the hero
+    // the LEAD SOURCE PERFORMANCE section (when provided) is Leads-only with the
+    // audit-only footnote
+    const withSources: WeeklyCcReportInput = {
+      ...input,
+      sourcePerformance: {
+        rows: [
+          { source: "family", label: "Family", leads: 273, bookings: 71, priorBookings: 0, laterBookings: 0, conv: 0.26 },
+          { source: "animalia", label: "Animalia", leads: 562, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
+        ],
+        totalLeads: 957,
+        totalBookings: 79,
+        totalConv: 0.074,
+        totalCurrentBookings: 71,
+        totalPriorBookings: 3,
+        totalLaterBookings: 0,
+        trulyUnattributedBookings: 2,
+        sourceResolvedBookings: 77,
+        coverage: 77 / 79,
+        best: "Family",
+        worst: "Animalia",
+        overlapNote: null,
+      },
+    };
+    const t2 = buildWeeklyCcReportText(withSources);
+    expect(t2).toContain("Family — Leads: 273");
+    expect(t2).not.toContain("Family — Leads: 273 · Bookings:"); // Bookings/Conversion columns gone
+    expect(t2).toContain("Total — Leads: 957");
+    expect(t2).toContain(
+      "Booking-period audit: 79 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 3 · No reliable link: 2 · Coverage: 77/79 (97.47%) — detail on the Weekly tab",
+    );
   });
 
   test("a stored Celebrate note overrides the computed default; sections persist verbatim", () => {

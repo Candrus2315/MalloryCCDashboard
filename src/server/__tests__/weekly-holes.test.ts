@@ -288,6 +288,19 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       // the ONLY difference (its documented intent: "every other line …
       // untouched").
       sourcePerformance: data.report.sourcePerformance,
+      // Same doctrine for the owner's PRODUCTION BLOCK (Final Booking Logic
+      // 10/28, audit-79v84): the page's copy renders the four-number hero
+      // (Gross / Cancellations / Net) + gross MTD + the Leads-only source
+      // section, so the baseline includes the SAME productionWeek /
+      // productionMonth inputs — the Holes line stays the only difference
+      // this comparison can find.
+      productionWeek: {
+        gross: data.bookings.production.gross,
+        cancellations: data.bookings.production.cancellations,
+        net: data.bookings.production.net,
+        goal: data.bookings.goal,
+      },
+      productionMonth: { gross: data.mtd.gross, goal: data.mtd.goal },
       holes: null,
     }).split("\n");
     const actual = data.report.reportText.split("\n");

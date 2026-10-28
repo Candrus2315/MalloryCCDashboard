@@ -283,12 +283,25 @@ describe("GROUP 4 — funnel/report alignment (one cohort definition everywhere)
     expect(last).toMatchObject({ weekStart: "2026-10-19", leads: 2, wins: 2, pct: 1 });
   });
 
-  test("the CC report's Bookings-from-Leads line is the SAME funnel card math (not the deposit-week count)", async () => {
+  test("the CC report's 'Bookings from Leads' line is GONE (Final Booking Logic 10/28 §6); the section is Leads-only with the audit-only footnote", async () => {
     const { store } = await seedAlignmentStore();
     const data = await weeklyPageData({ store, today: TODAY });
     const lines = data.report.reportText.split("\n");
-    const i = lines.findIndex((l) => l.startsWith("Bookings from Leads:"));
-    expect(lines[i]).toBe(`Bookings from Leads: 100.00%`); // produced 2 / cohort 2 — NOT 1/2
+    expect(lines.some((l) => l.startsWith("Bookings from Leads:"))).toBe(false); // cohort funnel removed
+    // Leads-only source lines (work-date cohort counts), no Bookings/Conversion
+    expect(lines).toContain("Family — Leads: 1");
+    expect(lines).toContain("Animalia — Leads: 1");
+    expect(lines).toContain("Total — Leads: 2");
+    expect(lines.some((l) => l.includes("· Bookings:") && l.includes("Conversion:"))).toBe(false);
+    // the four-number hero rides the SAME produced machinery (tab ↔ report
+    // identity) — goalVsActual formatting (±N suffix) on the gross
+    const gross = data.bookings.production.gross;
+    const goal = data.bookings.goal;
+    const d = gross - goal;
+    const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
+    expect(data.report.reportText).toContain(
+      `Bookings (Week): ${gross}/${goal} (${sign}${Math.abs(d)}) gross · Cancellations: ${data.bookings.production.cancellations} · Net: ${data.bookings.production.net}`,
+    );
   });
 });
 
@@ -311,14 +324,17 @@ describe("GROUP 6 — Weekly tab ↔ CC Report digit identity (cohort rows)", ()
     expect(data.report.sourcePerformance!.totalLeads).toBe(tabTotal.leads);
     expect(data.report.sourcePerformance!.totalCurrentBookings).toBe(tabTotal.bookedLeads);
     expect(data.report.sourcePerformance!.totalConv).toBe(tabTotal.conv);
-    // the methodology sentence the report shows matches the tab's definition
-    expect(data.report.reportText).toContain("Cohort = leads received for this work week (work-date).");
+    // the methodology sentence the report shows matches the tab's Leads-only definition
+    expect(data.report.reportText).toContain(
+      "Leads = leads received for this work week (work-date cohort, all seven sources). Production reports as Gross / Cancellations / Net in the hero line.",
+    );
     // the footnote's audit aggregates come from the UNTOUCHED booking-period
     // audit table (deposit-week wins, source-date slice): w-f resolved to its
     // lead whose sheet date (10/16) predates the week → prior-period; w-later
-    // (deposit 10/26) is outside the audit's win window entirely.
+    // (deposit 10/26) is outside the audit's win window entirely. The 79-basis
+    // figure is relabeled AUDIT-ONLY (Final Booking Logic 10/28 item 7).
     expect(data.report.sourcePerformance!.totalBookings).toBe(data.sourcePerformance.table.totalBookings);
-    expect(data.report.reportText).toContain("Booking-period audit: 1 wins in week · Prior-period: 1 · No reliable link: 0 · Coverage: 1/1 (100.00%) — detail on the Weekly tab");
+    expect(data.report.reportText).toContain("Booking-period audit: 1 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 1 · No reliable link: 0 · Coverage: 1/1 (100.00%) — detail on the Weekly tab");
     // and the three-category audit table itself keeps its source-date slice:
     // its lead counts count SHEET dates in the week (A only), not the rolled F.
     expect(data.sourcePerformance.table.rows.find((r) => r.source === "family")?.leads).toBe(0);

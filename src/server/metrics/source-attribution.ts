@@ -47,7 +47,8 @@
  * Pure module: no DB, no clock, no React — deterministic under tests.
  */
 import type { AppointmentRow, AttributionRow, LeadRow } from "./compute";
-import { createdBusinessDateOf, isBookingWin } from "./compute";
+import { appointmentPaymentStateOf, createdBusinessDateOf, filterApptsCreatedInEtRange, isBookingWin } from "./compute";
+import { appointmentInScope, type AcuityScope } from "./availability";
 import { FORM_SOURCE_SHEETS, GENRE_SOURCE_SHEETS, LEAD_SOURCE_LABELS, type LeadSourceSheet } from "../../components/lead-sources";
 import { conversionRate, splitLeadsByType, type WeekFunnelRow } from "./weekly";
 import { addDays } from "../date-logic";
@@ -812,6 +813,163 @@ export function leadProducedWin(
     }
   }
   return false;
+}
+
+// ---------- WEEKLY BOOKINGS PRODUCED (Mon–Sun) — owner directive 2026-10-28 ----------
+
+/**
+ * An appointment row with the stored client-identity columns — exactly the
+ * shape `getWinsWithClientsBetween` returns (pg + memory mirrors), so the
+ * builder feeds from the SAME fetch the Weekly page already makes (no new
+ * store query). The identity fields are optional so lean test fixtures work.
+ */
+export type ApptWithClientIdentity = AppointmentRow & {
+  client_phone?: string | null;
+  client_email?: string | null;
+};
+
+export interface WeeklyBookingsProduced {
+  /** The surviving paid rows — auditability: one entry per produced booking. */
+  rows: ApptWithClientIdentity[];
+  count: number;
+}
+
+/**
+ * Identity tokens of ONE appointment: canonical phone10 / emailNorm (the
+ * SAME normalizations the ingest matched on — never the raw display strings).
+ */
+function bookingIdentityTokens(a: Pick<ApptWithClientIdentity, "client_phone" | "client_email">): string[] {
+  const tokens: string[] = [];
+  const p = phone10(a.client_phone);
+  if (p) tokens.push("p:" + p);
+  const e = emailNorm(a.client_email);
+  if (e) tokens.push("e:" + e);
+  return tokens;
+}
+
+/**
+ * WEEKLY BOOKINGS PRODUCED (Mon–Sun) — owner directive 2026-10-28 (the
+ * 79-vs-84 formal audit, audit-79v84; owner-confirmed definition, and a
+ * SEPARATE count that never touches the 79/funnel/cohort chains):
+ *
+ *   = appointments with a PAID DEPOSIT whose ET creation business date
+ *     (created_business_date) falls in the Mon–Sun week,
+ *     IDENTITY-DEDUPED (canonical phone10/email — a cancel-and-rebook
+ *     counts ONCE), CANCELLATIONS INCLUDED.
+ *
+ * Scope: same `appointmentInScope` rule as every Weekly number (pass the
+ * `settings.acuity` scope; omit to skip — pure builder, no settings read).
+ * Payment: `appointmentPaymentStateOf === "paid"` (persisted state first, else
+ * derived from raw) — the status is NOT filtered here, so a booking that paid
+ * in-week and later cancelled still counts as produced that week (the exact
+ * five-record gap the audit reconciled: 79 paid-and-active wins + 5 net
+ * cancelled-after-payment = 84 for Oct 19–25).
+ * Dedupe (the audit's exact rule): a CANCELLED paid row is an identity
+ * duplicate — dropped — when the week ALSO holds an ACTIVE paid row sharing a
+ * phone10/email token (the active sibling wins). A cancelled-only group still
+ * counts (the booking was produced); two distinct active bookings never merge.
+ * Pure: no DB, no clock, deterministic.
+ */
+export function computeWeeklyBookingsProduced(
+  appts: ApptWithClientIdentity[],
+  weekMon: string,
+  weekSun: string,
+  scope?: AcuityScope | undefined,
+): WeeklyBookingsProduced {
+  // 1. Scope — the same in-scope rule the Weekly page applies to every count.
+  const inScope = scope ? appts.filter((a) => appointmentInScope(a, scope)) : appts;
+  // 2. Created in the week (ET business date bounds — the S7c created bucket).
+  const createdInWeek = filterApptsCreatedInEtRange(inScope, weekMon, weekSun);
+  // 3. Paid deposit; cancellations INCLUDED (status deliberately not filtered).
+  const paid = createdInWeek.filter((a) => (appointmentPaymentStateOf(a) ?? "") === "paid");
+  // 4. Identity dedupe — the ACTIVE rows' tokens; a cancelled paid row sharing
+  //    any of them is the cancel-and-rebook duplicate of that active sibling.
+  const activeTokens = new Set<string>();
+  for (const a of paid) {
+    if (a.cancelled || a.status === "cancelled") continue;
+    for (const t of bookingIdentityTokens(a)) activeTokens.add(t);
+  }
+  const rows = paid.filter((a) => {
+    if (!(a.cancelled || a.status === "cancelled")) return true; // active rows always count
+    return !bookingIdentityTokens(a).some((t) => activeTokens.has(t)); // cancelled-only groups count too
+  });
+  return { rows, count: rows.length };
+}
+
+// ---------- THE PRODUCTION BLOCK (owner Final Booking Logic 10/28) ----------
+
+/** Row-level cancelled predicate — the SAME status convention the dedupe uses. */
+function isCancelledApptRow(a: Pick<ApptWithClientIdentity, "cancelled" | "status">): boolean {
+  return a.cancelled || a.status === "cancelled";
+}
+
+/**
+ * The owner's four-number production block for one Mon–Sun week (or any
+ * created-date range — the MTD tracker reuses it with monthStart..today):
+ *
+ *   gross         = computeWeeklyBookingsProduced's count — qualifying
+ *                   (paid-deposit) bookings ORIGINALLY CREATED in the window,
+ *                   identity-deduped (cancel-and-rebook counts once),
+ *                   CANCELLATIONS INCLUDED. Oct 19–25 = 84 (audit-exact,
+ *                   audit-79v84). Credit is PERMANENTLY tied to the original
+ *                   creation business date — a reschedule never moves a
+ *                   booking between weeks.
+ *   cancellations = TRUE cancellations among that gross: members of the
+ *                   produced set whose status is cancelled AND whose identity
+ *                   group has NO active paid sibling. The produced set's
+ *                   dedupe already guarantees that condition (a cancelled row
+ *                   sharing a phone10/email token with an ACTIVE paid row was
+ *                   dropped from gross entirely), so the cancelled members of
+ *                   `rows` are exactly those cancellations — Oct 19–25 = 5
+ *                   (Kucera, Samuelson, Buckholz, Simmons, Kelly). Vallee
+ *                   Bordinaro's cancelled row dedupes against her same-week
+ *                   active rebook, so it is absent from gross AND from
+ *                   cancellations — a reschedule, never a cancellation.
+ *   net           = gross − cancellations. Oct 19–25 = 79.
+ *
+ * CROSS-WEEK CANCEL-AND-REBOOK EDGE RULE (documented; NOT present in the
+ * current data): a booking created in week 1 that is cancelled and rebooked
+ * in week 2 credits WEEK 1 with both the Gross booking and the Cancellation —
+ * the cancelled row was created in week 1 and week 1 holds no active sibling
+ * for it — while the rebook created in week 2 is week 2's own Gross. Credit
+ * rides the original creation timestamp; nothing is re-bucketed across weeks.
+ *
+ * NO special case for $0-paid rows (Beth Simmons stays as-is — owner
+ * directive): qualification is the persisted/derived paid state, never an
+ * amount threshold.
+ * Pure: no DB, no clock, deterministic.
+ */
+export interface WeeklyProductionBlock {
+  gross: number;
+  cancellations: number;
+  net: number;
+  /** The surviving paid rows (the gross) — auditability: one entry per produced booking. */
+  rows: ApptWithClientIdentity[];
+}
+
+export function computeWeeklyProduction(
+  appts: ApptWithClientIdentity[],
+  weekMon: string,
+  weekSun: string,
+  scope?: AcuityScope | undefined,
+): WeeklyProductionBlock {
+  const produced = computeWeeklyBookingsProduced(appts, weekMon, weekSun, scope);
+  const cancellations = produced.rows.filter(isCancelledApptRow).length;
+  return { gross: produced.count, cancellations, net: produced.count - cancellations, rows: produced.rows };
+}
+
+/**
+ * WEEKLY CANCELLATIONS — the true-cancellation count of the produced set
+ * (see computeWeeklyProduction). Convenience form for callers that only need
+ * the number; the Weekly page takes the combined block.
+ */
+export function computeWeeklyCancellations(
+  appts: ApptWithClientIdentity[],
+  weekMon: string,
+  weekSun: string,
+  scope?: AcuityScope | undefined,
+): number {
+  return computeWeeklyProduction(appts, weekMon, weekSun, scope).cancellations;
 }
 export function computeLeadCohortOutcomes(
   cohortLeadJoinRows: LeadJoinRow[],

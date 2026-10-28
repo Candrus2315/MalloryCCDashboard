@@ -458,17 +458,21 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section (simplifie
     expect(totalIdx).toBeGreaterThanOrEqual(0);
     expect(spIdx).toBeGreaterThan(totalIdx);
     expect(convIdx).toBeGreaterThan(spIdx);
-    // the SIMPLIFIED per-source lines: Leads / Bookings / Conversion (same
-    // cohort rules — Bookings = current-period cohort wins; — on zero leads)
-    expect(text).toContain("Family — Leads: 10 · Bookings: 4 · Conversion: 40.0%");
-    expect(text).toContain("Alliance Certificates — Leads: 0 · Bookings: 0 · Conversion: —");
-    expect(text).toContain("Total — Leads: 24 · Bookings: 5 · Conversion: 20.8%");
-    // the shortened cohort-doctrine methodology sentence (work-date alignment)
-    expect(text).toContain("Cohort = leads received for this work week (work-date). Bookings = those cohort leads that have produced a qualifying paid booking, counted to date. Conversion = Bookings ÷ Leads.");
-    // the ONE compact auditability footnote (booking-period audit: wins in
-    // week / prior / no-link / coverage — the prior bookings stay audit-only)
+    // LEADS-ONLY per-source lines (Final Booking Logic 10/28 §6): the
+    // cohort-produced Bookings / Conversion columns left the report —
+    // production reports as Gross / Cancellations / Net in the hero line
+    expect(text).toContain("Family — Leads: 10");
+    expect(text).toContain("Alliance Certificates — Leads: 0");
+    expect(text).toContain("Total — Leads: 24");
+    expect(text).not.toContain("Family — Leads: 10 · Bookings:");
+    // the Leads-only methodology sentence
     expect(text).toContain(
-      "Booking-period audit: 8 wins in week · Prior-period: 3 · No reliable link: 3 · Coverage: 5/8 (62.50%) — detail on the Weekly tab",
+      "Leads = leads received for this work week (work-date cohort, all seven sources). Production reports as Gross / Cancellations / Net in the hero line.",
+    );
+    // the ONE compact auditability footnote, relabeled AUDIT-ONLY (item 7:
+    // active paid wins — excludes later cancellations; production = Gross/Net)
+    expect(text).toContain(
+      "Booking-period audit: 8 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 3 · No reliable link: 3 · Coverage: 5/8 (62.50%) — detail on the Weekly tab",
     );
     // the old multi-category lines are GONE from the report
     expect(text).not.toContain("Current-period:");
@@ -503,9 +507,10 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE section (simplifie
         overlapNote: null,
       },
     });
-    expect(text).toContain("Family — Leads: 10 · Bookings: 1 · Conversion: 10.0%");
+    expect(text).toContain("Family — Leads: 10");
+    expect(text).not.toContain("· Bookings: 1 ·");
     expect(text).toContain(
-      "Booking-period audit: 5 wins in week · Prior-period: 0 · Later-period: 2 · No reliable link: 2 · Coverage: 3/5 (60.00%) — detail on the Weekly tab",
+      "Booking-period audit: 5 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 0 · Later-period: 2 · No reliable link: 2 · Coverage: 3/5 (60.00%) — detail on the Weekly tab",
     );
   });
 });
