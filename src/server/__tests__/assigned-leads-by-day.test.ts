@@ -357,6 +357,48 @@ describe("assigned-leads-by-day battery — MemoryStore (owner table, week 2026-
     const fixture = (await Bun.file(new URL("./fixtures/assigned-leads-2026-09-21-to-27-by-day.csv", import.meta.url).pathname).text()).trimEnd().split("\n");
     expect(lines.length).toBe(fixture.length);
   });
+
+  test("form-source CSV rows use stable machine keys in genre — never a display label", () => {
+    // The four Forms Data tabs have no session genre and no rep: they are team
+    // rows only (never rep cells), and the CSV `genre` column holds the
+    // FORM_CSV_GENRE machine keys so the export stays machine-readable.
+    const mon = "2026-11-02";
+    const sun = addDays(mon, 6);
+    const dates = dateRange(mon, sun);
+    const formLead = (i: number, sheet: string, work: string): LeadRow => ({
+      id: `formkey-${sheet}-${i}`,
+      lead_type: "Lead",
+      source_date: work,
+      work_date: work,
+      contact_id: `fk-contact-${i}`,
+      assigned_rep_id: null,
+      source_sheet: sheet,
+    });
+    const grid = buildAssignedLeadsByDay({
+      leads: [
+        formLead(1, "google_ads_leads", dates[0]),
+        formLead(2, "google_ads_leads", dates[0]),
+        formLead(3, "website_applications", dates[2]),
+        formLead(4, "auction_register_certificate", dates[4]),
+        formLead(5, "alliance_activate_certificate", dates[6]),
+      ],
+      opps: [],
+      rosterReps: [],
+      nameById: new Map(),
+      mon,
+      sun,
+    });
+    expect(grid.rows).toEqual([]); // form leads NEVER land in rep cells
+    expect(grid.formTotals[0]).toBe(2);
+    const csv = assignedLeadsCsv(grid);
+    const lines = csv.trimEnd().split("\n");
+    expect(lines[0]).toBe("rep,day,genre,assigned_leads");
+    expect(lines).toContain("(no rep — team total),2026-11-02 Mon,google_ads,2");
+    expect(lines).toContain("(no rep — team total),2026-11-04 Wed,website,1");
+    expect(lines).toContain("(no rep — team total),2026-11-06 Fri,auction_certificate,1");
+    expect(lines).toContain("(no rep — team total),2026-11-08 Sun,alliance_certificate,1");
+    expect(csv).not.toContain("Google Ads Leads,"); // display label never the genre value
+  });
 });
 
 describe("repsPageData integration — the section rides the REAL loader chain (MemoryStore)", () => {

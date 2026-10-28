@@ -41,6 +41,19 @@ export const ASSIGNED_GENRE_LABELS: Record<AssignedGenre, string> = {
   fairyland: "Fairyland",
 };
 
+/**
+ * Stable machine key the CSV `genre` column holds for each FORM-WORKBOOK
+ * source (they have no session genre — never guessed into Family, and distinct
+ * from the Alliance/Auction CHANNEL buckets "Alliance"/"Auction"). Explained
+ * in the grid InfoTip so the export stays machine-readable end to end.
+ */
+export const FORM_CSV_GENRE: Record<FormSourceSheet, string> = {
+  auction_register_certificate: "auction_certificate",
+  google_ads_leads: "google_ads",
+  alliance_activate_certificate: "alliance_certificate",
+  website_applications: "website",
+};
+
 /** One rep × one day cell — all five genres, zero-filled. */
 export interface AssignedByDayCell {
   animalia: number;
@@ -282,10 +295,12 @@ export function assignedByDayLabel(date: string): string {
  * × genre in day order (Mon..Sun) then fixed genre order; zero cells are
  * omitted (the owner's files list only non-zero counts). Deterministic.
  *
- * FORM-WORKBOOK SOURCES (owner directive 2026-10-27): after the rep rows, one
- * row per form source × day with a non-zero count, rep labeled
- * "(no rep — team total)" — form leads have no rep, and the export must
- * account for all seven sources, not just the five genre/channel buckets.
+ * FORM-WORKBOOK SOURCES (owner directive 2026-10-27; machine keys 2026-10-28):
+ * after the rep rows, one row per form source × day with a non-zero count, rep
+ * labeled "(no rep — team total)" — form leads have no rep, and the export must
+ * account for all seven sources, not just the five genre/channel buckets. The
+ * `genre` column holds FORM_CSV_GENRE keys (auction_certificate, google_ads,
+ * alliance_certificate, website) — stable snake_case, never a display label.
  */
 export function assignedLeadsCsv(grid: AssignedByDayGrid): string {
   const lines: string[] = ["rep,day,genre,assigned_leads"];
@@ -301,7 +316,7 @@ export function assignedLeadsCsv(grid: AssignedByDayGrid): string {
   const FORM_TEAM_REP = "(no rep — team total)";
   for (const f of grid.formSources) {
     f.days.forEach((n, i) => {
-      if (n > 0) lines.push(`${csvField(FORM_TEAM_REP)},${csvField(assignedByDayLabel(grid.dates[i]))},${csvField(f.label)},${n}`);
+      if (n > 0) lines.push(`${csvField(FORM_TEAM_REP)},${csvField(assignedByDayLabel(grid.dates[i]))},${csvField(FORM_CSV_GENRE[f.source])},${n}`);
     });
   }
   return `${lines.join("\n")}\n`;

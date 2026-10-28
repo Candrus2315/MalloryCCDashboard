@@ -17,8 +17,10 @@ import {
 import {
   assignedLeadsCsv,
   type AssignedByDayCell,
+  type AssignedByDayFormRow,
   type AssignedByDayRow,
 } from "~/server/metrics/assigned-by-day";
+import type { FormSourceSheet } from "~/components/lead-sources";
 import {
   formatCount,
   formatDiff,
@@ -969,7 +971,7 @@ function RepsPage() {
             <span className="inline-flex items-center gap-1.5">
               <p className="section-heading">Assigned Leads by Day</p>
               <InfoTip
-                tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by the rep's HighLevel user (bucketed by ET created date). All dates America/New_York; unassigned sheet leads are excluded. Each cell stacks the count with its genre label — Animalia, Family or Fairyland — and Al · Au mark Alliance/Auction leads that rep owns. Team Total sums every lead owner shown, including the collapsed Other Lead Owners. CSV columns: rep, day, genre, assigned_leads."
+                tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by the rep's HighLevel user (bucketed by ET created date). All dates America/New_York; unassigned sheet leads are excluded. Each cell stacks the count with its genre label — Animalia, Family or Fairyland — and Al · Au mark Alliance/Auction leads that rep owns. Team Total sums every lead owner shown, including the collapsed Other Lead Owners. The four Forms Data tabs (Auction Certificates, Google Ads, Alliance Certificates, Website Applications) have no session genre and no rep, so they never enter rep cells — the labeled team row beneath the grid carries them, each source with its own colored tick on the breakdown line (the row's combined day counts stay unticked because sources mix inside a day). CSV columns: rep, day, genre, assigned_leads — rep rows use Animalia / Family / Fairyland / Alliance / Auction; the form-source rows (rep “(no rep — team total)”) use the machine keys auction_certificate, google_ads, alliance_certificate, website."
                 label="What Assigned Leads by Day shows"
               />
             </span>
@@ -1103,7 +1105,14 @@ function RepsPage() {
                 </tr>
                 <tr className="hover:bg-transparent">
                   <td colSpan={assignedGrid.dates.length + 2} className="py-1 text-[12px] text-(--text-muted)">
-                    {assignedGrid.formSources.filter((f) => f.total > 0).map((f) => `${f.label} ${formatInt(f.total)}`).join(" · ")}
+                    {/* Per-source markers (owner-flagged honesty 10/28): count
+                        primary, muted label + source tick — the same language as
+                        the genre ticks; the InfoTip maps ticks → CSV keys. */}
+                    <span className="flex flex-wrap gap-x-4 gap-y-1">
+                      {assignedGrid.formSources.filter((f) => f.total > 0).map((f) => (
+                        <FormSourceMarker key={f.source} f={f} />
+                      ))}
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -1142,6 +1151,33 @@ const GENRE_TICK: Record<"Animalia" | "Family" | "Fairyland", string> = {
   Family: "bg-(--text-muted)",
   Fairyland: "bg-violet-500 dark:bg-violet-400",
 };
+
+/**
+ * Neutral tick per FORM-WORKBOOK source (owner-flagged honesty 2026-10-28):
+ * the four Forms Data tabs have NO session genre, so each gets its own muted,
+ * theme-safe tick — the same visual language as the genre ticks above, never a
+ * color badge. Form leads are team totals (no rep) and never enter rep cells,
+ * so their markers live on the per-source line beneath the grid; the team
+ * row's combined day counts stay unticked because sources mix inside a day.
+ */
+const FORM_SOURCE_TICK: Record<FormSourceSheet, string> = {
+  auction_register_certificate: "bg-amber-500 dark:bg-amber-400",
+  google_ads_leads: "bg-sky-500 dark:bg-sky-400",
+  alliance_activate_certificate: "bg-teal-500 dark:bg-teal-400",
+  website_applications: "bg-emerald-500 dark:bg-emerald-400",
+};
+
+/** One form-source marker on the team-row breakdown line — count primary,
+    label small + muted with the source's tick (mirrors GenreCount). */
+function FormSourceMarker({ f }: { f: AssignedByDayFormRow }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="text-[12px] font-medium leading-none tabular-nums text-(--text-body)">{formatInt(f.total)}</span>
+      <span className={"h-[7px] w-[2px] shrink-0 rounded-full " + FORM_SOURCE_TICK[f.source]} aria-hidden="true" />
+      <span className="text-[11px] leading-none text-(--text-muted)">{f.label}</span>
+    </span>
+  );
+}
 
 /** One count + genre label line: the count is the primary element (larger,
     warm white), the label small and muted with its genre tick. */

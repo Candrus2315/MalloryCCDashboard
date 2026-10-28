@@ -292,6 +292,7 @@ describe("schedulerTick S4 wiring", () => {
 
 // ---------- 5. demo-row purge safety (backlog f3a6d591) ----------
 describe("demo-row purge safety (S4 bundled)", () => {
+  // ANCHOR 2026-09-21: pinned provider-shaped fixture rows (createdAt/createdTimeSource frozen) — static data only, this file reads no clock, so the 9/21 dates cannot drift.
   const providerAppt = (id: string): NormalizedAppointment => ({
     acuity_appointment_id: id,
     calendarId: "cal_1",

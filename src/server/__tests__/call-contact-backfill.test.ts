@@ -24,6 +24,7 @@ import { assertBookingInvariant, bookingCoverage, type AttributionRow, type Call
 
 // ---------- fixtures ----------
 
+// ANCHOR 2026-09-26 (pinned clock, threaded as `now` into every chunk run): fixtures sit in the week ending Sat 9/26 (calls 9/20–9/21) so attribution windows and checkpoint resume are deterministic — this file never reads the real clock.
 const NOW_ISO = "2026-09-26T12:00:00.000Z";
 const now = () => new Date(NOW_ISO);
 

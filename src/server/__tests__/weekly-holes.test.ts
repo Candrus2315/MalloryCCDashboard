@@ -50,6 +50,7 @@ const TU = (i: number): string => T(i + 1);
 
 describe("deriveWeeklyHoles (pure, RULING 8 — owner ruling 10/11)", () => {
   test("derived capacity: 10 slots/day, 9 on Tuesday = 69/week", () => {
+    // ANCHOR 2026-09-21: the owner's holes reference week (9/21–9/27: 49 booked, Thu 9/24 fully dark → 20 holes) — pinned historical weekStart, no relative-now() drift; to refresh, recompute expectations from the studio grid (10 slots/day, 9 Tue).
     const w = deriveWeeklyHoles({ weekStart: "2026-09-21", sessionAppts: [] });
     expect(w.capacity).toBe(69);
     expect(w.booked).toBe(0);

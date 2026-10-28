@@ -43,7 +43,11 @@ const specExampleBig3: Big3Input = {
   priority3: "1 on 1s",
 };
 
-/** The SPEC example, verbatim (owner's Daily CC Report format). */
+/**
+ * The SPEC example (owner's Daily CC Report format) — percentages at the
+ * ONE-decimal precision the owner flagged (2026-10-28): "63.6%", never
+ * "63.63%" and never float dust ("71.7857…%").
+ */
 const SPEC_EXAMPLE = [
   "Daily CC Report",
   "",
@@ -52,9 +56,9 @@ const SPEC_EXAMPLE = [
   "Key Driver: 79",
   "Left: 42",
   "Daily: 21",
-  "Conversion of Calls Over 2 Mins: 63.63%",
-  "Conversion of Assigned Leads: 13.18%",
-  "% of Appt Achieved: 53.16%",
+  "Conversion of Calls Over 2 Mins: 63.6%",
+  "Conversion of Assigned Leads: 13.2%",
+  "% of Appt Achieved: 53.2%",
   "",
   "Leads:",
   "Weekly Lead Budget: 700",
@@ -63,7 +67,7 @@ const SPEC_EXAMPLE = [
   "Animalia: 53",
   "Fairyland: 0",
   "Total Weekly Leads: 594",
-  "% of Budget Used: 84.86%",
+  "% of Budget Used: 84.9%",
   "Leads Remaining: 106",
   "",
   "Big 3:",
@@ -84,6 +88,27 @@ describe("report text formatting", () => {
     expect(formatPercent(0.5)).toBe("50.00%");
     expect(formatPercent(1)).toBe("100.00%");
     expect(formatPercent(0)).toBe("0.00%");
+  });
+
+  test("DAILY REPORT precision (owner-flagged): one decimal, never float dust", () => {
+    // The copied report's four percentages are formatPercent(x, 1): a
+    // repeating-decimal ratio renders clean ("71.8%"), never the raw float
+    // ("71.78571428571429%") and never the 2-decimal default ("71.79%").
+    expect(formatPercent(0.7178571428571428, 1)).toBe("71.8%"); // 503/7 % dust
+    expect(formatPercent(2 / 3, 1)).toBe("66.7%"); // repeating 6s
+    expect(formatPercent(43 / 79, 1)).toBe("54.4%"); // live goal-achievement shape
+    expect(formatPercent(0.5, 1)).toBe("50.0%");
+    expect(formatPercent(1, 1)).toBe("100.0%");
+    const text = buildDailyReportText(specExampleMetrics(), specExampleBig3);
+    for (const line of text.split("\n")) {
+      for (const match of line.matchAll(/(\d+\.\d+)%/g)) {
+        expect(match[1].split(".")[1]).toHaveLength(1); // exactly one decimal
+      }
+      expect(line).not.toMatch(/\d{3,}\.\d/); // no long float tails anywhere
+    }
+    expect(text).toContain("Conversion of Calls Over 2 Mins: 63.6%");
+    expect(text).toContain("% of Budget Used: 84.9%");
+    expect(text).not.toContain("63.63%");
   });
 
   test("counts stay integer-formatted; missing data renders as em dash", () => {
