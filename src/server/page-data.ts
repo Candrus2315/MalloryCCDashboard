@@ -1681,7 +1681,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // recent-completed-weeks strip (report week included — one fetch serves both).
   const seriesMon = addDays(lwMon, -7 * (FUNNEL_SERIES_WEEKS - 1));
 
-  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, monthlyGoalRow, reportWeekSessions, channelLeadOpps, winsJoinRaw, leadsJoin, leadsSeries, leadsCohort] =
+  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, reportWeekSessions, channelLeadOpps, winsJoinRaw, leadsJoin, leadsCohort] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
