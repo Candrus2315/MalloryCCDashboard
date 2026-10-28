@@ -921,14 +921,41 @@ function isCancelledApptRow(a: Pick<ApptWithClientIdentity, "cancelled" | "statu
  *                   sharing a phone10/email token with an ACTIVE paid row was
  *                   dropped from gross entirely), so the cancelled members of
  *                   `rows` are exactly those cancellations — Oct 19–25 = 5
- *                   (Kucera, Samuelson, Buckholz, Simmons, Kelly). Vallee
- *                   Bordinaro's cancelled row dedupes against her same-week
- *                   active rebook, so it is absent from gross AND from
- *                   cancellations — a reschedule, never a cancellation.
+ *                   (Kucera, Samuelson, Buckholz, Simmons, Kelly; live 6 with
+ *                   Babcock). Vallee Bordinaro's cancelled row dedupes against
+ *                   her same-week active rebook, so it is absent from gross
+ *                   AND from cancellations — a cancel-and-rebook, never a
+ *                   cancellation (lineage note below).
  *   net           = gross − cancellations. Oct 19–25 = 79.
  *
- * CROSS-WEEK CANCEL-AND-REBOOK EDGE RULE (documented; NOT present in the
- * current data): a booking created in week 1 that is cancelled and rebooked
+ * RESCHEDULE LINEAGE AUDIT (10/28, provider-doc + record grounded; artifacts
+ * /home/team/shared/reschedule-lineage-audit/):
+ *   - A normal Acuity reschedule RETAINS the appointment ID: the only
+ *     reschedule mechanism is PUT /appointments/{id}/reschedule ("Reschedule
+ *     an appointment to a different date or calendar"), an in-place mutation
+ *     of THAT object, and our sync upserts by acuity_appointment_id — the
+ *     row's created_at/created_business_date keep re-deriving from the
+ *     UNCHANGED datetimeCreated. Production credit therefore already rides
+ *     the original creation event BY CONSTRUCTION: session-date changes (any
+ *     number of them) never move gross, create gross in a new week, or count
+ *     as cancellations. Pinned by reschedule-lineage.test.ts.
+ *   - Acuity CANNOT represent a reschedule as cancelled+new: the same
+ *     endpoint answers `reschedule_canceled` ("Canceled appointments may not
+ *     be rescheduled") — a cancelled appointment is terminal, so a cancel+new
+ *     pair is always a genuine cancellation + a genuine NEW booking event,
+ *     never a disguised reschedule. No lineage/origin metadata exists in any
+ *     stored raw payload (825-object key census: only `canClientReschedule`,
+ *     a permission flag). Consequence: NO lineage heuristics — the owner's
+ *     decision gate forbids guessing, and none is needed; the cross-week
+ *     cancel-and-rebook edge rule below IS the correct treatment of every
+ *     cancel+new pair, and the same-week Vallee pair is the owner-confirmed
+ *     identity dedupe (84), not a reschedule.
+ *
+ *
+ * CROSS-WEEK CANCEL-AND-REBOOK EDGE RULE (documented; the 10/28 lineage
+ * audit found exactly THREE such pairs in the full paid history — Collins
+ * 17.9d, Lord 32.0d, O'Brien 75.1d apart — all genuine cancel+rebook): a
+ * booking created in week 1 that is cancelled and rebooked
  * in week 2 credits WEEK 1 with both the Gross booking and the Cancellation —
  * the cancelled row was created in week 1 and week 1 holds no active sibling
  * for it — while the rebook created in week 2 is week 2's own Gross. Credit
