@@ -288,6 +288,11 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       // the ONLY difference (its documented intent: "every other line …
       // untouched").
       sourcePerformance: data.report.sourcePerformance,
+      // Same doctrine for the owner-directed WEEKLY BOOKINGS PRODUCED line
+      // (directive 10/28, audit-79v84): the page's copy carries it, so the
+      // legacy baseline includes the SAME figure — the Holes line stays the
+      // only difference this comparison can find.
+      bookingsProduced: data.bookings.producedMonSun,
       holes: null,
     }).split("\n");
     const actual = data.report.reportText.split("\n");
