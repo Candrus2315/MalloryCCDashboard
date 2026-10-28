@@ -238,36 +238,43 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
     expect(text).toContain("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
     expect(text).toContain("Bookings (Month-to-Date, September 2026): 246/316 (−70) gross");
     expect(text).not.toContain("Bookings Produced (Mon–Sun):"); // superseded by the hero
-    // the LEAD SOURCE PERFORMANCE section (when provided) is Leads-only with the
-    // audit-only footnote
-    const withSources: WeeklyCcReportInput = {
-      ...input,
-      sourcePerformance: {
-        rows: [
-          { source: "family", label: "Family", leads: 273, bookings: 71, priorBookings: 0, laterBookings: 0, conv: 0.26 },
-          { source: "animalia", label: "Animalia", leads: 562, bookings: 0, priorBookings: 0, laterBookings: 0, conv: 0 },
-        ],
-        totalLeads: 957,
-        totalBookings: 79,
-        totalConv: 0.074,
-        totalCurrentBookings: 71,
-        totalPriorBookings: 3,
-        totalLaterBookings: 0,
-        trulyUnattributedBookings: 2,
-        sourceResolvedBookings: 77,
-        coverage: 77 / 79,
-        best: "Family",
-        worst: "Animalia",
-        overlapNote: null,
+  });
+
+  test("LEAD SOURCE PERFORMANCE is ERASED from the report (owner directive 10/28): no header, no per-source lead lines, no Total — Leads, no audit footnote — the section cannot render for ANY input", () => {
+    // The report text is checked on the fullest template (hero + MTD + holes +
+    // form-source lead lines) — the erased section has no input field anymore,
+    // so nothing can ever bring it back.
+    const text = buildWeeklyCcReportText({
+      ...baseInput(),
+      productionWeek: { gross: 84, cancellations: 5, net: 79, goal: 69 },
+      productionMonth: { gross: 246, goal: 316 },
+      holes: 7,
+      leads: {
+        family: 273, animalia: 562, fairyland: 66,
+        auction_register_certificate: 4, google_ads_leads: 39,
+        alliance_activate_certificate: 1, website_applications: 25,
+        total: 970,
       },
-    };
-    const t2 = buildWeeklyCcReportText(withSources);
-    expect(t2).toContain("Family — Leads: 273");
-    expect(t2).not.toContain("Family — Leads: 273 · Bookings:"); // Bookings/Conversion columns gone
-    expect(t2).toContain("Total — Leads: 957");
-    expect(t2).toContain(
-      "Booking-period audit: 79 active paid wins — audit view (excludes later cancellations; production = Gross/Net above) · Prior-period: 3 · No reliable link: 2 · Coverage: 77/79 (97.47%) — detail on the Weekly tab",
-    );
+    });
+    // the erased header + methodology sentence
+    expect(text).not.toContain("LEAD SOURCE PERFORMANCE");
+    expect(text).not.toContain("Leads = leads received for this work week");
+    // all seven per-source lead lines (the report's channel lines keep their
+    // own "Alliance — Leads: N · Bookings: N" shape — a per-source line would
+    // be "<Label> — Leads: N" without a Bookings pair)
+    for (const label of ["Family", "Animalia", "Fairyland", "Auction Certificates", "Google Ads Leads", "Alliance Certificates", "Website Applications"]) {
+      expect(text).not.toContain(`${label} — Leads:`);
+    }
+    // the Total line and the trailing audit footnote
+    expect(text).not.toContain("Total — Leads:");
+    expect(text).not.toContain("Booking-period audit:");
+    expect(text).not.toContain("detail on the Weekly tab");
+    // the kept sections survive: hero, MTD, the genre Leads block, Total
+    expect(text).toContain("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
+    expect(text).toContain("Bookings (Month-to-Date, September 2026): 246/316 (−70) gross");
+    expect(text).toContain("Fairyland: 66");
+    expect(text).toContain("Total: 970");
+    expect(text).toContain("Holes (empty slots): 7");
   });
 
   test("a stored Celebrate note overrides the computed default; sections persist verbatim", () => {
@@ -365,6 +372,11 @@ describe("weeklyPageData CC Report payload (MemoryStore, pinned today)", () => {
     expect(data.report.reportText).toContain("Website — Leads: — · Bookings: —");
     expect(data.report.reportText).toContain("Empty appointments:");
     expect(data.report.reportText).toContain("1st Call Completed through Monday:");
+    // ERASED section (owner directive 10/28): the copied report carries NO
+    // lead-source lines even though the page computes the audit payload
+    expect(data.report.reportText).not.toContain("LEAD SOURCE PERFORMANCE");
+    expect(data.report.reportText).not.toContain("Total — Leads:");
+    expect(data.report.reportText).not.toContain("Booking-period audit:");
   });
 
   test("no stored notes → empty map, celebrate default fills from last week's top performer", async () => {

@@ -1587,6 +1587,17 @@ export interface WeeklyPageData {
   channels: { alliance: number; auction: number; website: number | null };
   /** Alliance/Auction LEADS of the report week (GHL opportunities, created-date ET bucketing); website null. */
   channelLeads: { alliance: number; auction: number; website: number | null };
+  /**
+   * SECONDARY CHANNEL PANEL (owner directive 2026-10-28): paid bookings of the
+   * report week attributed to each Forms-Data channel source by the SOURCE
+   * ATTRIBUTION chain (nearest-lead-to-booking-creation, booking-period basis
+   * — current-, prior- AND later-period matches keep their resolved source, so
+   * each figure = bookings + priorBookings + laterBookings of that source's
+   * audit-table row). Sums the EXISTING audit table — the attribution engine
+   * is never re-derived. A channel with no attributed wins is an honest 0
+   * (dashes are reserved for "not computable", which this never is).
+   */
+  channelAttribution: { alliance: number; auction: number; website: number };
   /** Assigned-lead conversion: numerator = rep-attributed wins, denominator = source-dated assigned leads. */
   conversion: {
     overall: number | null;
@@ -1641,8 +1652,15 @@ export interface WeeklyPageData {
     celebrateDefault: string | null;
     /** The full CC Report text COPY REPORT emits (owner's template order). */
     reportText: string;
-    /** The LEAD SOURCE PERFORMANCE section input reportText carries (owner directive 10/27, Step 5). */
-    sourcePerformance: NonNullable<WeeklyCcReportInput["sourcePerformance"]>;
+    /**
+     * FORMER CC Report "LEAD SOURCE PERFORMANCE" section input (owner directive
+     * 2026-10-27). The owner then ordered the section ERASED from the copied
+     * report text (2026-10-28) — buildWeeklyCcReportText no longer accepts or
+     * renders any of it. The object survives here ONLY as the Weekly tab's
+     * collapsed Attribution detail input (best/worst lines read it); the report
+     * text carries nothing from it.
+     */
+    sourcePerformance: ReportSourcePerformance;
   };
   /**
    * BOOKINGS FROM LEADS (owner funnel, 2026-09-29): ALL paid bookings of the
@@ -1671,6 +1689,37 @@ export interface WeeklyPageData {
     lookbackDays: number;
   };
   warnings: string[];
+}
+
+/**
+ * Shape of the former CC Report LEAD SOURCE PERFORMANCE input (owner directive
+ * 2026-10-27). ERASED from the report text by the owner's 2026-10-28 directive
+ * — WeeklyCcReportInput no longer carries the field. The object is still built
+ * and exposed as data.report.sourcePerformance: the Weekly tab's collapsed
+ * Attribution detail (best/worst source lines) is its only remaining reader.
+ */
+export interface ReportSourcePerformance {
+  rows: {
+    source: string;
+    label: string;
+    leads: number;
+    bookings: number;
+    priorBookings: number;
+    laterBookings: number;
+    conv: number | null;
+  }[];
+  totalLeads: number;
+  totalBookings: number;
+  totalConv: number | null;
+  totalCurrentBookings: number;
+  totalPriorBookings: number;
+  totalLaterBookings: number;
+  trulyUnattributedBookings: number;
+  sourceResolvedBookings: number;
+  coverage: number | null;
+  best: string | null;
+  worst: string | null;
+  overlapNote: string | null;
 }
 
 /** Horizon (days) for the "first fully open day" scan — bounded, never infinite. */
@@ -1946,6 +1995,21 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const sourceTable = buildSourcePerformanceTable(leadsSdAudit, winsJoin, byWinSource, { start: lwMon, end: lwSun });
   const sourceBestWorst = bestWorstSourceLines(sourceTable.rows);
   const sourceOverlap = crossSourceOverlap(leadsJoin, SOURCE_JOIN_LOOKBACK_DAYS);
+  // SECONDARY CHANNEL PANEL (owner directive 2026-10-28): per-channel paid
+  // bookings from the SOURCE ATTRIBUTION chain — the SUM of the audit table's
+  // three per-source categories (current + prior + later; a matched lead keeps
+  // its resolved source in every category). NO re-derivation: read straight
+  // off sourceTable.rows. A channel with no row / no attributed wins is an
+  // honest 0 (the panel renders numbers, never "—").
+  const attributedForBucket = (b: SourceBucket): number => {
+    const r = sourceTable.rows.find((x) => x.source === b);
+    return r == null ? 0 : r.bookings + r.priorBookings + r.laterBookings;
+  };
+  const channelAttribution: WeeklyPageData["channelAttribution"] = {
+    alliance: attributedForBucket("alliance_activate_certificate"),
+    auction: attributedForBucket("auction_register_certificate"),
+    website: attributedForBucket("website_applications"),
+  };
 
   // ---- CALENDAR FILL ----
   // studio hours: availability_rules is the runtime mirror; fall back to the
@@ -2089,15 +2153,13 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   };
 
   const reportNotes = reportNotesRow?.notes ?? {};
-  // The LEAD SOURCE PERFORMANCE section input the copy carries (directive
-  // 10/27, Step 5). Exposed on data.report so the byte-identity tests (and the
-  // UI) can see exactly what the report renders without re-deriving it.
-  // LEAD SOURCE PERFORMANCE input (work-date alignment): the SAME cohort
-  // lines the Weekly tab's primary table shows (work-date cohort leads,
-  // cohort-to-date bookings, produced÷leads conversion). The auditability
-  // footnote's aggregates (wins in week, prior, later, no-link, coverage)
-  // still come from the UNTOUCHED booking-period audit table.
-  const reportSourcePerformance: NonNullable<WeeklyCcReportInput["sourcePerformance"]> = {
+  // FORMER report section input (owner directive 2026-10-27; ERASED from the
+  // report text 2026-10-28 — buildWeeklyCcReportText no longer takes it).
+  // Still built and exposed on data.report.sourcePerformance: the Weekly tab's
+  // collapsed Attribution detail reads best/worst from it. Work-date cohort
+  // lines from the Weekly tab's primary table; audit aggregates from the
+  // UNTOUCHED booking-period audit table.
+  const reportSourcePerformance: ReportSourcePerformance = {
     rows: sourceCohort
       .filter((r) => r.source !== "total")
       .map((r) => ({
@@ -2141,7 +2203,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     channels,
     channelLeads,
     leads: splitLeadsByType(leadsWeek),
-    sourcePerformance: reportSourcePerformance,
+    // sourcePerformance: REMOVED from the report input — the owner erased the
+    // LEAD SOURCE PERFORMANCE section from the CC Report (2026-10-28); the
+    // object lives on as data.report.sourcePerformance (Attribution detail).
     // WORK-DATE ALIGNMENT: the assigned cohort is the week's work-date cohort
     // and the bookings are cohort-to-date produced (credited by lead
     // assignment) — same doctrine as the LEAD SOURCE PERFORMANCE lines above;
@@ -2182,6 +2246,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     },
     channels,
     channelLeads,
+    channelAttribution,
     conversion: assignedConversion,
     leads: splitLeadsByType(leadsWeek),
     funnel,

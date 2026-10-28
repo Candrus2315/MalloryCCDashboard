@@ -95,54 +95,16 @@ export interface WeeklyCcReportInput {
     total: number;
   };
   /**
-   * LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, Step 5; SIMPLIFIED
-   * report presentation — same table as the Weekly tab): per-source leads (the
-   * week's source_date cohort), CURRENT-PERIOD bookings (matched lead's sheet
-   * date inside the week — the only conversion-numerator feed) and one-decimal
-   * cohort conversion (Bookings ÷ Leads). The report prints ONLY the simple
-   * per-source lines + Total + ONE compact auditability footnote (prior-period
-   * / later-period / no-link / coverage) — the three-category fields below all
-   * stay complete for the Weekly tab's detail view; nothing in the data layer
-   * changed. Selection rule unchanged: the contact's NEAREST sheet lead
-   * (nearest source_date to the booking's creation ET date, tie → most
-   * recently ingested). Truly Unattributed = no reliable lead link — the ONLY
-   * meaning of Unattributed. `best`/`worst`/`overlapNote` are carried for the
-   * Weekly tab's detail view (the report section no longer prints them).
-   * OPTIONAL: absent/null keeps the owner's template BYTE-IDENTICAL — the
-   * section only renders when the page passes it.
+   * [REMOVED — owner directive 2026-10-28, "erase LEAD SOURCE PERFORMANCE from
+   * the CC Report"]: the report NO LONGER accepts or renders any per-source
+   * section — no header, no methodology sentence, no per-source lead lines, no
+   * "Total — Leads" line, no booking-period audit footnote. The per-source
+   * Leads table lives ONLY on the Weekly page (Lead Source | Leads Received);
+   * the report keeps its hero (Gross / Cancellations / Net ± goal), the MTD
+   * gross line and its other non-source sections. The input field is GONE from
+   * the interface (the page no longer passes it) — nothing of the section
+   * survives in the report text for any caller.
    */
-  sourcePerformance?: {
-    rows: {
-      source: string;
-      label: string;
-      leads: number;
-      /** COHORT-TO-DATE (work-date alignment): cohort leads that produced a qualifying paid booking — the conversion numerator. */
-      bookings: number;
-      /** Unused on the cohort rows (always 0) — the prior/later audit lives in the footnote aggregates. */
-      priorBookings: number;
-      /** Unused on the cohort rows (always 0) — see priorBookings. */
-      laterBookings: number;
-      conv: number | null;
-    }[];
-    totalLeads: number;
-    /** ALL paid wins of the week = current + prior + later + truly unattributed. */
-    totalBookings: number;
-    /** COHORT conversion (cohort-to-date produced ÷ cohort leads) — the table-consistent total. */
-    totalConv: number | null;
-    /** Cohort-to-date produced bookings (the table-consistent numerator). */
-    totalCurrentBookings: number;
-    totalPriorBookings: number;
-    totalLaterBookings: number;
-    /** Wins with no reliable lead link — the ONLY "Unattributed" meaning. */
-    trulyUnattributedBookings: number;
-    /** Wins that resolved to a known lead/source. */
-    sourceResolvedBookings: number;
-    /** sourceResolvedBookings ÷ totalBookings; null when the week had no wins. */
-    coverage: number | null;
-    best: string | null;
-    worst: string | null;
-    overlapNote: string | null;
-  } | null;
   conversion: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
   /**
    * BOOKINGS FROM LEADS (owner request 2026-09-29; work-date alignment): the
@@ -263,44 +225,13 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   }
   lines.push(`Total: ${formatInt(leads.total)}`);
   lines.push("");
-  // LEAD SOURCE PERFORMANCE (owner directive 2026-10-27, SIMPLIFIED; Final
-  // Booking Logic 10/28): per source "Leads" ONLY — the work-date cohort
-  // counts (957 basis). The cohort-produced Bookings / Conversion columns
-  // LEAVE the report with the Weekly tab's panel (owner §6: cohort-produced
-  // bookings are no longer displayed; production reports as Gross /
-  // Cancellations / Net in the hero line). Auditability stays, in ONE compact
-  // footnote relabeled audit-only: the booking-period audit's active paid
-  // wins (later cancellations excluded — production = Gross/Net above),
-  // prior/later-period bookings kept under their resolved source, Truly
-  // Unattributed (no reliable sheet-lead link — the only "Unattributed"
-  // meaning) and coverage; the full three-category breakdown lives on the
-  // Weekly tab. Renders ONLY when the page provides the input — the template
-  // stays byte-identical otherwise.
-  if (input.sourcePerformance) {
-    const sp = input.sourcePerformance;
-    lines.push("LEAD SOURCE PERFORMANCE (report week):");
-    lines.push(
-      "Leads = leads received for this work week (work-date cohort, all seven sources). Production reports as Gross / Cancellations / Net in the hero line.",
-    );
-    for (const r of sp.rows) {
-      if (r.source === "total" || r.source === "unattributed") continue;
-      lines.push(`${r.label} — Leads: ${formatInt(r.leads)}`);
-    }
-    lines.push(`Total — Leads: ${formatInt(sp.totalLeads)}`);
-    const foot: string[] = [
-      `Booking-period audit: ${formatInt(sp.totalBookings)} active paid wins — audit view (excludes later cancellations; production = Gross/Net above)`,
-    ];
-    foot.push(`Prior-period: ${formatInt(sp.totalPriorBookings)}`);
-    if (sp.totalLaterBookings > 0) foot.push(`Later-period: ${formatInt(sp.totalLaterBookings)}`);
-    foot.push(`No reliable link: ${formatInt(sp.trulyUnattributedBookings)}`);
-    if (sp.coverage != null) {
-      foot.push(
-        `Coverage: ${formatInt(sp.sourceResolvedBookings)}/${formatInt(sp.totalBookings)} (${(sp.coverage * 100).toFixed(2)}%)`,
-      );
-    }
-    lines.push(`${foot.join(" · ")} — detail on the Weekly tab`);
-    lines.push("");
-  }
+  // LEAD SOURCE PERFORMANCE — ERASED from the report (owner directive
+  // 2026-10-28): the header, the methodology sentence, all seven per-source
+  // lead lines, the "Total — Leads" line and the trailing booking-period audit
+  // footnote are GONE. The report text contains NO lead-source section for any
+  // input; per-source leads live only on the Weekly page's table. The optional
+  // inputs stay optional elsewhere (productionWeek/productionMonth/holes…) so
+  // the template still renders byte-identical when they are absent.
   // WORK-DATE ALIGNMENT: the assigned cohort is the week's work-date cohort
   // and the bookings are cohort-to-date produced (credited by lead
   // assignment) — the rep-cohort doctrine the owner's standing directive

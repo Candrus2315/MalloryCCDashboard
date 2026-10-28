@@ -966,22 +966,29 @@ function WeeklyPage() {
           </p>
         </Panel>
 
-        {/* PREVIOUS WEEK — Alliance / Auction / Website (owner CC Report template).
-            Secondary by design: quieter type, narrower column. */}
+        {/* REPORT WEEK — Alliance / Auction / Website (owner CC Report template;
+            owner directive 10/28: real per-source data, not the pre-forms
+            GHL-pipeline basis). Secondary by design: quieter type, narrower
+            column. Leads = the Forms Data tabs in the work-date cohort (the
+            SAME numbers the Leads panel shows); Paid bookings = the SOURCE
+            ATTRIBUTION chain (nearest-lead-to-booking-creation, booking-period
+            basis) — including Website (an honest 0, never a dash). */}
         <Panel className="p-5 sm:p-6">
           <p className="kpi-label flex items-center gap-1.5">
-            Alliance / Auction / Website — previous week
+            Alliance / Auction / Website — report week ({formatDateHuman(data.week.start)} – {formatDateHuman(data.week.end)})
             <InfoTip
-              label="How the channel split is computed"
+              label="How the channel panel is computed"
               tip={
                 <>
-                  Bookings: paid wins of the week whose Acuity appointment type contains the channel name (case-insensitive)
-                  — same deposit-paid rule as every other figure. Leads: HighLevel opportunities on the channel's pipeline
-                  (Alliance / Alliance Booking Calls, Auction / Auction Booking Calls) whose created date falls in the week,
-                  America/New_York — synced from GoHighLevel, every pipeline status counts (open, won, lost, abandoned).
-                  Website shows "—" on both: no distinct Website booking type exists in Acuity and no Website lead source is
-                  synced — nothing is invented meanwhile. Bookings here count active paid wins (attribution basis); later
-                  cancellations excluded — the production block above shows Gross/Net.
+                  Leads: each channel's Forms Data workbook leads in the report week's WORK-DATE cohort — the SAME counts
+                  the Leads panel above shows for Alliance Activate Certificates, Auction Register Certificates and
+                  Website Applications (sheet dates the team works Mon–Fri of the report week; genre sheets not listed
+                  here). Paid bookings: the week's active paid wins attributed by the nearest-lead-to-booking-creation
+                  source rule — the booking-period audit basis (a win counts under the source of the contact's nearest
+                  sheet lead; current-, prior- and later-period matches all keep their resolved source; website now
+                  counts too — 0 when nothing attributed, never "—"). Deliberately different from the hero's Gross:
+                  Gross counts qualifying bookings CREATED in the week and includes later cancellations, while this
+                  column is the audit view (active paid wins of the week) — production is always the hero block above.
                 </>
               }
             />
@@ -996,18 +1003,14 @@ function WeeklyPage() {
             </thead>
             <tbody>
               {[
-                { name: "Alliance", leads: data.channelLeads.alliance, bookings: data.channels.alliance },
-                { name: "Auction", leads: data.channelLeads.auction, bookings: data.channels.auction },
-                { name: "Website", leads: data.channelLeads.website, bookings: data.channels.website },
+                { name: "Alliance", leads: data.leads.alliance_activate_certificate, bookings: data.channelAttribution.alliance },
+                { name: "Auction", leads: data.leads.auction_register_certificate, bookings: data.channelAttribution.auction },
+                { name: "Website", leads: data.leads.website_applications, bookings: data.channelAttribution.website },
               ].map((r) => (
                 <tr key={r.name} className="border-b border-(--table-border-weak)">
                   <td className="py-1.5 pr-2 text-(--text-body)">{r.name}</td>
-                  <td className={"py-1.5 text-right tabular-nums " + (r.leads == null ? "text-(--text-muted)" : "font-medium text-(--text-body)")}>
-                    {r.leads == null ? "—" : formatInt(r.leads)}
-                  </td>
-                  <td className={"py-1.5 text-right tabular-nums " + (r.bookings == null ? "text-(--text-muted)" : "font-medium text-(--text-body)")}>
-                    {r.bookings == null ? "—" : formatInt(r.bookings)}
-                  </td>
+                  <td className="py-1.5 text-right font-medium tabular-nums text-(--text-body)">{formatInt(r.leads)}</td>
+                  <td className="py-1.5 text-right font-medium tabular-nums text-(--text-body)">{formatInt(r.bookings)}</td>
                 </tr>
               ))}
             </tbody>
