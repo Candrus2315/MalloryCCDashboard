@@ -914,7 +914,7 @@ function RepsPage() {
           </summary>
           <div className="mt-3 space-y-2 text-[13px] text-(--text-body)">
             <p>
-              `Verdict audit — wins booked through this rep's attribution verdict in the selected range: ${formatInt(
+              {`Verdict audit — wins booked through this rep's attribution verdict in the selected range: ${formatInt(
                 data.repSourcePerformance.totalResolvedWins,
               )} total (the primary Bookings above count cohort leads produced to date, so the two views need not match) and ${formatInt(
                 data.repSourcePerformance.trulyUnattributedWins,
