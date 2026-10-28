@@ -87,6 +87,7 @@ import {
   buildSourcePerformanceTable,
   computeAssignedCohortProduced,
   computeLeadCohortOutcomes,
+  computeWeeklyBookingsProduced,
   crossSourceOverlap,
   resolveBookingSources,
   COHORT_WIN_LOOKBACK_DAYS,
@@ -1554,6 +1555,17 @@ export interface WeeklyPageData {
      * dashboard-only (never in the copied CC Report text).
      */
     dayByRep: WeeklyDayByRepGrid;
+    /**
+     * WEEKLY BOOKINGS PRODUCED (Mon–Sun) (owner directive 2026-10-28,
+     * formal audit audit-79v84): paid deposits on bookings CREATED in the
+     * Mon–Sun report week, identity-deduped per client (cancel-and-rebook
+     * counted once), CANCELLATIONS INCLUDED — the owner's production count
+     * (Oct 19–25 = 84, audit-exact). A SEPARATE count from `total` (the
+     * paid-AND-ACTIVE wins) and from the cohort table's Bookings column
+     * (cohort-to-date produced); computed from the SAME
+     * getWinsWithClientsBetween fetch — no new store query.
+     */
+    producedMonSun: number;
   };
   /**
    * Previous week's Alliance/Auction/Website split (owner CC Report template).
@@ -1761,6 +1773,13 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const winsCohort = filterApptsInWinBucketRange(winsJoinRaw, addDays(seriesMon, -COHORT_WIN_LOOKBACK_DAYS), today).filter(
     (a) => isBookingWin(a) && appointmentInScope(a, scope),
   );
+  // WEEKLY BOOKINGS PRODUCED (Mon–Sun) (owner directive 2026-10-28, formal
+  // audit audit-79v84): the SAME getWinsWithClientsBetween fetch (no new
+  // store query), sliced by ET CREATION date inside the week — paid
+  // deposit, identity-deduped per client, cancellations INCLUDED. A
+  // SEPARATE count: nothing above moves (winsLw/funnel/cohort chains are
+  // byte-untouched — the directive's hard constraints).
+  const bookingsProducedMonSun = computeWeeklyBookingsProduced(winsJoinRaw, lwMon, lwSun, scope);
   // PRIMARY per-source table (owner directive, work-date alignment): the
   // work-date cohort through computeLeadCohortOutcomes — Leads Received =
   // cohort leads per source; Bookings = DISTINCT cohort leads that produced
@@ -2077,6 +2096,9 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     monthKey,
     bookingsWeek: { total: winsLw.length, goal: weeklyGoal },
     bookingsMonth: { total: winsMtd.length, goal: monthlyGoal },
+    // WEEKLY BOOKINGS PRODUCED — the SAME number the payload returns beside
+    // the cohort table (tab <-> report digit identity invariant).
+    bookingsProduced: bookingsProducedMonSun.count,
     channels,
     channelLeads,
     leads: splitLeadsByType(leadsWeek),
@@ -2114,6 +2136,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       daily: lwDates.map((d) => ({ date: d, count: dailyMap.get(d) ?? 0 })),
       repRows: lwRepRows,
       dayByRep: lwDayByRep,
+      producedMonSun: bookingsProducedMonSun.count,
       unattributed: lwOwnership.unattributed,
     },
     channels,

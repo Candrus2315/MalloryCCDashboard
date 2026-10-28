@@ -46,6 +46,17 @@ export interface WeeklyCcReportInput {
   monthKey: string;
   bookingsWeek: { total: number; goal: number | null };
   bookingsMonth: { total: number; goal: number | null };
+  /**
+   * WEEKLY BOOKINGS PRODUCED (Mon–Sun) (owner directive 2026-10-28, formal
+   * audit audit-79v84): paid deposits on bookings CREATED in the Mon–Sun
+   * report week, identity-deduped per client (cancel-and-rebook counted once),
+   * CANCELLATIONS INCLUDED — the owner's production count, reconciled exactly
+   * (Oct 19–25 = 84). A SEPARATE count from Bookings (Week) above (paid-AND-
+   * ACTIVE wins) and from the cohort table's Bookings column (cohort-to-date
+   * produced); the same figure the Weekly tab renders beside the cohort table.
+   * OPTIONAL: absent/null keeps the template BYTE-IDENTICAL.
+   */
+  bookingsProduced?: number | null;
   /** Alliance/Auction BOOKINGS counted from Acuity types; website always null (no such Acuity type). */
   channels: ChannelSplitLine;
   /** Alliance/Auction LEADS from GHL opportunities (ET created-date week); website null (no synced source). */
@@ -173,6 +184,15 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   lines.push(`CC Report — Week of ${formatDateHumanFull(input.week.start)} – ${formatDateHumanFull(input.week.end)}`);
   lines.push("");
   lines.push(`Bookings (Week): ${goalVsActual(input.bookingsWeek.total, input.bookingsWeek.goal)}`);
+  // WEEKLY BOOKINGS PRODUCED (owner directive 2026-10-28, audit-79v84): ONE
+  // line — figure + the definition footnote (the same number the Weekly tab
+  // shows beside the cohort table; Weekly tab ↔ Report digit identity).
+  // Absent input keeps the template byte-identical.
+  if (input.bookingsProduced != null) {
+    lines.push(
+      `Bookings Produced (Mon–Sun): ${formatInt(input.bookingsProduced)} — paid deposits on bookings created in the Mon–Sun week · per client (cancel-and-rebook counted once) · cancellations included`,
+    );
+  }
   lines.push(`Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.bookingsMonth.total, input.bookingsMonth.goal)}`);
   lines.push("");
   lines.push(`Alliance — Leads: ${formatInt(input.channelLeads.alliance)} · Bookings: ${formatInt(input.channels.alliance)}`);

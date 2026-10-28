@@ -714,6 +714,28 @@ function WeeklyPage() {
               prior-period, no-link, coverage) is in the Attribution detail below.
             </p>
           </div>
+          {/* WEEKLY BOOKINGS PRODUCED (Mon–Sun) — owner directive 2026-10-28
+              (formal audit audit-79v84): ONE additive figure beside the
+              untouched cohort table. The owner's production count — paid
+              deposits on bookings CREATED in the Mon–Sun week, identity-deduped
+              per client (cancel-and-rebook counted once), CANCELLATIONS
+              INCLUDED — deliberately SEPARATE from the hero total (paid-AND-
+              active wins) and from the cohort table's Bookings column
+              (cohort-to-date produced). The SAME number the copied CC Report
+              carries (tab ↔ report digit identity). */}
+          <div className="mt-4 border-t border-(--table-border) pt-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <Eyebrow>Bookings Produced (Mon–Sun)</Eyebrow>
+              <p className="text-2xl font-semibold tabular-nums text-(--text-primary)">
+                {formatInt(data.bookings.producedMonSun)}
+              </p>
+            </div>
+            <p className="mt-1 text-xs leading-snug text-(--text-muted)">
+              Paid deposits on bookings created in the Mon–Sun week · per client (cancel-and-rebook counted once) ·
+              cancellations included — a separate count from the cohort Bookings column above and from the week's
+              win total.
+            </p>
+          </div>
           {/* ATTRIBUTION DETAIL (audit view — the owner directive keeps this
               out of the primary table but never deletes it): the full
               three-category BOOKING-PERIOD table (wins won in the week by the
