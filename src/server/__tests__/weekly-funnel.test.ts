@@ -1,23 +1,29 @@
 /**
- * BOOKINGS FROM LEADS funnel (owner request 2026-09-29) — deterministic tests.
+ * BOOKINGS FROM LEADS funnel (owner request 2026-09-29; WORK-DATE ALIGNMENT
+ * amendment) — deterministic tests.
  *
- * The owner's funnel view: for each Mon–Sun week,
- *   % = ALL paid bookings (booking_win_business_date in week, incl.
- *       online/unattributed) ÷ ALL sheet leads (source_date in week, all
- *       sheets). It is the OVERALL funnel rate, not a strict lead→booking
- *       attribution — online bookings, repeat clients and Alliance/Auction
- *       members never appear in the sheets.
+ * The owner's funnel view, cohort doctrine: for each Mon–Sun week,
+ *   % = the week's WORK-DATE lead cohort leads that have PRODUCED a
+ *       qualifying paid booking, COUNTED TO DATE (a booking made weeks later
+ *       still counts toward its ORIGINAL week — identity join + causality
+ *       guard, no verdict filter; online/unattributed wins count through the
+ *       lead identity)
+ *       ÷ the SAME week's work-date lead cohort (all sheets).
+ * It is the cohort-to-date rate — numerator and denominator are the same
+ * cohort — NOT a booking-period count (the operational Bookings-vs-goal
+ * tracker keeps its deposit-week wins).
  *
  *  1. recentCompletedWeekStarts (injected clock): the last N COMPLETED Mon–Sun
  *     weeks, oldest first — the in-progress week NEVER appears (any weekday,
  *     incl. the Monday-report day and a Sunday when the current week is still
  *     incomplete), and the owner's reference series reproduces exactly.
- *  2. weekFunnelRows bucketing: Sun/Mon week boundaries, pending (unpaid) rows
- *     never count, out-of-window wins ignored, zero-leads weeks → pct null
- *     (never a fabricated 0%), leads-with-no-wins → a true 0%.
+ *  2. weekFunnelRows bucketing (the booking-period flavor, kept for its
+ *     callers): Sun/Mon week boundaries, pending (unpaid) rows never count,
+ *     out-of-window wins ignored, zero-leads weeks → pct null (never a
+ *     fabricated 0%), leads-with-no-wins → a true 0%.
  *  3. weeklyPageData through the PageDeps seam (MemoryStore + pinned today):
- *     the funnel card counts (all bookings incl. unattributed ÷ all leads),
- *     the 5-row series ending at the report week, no in-progress week row.
+ *     the funnel card (cohort-to-date produced ÷ cohort), the 5-row cohort
+ *     series ending at the report week, no in-progress week row.
  *  4. COPY REPORT: "Bookings from Leads: X%" sits directly after
  *     "Conversion of Assigned Leads" (template order otherwise unchanged).
  */
@@ -31,10 +37,10 @@ import type { AppointmentRow, LeadRow } from "../metrics/compute";
 const TODAY = "2026-09-29"; // Tue — the operating day of the live acceptance checks
 const H = (date: string, time: string) => new Date(`${date}T${time}:00.000-04:00`).toISOString(); // EDT
 
-const win = (id: string, winDate: string | null, createdDate: string, paid = true): AppointmentRow => ({
+const win = (id: string, winDate: string | null, createdDate: string, paid = true, contactId: string | null = null): AppointmentRow => ({
   id,
   acuity_appointment_id: id, // the memory store keys appointments on the Acuity id — omitting it would collapse every upsert
-  contact_id: null,
+  contact_id: contactId,
   calendar_id: null,
   appointment_type: "Portrait Session",
   appointment_datetime: H(createdDate, "14:00"),
@@ -46,12 +52,12 @@ const win = (id: string, winDate: string | null, createdDate: string, paid = tru
   cancelled: false,
 });
 
-const lead = (id: string, sourceDate: string): LeadRow => ({
+const lead = (id: string, sourceDate: string, contactId: string | null = null): LeadRow => ({
   id,
   lead_type: "family",
   source_date: sourceDate,
   work_date: sourceDate,
-  contact_id: null,
+  contact_id: contactId,
   assigned_rep_id: null,
   source_sheet: "family",
   source_id: id,
@@ -141,35 +147,36 @@ describe("weekFunnelRows (pure bucketing)", () => {
 /**
  * Seed across the whole 5-week series (TODAY = Tue 2026-09-29, series floor
  * 2026-08-24, report week 9/21–9/27). No attributions are seeded at all —
- * every win is unattributed/online, which the funnel MUST still count
- * (owner definition: ALL bookings). Shape mirrors the owner's reference:
- *  8/24 week: 3 leads, 1 win → 33.33%
- *  8/31 week: 0 leads, 0 wins → —
- *  9/07 week: 2 leads, 0 wins → 0.00%
- *  9/14 week: 1 lead, 0 wins → 0.00%
- *  9/21 week: 4 leads, 2 wins → 50.00%   (the report week / funnel card)
+ * every win is unattributed/online, which the cohort-to-date funnel MUST
+ * still count through the lead identity alone (no verdict filter). Identity
+ * wires each produced lead to its causal win (created ≥ lead source_date):
+ *  8/24 week: 3 leads, 1 produced (f-l2) → 33.33%
+ *  8/31 week: 0 leads, 0 produced → —
+ *  9/07 week: 2 leads, 0 produced → 0.00%
+ *  9/14 week: 1 lead, 0 produced → 0.00%
+ *  9/21 week: 4 leads, 2 produced (f-l7, f-l9) → 50.00% (the report week / funnel card)
  *  9/28 week: 1 win — the IN-PROGRESS week, must appear NOWHERE.
  */
 async function seedFunnelStore(): Promise<MemoryStore> {
   const store = new MemoryStore();
   await store.saveSettings({ acuity: { calendars_included: [], types_included: [] } });
   await store.upsertAppointments([
-    win("f-w1", "2026-08-26", "2026-08-26"), // Aug 24–30 week
-    win("f-w5a", "2026-09-22", "2026-09-22"), // report week (no attribution rows → online)
-    win("f-w5b", "2026-09-26", "2026-09-26"), // report week, unattributed
+    win("f-w1", "2026-08-26", "2026-08-26", true, "k-f2"), // Aug 24–30 week — produced f-l2
+    win("f-w5a", "2026-09-22", "2026-09-22", true, "k-f7"), // report week (no attribution rows → online) — produced f-l7
+    win("f-w5b", "2026-09-26", "2026-09-26", true, "k-f9"), // report week, unattributed — produced f-l9
     win("f-pending", null, "2026-09-23", false), // pending — never counts
     win("f-current", "2026-09-28", "2026-09-28"), // in-progress week — excluded everywhere
   ]);
   await store.upsertLeads([
     lead("f-l1", "2026-08-24"),
-    lead("f-l2", "2026-08-26"),
+    lead("f-l2", "2026-08-26", "k-f2"),
     lead("f-l3", "2026-08-30"), // Aug 24–30: 3 leads
     lead("f-l4", "2026-09-08"),
     lead("f-l5", "2026-09-13"), // Sep 7–13: 2 leads
     lead("f-l6", "2026-09-20"), // Sep 14–20: 1 lead
-    lead("f-l7", "2026-09-21"),
+    lead("f-l7", "2026-09-21", "k-f7"),
     lead("f-l8", "2026-09-23"),
-    lead("f-l9", "2026-09-25"),
+    lead("f-l9", "2026-09-25", "k-f9"),
     lead("f-l10", "2026-09-27"), // report week: 4 leads
     lead("f-l11", "2026-09-28"), // in-progress week — excluded everywhere
   ]);
@@ -177,11 +184,12 @@ async function seedFunnelStore(): Promise<MemoryStore> {
 }
 
 describe("weeklyPageData funnel wiring (MemoryStore, pinned today)", () => {
-  test("funnel card: ALL paid bookings (unattributed included) ÷ ALL sheet leads of the report week", async () => {
+  test("funnel card: cohort-to-date PRODUCED ÷ the work-date lead cohort (unattributed wins still count — identity, not verdict)", async () => {
     const store = await seedFunnelStore();
     const data = await weeklyPageData({ store, today: TODAY });
-    expect(data.funnel.wins).toBe(2); // both report-week wins count — attribution is irrelevant here
-    expect(data.funnel.leads).toBe(4);
+    expect(data.funnel.wins).toBe(2); // operational deposit-week wins (goal tracker) — unchanged semantics
+    expect(data.funnel.leads).toBe(4); // the report week's work-date cohort
+    expect(data.funnel.produced).toBe(2); // DISTINCT cohort leads with a causal win ever: f-l7 + f-l9
     expect(data.funnel.pct ?? -1).toBeCloseTo(0.5, 6);
   });
 
@@ -196,8 +204,10 @@ describe("weeklyPageData funnel wiring (MemoryStore, pinned today)", () => {
     expect(rows[2]).toEqual({ weekStart: "2026-09-07", weekEnd: "2026-09-13", leads: 2, wins: 0, pct: 0 });
     expect(rows[3]).toEqual({ weekStart: "2026-09-14", weekEnd: "2026-09-20", leads: 1, wins: 0, pct: 0 });
     // the last row IS the report week and matches the funnel card exactly
+    // (fixture coincidence that produced = deposit-week wins = 2; the series
+    // row is cohort-to-date produced, the card's `wins` stays operational)
     expect(rows[4].weekStart).toBe(data.week.start);
-    expect(rows[4].wins).toBe(data.funnel.wins);
+    expect(rows[4].wins).toBe(data.funnel.produced);
     expect(rows[4].leads).toBe(data.funnel.leads);
     expect(rows[4].pct).toBe(data.funnel.pct);
   });
@@ -208,7 +218,7 @@ describe("weeklyPageData funnel wiring (MemoryStore, pinned today)", () => {
     const lines = data.report.reportText.split("\n");
     const i = lines.findIndex((l) => l.startsWith("Conversion of Assigned Leads:"));
     expect(i).toBeGreaterThan(-1);
-    expect(lines[i + 1]).toBe("Bookings from Leads: 50.00%"); // 2 wins / 4 leads
+    expect(lines[i + 1]).toBe("Bookings from Leads: 50.00%"); // 2 produced / 4 cohort leads
   });
 });
 

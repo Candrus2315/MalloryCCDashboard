@@ -1807,6 +1807,27 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   const assignedFamOutcome = genreOutcome("family");
   const assignedAniOutcome = genreOutcome("animalia");
   const assignedFaiOutcome = genreOutcome("fairyland");
+  // TAB <-> REPORT DIGIT IDENTITY (work-date alignment): ONE conversion object
+  // feeds BOTH the CC report's "Conversion of Assigned Leads" line and the
+  // returned payload's conversion block — they can never disagree.
+  const assignedConversion = {
+    overall: conversionRate(assignedTotal.bookedLeads, assignedTotal.leads),
+    family: conversionRate(assignedFamOutcome.bookedLeads, assignedFamOutcome.leads),
+    animalia: conversionRate(assignedAniOutcome.bookedLeads, assignedAniOutcome.leads),
+    fairyland: conversionRate(assignedFaiOutcome.bookedLeads, assignedFaiOutcome.leads),
+    numerator: {
+      overall: assignedTotal.bookedLeads,
+      family: assignedFamOutcome.bookedLeads,
+      animalia: assignedAniOutcome.bookedLeads,
+      fairyland: assignedFaiOutcome.bookedLeads,
+    },
+    denominator: {
+      overall: assignedTotal.leads,
+      family: assignedFamOutcome.leads,
+      animalia: assignedAniOutcome.leads,
+      fairyland: assignedFaiOutcome.leads,
+    },
+  };
 
   // ---- MTD ----
   const mtdOwnership = splitWinOwnership(winsMtd, attributions);
@@ -2060,12 +2081,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     channelLeads,
     leads: splitLeadsByType(leadsWeek),
     sourcePerformance: reportSourcePerformance,
-    conversion: {
-      overall: conversionRate(lwOwnership.repWins.length, assigned.length),
-      family: conversionRate(repWinsFam, assignedFam.length),
-      animalia: conversionRate(repWinsAni, assignedAni.length),
-      fairyland: conversionRate(repWinsFai, assignedFai.length),
-    },
+    // WORK-DATE ALIGNMENT: the assigned cohort is the week's work-date cohort
+    // and the bookings are cohort-to-date produced (credited by lead
+    // assignment) — same doctrine as the LEAD SOURCE PERFORMANCE lines above;
+    // the SAME object the payload returns (tab <-> report digit identity).
+    conversion: assignedConversion,
     funnel,
     calendar,
     // OWNER HOLES of the report week (9/30) — fills the "Holes" placeholder
@@ -2098,27 +2118,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     },
     channels,
     channelLeads,
-    conversion: {
-      // COHORT-TO-DATE doctrine (work-date alignment): bookings produced by
-      // the week's assigned work-date cohort leads (to date, credited by
-      // lead assignment) ÷ that cohort.
-      overall: conversionRate(assignedTotal.bookedLeads, assignedTotal.leads),
-      family: conversionRate(assignedFamOutcome.bookedLeads, assignedFamOutcome.leads),
-      animalia: conversionRate(assignedAniOutcome.bookedLeads, assignedAniOutcome.leads),
-      fairyland: conversionRate(assignedFaiOutcome.bookedLeads, assignedFaiOutcome.leads),
-      numerator: {
-        overall: assignedTotal.bookedLeads,
-        family: assignedFamOutcome.bookedLeads,
-        animalia: assignedAniOutcome.bookedLeads,
-        fairyland: assignedFaiOutcome.bookedLeads,
-      },
-      denominator: {
-        overall: assignedTotal.leads,
-        family: assignedFamOutcome.leads,
-        animalia: assignedAniOutcome.leads,
-        fairyland: assignedFaiOutcome.leads,
-      },
-    },
+    conversion: assignedConversion,
     leads: splitLeadsByType(leadsWeek),
     funnel,
     funnelSeries,
