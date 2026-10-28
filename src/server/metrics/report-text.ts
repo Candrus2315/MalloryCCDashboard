@@ -7,8 +7,10 @@
  *  - COPY FOR SLACK   → base text fenced in a code block (pastes cleanly)
  *
  * Pure module: no DB, no clock, no React. Snapshot-tested against the SPEC
- * example. Formatting rules: percentages 2 decimals (63.63%), counts as plain
- * integers, missing data renders as "—" (never a plausible number).
+ * example. Formatting rules: percentages ONE decimal ("63.6%" — the owner's
+ * clean-precision convention 2026-10-28, same as the Team/Reps pages; the
+ * formatPercent 2-decimal default remains for other consumers), counts as
+ * plain integers, missing data renders as "—" (never a plausible number).
  */
 
 import type { DailyReportMetrics } from "./compute";
@@ -145,9 +147,12 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     `Key Driver: ${formatInt(m.weeklyBookingGoal)}`,
     `Left: ${formatInt(m.bookingsLeft)}`,
     `Daily: ${formatInt(m.dailyBookingsNeeded)}`,
-    `Conversion of Calls Over 2 Mins: ${formatPercent(m.conversationConversion)}`,
-    `Conversion of Assigned Leads: ${formatPercent(m.assignedLeadConversion)}`,
-    `% of Appt Achieved: ${formatPercent(m.goalAchievement)}`,
+    // ONE-DECIMAL convention (owner-flagged precision 2026-10-28): every
+    // percentage in the copied report renders like the page above — one
+    // decimal, half-up, never float dust (e.g. "71.8%", not 71.7857…%).
+    `Conversion of Calls Over 2 Mins: ${formatPercent(m.conversationConversion, 1)}`,
+    `Conversion of Assigned Leads: ${formatPercent(m.assignedLeadConversion, 1)}`,
+    `% of Appt Achieved: ${formatPercent(m.goalAchievement, 1)}`,
     "",
     "Leads:",
     `Weekly Lead Budget: ${formatInt(m.weeklyLeadBudget)}`,
@@ -167,7 +172,7 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
         ]
       : []),
     `Total Weekly Leads: ${formatInt(m.weeklyLeads)}`,
-    `% of Budget Used: ${formatPercent(m.leadBudgetUsedPct)}`,
+    `% of Budget Used: ${formatPercent(m.leadBudgetUsedPct, 1)}`,
     `Leads Remaining: ${formatInt(m.leadsRemaining)}`,
     "",
     "Big 3:",

@@ -148,7 +148,9 @@ function DailyReportPage() {
               <div className="mt-6">
                 <RatioBar ratio={m.goalAchievement} />
                 <p className="kpi-sub mt-2 tabular-nums">
-                  {formatPercent(m.goalAchievement)} of goal · {formatInt(m.bookingsLeft)} remaining
+                  {/* ONE-DECIMAL convention (owner-flagged precision 10/28) —
+                      same as Team/Reps: formatPercent(x, 1), never raw floats. */}
+                  {formatPercent(m.goalAchievement, 1)} of goal · {formatInt(m.bookingsLeft)} remaining
                 </p>
               </div>
             </div>
@@ -169,7 +171,7 @@ function DailyReportPage() {
                   <dt className="text-[13px] font-medium text-(--text-body)">Conversation Conversion</dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-                      {formatPercent(m.conversationConversion)}
+                      {formatPercent(m.conversationConversion, 1)}
                     </span>
                     <span className="kpi-sub">{anchorDayPhrase(m.anchorDate, m.reportDate)}</span>
                   </dd>
@@ -178,7 +180,7 @@ function DailyReportPage() {
                   <dt className="text-[13px] font-medium text-(--text-body)">Assigned Lead Conversion</dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-                      {formatPercent(m.assignedLeadConversion)}
+                      {formatPercent(m.assignedLeadConversion, 1)}
                     </span>
                     <span className="kpi-sub">{anchorDayPhrase(m.anchorDate, m.reportDate)}</span>
                   </dd>
@@ -210,7 +212,7 @@ function DailyReportPage() {
               <div className="mt-5">
                 <RatioBar ratio={m.leadBudgetUsedPct} />
                 <p className="kpi-sub mt-2 tabular-nums">
-                  {formatPercent(m.leadBudgetUsedPct)} used · {formatInt(m.leadsRemaining)} remaining
+                  {formatPercent(m.leadBudgetUsedPct, 1)} used · {formatInt(m.leadsRemaining)} remaining
                 </p>
               </div>
             </div>
