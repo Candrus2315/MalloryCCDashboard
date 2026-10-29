@@ -105,16 +105,22 @@ describe("boot-seed wedge ② — ensureSchema bounded cap + reset", () => {
     expect(DEFAULT_SCHEMA_STMT_TIMEOUT_MS).toBe(90_000);
   });
 
-  test("healthy path byte-compatible: full sweep runs in order, resolves, stays memoized", async () => {
+  test("healthy path: version check then the full baseline in order, resolves, stays memoized", async () => {
     const { sql, executed } = makeFakeSql();
     const pg = makePg(sql, DEFAULT_SCHEMA_STMT_TIMEOUT_MS);
     await pg.ensureSchema();
-    // the real DDL sweep is ~80-200 statements starting with the users table
-    expect(executed.length).toBeGreaterThan(50);
-    expect(executed[0]).toContain("CREATE TABLE IF NOT EXISTS users");
+    // ensureSchema now drives the MIGRATION RUNNER (MIGRATION-PLAN §2): marker
+    // bootstrap + version read, then the 140-statement baseline — the cap and
+    // reset semantics below are unchanged. An already-migrated fake (records
+    // present) would run ZERO baseline statements — pinned in
+    // migration-runner.test.ts.
+    expect(executed.length).toBeGreaterThan(140);
+    expect(executed[0]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
+    expect(executed[1].startsWith("SELECT version, name, checksum")).toBe(true);
+    expect(executed[2]).toContain("CREATE TABLE IF NOT EXISTS users");
     // memoized: a second call re-runs NOTHING
     await pg.ensureSchema();
-    expect(executed.length).toBeGreaterThan(50); // unchanged by the second call
+    expect(executed.length).toBeGreaterThan(140); // unchanged by the second call
     expect(executed.filter((s) => s === executed[0]).length).toBe(1);
     await pg.close();
   });
