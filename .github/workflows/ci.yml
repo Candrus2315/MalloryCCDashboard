@@ -1,0 +1,36 @@
+name: CI
+
+# Hard gate against a broken main: typecheck → full test suite → production build.
+# Runs on every pull request and on every push to main. The job fails if any
+# step exits non-zero (default GitHub Actions step semantics — no continue-on-error).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    name: typecheck · test:all · build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bun 1.4.2 (pinned to the repo's lockfile/runtime version)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+          cached: true # dependency cache keyed on bun.lock
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: TypeScript validation
+        run: bun run typecheck
+
+      - name: Full test suite
+        run: bun run test:all
+
+      - name: Production build
+        run: bun run build
