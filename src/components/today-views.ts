@@ -2,15 +2,20 @@
  * Presentation-side compositions for the Today-page redesign
  * (design/today-redesign-spec.md §0 + §6). EVERYTHING here is arithmetic on
  * numbers `buildTodayMetrics` already produced — no new metrics, no new
- * queries, no metric redefinitions. Team means reuse the EXACT semantics of
- * the metrics layer's `buildTeamAverages`:
- *   counts  = mean over all OTHER reps (zeros included)
- *   rates   = mean over other reps that have a value, null when none
- *   self    = always excluded
+ * queries, no metric redefinitions. Team-rate comparisons use the POOLED
+ * semantics of `pooledBenchmarkExcluding` (owner ruling 10/29, WRONG-4):
+ *   pooled rate = Σ(other active reps' numerators) ÷ Σ(their denominators)
  * Deltas reuse the existing `teamDifference` units: rates in percentage
  * points (pp), counts in % difference, null when either side is null.
  */
-import { daysLeftInWorkWeek, weekElapsedWorkFraction, weekday, weekdayName } from "~/server/date-logic";
+import {
+  daysLeftInWorkWeek,
+  daysLeftInWorkWeekAt,
+  weekElapsedWorkFraction,
+  weekElapsedWorkFractionAt,
+  weekday,
+  weekdayName,
+} from "~/server/date-logic";
 import {
   MIN_CONVERSION_SAMPLE,
   TREND_MIN_DENOMINATOR,
@@ -99,14 +104,23 @@ export interface AttentionNote {
   href?: string;
 }
 
-/** OWNER-CORRECTED: working days only (Mon–Fri) — Mon 1/5 … Fri 5/5; Sat/Sun 5/5. */
-export function weekElapsedFraction(reportDate: string): number {
-  return weekElapsedWorkFraction(reportDate);
+/**
+ * OWNER-CORRECTED: working days only (Mon–Fri) — Mon 1/5 … Fri 5/5; Sat/Sun 5/5.
+ * OWNER RULING 10/29 (WRONG-3): with the ET clock (`etNowMinutes`, from the
+ * Today payload), expected-by-now uses the CUTOFF-AWARE day-state — before
+ * 18:30 ET today is still an open day (completed days only); at/after 18:30 ET
+ * today counts as completed (full-day expectation banked). Without a clock
+ * (legacy callers/tests) the pre-ruling always-counts-today semantics hold.
+ */
+export function weekElapsedFraction(reportDate: string, etNowMinutes?: number): number {
+  return etNowMinutes == null
+    ? weekElapsedWorkFraction(reportDate)
+    : weekElapsedWorkFractionAt(reportDate, etNowMinutes);
 }
 
 /** Spec §0 composition: expected bookings to date for a weekly goal. */
-export function expectedToDate(goal: number, reportDate: string): number {
-  return goal * weekElapsedFraction(reportDate);
+export function expectedToDate(goal: number, reportDate: string, etNowMinutes?: number): number {
+  return goal * weekElapsedFraction(reportDate, etNowMinutes);
 }
 
 // ---------- TODAY'S TARGET pace presentation (owner spec 2026-10-29) ----------
@@ -244,31 +258,6 @@ export function todayPaceView(input: {
   };
 }
 
-const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-
-export interface TeamColumnMeans {
-  totalCalls: number | null;
-  totalBookings: number | null;
-  conversationConversion: number | null;
-  /** other reps carrying a non-null conversationConversion — the TEAMDENOM gate for attention rules §6.3-4/5 */
-  conversationOthers: number;
-  assignedLeadConversion: number | null;
-}
-
-/** Per-column team means over `rows`, excluding `repId` (buildTeamAverages semantics). */
-export function teamMeansExcluding(rows: RepPerformanceRow[], repId: string): TeamColumnMeans {
-  const others = rows.filter((r) => r.repId !== repId);
-  const convOthers = others.map((r) => r.conversationConversion).filter((v): v is number => v != null);
-  const assignedOthers = others.map((r) => r.assignedLeadConversion).filter((v): v is number => v != null);
-  return {
-    totalCalls: mean(others.map((r) => r.totalCalls)),
-    totalBookings: mean(others.map((r) => r.totalBookings)),
-    conversationConversion: mean(convOthers),
-    conversationOthers: convOthers.length,
-    assignedLeadConversion: mean(assignedOthers),
-  };
-}
-
 export type DeltaUnit = "pct" | "pts";
 
 /** Same units as the metrics layer's teamDifference: pts for rates, % for counts. */
@@ -345,13 +334,21 @@ interface ScoredNote extends AttentionNote {
  * Management Attention notes per spec §6.3 — per rep, FIRST MATCH WINS.
  * Panel order: at-risk first (behind pace by largest goal gap, then
  * conversion deficit in pts), positives last, capped at 5 (positives drop
- * first). Conversion rules require the team mean to stand on ≥
- * TREND_MIN_DENOMINATOR value-carrying reps (the spec's TEAMDENOM ≥ 3) —
- * the rep side is already null when its denominator is below it.
+ * first). The conversion rule compares against the team's POOLED rate
+ * (owner ruling 10/29, WRONG-4) and requires ≥ TREND_MIN_DENOMINATOR other
+ * active reps carrying a qualifying-call denominator (the spec's TEAMDENOM
+ * ≥ 3) plus a non-zero pooled denominator — a thin team basis never verdicts.
  */
-export function attentionNotes(rows: RepPerformanceRow[], reportDate: string): AttentionNote[] {
-  const weekElapsed = weekElapsedFraction(reportDate);
-  const daysLeft = daysLeftInWorkWeek(reportDate); // working days only (Mon–Fri)
+export function attentionNotes(rows: RepPerformanceRow[], reportDate: string, etNowMinutes?: number): AttentionNote[] {
+  // OWNER RULING 10/29 (WRONG-3): when the payload clock is threaded, BOTH the
+  // expected-by-now fraction and the remaining-days copy use the SAME 18:30
+  // day-state as the pace figures — before the cutoff today is an open day
+  // (expected = completed days, days-left counts today); at/after the cutoff
+  // today is completed (full-day expectation banked, days-left drops today).
+  // No clock (legacy/tests) → the pre-ruling semantics, unchanged.
+  const weekElapsed = weekElapsedFraction(reportDate, etNowMinutes);
+  const daysLeft =
+    etNowMinutes == null ? daysLeftInWorkWeek(reportDate) : daysLeftInWorkWeekAt(reportDate, etNowMinutes);
   const dayWord = daysLeft === 1 ? "day" : "days";
   const pct1 = (v: number) => `${(v * 100).toFixed(1)}%`;
   const scored: ScoredNote[] = [];
@@ -393,23 +390,39 @@ export function attentionNotes(rows: RepPerformanceRow[], reportDate: string): A
         text:
           daysLeft === 0
             ? `${r.name} is behind pace — ${r.actual} of ${r.goal} bookings, and the work week is done. Pace resumes Monday.`
-            : `${r.name} is behind pace — ${r.actual} of ${r.goal} bookings with ${daysLeft} ${dayWord} left (expected ≈ ${expectedToDate(r.goal, reportDate).toFixed(1)} by now).`,
+            : `${r.name} is behind pace — ${r.actual} of ${r.goal} bookings with ${daysLeft} ${dayWord} left (expected ≈ ${expectedToDate(r.goal, reportDate, etNowMinutes).toFixed(1)} by now).`,
       });
       continue;
     }
-    // 4/5. Conversion vs team (both non-null, TEAMDENOM ≥ 3).
-    const tm = teamMeansExcluding(rows, r.repId);
-    const teamConvValid = tm.conversationConversion != null && tm.conversationOthers >= TREND_MIN_DENOMINATOR;
-    if (teamConvValid && r.conversationConversion != null && r.conversationConversion < (tm.conversationConversion as number)) {
-      const strongVolume = r.totalCalls >= (tm.totalCalls ?? 0) && (tm.totalCalls ?? 0) > 0;
+    // 4/5. Conversion vs the team's POOLED rate (owner ruling 10/29, WRONG-4):
+    // Σ other ACTIVE reps' numerators ÷ Σ their denominators — the exact
+    // pooledBenchmarkExcluding semantics the rep table uses, so this page can
+    // never emit contradictory verdicts from the same data (the old mean of
+    // other reps' rates is banned from coaching/status logic). Sample gates
+    // kept: the pooled rate must exist (pooled denominator > 0) AND ≥
+    // TREND_MIN_DENOMINATOR other active reps must carry a qualifying-call
+    // denominator — a thin team basis never verdicts.
+    const pooled = pooledBenchmarkExcluding(rows, r.repId, "conversation");
+    const convDenCarriers = rows.filter(
+      (o) => o.repId !== r.repId && o.operatingState === "active" && o.callsOverThreshold > 0,
+    ).length;
+    const teamConvValid = pooled.rate != null && convDenCarriers >= TREND_MIN_DENOMINATOR;
+    if (teamConvValid && r.conversationConversion != null && r.conversationConversion < pooled.rate) {
+      // "Strong call volume" copy variant: a COUNT heuristic (the rep's calls
+      // vs the other active reps' mean call count) — counts are not rates, so
+      // this mean-of-counts survives ruling 4; it only picks wording, never
+      // the verdict itself.
+      const otherActive = rows.filter((o) => o.repId !== r.repId && o.operatingState === "active");
+      const meanOtherCalls = otherActive.reduce((a, o) => a + o.totalCalls, 0) / (otherActive.length || 1);
+      const strongVolume = r.totalCalls >= meanOtherCalls && meanOtherCalls > 0;
       scored.push({
         severity: "risk",
         group: 1,
-        score: ((tm.conversationConversion as number) - r.conversationConversion) * 100, // deficit in pts
+        score: (pooled.rate - r.conversationConversion) * 100, // deficit in pts
         rep: r.name,
         text: strongVolume
-          ? `${r.name} has strong call volume but below-team Conversation Conversion (${pct1(r.conversationConversion)} vs ${pct1(tm.conversationConversion as number)}).`
-          : `${r.name} is below team average in Conversation Conversion (${pct1(r.conversationConversion)} vs ${pct1(tm.conversationConversion as number)}).`,
+          ? `${r.name} has strong call volume but below-team Conversation Conversion (${pct1(r.conversationConversion)} vs ${pct1(pooled.rate)}).`
+          : `${r.name} is below team average in Conversation Conversion (${pct1(r.conversationConversion)} vs ${pct1(pooled.rate)}).`,
       });
     }
   }

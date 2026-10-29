@@ -11,7 +11,7 @@
  *    as %, rates as percentage points) and reuse the Today redesign's
  *    TEAMDENOM ≥ 3 gate (TREND_MIN_DENOMINATOR).
  */
-import { formatDateHuman, weekElapsedWorkFraction, weekday } from "~/server/date-logic";
+import { formatDateHuman, weekElapsedWorkFraction, weekElapsedWorkFractionAt, weekday } from "~/server/date-logic";
 import { TREND_MIN_DENOMINATOR, type TeamComparison } from "~/server/metrics/compute";
 import { formatCount, formatPercent } from "~/server/metrics/report-text";
 
@@ -119,6 +119,15 @@ export function coachingObservations(input: {
   goal: { wtd: number; goalValue: number; anchorDay: string } | null;
   today: string;
   /**
+   * OWNER RULING 10/29 (WRONG-3): the ET clock (minutes since midnight) from
+   * the Reps payload. When threaded, the weekly-pace expectation uses the
+   * cutoff-aware day-state — before 18:30 ET on the anchor day only COMPLETED
+   * days are expected; at/after the cutoff the anchor day counts as completed
+   * (full-day expectation). Omitted (legacy/tests) → the pre-ruling
+   * always-counts-the-anchor-day semantics.
+   */
+  etNowMinutes?: number;
+  /**
    * Operating state (call_start_date). "not-yet-active" reps get NO coaching
    * verdicts at all — zero calls are EXPECTED before the start date; never a
    * sync-gap note, never a pace/conversion judgment (owner spec).
@@ -143,7 +152,14 @@ export function coachingObservations(input: {
 
   // 2 — weekly goal pace (week-scoped ranges only; anchor in the past or today).
   if (input.goal && input.goal.goalValue > 0 && input.goal.anchorDay <= input.today) {
-    const expected = input.goal.goalValue * weekElapsedWorkFraction(input.goal.anchorDay);
+    // OWNER RULING 10/29 (WRONG-3): expected-by-now follows the 18:30 ET
+    // day-state when the payload clock is threaded (completed days before the
+    // cutoff; the anchor day's full expectation at/after it).
+    const expected =
+      input.goal.goalValue *
+      (input.etNowMinutes == null
+        ? weekElapsedWorkFraction(input.goal.anchorDay)
+        : weekElapsedWorkFractionAt(input.goal.anchorDay, input.etNowMinutes));
     const gap = expected - input.goal.wtd;
     if (gap >= 0.5) {
       const wd = weekday(input.goal.anchorDay);

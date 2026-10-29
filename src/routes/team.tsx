@@ -872,7 +872,7 @@ function TeamPage() {
           <span className="inline-flex items-center gap-1.5">
             <Eyebrow>By Rep</Eyebrow>
             <InfoTip
-              tip={`Chips are rule-based from these columns — top bookings, conversion above team average (≥${TREND_MIN_DENOMINATOR} reps with a value), calls but no bookings, or no recorded activity; no grades. Assigned Lead Conversion per rep lives on each rep's page.`}
+              tip={`Chips are rule-based from these columns — top bookings, conversion above the team's pooled rate (Σ bookings ÷ Σ qualifying calls over ≥${TREND_MIN_DENOMINATOR} reps with a value), calls but no bookings, or no recorded activity; no grades. Assigned Lead Conversion per rep lives on each rep's page.`}
               label="How rep chips are assigned"
             />
           </span>

@@ -203,7 +203,11 @@ function TodayPage() {
 
   // Spec §0 composition — pace fraction of the work week (Mon 1/5 … Fri 5/5;
   // Sat/Sun 5/5). Working days only — agents work Mon–Fri.
-  const weekElapsed = weekElapsedFraction(m.date);
+  // OWNER RULING 10/29 (WRONG-3): with the payload clock the fraction follows
+  // the 18:30 ET day-state (today's expectation banks at the cutoff), the SAME
+  // day-state the pace figures use — the pace dot, chips, and attention notes
+  // can never disagree about what "by now" means.
+  const weekElapsed = weekElapsedFraction(m.date, m.etNowMinutes ?? undefined);
   // Spec §6.1 pace state: emerald when goal achievement ≥ week elapsed, amber below, none when null.
   const paceState: "on" | "off" | null =
     m.bookings.goalAchievement == null
@@ -273,7 +277,10 @@ function TodayPage() {
   }, [m.repRows]);
 
   // Spec §6.3 management-attention notes (existing outputs only).
-  const notes = useMemo(() => attentionNotes(m.repRows, m.date), [m.repRows, m.date]);
+  const notes = useMemo(
+    () => attentionNotes(m.repRows, m.date, m.etNowMinutes ?? undefined),
+    [m.repRows, m.date, m.etNowMinutes],
+  );
 
   // Spec §3.4/§7.1 day cards — one per day the payload carries (today + the
   // next 6), prefix derived from the date offset. Status per the owner

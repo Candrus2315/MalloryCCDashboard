@@ -13,7 +13,6 @@ import {
   deltaValue,
   formatDelta,
   studioClosedOn,
-  teamMeansExcluding,
   weekElapsedFraction,
 } from "~/components/today-views";
 import type { AvailabilityRule, RepPerformanceRow } from "~/server/metrics/compute";
@@ -47,20 +46,45 @@ describe("today-views (spec §0/§6)", () => {
     expect(weekElapsedFraction("2026-09-27").toFixed(3)).toBe("1.000"); // Sun
   });
 
-  test("team means exclude self (buildTeamAverages semantics)", () => {
-    const rows = [
-      row({ repId: "a", totalCalls: 10, totalBookings: 5, conversationConversion: 0.5 }),
-      row({ repId: "b", totalCalls: 4, totalBookings: 1, conversationConversion: null }),
-    ];
-    const a = teamMeansExcluding(rows, "a");
-    expect(a.totalCalls).toBe(4);
-    expect(a.totalBookings).toBe(1);
-    expect(a.conversationConversion).toBeNull(); // b has no value
-    expect(a.conversationOthers).toBe(0);
-    const b = teamMeansExcluding(rows, "b");
-    expect(b.totalCalls).toBe(10);
-    expect(b.conversationConversion).toBe(0.5);
-    expect(b.conversationOthers).toBe(1);
+  test("attention conv rule compares vs the POOLED team rate (WRONG-4) behind the ≥3-carrier gate", () => {
+    // Three other ACTIVE reps, pooled rate 0.5 (each 1 qualifying booking / 2
+    // over-threshold calls); the selected rep converts 0.2 on 5 — below pooled.
+    const others = [1, 2, 3].map((i) =>
+      row({
+        repId: `o${i}`,
+        name: `Other ${i}`,
+        totalCalls: 3,
+        callsOverThreshold: 2,
+        bookingsFromOverThreshold: 1,
+        conversationConversion: 0.5,
+      }),
+    );
+    const low = row({
+      repId: "sel",
+      name: "Sel",
+      totalCalls: 6,
+      callsOverThreshold: 5,
+      bookingsFromOverThreshold: 1,
+      conversationConversion: 0.2,
+    });
+    const notes = attentionNotes([low, ...others], "2026-10-29"); // Thursday
+    const convNote = notes.find((n) => n.rep === "Sel");
+    expect(convNote?.text).toContain("(20.0% vs 50.0%)");
+    // Thin team basis: only 2 other reps carry a qualifying-call denominator —
+    // the TEAMDENOM ≥ 3 gate suppresses the verdict (never a thin-sample call).
+    const thin = attentionNotes([low, ...others.slice(0, 2)], "2026-10-29");
+    expect(thin.some((n) => n.text.includes("Conversation Conversion"))).toBe(false);
+    // A rep ABOVE the pooled rate never gets the note (mean-based fixtures
+    // could flag the middle rep; pooled compares against one team number).
+    const mid = row({
+      repId: "sel",
+      name: "Sel",
+      totalCalls: 6,
+      callsOverThreshold: 5,
+      bookingsFromOverThreshold: 3,
+      conversationConversion: 0.6,
+    });
+    expect(attentionNotes([mid, ...others], "2026-10-29").some((n) => n.rep === "Sel")).toBe(false);
   });
 
   test("chips: first match wins + no-chip guard on data gaps", () => {
@@ -106,28 +130,34 @@ describe("today-views (spec §0/§6)", () => {
     );
   });
 
-  test("attention: conversion notes need TEAMDENOM ≥ 3 value-carrying others", () => {
+  test("attention: conversion notes need TEAMDENOM ≥ 3 denominator-carrying others", () => {
     const rows = [
-      row({ repId: "a", name: "Ann", goal: 14, actual: 12, goalPercent: 0.86, totalCalls: 10, callsOverThreshold: 5, conversationConversion: 0.5 }),
-      row({ repId: "c", name: "Cy", goal: 14, actual: 12, goalPercent: 0.86, totalCalls: 12, callsOverThreshold: 6, conversationConversion: 0.7 }),
-      row({ repId: "e", name: "Eve", goal: 14, actual: 12, goalPercent: 0.86, totalCalls: 6, callsOverThreshold: 4, conversationConversion: 0.4 }),
-      row({ repId: "d", name: "Dee", goal: 14, actual: 11, goalPercent: 0.79, totalCalls: 4, callsOverThreshold: 4, conversationConversion: 0.25 }),
+      // Numerators stay integer-consistent with the rates (pooled Σ/Σ reads them).
+      row({ repId: "a", name: "Ann", goal: 14, actual: 12, goalPercent: 0.86, totalCalls: 10, callsOverThreshold: 5, bookingsFromOverThreshold: 3, conversationConversion: 0.6 }),
+      row({ repId: "c", name: "Cy", goal: 14, actual: 12, goalPercent: 0.86, totalCalls: 12, callsOverThreshold: 10, bookingsFromOverThreshold: 7, conversationConversion: 0.7 }),
+      row({ repId: "e", name: "Eve", goal: 14, actual: 12, goalPercent: 0.86, totalCalls: 6, callsOverThreshold: 5, bookingsFromOverThreshold: 2, conversationConversion: 0.4 }),
+      row({ repId: "d", name: "Dee", goal: 14, actual: 11, goalPercent: 0.79, totalCalls: 4, callsOverThreshold: 4, bookingsFromOverThreshold: 1, conversationConversion: 0.25 }),
     ];
     // MID-WEEK date (Wed 2026-09-23, 3/5 of the week): expected-to-date for a
     // 14 goal is 8.4, so NO rep is behind pace and the conversion rules can
     // fire. (A Friday date would make the behind-pace rule legitimately win
     // first for Dee — 11 of 14 with the week done — which is its own rule.)
-    // only 3 others carry values for each rep → gate passes (≥ 3)
+    // 3 others carry denominators for each rep → gate passes (≥ 3); the
+    // comparison rate is the POOLED Σ/Σ of the others (WRONG-4), not a mean:
+    // Dee vs pooled (3+7+2)/(5+10+5) = 12/20 = 60.0%; Eve vs (3+7+1)/(5+10+4) = 11/19 = 57.9%.
     const notes = attentionNotes(rows, "2026-09-23");
     const dee = notes.find((n) => n.rep === "Dee");
-    expect(dee!.text).toBe("Dee is below team average in Conversation Conversion (25.0% vs 53.3%).");
-    // Ann (50%) and Cy (70%) sit ABOVE their team means — no conversion note for them.
+    expect(dee!.text).toBe("Dee is below team average in Conversation Conversion (25.0% vs 60.0%).");
+    // Ann (60%) and Cy (70%) sit ABOVE their pooled team rates — no note for them.
     const ann = notes.find((n) => n.rep === "Ann");
     expect(ann).toBeUndefined();
     const eve = notes.find((n) => n.rep === "Eve");
-    expect(eve!.text).toBe("Eve is below team average in Conversation Conversion (40.0% vs 48.3%).");
-    // drop one value-carrying rep → gate fails → no conversion notes
-    const thin = rows.map((r) => (r.repId === "e" ? { ...r, conversationConversion: null, callsOverThreshold: 0 } : r));
+    expect(eve!.text).toBe("Eve is below team average in Conversation Conversion (40.0% vs 57.9%).");
+    // drop two qualifying-call denominators → fewer than 3 carriers → the
+    // TEAMDENOM ≥ 3 gate fails → no conversion notes (thin team never verdicts)
+    const thin = rows.map((r) =>
+      r.repId === "e" || r.repId === "c" ? { ...r, conversationConversion: null, callsOverThreshold: 0, bookingsFromOverThreshold: 0 } : r,
+    );
     expect(attentionNotes(thin, "2026-09-25").some((n) => n.text.includes("Conversation Conversion"))).toBe(false);
   });
 

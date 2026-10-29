@@ -157,6 +157,9 @@ export interface PageDeps {
 
 export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const today = deps?.today ?? etToday();
+    // OWNER RULING 10/29 (WRONG-3): the payload's ET wall-clock — the Coaching
+    // Focus weekly-pace expectation follows the 18:30 ET day-state with it.
+    const etMinutes = deps?.etNowMinutes ?? etNowMinutes();
     const meta: PageMeta = deps?.store
       ? { mode: "memory", dbReason: null, today, demoSeeded: false }
       : await loadPageMeta();
@@ -345,12 +348,26 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const metrics = rep ? summaries.get(rep.id) : undefined;
     const others = reps.filter((r) => r.id !== rep?.id).map((r) => summaries.get(r.id)!);
     const teamAverages = buildTeamAverages({ others });
+    // OWNER RULING 10/29 (WRONG-2): the team-share goal divisor is the ACTIVE
+    // PRODUCTION ROSTER on current periods — the same count Today and the Team
+    // page use (departed reps never dilute the share). HISTORICAL periods: no
+    // per-period roster snapshot exists (settings.active_roster is current
+    // state only), so the divisor falls back to the roster of reps who
+    // actually PARTICIPATED in the period (≥1 qualifying win or call in
+    // range). Departed participants keep displaying and keep counting toward
+    // the share they worked under — never erased, and never every-rep-ever.
+    const currentPeriod = range.end >= today;
+    const participatedRepCount = reps.filter((r) => {
+      const ps = summaries.get(r.id);
+      return !!ps && (ps.totalBookings > 0 || ps.totalCalls > 0);
+    }).length;
+    const repCountForGoal = currentPeriod ? users.length : participatedRepCount;
     const goal = rep
       ? resolveRepGoal({
           weeks,
           repGoalsByWeek,
           teamGoalByWeek,
-          repCount: reps.length,
+          repCount: repCountForGoal,
         })
       : null;
     const detail = rep && metrics ? buildRepDetail({ rep, metrics, goal, weeks }) : null;
@@ -390,6 +407,9 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     return {
       meta,
       today,
+      // OWNER RULING 10/29 (WRONG-3): presentation clock for the coaching
+      // pace expectation (18:30 ET day-state; null-safe for legacy callers).
+      etNowMinutes: etMinutes,
       range: {
         mode: range.mode,
         label: range.label,
@@ -562,6 +582,19 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     // is its OWN state here — never folded into Unattributed.
     const bookingSplit = bookingAttributionSplit(appts, attributionsEligible);
 
+    // OWNER RULING 10/29 (WRONG-2): the team-share goal divisor is the ACTIVE
+    // PRODUCTION ROSTER on current periods (Today and the Reps page now agree;
+    // departed reps never dilute the share). HISTORICAL periods: no per-period
+    // roster snapshot exists, so the divisor falls back to the roster of reps
+    // who actually PARTICIPATED in the period (≥1 qualifying win or call in
+    // range) — the documented owner fallback; never every-rep-ever.
+    const currentPeriod = range.end >= today;
+    const participatedRepCount = reps.filter((r) => {
+      const ps = summaries.get(r.id);
+      return !!ps && (ps.totalBookings > 0 || ps.totalCalls > 0);
+    }).length;
+    const repCountForGoal = currentPeriod ? reps.length : participatedRepCount;
+
     const repRows: RepStripRow[] = reps
       .map((r) => {
         const s = summaries.get(r.id);
@@ -581,7 +614,7 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
           conversationConversion: s?.conversationConversion ?? null,
           totalCalls: s?.totalCalls ?? 0,
           avgCallDurationSeconds: s?.avgCallDurationSeconds ?? null,
-          goal: resolveRepGoal({ weeks, repGoalsByWeek, teamGoalByWeek, repCount: reps.length }),
+          goal: resolveRepGoal({ weeks, repGoalsByWeek, teamGoalByWeek, repCount: repCountForGoal }),
           operatingState: repOperatingState(r.call_start_date, today),
           callStartDate: r.call_start_date ?? null,
         };
@@ -819,6 +852,11 @@ export async function todayPageData(deps?: PageDeps) {
     openSlotsByDay,
     reps: todayReps,
     repGoals: resolvedRepGoals,
+    // OWNER RULING 10/29 (WRONG-1): the team Assigned Lead Conversion
+    // denominator counts assigned leads credited to ACTIVE reps only — the
+    // same rule the Team page applies (departed reps' rows stay in the DB,
+    // never in team rollups).
+    activeRepIds: new Set(todayReps.map((r) => r.id)),
     // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET.
     etNowMinutes: etNowMinutes(),
   });
@@ -939,6 +977,9 @@ export async function dailyReportPageData(deps?: PageDeps) {
     teamBookingGoal: teamGoal?.booking_goal ?? 79,
     weeklyLeadBudget: teamGoal?.lead_budget ?? 700,
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
+    // OWNER RULING 10/29 (WRONG-1): anchor-day Assigned Lead Conversion counts
+    // assigned leads credited to ACTIVE reps only (Team-page rule).
+    activeRepIds: new Set(rosterUsers.map((u) => u.id)),
     // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET, and
     // the performance anchor follows the same cutoff.
     etNowMinutes: etMinutes,

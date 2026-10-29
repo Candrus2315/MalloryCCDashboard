@@ -226,15 +226,17 @@ describe("team averages + comparisons (SPEC format)", () => {
     totalBookings: 5,
   });
   const others = [
-    mkMetrics({ repId: "a", totalCalls: 68, callsOverThreshold: 11, conversationConversion: 0.545, avgCallDurationSeconds: 255 }),
-    mkMetrics({ repId: "b", totalCalls: 68, callsOverThreshold: 11, conversationConversion: 0.545, avgCallDurationSeconds: 255 }),
+    // Each 6/11 ≈ 0.545 — the pooled team rate across both is 12/22 = 6/11
+    // (WRONG-4: rates are POOLED Σ/Σ, so rate fixtures carry numerators too).
+    mkMetrics({ repId: "a", totalCalls: 68, callsOverThreshold: 11, bookingsFromOverThreshold: 6, conversationConversion: 0.545, avgCallDurationSeconds: 255 }),
+    mkMetrics({ repId: "b", totalCalls: 68, callsOverThreshold: 11, bookingsFromOverThreshold: 6, conversationConversion: 0.545, avgCallDurationSeconds: 255 }),
   ];
 
   test("team average EXCLUDES the viewed rep", () => {
     const t = buildTeamAverages({ others });
     expect(t.repCount).toBe(2);
     expect(t.totalCalls).toBe(68);
-    expect(t.conversationConversion).toBeCloseTo(0.545);
+    expect(t.conversationConversion).toBeCloseTo(6 / 11); // POOLED 12/22 — never a mean of rep rates
     const withSelf = buildTeamAverages({ others: [rep, ...others] });
     expect(withSelf.totalCalls).toBe((74 + 68 + 68) / 3); // only when rep not excluded
     expect(withSelf.repCount).toBe(3);
@@ -252,7 +254,8 @@ describe("team averages + comparisons (SPEC format)", () => {
     const rows = compareWithTeam(rep, t);
     const conv = rows.find((r) => r.metric === "Conversation Conversion")!;
     expect(conv.unit).toBe("pp");
-    expect(conv.diff).toBeCloseTo((0.571 - 0.545) * 100);
+    expect(conv.teamAvg).toBeCloseTo(6 / 11); // pooled Σ/Σ (WRONG-4)
+    expect(conv.diff).toBeCloseTo((0.571 - 6 / 11) * 100);
     expect(formatDiff(conv.diff, "pp")).toBe("+2.6 pp");
   });
   test("durations compare in seconds", () => {
