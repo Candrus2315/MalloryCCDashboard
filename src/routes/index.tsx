@@ -216,14 +216,16 @@ function TodayPage() {
         ? "on"
         : "off";
 
-  // TODAY'S TARGET presentation (owner spec 10/29): pure display mapping of
-  // the payload's pace fields — target is paceNeeded verbatim (the formula,
-  // the Mon–Fri denominator and the 18:30 cutoff are untouched), the day
-  // states (open / closed / weekend) carry the honest copy.
+  // TODAY'S TARGET presentation (owner spec 10/29; FROZEN basis owner rev 90,
+  // 10/29): pure display mapping of the payload's pace fields — the OPEN state
+  // shows the FROZEN start-of-day target (bookings.paceNeeded is kept only for
+  // the closed-state roll), the day states (open / closed / weekend) carry the
+  // honest copy, WEEKLY REMAINING stays live.
   const pace = todayPaceView({
     paceDayState: m.paceDayState,
     paceNextWorkday: m.paceNextWorkday,
     paceNeeded: m.bookings.paceNeeded,
+    frozenTarget: m.bookings.frozenTarget,
     bookedToday: m.bookings.today,
     remaining: m.bookings.remaining,
     weeklyGoal: m.bookings.weeklyGoal,
@@ -447,11 +449,11 @@ function TodayPage() {
               </div>
             </div>
             {/* right / supporting — today's pace and activity, secondary to the goal.
-                TODAY'S TARGET presentation (owner spec 10/29): the old
-                "Daily Pace Needed: N" was the TOTAL daily target but read like
-                N still needed. The target number, the day-state copy and the
-                18:30 roll come from todayPaceView — the paceNeeded formula,
-                the Mon–Fri denominator and the cutoff semantics are untouched. */}
+                TODAY'S TARGET presentation (owner spec 10/29; FROZEN basis owner
+                rev 90): the open state shows the START-OF-DAY target (goal −
+                wins before today ÷ Mon–Fri workdays incl. today, no 18:30
+                adjustment) HELD all day — never recalculated as bookings land.
+                The 18:30 closed roll and the weekend honesty are unchanged. */}
             <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
               <Eyebrow>Today's Pace</Eyebrow>
               <dl className="mt-4 space-y-4">

@@ -164,7 +164,9 @@ function DailyReportPage() {
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
                       {formatInt(m.dailyBookingsNeeded)}
                     </span>
-                    <span className="kpi-sub">{m.paceWeekend ? "team is off — pace resumes Monday" : "pace to goal"}</span>
+                    <span className="kpi-sub">
+                      {m.paceWeekend ? "team is off — pace resumes Monday" : "start-of-day target"}
+                    </span>
                   </dd>
                 </div>
                 <div>

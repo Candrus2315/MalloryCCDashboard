@@ -128,8 +128,12 @@ export function expectedToDate(goal: number, reportDate: string, etNowMinutes?: 
  * Owner-approved rework of the old "Daily Pace Needed" block. The old copy
  * ("Daily Pace Needed: 12 · to hit goal") was the TOTAL daily target but read
  * like 12 MORE bookings still needed. This pure mapper turns the payload's
- * pace fields (target = paceNeeded, unchanged formula) + the day-state the
- * payload now carries into the exact display copy:
+ * pace fields + the day-state the payload carries into the exact display copy.
+ * FROZEN BASIS (owner rev 90, 10/29): the OPEN state shows the payload's
+ * frozenTarget — the start-of-day computation held all day; the CLOSED state
+ * keeps the rolled next-workday requirement (paceNeeded — after 18:30 ET today
+ * is complete, so remaining ÷ workdays after today IS the next workday's
+ * frozen target); weekend shows 0 / honest copy (no fabricated target):
  *   open weekday  → "[target] bookings" + "[booked] booked · [N] more needed
  *                   today" / "Target reached" / "[X] above today's target"
  *   closed weekday→ "Today's production window has closed (after 18:30 ET)"
@@ -138,8 +142,8 @@ export function expectedToDate(goal: number, reportDate: string, etNowMinutes?: 
  *                   weekend target, pace-ended + weekly remaining only
  *   weekend       → existing honest "team is off — pace resumes Monday"
  * WEEKLY REMAINING ("[remaining] bookings left to hit [goal]") is always
- * present. No metric math here — moreNeeded is a subtraction for display and
- * is never negative; the target itself is the payload's paceNeeded verbatim.
+ * present and keeps updating live (goal − WTD incl. today). No metric math
+ * here — moreNeeded is a subtraction for display and is never negative.
  */
 export interface TodayPaceView {
   state: "open" | "closed" | "weekend";
@@ -169,12 +173,20 @@ export interface TodayPaceView {
 export function todayPaceView(input: {
   paceDayState: "open" | "closed" | "weekend";
   paceNextWorkday: string | null;
+  /** Live pace requirement — used for the closed-state roll (rev 90). */
   paceNeeded: number;
+  /**
+   * FROZEN START-OF-DAY TARGET (owner rev 90): shown while the day is OPEN —
+   * computed at the start of the production day and held all day, never
+   * recalculated as bookings land. The closed state keeps the rolled
+   * next-workday requirement (paceNeeded) instead.
+   */
+  frozenTarget: number;
   bookedToday: number;
   remaining: number;
   weeklyGoal: number;
 }): TodayPaceView {
-  const target = input.paceNeeded;
+  const target = input.paceDayState === "open" ? input.frozenTarget : input.paceNeeded;
   const above = Math.max(0, input.bookedToday - target);
   const moreNeeded = Math.max(0, target - input.bookedToday);
   const reached = input.bookedToday >= target;
@@ -235,13 +247,15 @@ export function todayPaceView(input: {
     };
   }
 
-  // Open weekday: the live target + today's progress in one honest line.
+  // Open weekday: the FROZEN target + today's progress in one honest line
+  // (owner rev 90 copy: "N booked · M remaining to today's target" — never
+  // negative; "Target reached" at the target; "X above today's target" past it).
   const progressLine =
     above > 0
       ? `${input.bookedToday} booked · ${above} above today's target`
       : reached
         ? "Target reached"
-        : `${input.bookedToday} booked · ${moreNeeded} more needed today`;
+        : `${input.bookedToday} booked · ${moreNeeded} remaining to today's target`;
   return {
     state: "open",
     target,
