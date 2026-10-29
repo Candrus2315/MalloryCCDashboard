@@ -725,6 +725,28 @@ export function assignedLeadsByRep(leads: LeadRow[], startWorkDate: string, endW
   return m;
 }
 
+/**
+ * TEAM-level assigned-lead count over a work-date range (owner ruling 10/29,
+ * WRONG-1): the canonical ASSIGNED-ONLY denominator — work_date in range,
+ * assigned_rep_id set, form-source sheets excluded. When `activeRepIds` is
+ * given (every live page threads the active roster) only leads credited to
+ * ACTIVE reps count — exactly the Team page's rule (buildTeamRangeMetrics);
+ * departed reps' assigned rows stay in the DB but never reach team rollups.
+ * Without the set (legacy callers/tests) every assigned owner counts — the
+ * pre-ruling Team fallback semantics.
+ */
+export function assignedLeadsTotal(
+  leads: LeadRow[],
+  startWorkDate: string,
+  endWorkDate: string,
+  activeRepIds?: Set<string>,
+): number {
+  const byRep = assignedLeadsByRep(leads, startWorkDate, endWorkDate);
+  return [...byRep.entries()]
+    .filter(([repId]) => !activeRepIds || activeRepIds.has(repId))
+    .reduce((a, [, n]) => a + n, 0);
+}
+
 // ---------- aggregated dashboard model ----------
 
 export interface TodayMetrics {
@@ -765,6 +787,14 @@ export interface TodayMetrics {
    * no weekend target is ever fabricated).
    */
   paceNextWorkday: string | null;
+  /**
+   * The ET wall-clock (minutes since midnight) the payload was built with —
+   * carried so the presentation layer (expected-by-now, attention day-state,
+   * pace dot) uses the SAME 18:30 day-state as the pace figures (owner ruling
+   * 10/29, WRONG-3) instead of a second clock. Null when the caller gave none
+   * (legacy/tests) — presentation then keeps the pre-ruling semantics.
+   */
+  etNowMinutes: number | null;
   callsToday: CallsSummary;
   conversionsToday: {
     conversation: number | null;
@@ -846,6 +876,13 @@ export function buildTodayMetrics(input: {
   reps: Rep[];
   repGoals: RepGoalRow[];
   /**
+   * OWNER RULING 10/29 (WRONG-1): the active-roster rep ids. When given, the
+   * team Assigned Lead Conversion denominator counts assigned leads credited
+   * to ACTIVE reps only (the Team page's rule) — departed reps' assigned rows
+   * never reach team rollups. Omitted (legacy/tests) → every assigned owner.
+   */
+  activeRepIds?: Set<string>;
+  /**
    * OWNER 18:30 RULE (pace figures only): live America/New_York minutes since
    * midnight. When provided, the DAILY PACE days-left counts today as a
    * remaining working day only before 18:30 ET. Omitted (tests/legacy callers)
@@ -881,6 +918,13 @@ export function buildTodayMetrics(input: {
     (a, b) => a + b,
     0,
   );
+  // OWNER RULING 10/29 (WRONG-1): "Assigned Lead Conversion" is the canonical
+  // assigned-only metric EVERYWHERE — the team denominator is the work-date
+  // cohort's ASSIGNED leads (assigned_rep_id set, form-source sheets excluded,
+  // credited to active reps when the roster is threaded), NOT the total lead
+  // cohort. Same definition Team/Reps already use (compute.ts module header).
+  // The numerator stays the period's qualifying wins.
+  const assignedLeadsToday = assignedLeadsTotal(input.leadsAllRecent, reportDate, reportDate, input.activeRepIds);
 
   const remaining = Math.max(0, input.teamBookingGoal - bookingsWtd);
   // PACE days-left (owner 18:30 rule): pace figures only — every other use of
@@ -938,10 +982,14 @@ export function buildTodayMetrics(input: {
     paceWeekend: dLeft === 0,
     paceDayState,
     paceNextWorkday,
+    // Presentation clock (owner ruling 10/29, WRONG-3): the SAME etNowMinutes
+    // the pace figures used, carried so expected-by-now / attention day-state
+    // / the pace dot share one day-state instead of a second clock.
+    etNowMinutes: input.etNowMinutes ?? null,
     callsToday,
     conversionsToday: {
       conversation: conversationConversion(fromOverToday.length, callsToday.overThreshold),
-      assignedLead: assignedLeadConversion(bookingsToday, leadsTodaySummary.total),
+      assignedLead: assignedLeadConversion(bookingsToday, assignedLeadsToday),
     },
     leads: {
       today: leadsTodaySummary,
@@ -1363,10 +1411,7 @@ export function buildTeamRangeMetrics(input: {
     input.allCallsForJoin,
     input.thresholdSeconds,
   ).length;
-  const assignedByRep = assignedLeadsByRep(input.leads, input.workStart, input.workEnd);
-  const assignedLeads = [...assignedByRep.entries()]
-    .filter(([repId]) => !input.activeRepIds || input.activeRepIds.has(repId))
-    .reduce((a, [, n]) => a + n, 0);
+  const assignedLeads = assignedLeadsTotal(input.leads, input.workStart, input.workEnd, input.activeRepIds);
 
   const goal = resolveTeamGoal({ weeks: input.weeks, teamGoalByWeek: input.teamGoalByWeek });
   const actual = totalBookings;
@@ -2093,6 +2138,13 @@ export function buildDailyReportMetrics(input: {
   teamBookingGoal: number;
   weeklyLeadBudget: number;
   thresholdSeconds: number;
+  /**
+   * OWNER RULING 10/29 (WRONG-1): the active-roster rep ids. When given, the
+   * anchor-day Assigned Lead Conversion denominator counts assigned leads
+   * credited to ACTIVE reps only (the Team page's rule). Omitted (legacy
+   * callers/tests) → every assigned owner (the pre-ruling fallback).
+   */
+  activeRepIds?: Set<string>;
   /** OWNER 18:30 RULE (pace figures + performance anchor) — see daysLeftInWorkWeekAt / dailyReportAnchorDate. */
   etNowMinutes?: number;
 }): DailyReportMetrics {
@@ -2125,11 +2177,12 @@ export function buildDailyReportMetrics(input: {
   // work-date logic folds Fri–Sun source days → Monday, so FRIDAY has a real
   // cohort — assigned-lead conversion stays available on Monday mornings when
   // Friday had data (that is the intended effect of the anchor rule).
-  const anchorDayLeads = applyLeadAdjustments(
-    summarizeLeadRows(input.leadsAllRecent.filter((l) => l.work_date === anchorDate)),
-    adj,
-    (a) => a.work_date === anchorDate,
-  );
+  // OWNER RULING 10/29 (WRONG-1): Assigned Lead Conversion denominator =
+  // the anchor day's ASSIGNED leads only (assigned_rep_id set, form-source
+  // sheets excluded, credited to active reps) — the canonical definition the
+  // Team/Reps surfaces already use, NOT the total cohort. Numerator stays the
+  // anchor day's qualifying wins.
+  const anchorDayAssignedLeads = assignedLeadsTotal(input.leadsAllRecent, anchorDate, anchorDate, input.activeRepIds);
 
   const bookingsLeft = Math.max(0, input.teamBookingGoal - bookingsWtd);
   // PACE days-left (owner 18:30 rule): pace figures only.
@@ -2151,7 +2204,7 @@ export function buildDailyReportMetrics(input: {
     workDaysLeft,
     paceWeekend: workDaysLeft === 0,
     conversationConversion: conversationConversion(fromOverAnchor.length, callsAnchorDay.overThreshold),
-    assignedLeadConversion: assignedLeadConversion(bookingsAnchorDay, anchorDayLeads.total),
+    assignedLeadConversion: assignedLeadConversion(bookingsAnchorDay, anchorDayAssignedLeads),
     goalAchievement: goalAchievement(bookingsWtd, input.teamBookingGoal),
     weeklyLeadBudget: input.weeklyLeadBudget,
     leadsToday: todayCohort.total,

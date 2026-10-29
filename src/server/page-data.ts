@@ -819,6 +819,11 @@ export async function todayPageData(deps?: PageDeps) {
     openSlotsByDay,
     reps: todayReps,
     repGoals: resolvedRepGoals,
+    // OWNER RULING 10/29 (WRONG-1): the team Assigned Lead Conversion
+    // denominator counts assigned leads credited to ACTIVE reps only — the
+    // same rule the Team page applies (departed reps' rows stay in the DB,
+    // never in team rollups).
+    activeRepIds: new Set(todayReps.map((r) => r.id)),
     // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET.
     etNowMinutes: etNowMinutes(),
   });
@@ -939,6 +944,9 @@ export async function dailyReportPageData(deps?: PageDeps) {
     teamBookingGoal: teamGoal?.booking_goal ?? 79,
     weeklyLeadBudget: teamGoal?.lead_budget ?? 700,
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
+    // OWNER RULING 10/29 (WRONG-1): anchor-day Assigned Lead Conversion counts
+    // assigned leads credited to ACTIVE reps only (Team-page rule).
+    activeRepIds: new Set(rosterUsers.map((u) => u.id)),
     // OWNER 18:30 RULE: pace days-left excludes today at/after 18:30 ET, and
     // the performance anchor follows the same cutoff.
     etNowMinutes: etMinutes,
