@@ -541,6 +541,35 @@ export function paceNeeded(remaining: number, daysLeft: number): number {
   return Math.max(0, Math.ceil(remaining / daysLeft));
 }
 
+/**
+ * FROZEN START-OF-DAY DAILY TARGET (owner rev 90, 10/29) — the daily target is
+ * computed ONCE at the start of each production day and then HELD for the
+ * entire day; it is NOT recalculated as bookings land (the old live basis
+ * compared today's completions against a requirement that already contained
+ * them — a moving, self-defeating target).
+ *
+ *   target = ceil(max(0, goal − wins BEFORE today) ÷ workdays left INCLUDING today)
+ *
+ *  - wins-before-today: qualifying wins (isBookingWin) whose deposit/win date
+ *    falls BEFORE the production day, Mon–Sun week (deposit-date wins — the
+ *    same win qualification everywhere; pending payments never count).
+ *  - workdaysLeftInclToday counts Mon–Fri from today through Friday with NO
+ *    18:30 adjustment (start-of-day state): Mon=5 … Fri=1, Sat/Sun=0.
+ *  - workdaysLeftInclToday = 0 (weekend) → 0: no target is ever fabricated
+ *    for Sat/Sun.
+ *  - goal already reached entering the day → floor 0 ("Target reached").
+ * Pure — no clock, no DB; callers thread the start-of-day inputs.
+ */
+export function frozenDailyTarget(input: {
+  goal: number;
+  winsBeforeToday: number;
+  workdaysLeftInclToday: number;
+}): number {
+  if (input.workdaysLeftInclToday <= 0) return 0;
+  const deficit = Math.max(0, input.goal - input.winsBeforeToday);
+  return Math.max(0, Math.ceil(deficit / input.workdaysLeftInclToday));
+}
+
 // ---------- leads ----------
 
 export interface LeadSummary {
@@ -759,7 +788,17 @@ export interface TodayMetrics {
     wtd: number;
     weeklyGoal: number;
     remaining: number;
+    /** Live pace requirement — kept ONLY for the closed-state roll (rev 90). */
     paceNeeded: number;
+    /**
+     * FROZEN START-OF-DAY TARGET (owner rev 90, 10/29): goal − wins BEFORE
+     * today, ÷ Mon–Fri workdays INCLUDING today (no 18:30 adjustment),
+     * computed at the start of the production day and HELD all day. The
+     * TODAY'S TARGET block shows this number while the day is open.
+     */
+    frozenTarget: number;
+    /** Qualifying wins with deposit/win date BEFORE today (the frozen basis). */
+    winsBeforeToday: number;
     goalAchievement: number | null;
   };
   /**
@@ -927,6 +966,22 @@ export function buildTodayMetrics(input: {
   const assignedLeadsToday = assignedLeadsTotal(input.leadsAllRecent, reportDate, reportDate, input.activeRepIds);
 
   const remaining = Math.max(0, input.teamBookingGoal - bookingsWtd);
+  // FROZEN START-OF-DAY TARGET (owner rev 90, 10/29): the TODAY'S TARGET block
+  // shows a target computed from the START-OF-DAY state and held all day —
+  // weekly goal minus qualifying wins BEFORE today (deposit-date wins, Mon–Sun
+  // week; pending payments never count), divided by Mon–Fri workdays remaining
+  // INCLUDING today (daysLeftInWorkWeek: NO 18:30 adjustment in this divisor).
+  // It is NOT recalculated as bookings land. The live paceNeeded below stays
+  // ONLY for the closed-state roll (after 18:30 ET today is complete, so
+  // remaining-at-that-moment ÷ workdays after today equals the next workday's
+  // frozen target — the owner-ratified roll, unchanged).
+  const winsBeforeToday = countBookingsCreatedBetween(input.apptsCreatedWtd, "", addDays(reportDate, -1));
+  const workdaysInclToday = daysLeftInWorkWeek(reportDate);
+  const frozenTarget = frozenDailyTarget({
+    goal: input.teamBookingGoal,
+    winsBeforeToday,
+    workdaysLeftInclToday: workdaysInclToday,
+  });
   // PACE days-left (owner 18:30 rule): pace figures only — every other use of
   // the report date keeps daysLeftInWorkWeek semantics.
   const dLeft =
@@ -976,6 +1031,8 @@ export function buildTodayMetrics(input: {
       weeklyGoal: input.teamBookingGoal,
       remaining,
       paceNeeded: paceNeeded(remaining, dLeft),
+      frozenTarget,
+      winsBeforeToday,
       goalAchievement: goalAchievement(bookingsWtd, input.teamBookingGoal),
     },
     paceDaysLeft: dLeft,
@@ -2106,7 +2163,17 @@ export interface DailyReportMetrics {
   bookingsWtd: number;
   weeklyBookingGoal: number;
   bookingsLeft: number;
+  /**
+   * FROZEN START-OF-DAY TARGET (owner rev 90) while the day is open — the
+   * same number Today's TODAY'S TARGET block shows for this day. At/after the
+   * 18:30 cutoff this field carries the closed-state ROLL (remaining ÷
+   * workdays after today = the next workday's frozen target); 0 on a weekend.
+   */
   dailyBookingsNeeded: number;
+  /** Qualifying wins with deposit/win date BEFORE today (the frozen basis). */
+  winsBeforeToday: number;
+  /** Mon–Fri workdays including today, NO 18:30 adjustment (frozen divisor). */
+  workdaysInclToday: number;
   /** Working days left in the week (Mon–Fri incl. today); 0 on a weekend. */
   workDaysLeft: number;
   /** True when no working days remain (Sat/Sun) — pace figures show 0 + a note. */
@@ -2203,6 +2270,24 @@ export function buildDailyReportMetrics(input: {
     input.etNowMinutes == null
       ? daysLeftInWorkWeek(reportDate)
       : daysLeftInWorkWeekAt(reportDate, input.etNowMinutes);
+  // FROZEN START-OF-DAY TARGET (owner rev 90, 10/29): the Daily Bookings
+  // Needed figure is the SAME frozen target the Today page shows for the same
+  // production day — goal − wins BEFORE today (deposit-date wins, Mon–Sun
+  // week), ÷ Mon–Fri workdays INCLUDING today (NO 18:30 adjustment) — never a
+  // live recalculation. At/after the 18:30 cutoff today is complete, so the
+  // figure rolls forward exactly like Today's closed state: remaining-at-that-
+  // moment ÷ workdays AFTER today (the live paceNeeded — equals the next
+  // workday's frozen target). Weekend: workdaysInclToday = 0 → no target.
+  const winsBeforeToday = countBookingsCreatedBetween(input.apptsCreatedWtd, "", addDays(reportDate, -1));
+  const workdaysInclToday = daysLeftInWorkWeek(reportDate);
+  const frozenTarget = frozenDailyTarget({
+    goal: input.teamBookingGoal,
+    winsBeforeToday,
+    workdaysLeftInclToday: workdaysInclToday,
+  });
+  const paceDayClosed =
+    workdaysInclToday > 0 && input.etNowMinutes != null && input.etNowMinutes >= PACE_DAY_CUTOFF_ET_MINUTES;
+  const dailyBookingsNeeded = paceDayClosed ? paceNeeded(bookingsLeft, workDaysLeft) : frozenTarget;
 
   return {
     reportDate,
@@ -2213,7 +2298,9 @@ export function buildDailyReportMetrics(input: {
     bookingsWtd,
     weeklyBookingGoal: input.teamBookingGoal,
     bookingsLeft,
-    dailyBookingsNeeded: paceNeeded(bookingsLeft, workDaysLeft),
+    dailyBookingsNeeded,
+    winsBeforeToday,
+    workdaysInclToday,
     workDaysLeft,
     paceWeekend: workDaysLeft === 0,
     conversationConversion: conversationConversion(fromOverAnchor.length, callsAnchorDay.overThreshold),

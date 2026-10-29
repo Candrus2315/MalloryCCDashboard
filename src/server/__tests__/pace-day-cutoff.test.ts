@@ -6,9 +6,18 @@
  * behavior unchanged (0 working days remain → pace resumes Monday; the
  * never-negative pace rule is untouched — paceNeeded returns 0 at 0 days).
  *
- * SCOPE: pace paths only. daysLeftInWorkWeek (today always counts) stays the
- * semantics for non-pace callers, and every builder keeps it whenever no ET
- * clock is threaded — which is why all pre-existing tests keep their numbers.
+ * OWNER REV 90 (10/29) — FROZEN START-OF-DAY TARGET: while the day is open the
+ * DAILY TARGET shown is no longer the live recalculation (goal − WTD incl.
+ * today) ÷ days-left; it is the START-OF-DAY computation (goal − wins BEFORE
+ * today) ÷ Mon–Fri workdays including today, HELD all day. paceNeeded keeps
+ * its exact live formula but survives ONLY as the closed-state roll (after
+ * 18:30 ET today is complete, so remaining-at-that-moment ÷ workdays after
+ * today = the next workday's frozen target). Lead pace (dailyLeadsNeeded) is
+ * NOT part of the ruling and keeps the live basis everywhere.
+ *
+ * SCOPE: pace paths only. daysLeftInWorkWeek (today always counts) is now the
+ * FROZEN divisor semantics for the booking target, and every builder keeps the
+ * live daysLeftInWorkWeekAt roll for the closed state.
  */
 import { describe, expect, test } from "bun:test";
 import { daysLeftInWorkWeek, daysLeftInWorkWeekAt, PACE_DAY_CUTOFF_ET_MINUTES } from "../date-logic";
@@ -55,7 +64,7 @@ describe("daysLeftInWorkWeekAt — the 18:30 ET pace cutoff (owner-ratified)", (
     expect(daysLeftInWorkWeekAt(SUN, 9 * 60)).toBe(0);
     expect(daysLeftInWorkWeekAt(SUN, 23 * 60 + 59)).toBe(0);
   });
-  test("sibling daysLeftInWorkWeek keeps today-counts semantics at the same clock (pace-only scope)", () => {
+  test("daysLeftInWorkWeek keeps today-counts semantics — the FROZEN divisor (Mon 5 … Fri 1, weekend 0)", () => {
     expect(daysLeftInWorkWeek(MON)).toBe(5);
     expect(daysLeftInWorkWeek(FRI)).toBe(1);
     expect(daysLeftInWorkWeek(SAT)).toBe(0);
@@ -80,7 +89,7 @@ describe("paceDaysLeftForRange (Team page pace) honors the cutoff", () => {
   });
 });
 
-describe("builders thread the cutoff into the pace figures only (13 of 79 booked on Monday)", () => {
+describe("builders: closed-state roll + frozen open-state target (13 of 79 booked on Monday)", () => {
   const thirteenth = Array.from({ length: 13 }, (_, i) => appt(`appt-${i}`));
   const todayInput = {
     reportDate: MON,
@@ -112,31 +121,39 @@ describe("builders thread the cutoff into the pace figures only (13 of 79 booked
     thresholdSeconds: 120,
   } as const;
 
-  test("buildTodayMetrics at Mon 18:30 ET: paceDaysLeft 4 → paceNeeded = ceil(66 ÷ 4) = 17; lead pace on the same basis", () => {
+  test("buildTodayMetrics at Mon 18:30 ET: closed roll paceNeeded = ceil(66 ÷ 4) = 17; frozen target UNCHANGED at ceil(79 ÷ 5) = 16", () => {
     const m = buildTodayMetrics({ ...todayInput, etNowMinutes: H1830 });
     expect(m.paceDaysLeft).toBe(4);
     expect(m.bookings.remaining).toBe(66);
-    expect(m.bookings.paceNeeded).toBe(17); // ceil(66/4); raw quotient 16.5 (owner example)
+    expect(m.bookings.paceNeeded).toBe(17); // ceil(66/4) — the closed-state roll (raw 16.5, owner example)
+    expect(m.bookings.frozenTarget).toBe(16); // start-of-day basis: goal 79 − 0 wins before Mon ÷ 5 workdays
+    expect(m.bookings.winsBeforeToday).toBe(0);
     expect(m.paceWeekend).toBe(false);
-    expect(m.leads.dailyNeeded).toBe(175); // ceil(700/4)
+    expect(m.leads.dailyNeeded).toBe(175); // lead pace NOT part of rev 90 — live basis unchanged
   });
-  test("buildTodayMetrics WITHOUT a clock keeps legacy semantics (5 days → ceil(66 ÷ 5) = 14)", () => {
+  test("buildTodayMetrics WITHOUT a clock (open): live paceNeeded keeps its formula (ceil(66 ÷ 5) = 14) but the DISPLAYED frozen target is ceil(79 ÷ 5) = 16", () => {
     const m = buildTodayMetrics(todayInput);
     expect(m.paceDaysLeft).toBe(5);
-    expect(m.bookings.paceNeeded).toBe(14);
+    expect(m.bookings.paceNeeded).toBe(14); // legacy live formula — kept verbatim (closed roll only)
+    expect(m.bookings.frozenTarget).toBe(16); // REV 90: the open-state TODAY'S TARGET — frozen start-of-day basis
+    expect(m.bookings.winsBeforeToday).toBe(0);
     expect(m.leads.dailyNeeded).toBe(140);
   });
-  test("buildDailyReportMetrics at Mon 18:30 ET: workDaysLeft 4 → dailyBookingsNeeded 17; paceWeekend false", () => {
+  test("buildDailyReportMetrics at Mon 18:30 ET: closed roll dailyBookingsNeeded 17; paceWeekend false; frozen basis exposed", () => {
     const m = buildDailyReportMetrics({ ...reportInput, etNowMinutes: H1830 });
     expect(m.workDaysLeft).toBe(4);
-    expect(m.dailyBookingsNeeded).toBe(17);
+    expect(m.dailyBookingsNeeded).toBe(17); // closed roll — unchanged by rev 90
+    expect(m.winsBeforeToday).toBe(0);
+    expect(m.workdaysInclToday).toBe(5);
     expect(m.dailyLeadsNeeded).toBe(175);
     expect(m.paceWeekend).toBe(false);
   });
-  test("buildDailyReportMetrics WITHOUT a clock keeps legacy semantics (5 days → 14)", () => {
+  test("buildDailyReportMetrics WITHOUT a clock (open): FROZEN start-of-day target ceil(79 ÷ 5) = 16 — no live recalculation", () => {
     const m = buildDailyReportMetrics(reportInput);
     expect(m.workDaysLeft).toBe(5);
-    expect(m.dailyBookingsNeeded).toBe(14);
+    expect(m.dailyBookingsNeeded).toBe(16); // REV 90: frozen basis (was the live 14)
+    expect(m.winsBeforeToday).toBe(0);
+    expect(m.workdaysInclToday).toBe(5);
     expect(m.dailyLeadsNeeded).toBe(140);
   });
   test("paceNeeded stays never-negative at 0 days (weekend honesty untouched)", () => {
