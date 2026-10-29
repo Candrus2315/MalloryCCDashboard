@@ -5,12 +5,25 @@ import type { Migration } from "./runner";
  *
  * The pre-runner PgStore cold-start DDL array (140 statements: 49 CREATE
  * TABLE / 48 ALTER TABLE / 38 CREATE INDEX / 5 guarded seed UPDATEs) moved
- * here VERBATIM — byte-identical text, same order, same idempotency
- * guarantees. It is the append-only log of everything the schema ever
- * needed, and after this migration merges it may NEVER be edited: the
- * runner records a sha256 checksum of these statements at stamp time and
- * REFUSES TO BOOT on mismatch (SchemaMigrationError), so any accidental
- * edit surfaces as a named error instead of a silent drift (§1.2 risk 6).
+ * here with byte-identical statement text — same order EXCEPT two statements
+ * (see DEVIATION below), same idempotency guarantees. It is the append-only
+ * log of everything the schema ever needed, and after this migration merges
+ * it may NEVER be edited: the runner records a sha256 checksum of these
+ * statements at stamp time and REFUSES TO BOOT on mismatch
+ * (SchemaMigrationError), so any accidental edit surfaces as a named error
+ * instead of a silent drift (§1.2 risk 6).
+ *
+ * DEVIATION (the only one, documented): two ALTER statements were misplaced
+ * BEFORE their table's CREATE in the original array —
+ *   `ALTER TABLE leads ADD COLUMN …source_raw_date` (was before CREATE leads)
+ *   `ALTER TABLE pip_templates ADD COLUMN …version` (was before CREATE pip_templates)
+ * Harmless on prod (every object exists; both are no-ops at any position)
+ * but they made a FRESH empty DB fail (`relation "leads" does not exist`),
+ * breaking MIGRATION-PLAN §1.1's own ordering rule ("base tables before the
+ * ALTERs that extend them") and the runner's fresh-install contract. The
+ * two statements were MOVED (text untouched, count untouched) to directly
+ * after their CREATE TABLE. A registry invariant test pins dependency order
+ * so this can never regress.
  *
  * Baseline semantics against the three DB states:
  *   - Production (all objects exist): every statement is a no-op —
@@ -133,7 +146,6 @@ export const migration: Migration = {
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS booking_win_business_date date`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS payment_business_date_source text`,
   // AUDIT FIDELITY (10/23): the sheet's raw Date-column text, nullable, populated going forward only — never backfilled.
-  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS source_raw_date text`,
   `ALTER TABLE appointments ADD COLUMN IF NOT EXISTS first_seen_paid_at timestamptz`,
   // PENDING PAYMENT DISMISSAL (owner request 2026-09-30): the owner's ✕ on the
   // Today page's Pending Payments list. Written ONLY by the dismiss endpoint;
@@ -178,6 +190,7 @@ export const migration: Migration = {
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (provider, source_id)
   )`,
+  `ALTER TABLE leads ADD COLUMN IF NOT EXISTS source_raw_date text`,
   `CREATE INDEX IF NOT EXISTS leads_work_date_idx ON leads (work_date)`,
   `CREATE TABLE IF NOT EXISTS rep_goals (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -473,7 +486,6 @@ export const migration: Migration = {
   `ALTER TABLE pips ADD COLUMN IF NOT EXISTS template_version integer`,
   `ALTER TABLE pips ADD COLUMN IF NOT EXISTS checkin_cadence_days integer`,
   `CREATE INDEX IF NOT EXISTS pips_template_idx ON pips (template_id)`,
-  `ALTER TABLE pip_templates ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   `CREATE INDEX IF NOT EXISTS pips_status_idx ON pips (status)`,
   `CREATE INDEX IF NOT EXISTS pips_rep_idx ON pips (rep_id)`,
   // Frozen-evidence snapshots: written ONLY at issue time (amendments later
@@ -520,6 +532,7 @@ export const migration: Migration = {
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   )`,
+  `ALTER TABLE pip_templates ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1`,
   // Typed module event log (primary PIP audit trail; every event is ALSO
   // mirrored compactly into manual_overrides for the existing Audit page).
   // History never deleted — deliberately NO FK on pip_id so log rows outlive

@@ -132,6 +132,30 @@ describe("migration registry — frozen baseline shape", () => {
     expect(BASELINE_STMTS[0].startsWith("CREATE TABLE IF NOT EXISTS users")).toBe(true);
     expect(BASELINE_STMTS[139].startsWith("CREATE INDEX IF NOT EXISTS ret_outcomes_status_idx")).toBe(true);
   });
+  test("dependency order invariant: every ALTER/INDEX lands after its table's CREATE (fresh-DB contract)", () => {
+    // The original array had exactly two misplaced ALTERs (leads, pip_templates)
+    // — moved during the baseline snapshot; see 000_baseline.ts DEVIATION note.
+    const created = new Set<string>();
+    const problems: string[] = [];
+    BASELINE_STMTS.forEach((s, i) => {
+      const cm = s.match(/^CREATE TABLE IF NOT EXISTS (\w+)/);
+      if (cm) {
+        created.add(cm[1]);
+        for (const fk of s.matchAll(/REFERENCES (\w+)/g)) {
+          if (!created.has(fk[1])) problems.push(`#${i}: CREATE ${cm[1]} FK -> ${fk[1]} not yet created`);
+        }
+        return;
+      }
+      let m = s.match(/^ALTER TABLE (\w+)/);
+      if (m && !created.has(m[1])) {
+        problems.push(`#${i}: ALTER ${m[1]} before CREATE`);
+        return;
+      }
+      m = s.match(/^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS \w+ ON (\w+)/);
+      if (m && !created.has(m[1])) problems.push(`#${i}: INDEX ON ${m[1]} before CREATE`);
+    });
+    expect(problems).toEqual([]);
+  });
   test("checksum: deterministic 64-hex; any edit to any statement changes it", () => {
     expect(EXPECTED_CHECKSUM).toMatch(/^[0-9a-f]{64}$/);
     expect(migrationChecksum(baseline)).toBe(EXPECTED_CHECKSUM);
