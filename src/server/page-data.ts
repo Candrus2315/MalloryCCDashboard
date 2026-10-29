@@ -345,12 +345,26 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const metrics = rep ? summaries.get(rep.id) : undefined;
     const others = reps.filter((r) => r.id !== rep?.id).map((r) => summaries.get(r.id)!);
     const teamAverages = buildTeamAverages({ others });
+    // OWNER RULING 10/29 (WRONG-2): the team-share goal divisor is the ACTIVE
+    // PRODUCTION ROSTER on current periods — the same count Today and the Team
+    // page use (departed reps never dilute the share). HISTORICAL periods: no
+    // per-period roster snapshot exists (settings.active_roster is current
+    // state only), so the divisor falls back to the roster of reps who
+    // actually PARTICIPATED in the period (≥1 qualifying win or call in
+    // range). Departed participants keep displaying and keep counting toward
+    // the share they worked under — never erased, and never every-rep-ever.
+    const currentPeriod = range.end >= today;
+    const participatedRepCount = reps.filter((r) => {
+      const ps = summaries.get(r.id);
+      return !!ps && (ps.totalBookings > 0 || ps.totalCalls > 0);
+    }).length;
+    const repCountForGoal = currentPeriod ? users.length : participatedRepCount;
     const goal = rep
       ? resolveRepGoal({
           weeks,
           repGoalsByWeek,
           teamGoalByWeek,
-          repCount: reps.length,
+          repCount: repCountForGoal,
         })
       : null;
     const detail = rep && metrics ? buildRepDetail({ rep, metrics, goal, weeks }) : null;
@@ -562,6 +576,19 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     // is its OWN state here — never folded into Unattributed.
     const bookingSplit = bookingAttributionSplit(appts, attributionsEligible);
 
+    // OWNER RULING 10/29 (WRONG-2): the team-share goal divisor is the ACTIVE
+    // PRODUCTION ROSTER on current periods (Today and the Reps page now agree;
+    // departed reps never dilute the share). HISTORICAL periods: no per-period
+    // roster snapshot exists, so the divisor falls back to the roster of reps
+    // who actually PARTICIPATED in the period (≥1 qualifying win or call in
+    // range) — the documented owner fallback; never every-rep-ever.
+    const currentPeriod = range.end >= today;
+    const participatedRepCount = reps.filter((r) => {
+      const ps = summaries.get(r.id);
+      return !!ps && (ps.totalBookings > 0 || ps.totalCalls > 0);
+    }).length;
+    const repCountForGoal = currentPeriod ? reps.length : participatedRepCount;
+
     const repRows: RepStripRow[] = reps
       .map((r) => {
         const s = summaries.get(r.id);
@@ -581,7 +608,7 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
           conversationConversion: s?.conversationConversion ?? null,
           totalCalls: s?.totalCalls ?? 0,
           avgCallDurationSeconds: s?.avgCallDurationSeconds ?? null,
-          goal: resolveRepGoal({ weeks, repGoalsByWeek, teamGoalByWeek, repCount: reps.length }),
+          goal: resolveRepGoal({ weeks, repGoalsByWeek, teamGoalByWeek, repCount: repCountForGoal }),
           operatingState: repOperatingState(r.call_start_date, today),
           callStartDate: r.call_start_date ?? null,
         };
