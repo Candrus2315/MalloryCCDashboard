@@ -523,11 +523,14 @@ function TeamPage() {
     }
   };
 
-  // Sticky header (index.tsx pattern, offsets pair with the shell header:
-  // top-[68px] on phones where the header is 68px, md:top-14 on desktop).
-  // The rep header cell is sticky left too (opaque bg so horizontal scroll
-  // keeps rep identity, §6/§15) and sits above the other header cells; body
-  // rep cells get z-[1].
+  // Sticky header (index.tsx pattern). LAYOUT INTEGRITY 10/29: the table sits
+  // inside an `overflow-x-auto` wrapper — that wrapper (not the page) is the
+  // sticky containing block, so the old `top-[68px] md:top-14` offset pinned
+  // the header row down INTO the first body row, painting column labels over
+  // Allison Wittner's row (name clipped/overlapped — owner-reported) and
+  // hiding the row on phones. `top-0` pins the header at its natural position:
+  // no overlap; the rep header cell stays sticky LEFT so horizontal scroll
+  // keeps rep identity (§6/§15); body rep cells keep z-[1].
   const th = (key: SortKey, label: string, opts?: { left?: boolean }) => {
     const active = sortKey === key;
     const caret = active ? (sortAsc ? "↑" : "↓") : key === "rep" ? "↑" : "↓";
@@ -537,8 +540,8 @@ function TeamPage() {
         aria-sort={active ? (sortAsc ? "ascending" : "descending") : undefined}
         className={
           opts?.left
-            ? "sticky left-0 top-[68px] z-[3] bg-(--card-bg) pb-2 text-left md:top-14"
-            : "sticky top-[68px] z-[2] bg-(--sticky-header-bg) pb-2 text-right backdrop-blur-sm md:top-14"
+            ? "sticky left-0 top-0 z-[3] bg-(--card-bg) pb-2 text-left"
+            : "sticky top-0 z-[2] bg-(--sticky-header-bg) pb-2 text-right backdrop-blur-sm"
         }
       >
         <button type="button" className="th-sort-btn normal-case tracking-normal text-xs text-(--text-caption)" onClick={() => sortBy(key)}>
