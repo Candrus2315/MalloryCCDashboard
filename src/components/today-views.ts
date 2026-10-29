@@ -10,7 +10,7 @@
  * Deltas reuse the existing `teamDifference` units: rates in percentage
  * points (pp), counts in % difference, null when either side is null.
  */
-import { daysLeftInWorkWeek, weekElapsedWorkFraction, weekday } from "~/server/date-logic";
+import { daysLeftInWorkWeek, weekElapsedWorkFraction, weekday, weekdayName } from "~/server/date-logic";
 import {
   MIN_CONVERSION_SAMPLE,
   TREND_MIN_DENOMINATOR,
@@ -107,6 +107,141 @@ export function weekElapsedFraction(reportDate: string): number {
 /** Spec §0 composition: expected bookings to date for a weekly goal. */
 export function expectedToDate(goal: number, reportDate: string): number {
   return goal * weekElapsedFraction(reportDate);
+}
+
+// ---------- TODAY'S TARGET pace presentation (owner spec 2026-10-29) ----------
+/**
+ * Owner-approved rework of the old "Daily Pace Needed" block. The old copy
+ * ("Daily Pace Needed: 12 · to hit goal") was the TOTAL daily target but read
+ * like 12 MORE bookings still needed. This pure mapper turns the payload's
+ * pace fields (target = paceNeeded, unchanged formula) + the day-state the
+ * payload now carries into the exact display copy:
+ *   open weekday  → "[target] bookings" + "[booked] booked · [N] more needed
+ *                   today" / "Target reached" / "[X] above today's target"
+ *   closed weekday→ "Today's production window has closed (after 18:30 ET)"
+ *                   + "Needed [next workday]: [target] bookings" (rolled —
+ *                   never a same-day "more needed"), Friday evening → no
+ *                   weekend target, pace-ended + weekly remaining only
+ *   weekend       → existing honest "team is off — pace resumes Monday"
+ * WEEKLY REMAINING ("[remaining] bookings left to hit [goal]") is always
+ * present. No metric math here — moreNeeded is a subtraction for display and
+ * is never negative; the target itself is the payload's paceNeeded verbatim.
+ */
+export interface TodayPaceView {
+  state: "open" | "closed" | "weekend";
+  /** Total daily target — the payload's paceNeeded (ceil), NOT "more needed". */
+  target: number;
+  bookedToday: number;
+  /** max(0, target − bookedToday) — display-only, never negative. */
+  moreNeeded: number;
+  /** bookedToday − target when the target is exceeded, else 0. */
+  above: number;
+  /** bookedToday ≥ target. */
+  reached: boolean;
+  /** "[remaining] bookings left to hit [goal]" — the WEEKLY REMAINING row. */
+  weeklyRemaining: string;
+  /** Open-state progress line under the target figure. */
+  progressLine: string;
+  /** Closed weekday only: window-closed honesty line. */
+  windowClosedLine: string | null;
+  /** Closed weekday with remaining workdays: "Needed Friday: 20 bookings". */
+  nextWorkdayLine: string | null;
+  /** Weekday name of the rolled next workday (closed state only, else null). */
+  nextWorkdayName: string | null;
+  /** Weekend honesty line ("team is off — pace resumes Monday") or the Friday pace-ended line; null otherwise. */
+  offLine: string | null;
+}
+
+export function todayPaceView(input: {
+  paceDayState: "open" | "closed" | "weekend";
+  paceNextWorkday: string | null;
+  paceNeeded: number;
+  bookedToday: number;
+  remaining: number;
+  weeklyGoal: number;
+}): TodayPaceView {
+  const target = input.paceNeeded;
+  const above = Math.max(0, input.bookedToday - target);
+  const moreNeeded = Math.max(0, target - input.bookedToday);
+  const reached = input.bookedToday >= target;
+  const weeklyRemaining = `${input.remaining} bookings left to hit ${input.weeklyGoal}`;
+
+  if (input.paceDayState === "weekend") {
+    return {
+      state: "weekend",
+      target,
+      bookedToday: input.bookedToday,
+      moreNeeded: 0,
+      above,
+      reached,
+      weeklyRemaining,
+      progressLine: "",
+      windowClosedLine: null,
+      nextWorkdayLine: null,
+      nextWorkdayName: null,
+      offLine: "team is off — pace resumes Monday",
+    };
+  }
+
+  if (input.paceDayState === "closed") {
+    const windowClosedLine = "Today's production window has closed (after 18:30 ET)";
+    if (input.paceNextWorkday) {
+      const dayName = weekdayName(input.paceNextWorkday);
+      return {
+        state: "closed",
+        target,
+        bookedToday: input.bookedToday,
+        moreNeeded,
+        above,
+        reached,
+        weeklyRemaining,
+        progressLine: "",
+        windowClosedLine,
+        nextWorkdayLine: `Needed ${dayName}: ${target} bookings`,
+        nextWorkdayName: dayName,
+        offLine: null,
+      };
+    }
+    // Friday at/after the cutoff: no working day remains — NEVER a weekend
+    // target. Pace has ended for the week; weekend bookings still count
+    // toward the Mon–Sun actuals (the WEEKLY REMAINING row stays live).
+    return {
+      state: "closed",
+      target,
+      bookedToday: input.bookedToday,
+      moreNeeded: 0,
+      above,
+      reached,
+      weeklyRemaining,
+      progressLine: "",
+      windowClosedLine,
+      nextWorkdayLine: null,
+      nextWorkdayName: null,
+      offLine: "no pace target until Monday — weekend bookings still count toward the week",
+    };
+  }
+
+  // Open weekday: the live target + today's progress in one honest line.
+  const progressLine =
+    above > 0
+      ? `${input.bookedToday} booked · ${above} above today's target`
+      : reached
+        ? "Target reached"
+        : `${input.bookedToday} booked · ${moreNeeded} more needed today`;
+  return {
+    state: "open",
+    target,
+    bookedToday: input.bookedToday,
+    moreNeeded,
+    above,
+    reached,
+    weeklyRemaining,
+    progressLine,
+    windowClosedLine: null,
+    nextWorkdayLine: null,
+    nextWorkdayName: null,
+    offLine: null,
+  };
 }
 
 const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);

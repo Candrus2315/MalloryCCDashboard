@@ -200,9 +200,12 @@ describe("E1: TrendPoint carries the family/animalia lead split (no new math)", 
     source_sheet: sheet,
   });
 
-  test("summarizeLeadRows: splits by lead_type (source_sheet fallback); unknown type stays out of both", () => {
+  test("summarizeLeadRows: splits by lead_type via the canonical genre chain (unknown text falls to the family catch-all)", () => {
+    // INC-9 alignment (10/29): splitLeadRows matches splitLeadsByType /
+    // classifyLeadSource EXACTLY — /animalia/i, /fairyland/i-or-sheet, then
+    // family catch-all; odd lead_type text no longer stays outside the split.
     expect(splitLeadRows([lead("f1", "family", "family"), lead("a1", "animalia", "animalia"), lead("f2", "", "family"), lead("u1", "other", "other")])).toEqual({
-      family: 2,
+      family: 3,
       animalia: 1,
       fairyland: 0,
       auction_register_certificate: 0,
@@ -229,7 +232,7 @@ describe("E1: TrendPoint carries the family/animalia lead split (no new math)", 
     });
     expect(t.points).toHaveLength(1);
     expect(t.points[0].leads).toBe(4); // unchanged total (adjustments have no split — never guessed)
-    expect(t.points[0].family).toBe(2);
+    expect(t.points[0].family).toBe(3); // canonical chain: "unknown" text → family catch-all
     expect(t.points[0].animalia).toBe(1);
     expect(t.points[0].family + t.points[0].animalia).toBeLessThanOrEqual(t.points[0].leads);
   });

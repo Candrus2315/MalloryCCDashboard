@@ -610,7 +610,7 @@ function RepsPage() {
                 <div className="sm:pr-6">
                   <p className="kpi-label flex items-center gap-1.5">
                     Total Bookings
-                    <InfoTip tip="Non-cancelled bookings, counted by created date" label="How Total Bookings is counted" />
+                    <InfoTip tip="Booking wins — paid deposit, not cancelled — counted by deposit date (America/New_York); created date only for legacy rows without one" label="How Total Bookings is counted" />
                   </p>
                   <p className="kpi-hero mt-2">{formatInt(d.metrics.totalBookings)}</p>
                 </div>
@@ -770,7 +770,7 @@ function RepsPage() {
             <span className="inline-flex items-center gap-1.5">
               <p className="section-heading">Performance Compared With Team Average</p>
               <InfoTip
-                tip={`Team average excludes the selected rep. Counts compare as % difference; conversion rates as percentage points (pp); durations in m/s. Team averages cover the ${data.teamAverages.repCount} other active ${data.teamAverages.repCount === 1 ? "rep" : "reps"}; rate averages include only reps with a value — a missing value renders as — rather than a guess.`}
+                tip={`Team average excludes the selected rep. Counts compare as % difference; conversion rates as percentage points (pp); durations in m/s. Team averages cover the ${data.teamAverages.repCount} other reporting ${data.teamAverages.repCount === 1 ? "rep" : "reps"} (active and past); rate averages include only reps with a value — a missing value renders as — rather than a guess.`}
                 label="How team averages and differences are computed"
               />
             </span>

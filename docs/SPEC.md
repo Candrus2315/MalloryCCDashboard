@@ -43,7 +43,7 @@ Acuity is the PRIMARY booking and studio availability source. Christopher can se
 Genre lead-ads sheets (three; lead_type text first, sheet-identity fallback for Fairyland's "Fairies" campaign):
 Family Sheet ID: 1_5d1TDrOLg_E3RICEY6M7K9wnM97M9wkHLUN-C0oIvg
 Animalia Sheet ID: 1Zp_ghywl-u4e13NHMoPRubZ9DCZC-Khv1ePL6PVahZU
-Fairyland Sheet ID: configured via Settings integration (not hardcoded here). **Parked owner decision:** the Fairyland spreadsheet's un-ingested `LEADS` tab (~24,437 rows of pure 2020–2024 history, zero overlap with stored leads) — options survey in the team's `shared/fairyland-leads-survey.md`.
+Fairyland Sheet ID: configured via Settings integration (not hardcoded here). **SETTLED — owner option B (final 2026-10-29):** the Fairyland spreadsheet's un-ingested `LEADS` tab (~24,437 rows of 2020–2024 history, zero overlap with stored leads) stays **EXCLUDED from ingest permanently**; Fairyland lead reporting is tied to the `2026 fairies` tab only. Options survey retained in the team's `shared/fairyland-leads-survey.md`.
 
 **Forms Data — Mallory Portraits workbook** (added per owner directive 2026-10-27; four tabs = four independent lead sources through the SAME pipeline as the genre sheets, identical count/dedupe rules):
 Workbook ID: 1ePTLKCpHVzvYo7zRUoAbE-rL3adXtkgjIsWXWtdf8Ms — tabs: Auction Register Certificate · Google Ads Leads · Alliance Activate Certificate · Website Applications.
