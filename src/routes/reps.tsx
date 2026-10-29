@@ -310,6 +310,10 @@ function RepsPage() {
             ? { wtd: goalViewRaw.wtd, goalValue: goalViewRaw.goalValue, anchorDay: goalViewRaw.anchorDay }
             : null,
         today: data.today,
+        // OWNER RULING 10/29 (WRONG-3): the payload's ET clock — the weekly
+        // pace expectation follows the 18:30 ET day-state (same cutoff as the
+        // Today page's expected-by-now).
+        etNowMinutes: data.etNowMinutes,
         // Not Yet Active reps get NO coaching verdicts (owner spec)
         operatingState: data.selectedOperatingState,
       })

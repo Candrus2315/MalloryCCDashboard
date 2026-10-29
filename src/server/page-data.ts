@@ -157,6 +157,9 @@ export interface PageDeps {
 
 export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     const today = deps?.today ?? etToday();
+    // OWNER RULING 10/29 (WRONG-3): the payload's ET wall-clock — the Coaching
+    // Focus weekly-pace expectation follows the 18:30 ET day-state with it.
+    const etMinutes = deps?.etNowMinutes ?? etNowMinutes();
     const meta: PageMeta = deps?.store
       ? { mode: "memory", dbReason: null, today, demoSeeded: false }
       : await loadPageMeta();
@@ -404,6 +407,9 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
     return {
       meta,
       today,
+      // OWNER RULING 10/29 (WRONG-3): presentation clock for the coaching
+      // pace expectation (18:30 ET day-state; null-safe for legacy callers).
+      etNowMinutes: etMinutes,
       range: {
         mode: range.mode,
         label: range.label,

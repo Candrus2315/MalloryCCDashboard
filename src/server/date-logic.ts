@@ -287,6 +287,26 @@ export function weekElapsedWorkFraction(reportDate: string): number {
   return wd >= 1 && wd <= 5 ? wd / 5 : 1;
 }
 
+/**
+ * OWNER RULING 10/29 (WRONG-3) — cutoff-aware sibling of
+ * weekElapsedWorkFraction for EXPECTED-BY-NOW semantics, threaded through the
+ * SAME PACE_DAY_CUTOFF_ET_MINUTES as every pace figure (no new date rules):
+ *  - Before 18:30 ET on a working day, today PARTICIPATES NORMALLY — it is
+ *    still an open working day (it counts toward the remaining-days side, same
+ *    as daysLeftInWorkWeekAt) and its full-day expectation is NOT yet banked:
+ *    expected-by-now covers the COMPLETED days only ((wd−1)/5).
+ *  - At/after 18:30 ET the day counts as COMPLETED for production pacing:
+ *    expected-by-now is the full-day expectation for today (wd/5) — the same
+ *    moment the pace side stops counting today as remaining.
+ * Weekend → 1 (5/5) in both states — the week's work is done.
+ */
+export function weekElapsedWorkFractionAt(reportDate: string, etMinutes: number): number {
+  const wd = weekday(reportDate);
+  if (wd < 1 || wd > 5) return 1; // Sat/Sun — the week's work is done
+  const completedDays = etMinutes >= PACE_DAY_CUTOFF_ET_MINUTES ? wd : wd - 1;
+  return completedDays / 5;
+}
+
 /** Working days (Mon–Fri) in [startStr, endStr] inclusive; 0 when end < start. */
 export function workingDaysBetween(startStr: string, endStr: string): number {
   if (endStr < startStr) return 0;

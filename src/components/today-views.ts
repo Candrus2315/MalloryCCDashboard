@@ -10,7 +10,14 @@
  * Deltas reuse the existing `teamDifference` units: rates in percentage
  * points (pp), counts in % difference, null when either side is null.
  */
-import { daysLeftInWorkWeek, weekElapsedWorkFraction, weekday, weekdayName } from "~/server/date-logic";
+import {
+  daysLeftInWorkWeek,
+  daysLeftInWorkWeekAt,
+  weekElapsedWorkFraction,
+  weekElapsedWorkFractionAt,
+  weekday,
+  weekdayName,
+} from "~/server/date-logic";
 import {
   MIN_CONVERSION_SAMPLE,
   TREND_MIN_DENOMINATOR,
@@ -99,14 +106,23 @@ export interface AttentionNote {
   href?: string;
 }
 
-/** OWNER-CORRECTED: working days only (Mon–Fri) — Mon 1/5 … Fri 5/5; Sat/Sun 5/5. */
-export function weekElapsedFraction(reportDate: string): number {
-  return weekElapsedWorkFraction(reportDate);
+/**
+ * OWNER-CORRECTED: working days only (Mon–Fri) — Mon 1/5 … Fri 5/5; Sat/Sun 5/5.
+ * OWNER RULING 10/29 (WRONG-3): with the ET clock (`etNowMinutes`, from the
+ * Today payload), expected-by-now uses the CUTOFF-AWARE day-state — before
+ * 18:30 ET today is still an open day (completed days only); at/after 18:30 ET
+ * today counts as completed (full-day expectation banked). Without a clock
+ * (legacy callers/tests) the pre-ruling always-counts-today semantics hold.
+ */
+export function weekElapsedFraction(reportDate: string, etNowMinutes?: number): number {
+  return etNowMinutes == null
+    ? weekElapsedWorkFraction(reportDate)
+    : weekElapsedWorkFractionAt(reportDate, etNowMinutes);
 }
 
 /** Spec §0 composition: expected bookings to date for a weekly goal. */
-export function expectedToDate(goal: number, reportDate: string): number {
-  return goal * weekElapsedFraction(reportDate);
+export function expectedToDate(goal: number, reportDate: string, etNowMinutes?: number): number {
+  return goal * weekElapsedFraction(reportDate, etNowMinutes);
 }
 
 // ---------- TODAY'S TARGET pace presentation (owner spec 2026-10-29) ----------
@@ -349,9 +365,16 @@ interface ScoredNote extends AttentionNote {
  * TREND_MIN_DENOMINATOR value-carrying reps (the spec's TEAMDENOM ≥ 3) —
  * the rep side is already null when its denominator is below it.
  */
-export function attentionNotes(rows: RepPerformanceRow[], reportDate: string): AttentionNote[] {
-  const weekElapsed = weekElapsedFraction(reportDate);
-  const daysLeft = daysLeftInWorkWeek(reportDate); // working days only (Mon–Fri)
+export function attentionNotes(rows: RepPerformanceRow[], reportDate: string, etNowMinutes?: number): AttentionNote[] {
+  // OWNER RULING 10/29 (WRONG-3): when the payload clock is threaded, BOTH the
+  // expected-by-now fraction and the remaining-days copy use the SAME 18:30
+  // day-state as the pace figures — before the cutoff today is an open day
+  // (expected = completed days, days-left counts today); at/after the cutoff
+  // today is completed (full-day expectation banked, days-left drops today).
+  // No clock (legacy/tests) → the pre-ruling semantics, unchanged.
+  const weekElapsed = weekElapsedFraction(reportDate, etNowMinutes);
+  const daysLeft =
+    etNowMinutes == null ? daysLeftInWorkWeek(reportDate) : daysLeftInWorkWeekAt(reportDate, etNowMinutes);
   const dayWord = daysLeft === 1 ? "day" : "days";
   const pct1 = (v: number) => `${(v * 100).toFixed(1)}%`;
   const scored: ScoredNote[] = [];
@@ -393,7 +416,7 @@ export function attentionNotes(rows: RepPerformanceRow[], reportDate: string): A
         text:
           daysLeft === 0
             ? `${r.name} is behind pace — ${r.actual} of ${r.goal} bookings, and the work week is done. Pace resumes Monday.`
-            : `${r.name} is behind pace — ${r.actual} of ${r.goal} bookings with ${daysLeft} ${dayWord} left (expected ≈ ${expectedToDate(r.goal, reportDate).toFixed(1)} by now).`,
+            : `${r.name} is behind pace — ${r.actual} of ${r.goal} bookings with ${daysLeft} ${dayWord} left (expected ≈ ${expectedToDate(r.goal, reportDate, etNowMinutes).toFixed(1)} by now).`,
       });
       continue;
     }
