@@ -9,8 +9,8 @@
  *    incremental watermark to the backfill's completion instant, and writes
  *    the honest connected/not-demo connection row.
  */
-import { LiveHighLevelAdapter, readHighLevelCreds } from "/home/team/shared/site/src/server/sync/highlevel-live";
-import { getStore } from "/home/team/shared/site/src/server/store";
+import { LiveHighLevelAdapter, readHighLevelCreds } from "../src/server/sync/highlevel-live";
+import { getStore } from "../src/server/store";
 
 const BACKFILL_FINISHED_AT = "2026-09-26T03:24:26.736Z";
 const STALE_RUN_ID = "2f2554ca-f733-45b9-99c8-834922887e2b";

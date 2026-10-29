@@ -34,6 +34,7 @@ import { join } from "node:path";
 const projRoot = join(import.meta.dir, "../../..");
 const ROUTE_TREE = join(projRoot, "src/routeTree.gen.ts");
 const ROUTE_TREE_BAK = join(projRoot, "src/routeTree.gen.ts.typecheck-bak");
+const DIST_SERVER = join(projRoot, "dist/server/server.js");
 const DANGLING_REFERENCE_CODES = new Set(["TS2304", "TS2305", "TS2307", "TS2551"]);
 
 /**
@@ -45,6 +46,19 @@ const DANGLING_REFERENCE_CODES = new Set(["TS2304", "TS2305", "TS2307", "TS2551"
 export function isMissingRouteTreeGenDiagnostic(line: string): boolean {
   const m = line.match(/error (TS\d+)/);
   return m !== null && m[1] === "TS2307" && line.includes("routeTree.gen");
+}
+
+/**
+ * TRUE for the sibling generated-artifact class: `serve.ts` /
+ * `vercel-entry.ts` import `./dist/server/server.js` — the gitignored BUILD
+ * output, absent on a fresh clone and in CI until `bun run build` runs.
+ * Exactly the routeTree.gen situation (E5) one level up: only a TS2307 whose
+ * module path is the dist server build, only while that artifact is absent
+ * (the caller decides absence). Any other diagnostic still fails the gate.
+ */
+export function isMissingDistServerDiagnostic(line: string): boolean {
+  const m = line.match(/error (TS\d+)/);
+  return m !== null && m[1] === "TS2307" && line.includes("dist/server/server.js");
 }
 
 /**
@@ -77,6 +91,10 @@ describe("typecheck tripwire", () => {
       // Tolerate the missing-module diagnostics ONLY while the file is absent
       // and generation did not produce it.
       const tolerateRouteTree = !existsSync(ROUTE_TREE) && !generated;
+      // Same fresh-clone logic for the dist server build (CI typechecks
+      // BEFORE the build step, so dist/server/server.js is always absent
+      // there; locally it exists after any build and the import resolves).
+      const tolerateDistServer = !existsSync(DIST_SERVER);
 
       const res = spawnSync(join(projRoot, "node_modules/.bin/tsc"), ["--noEmit"], {
         cwd: projRoot,
@@ -113,6 +131,7 @@ describe("typecheck tripwire", () => {
         // bun resolves it at runtime, but @types/bun isn't installed so tsc can't.
         .filter((line) => !line.includes("Cannot find module 'bun:test'"))
         .filter((line) => !(tolerateRouteTree && isMissingRouteTreeGenDiagnostic(line)))
+        .filter((line) => !(tolerateDistServer && isMissingDistServerDiagnostic(line)))
         .filter((line) => {
           const m = line.match(/error (TS\d+)/);
           return m !== null && DANGLING_REFERENCE_CODES.has(m[1]);
@@ -147,5 +166,26 @@ describe("typecheck tripwire", () => {
     ).toBe(false);
     expect(isMissingRouteTreeGenDiagnostic("src/a.ts(1,1): error TS2304: Cannot find name 'foo'")).toBe(false);
     expect(isMissingRouteTreeGenDiagnostic("plain output line")).toBe(false);
+    // The dist-server tolerance is a SEPARATE predicate: a dist line never
+    // matches the routeTree tolerance and vice versa.
+    expect(
+      isMissingDistServerDiagnostic(
+        "serve.ts(18,21): error TS2307: Cannot find module './dist/server/server.js' or its corresponding type declarations.",
+      ),
+    ).toBe(true);
+    expect(
+      isMissingDistServerDiagnostic(
+        "vercel-entry.ts(13,21): error TS2307: Cannot find module './dist/server/server.js' or its corresponding type declarations.",
+      ),
+    ).toBe(true);
+    expect(
+      isMissingDistServerDiagnostic("serve.ts(20,1): error TS2305: Module './dist/server/server.js' has no exported member 'server'."),
+    ).toBe(false);
+    expect(
+      isMissingRouteTreeGenDiagnostic(
+        "serve.ts(18,21): error TS2307: Cannot find module './dist/server/server.js' or its corresponding type declarations.",
+      ),
+    ).toBe(false);
+    expect(isMissingDistServerDiagnostic("plain output line")).toBe(false);
   });
 });
