@@ -774,7 +774,7 @@ function RepsPage() {
             <span className="inline-flex items-center gap-1.5">
               <p className="section-heading">Performance Compared With Team Average</p>
               <InfoTip
-                tip={`Team average excludes the selected rep. Counts compare as % difference; conversion rates as percentage points (pp); durations in m/s. Team averages cover the ${data.teamAverages.repCount} other reporting ${data.teamAverages.repCount === 1 ? "rep" : "reps"} (active and past); rate averages include only reps with a value — a missing value renders as — rather than a guess.`}
+                tip={`Team average excludes the selected rep. Counts compare as % difference; conversion rates as percentage points (pp); durations in m/s. Count averages cover the ${data.teamAverages.repCount} other reporting ${data.teamAverages.repCount === 1 ? "rep" : "reps"} (active and past); conversion rates are POOLED across the same population — Σ bookings ÷ Σ qualifying calls, and Σ bookings ÷ Σ assigned leads — so one thin rep rate never stands for the team; a zero pooled denominator renders as — rather than a guess.`}
                 label="How team averages and differences are computed"
               />
             </span>

@@ -1207,13 +1207,16 @@ export interface TeamComparison {
 }
 
 export interface TeamAverages {
-  repCount: number; // reps averaged in (viewed rep excluded)
+  /** Other reps in the comparison population (viewed rep excluded). */
+  repCount: number;
   totalCalls: number | null;
   callsOverThreshold: number | null;
   bookingsFromOverThreshold: number | null;
   totalBookings: number | null;
   assignedLeads: number | null;
+  /** POOLED team rate — Σ bookings-from->thr ÷ Σ >thr calls (WRONG-4). */
   conversationConversion: number | null;
+  /** POOLED team rate — Σ qualifying bookings ÷ Σ assigned leads (WRONG-4). */
   assignedLeadConversion: number | null;
   avgCallDurationSeconds: number | null;
 }
@@ -1221,13 +1224,27 @@ export interface TeamAverages {
 const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 
 /**
- * Team averages over the same range, EXCLUDING the viewed rep. Counts average
- * across all other reps (zero-activity reps included — they are part of the
- * team); rates and durations average only over reps that have a value, and are
- * null when none do (shown as "—", never a fake number).
+ * Team comparison figures over the same range, EXCLUDING the viewed rep.
+ * OWNER RULING 10/29 (WRONG-4): the RATE rows are POOLED — Σ numerators ÷ Σ
+ * denominators across the comparison population (mean-of-rep-rates is banned
+ * from coaching/status logic):
+ *   Conversation Conversion = Σ bookings-from->threshold-calls ÷ Σ >threshold-calls
+ *   Assigned Lead Conversion = Σ qualifying bookings ÷ Σ assigned leads
+ * A zero pooled denominator → null (shown as "—", never a fake rate).
+ * COUNT rows stay population MEANS across all other reps (zero-activity reps
+ * included — they are part of the team): a count has no numerator/denominator
+ * rate to pool, and the mean of counts is the honest per-rep team average.
+ * Duration stays the mean over value-carrying reps: per-rep averages are
+ * ROUNDED (summarizeCalls), so a pooled Σseconds÷Σcalls is not reconstructible
+ * from these rows — it is the explicitly-labeled "Average Call Duration"
+ * comparison row only, and drives no coaching/status logic.
  */
 export function buildTeamAverages(input: { others: RepRangeMetrics[] }): TeamAverages {
   const o = input.others;
+  const convNum = o.reduce((a, m) => a + m.bookingsFromOverThreshold, 0);
+  const convDen = o.reduce((a, m) => a + m.callsOverThreshold, 0);
+  const alcNum = o.reduce((a, m) => a + m.totalBookings, 0);
+  const alcDen = o.reduce((a, m) => a + m.assignedLeads, 0);
   return {
     repCount: o.length,
     totalCalls: mean(o.map((m) => m.totalCalls)),
@@ -1235,12 +1252,8 @@ export function buildTeamAverages(input: { others: RepRangeMetrics[] }): TeamAve
     bookingsFromOverThreshold: mean(o.map((m) => m.bookingsFromOverThreshold)),
     totalBookings: mean(o.map((m) => m.totalBookings)),
     assignedLeads: mean(o.map((m) => m.assignedLeads)),
-    conversationConversion: mean(
-      o.map((m) => m.conversationConversion).filter((v): v is number => v != null),
-    ),
-    assignedLeadConversion: mean(
-      o.map((m) => m.assignedLeadConversion).filter((v): v is number => v != null),
-    ),
+    conversationConversion: convDen > 0 ? convNum / convDen : null,
+    assignedLeadConversion: alcDen > 0 ? alcNum / alcDen : null,
     avgCallDurationSeconds: mean(
       o.map((m) => m.avgCallDurationSeconds).filter((v): v is number => v != null),
     ),
