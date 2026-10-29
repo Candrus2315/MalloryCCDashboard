@@ -1,6 +1,6 @@
 /** S5 STEP-1 GATE PROBE — what do the 46 window-note 'none' rows actually carry? READ-ONLY. */
 import postgres from "postgres";
-import { getSecret } from "../src/server/env";
+import { getSecret } from "../../src/server/env";
 
 const dbUrl = getSecret("DATABASE_URL")!;
 const sql = postgres(dbUrl, { max: 2, ...(new URL(dbUrl).searchParams.get("sslmode") === "null" ? {} : { ssl: "require" }) });

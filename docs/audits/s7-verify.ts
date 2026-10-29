@@ -5,8 +5,8 @@
  *     date-only dateCreated stores as midnight UTC so its UTC date == the raw string date)
  *  3. per-day breakdown for the report
  */
-import { getStore } from "../src/server/store";
-import { etDateStrFromInstant } from "../src/server/date-logic";
+import { getStore } from "../../src/server/store";
+import { etDateStrFromInstant } from "../../src/server/date-logic";
 
 const store = await getStore();
 const rows = await store.getAllAppointmentsSince("2000-01-01T00:00:00Z");

@@ -4,11 +4,11 @@
  * DB counts, checkpoint failedPages, and contact-linkage integrity for the
  * in-scope bookings + unresolved calls.
  */
-import { getStore } from "../src/server/store";
-import { readHighLevelCreds } from "../src/server/sync/highlevel-live";
-import { appointmentInScope } from "../src/server/metrics/availability";
+import { getStore } from "../../src/server/store";
+import { readHighLevelCreds } from "../../src/server/sync/highlevel-live";
+import { appointmentInScope } from "../../src/server/metrics/availability";
 import postgres from "postgres";
-import { getSecret } from "../src/server/env";
+import { getSecret } from "../../src/server/env";
 
 const creds = readHighLevelCreds();
 if (!creds) throw new Error("HIGHLEVEL_API_KEY / HIGHLEVEL_LOCATION_ID required");

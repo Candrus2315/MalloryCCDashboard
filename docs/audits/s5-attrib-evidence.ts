@@ -6,12 +6,12 @@
  * method that succeeds, and produce the decision matrix + both scenario totals.
  * Never writes: no upserts, no attribution persistence.
  */
-import { getStore } from "../src/server/store";
-import { appointmentInScope } from "../src/server/metrics/availability";
-import { normalizeUSPhone, normalizeEmail } from "../src/server/identity/normalize";
-import { buildRosterEligibility, eligibleRepId, type RosterEligibility } from "../src/server/roster";
-import { bookingCreationDateEt, attributionWindowDates, callDateEt } from "../src/server/metrics/attribution";
-import { getSecret } from "../src/server/env";
+import { getStore } from "../../src/server/store";
+import { appointmentInScope } from "../../src/server/metrics/availability";
+import { normalizeUSPhone, normalizeEmail } from "../../src/server/identity/normalize";
+import { buildRosterEligibility, eligibleRepId, type RosterEligibility } from "../../src/server/roster";
+import { bookingCreationDateEt, attributionWindowDates, callDateEt } from "../../src/server/metrics/attribution";
+import { getSecret } from "../../src/server/env";
 import postgres from "postgres";
 
 const store = await getStore();

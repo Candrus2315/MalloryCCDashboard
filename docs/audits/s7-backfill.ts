@@ -6,14 +6,14 @@
  * Then verifies the landed counts against Acuity ground truth.
  * Run: bun run scratch/s7-backfill.ts  (NOT under bun test — live creds + DB)
  */
-import { getStore } from "../src/server/store";
+import { getStore } from "../../src/server/store";
 import {
   readAcuityCreds,
   AcuityLiveAdapter,
   upsertAcuityAppointments,
   writeAcuityConnection,
-} from "../src/server/sync/acuity-live";
-import { etDateStrFromInstant } from "../src/server/date-logic";
+} from "../../src/server/sync/acuity-live";
+import { etDateStrFromInstant } from "../../src/server/date-logic";
 
 const store = await getStore();
 

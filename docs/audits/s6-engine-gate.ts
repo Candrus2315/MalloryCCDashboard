@@ -15,10 +15,10 @@
  * PERSISTS the s1 verdicts to booking_attributions (that IS the deployment of
  * the rule's data; the lead publishes after).
  */
-import { getStore } from "../src/server/store";
-import { computeAndPersistAttributions } from "../src/server/sync/attribution-tick";
-import { bookingsFromOverThresholdCalls } from "../src/server/metrics/compute";
-import { etDayStartUtc, addDays } from "../src/server/date-logic";
+import { getStore } from "../../src/server/store";
+import { computeAndPersistAttributions } from "../../src/server/sync/attribution-tick";
+import { bookingsFromOverThresholdCalls } from "../../src/server/metrics/compute";
+import { etDayStartUtc, addDays } from "../../src/server/date-logic";
 
 const store = await getStore();
 const settings = await store.getSettings();
@@ -124,7 +124,7 @@ const sinceAppts = etDayStartUtc(addDays(new Date().toISOString().slice(0, 10), 
 const appts = (await store.getAppointmentsWithClientsSince(sinceAppts)).filter((a) => {
   void a; return true;
 });
-const { appointmentInScope } = await import("../src/server/metrics/availability");
+const { appointmentInScope } = await import("../../src/server/metrics/availability");
 const inScope = appts.filter((a) => appointmentInScope(a, settings.acuity) && a.status !== "cancelled" && !a.cancelled);
 const over2min = bookingsFromOverThresholdCalls(inScope, after, allCalls, settings.meaningful_call_threshold_seconds);
 

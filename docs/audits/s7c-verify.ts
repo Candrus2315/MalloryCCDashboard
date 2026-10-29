@@ -6,10 +6,10 @@
  *     the metrics definition)   D. weekly 63   E. >2min   F. -0600 rows
  *  G. ET-vs-stated-date flips   H. precision/source/raw health
  */
-import { getStore } from "../src/server/store";
-import { bookingsFromOverThresholdCalls } from "../src/server/metrics/compute";
-import { appointmentInScope } from "../src/server/metrics/availability";
-import { etDayStartUtc, addDays, etDateStrFromInstant } from "../src/server/date-logic";
+import { getStore } from "../../src/server/store";
+import { bookingsFromOverThresholdCalls } from "../../src/server/metrics/compute";
+import { appointmentInScope } from "../../src/server/metrics/availability";
+import { etDayStartUtc, addDays, etDateStrFromInstant } from "../../src/server/date-logic";
 
 const scenarios = JSON.parse(await Bun.file("scratch/s5-scenarios.json").text());
 const engineGate = JSON.parse(await Bun.file("scratch/s5-engine-gate.json").text());

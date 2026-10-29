@@ -6,7 +6,7 @@
  * (status/repId/callExternalId/method/reason) — the before/after
  * verdict-invariance net for the reason-classification change.
  */
-import { matchAppointmentsToCalls, type AttributionAppointment, type AttributionCall, type AttributionContact, type AttributionHarvestInteraction } from "../src/server/metrics/attribution";
+import { matchAppointmentsToCalls, type AttributionAppointment, type AttributionCall, type AttributionContact, type AttributionHarvestInteraction } from "../../src/server/metrics/attribution";
 
 const USERS = [
   { id: "u_r1", is_active: true },

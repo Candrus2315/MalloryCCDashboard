@@ -10,9 +10,9 @@
  *   (stdout from the ===S4VERIFY-JSON=== sentinel on is pure JSON; pg DDL
  *   NOTICEs precede it)
  */
-import { getStore } from "../src/server/store";
-import { schedulerTick } from "../src/server/sync/scheduler";
-import { CONTACTS_INCREMENTAL_CHECKPOINT_KEY, CONTACTS_RECONCILIATION_CHECKPOINT_KEY } from "../src/server/sync/contacts-incremental";
+import { getStore } from "../../src/server/store";
+import { schedulerTick } from "../../src/server/sync/scheduler";
+import { CONTACTS_INCREMENTAL_CHECKPOINT_KEY, CONTACTS_RECONCILIATION_CHECKPOINT_KEY } from "../../src/server/sync/contacts-incremental";
 import postgres from "postgres";
 
 const store = await getStore();

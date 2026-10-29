@@ -4,10 +4,10 @@
  * Postgres, in the SAME scope the attribution tick evaluates. Read-only.
  * Run: bun scratch/s5b-verify.ts
  */
-import { addDays, etDayStartUtc, etToday } from "../src/server/date-logic";
-import { appointmentInScope } from "../src/server/metrics/availability";
-import { bookingAttributionSplit } from "../src/server/metrics/compute";
-import { getStore, getDbStatus } from "../src/server/store";
+import { addDays, etDayStartUtc, etToday } from "../../src/server/date-logic";
+import { appointmentInScope } from "../../src/server/metrics/availability";
+import { bookingAttributionSplit } from "../../src/server/metrics/compute";
+import { getStore, getDbStatus } from "../../src/server/store";
 
 const store = await getStore();
 const status = getDbStatus();

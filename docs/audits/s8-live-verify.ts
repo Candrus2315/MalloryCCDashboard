@@ -3,7 +3,7 @@
  * Postgres + real settings + real Acuity rows) and print the next-7-days
  * payload exactly as the Availability page consumes it.
  */
-import { availabilityPageData } from "../src/server/page-data";
+import { availabilityPageData } from "../../src/server/page-data";
 
 const data = await availabilityPageData();
 console.log("today:", data.today, "| connection:", JSON.stringify(data.connection));

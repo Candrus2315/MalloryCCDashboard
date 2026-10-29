@@ -1,6 +1,6 @@
 /** S5 DIAGNOSTIC — what rewrote the stored attributions? READ-ONLY, direct SQL (no store DDL). */
 import postgres from "postgres";
-import { getSecret } from "../src/server/env";
+import { getSecret } from "../../src/server/env";
 
 const dbUrl = getSecret("DATABASE_URL")!;
 const sql = postgres(dbUrl, { max: 2, ...(new URL(dbUrl).searchParams.get("sslmode") === null ? { ssl: "require" } : {}) });

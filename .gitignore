@@ -44,9 +44,10 @@ hl-clean.txt
 scratch-*.ts
 
 # --- Scratch probes stay local (backlog 91c47cdd): the scratch/ dir is
-# working debris — never commit it wholesale. Kept read-only artifacts are
-# force-added individually (git add -f), e.g. scratch/step5-allreps-probe.ts;
-# already-tracked scratch files stay tracked (gitignore never untracks).
+# working debris — never commit it wholesale. Permanent audit/forensic
+# artifacts live in docs/audits/ (incl. the formerly force-added kept
+# artifact scratch/step5-allreps-probe.ts, moved there 2026-10-28);
+# nothing under scratch/ is tracked anymore.
 scratch/
 dist.bak/
 nohup.out

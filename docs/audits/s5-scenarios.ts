@@ -21,19 +21,19 @@
  * Scenario totals: Rep-Attributed = 49 baseline + newly deterministic;
  * Ambiguous; Unattributed; sum = 124 for BOTH s1 and s2.
  */
-import { getStore } from "../src/server/store";
-import { appointmentInScope } from "../src/server/metrics/availability";
-import { matchAppointmentsToCalls } from "../src/server/metrics/attribution";
+import { getStore } from "../../src/server/store";
+import { appointmentInScope } from "../../src/server/metrics/availability";
+import { matchAppointmentsToCalls } from "../../src/server/metrics/attribution";
 import {
   bookingCreationDateEt,
   attributionWindowDates,
   callDateEt,
-} from "../src/server/metrics/attribution";
-import { buildRosterEligibility, eligibleRepId, type RosterEligibility } from "../src/server/roster";
-import { addDays, etDateStrFromInstant, etDayStartUtc, etToday } from "../src/server/date-logic";
-import { normalizeUSPhone, normalizeEmail } from "../src/server/identity/normalize";
+} from "../../src/server/metrics/attribution";
+import { buildRosterEligibility, eligibleRepId, type RosterEligibility } from "../../src/server/roster";
+import { addDays, etDateStrFromInstant, etDayStartUtc, etToday } from "../../src/server/date-logic";
+import { normalizeUSPhone, normalizeEmail } from "../../src/server/identity/normalize";
 import postgres from "postgres";
-import { getSecret } from "../src/server/env";
+import { getSecret } from "../../src/server/env";
 
 const store = await getStore();
 const settings = await store.getSettings();

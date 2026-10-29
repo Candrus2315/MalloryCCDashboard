@@ -4,8 +4,8 @@
  * (row count unchanged after re-upsert) and recent acuity sync_runs health.
  * Run: bun run scratch/s7-tick-check.ts
  */
-import { getStore } from "../src/server/store";
-import { availabilityTick } from "../src/server/sync/acuity-live";
+import { getStore } from "../../src/server/store";
+import { availabilityTick } from "../../src/server/sync/acuity-live";
 
 const store = await getStore();
 const before = (await store.getAllAppointmentsSince("2000-01-01T00:00:00Z")).length;

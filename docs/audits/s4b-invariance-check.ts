@@ -1,5 +1,5 @@
 /** S4b invariance check: modified engine must reproduce the pre-change baseline verdicts. */
-import { matchAppointmentsToCalls, type AttributionAppointment, type AttributionCall, type AttributionContact, type AttributionHarvestInteraction } from "../src/server/metrics/attribution";
+import { matchAppointmentsToCalls, type AttributionAppointment, type AttributionCall, type AttributionContact, type AttributionHarvestInteraction } from "../../src/server/metrics/attribution";
 
 const USERS = [
   { id: "u_r1", is_active: true },

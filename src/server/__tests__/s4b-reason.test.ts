@@ -7,7 +7,7 @@
  * renders it per row + as a grouped count summary. VERDICTS DO NOT CHANGE:
  *   1. the invariance suite reproduces the PRE-S4b engine's verdicts exactly
  *      (fixture: fixtures/s4b-verdict-baseline.json, captured from commit
- *      b64041e by scratch/s4b-baseline-dump.ts before the modification);
+ *      b64041e by docs/audits/s4b-baseline-dump.ts before the modification);
  *   2. the scenario matrix here also pins the classification itself.
  */
 import { describe, expect, test } from "bun:test";
@@ -75,7 +75,7 @@ const runEngine = (
 
 describe("S4b verdict invariance — the engine's verdicts are byte-identical to the pre-S4b baseline", () => {
   /**
-   * The EXACT scenario matrix scratch/s4b-baseline-dump.ts ran through the
+   * The EXACT scenario matrix docs/audits/s4b-baseline-dump.ts ran through the
    * PRE-change engine (commit b64041e) to produce
    * fixtures/s4b-verdict-baseline.json. Keep the two in sync: the fixture is
    * the before, this matrix is the after.
