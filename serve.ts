@@ -43,6 +43,16 @@ const HOST = "0.0.0.0";
 const IDLE_TIMEOUT = 255;
 const CLIENT_DIR = `${import.meta.dir}/dist/client`;
 
+// SECURITY (2026-10-28): this process IS the production runtime (the built
+// bundle behind the platform's TLS proxy). The session cookie's Secure
+// attribute is gated on this flag — vite dev (plain HTTP) never sets it, so
+// localhost/dev logins keep working. Set BEFORE the server binds so no request
+// can be served before the flag exists.
+{
+  const { markProdServeRuntime } = await import("./src/server/auth");
+  markProdServeRuntime();
+}
+
 // ---------------------------------------------------------------------------
 // SECOND-INSTANCE GUARD — runs before anything opens a DB pool or scheduler.
 // Evidence (boot-timeline probe, 2026-10-09): dist import 86ms (module scope
@@ -117,12 +127,13 @@ for (let attempt = 1; ; attempt++) {
           });
         }
         // RAW AUDIT ENDPOINT (GET /api/audit?rep=&date=) — read-only DB rows via
-        // the shared audit-api core. Same passphrase gate as every other route
-        // (resolveGate), so enabling DASHBOARD_PASSPHRASE later protects it too.
+        // the shared audit-api core. Same passphrase gate as every other route,
+        // now via the SHARED requireGate wrapper (src/server/api-gate) — the
+        // identical decision the vite dev middlewares run.
         if (pathname === "/api/audit") {
-          const { resolveGate } = await import("./src/server/auth");
-          const gate = await resolveGate(req);
-          if (gate.kind !== "allow") return gate.response;
+          const { requireGate } = await import("./src/server/api-gate");
+          const denied = await requireGate(req);
+          if (denied) return denied;
           const url = new URL(req.url);
           const { handleAuditQuery } = await import("./src/server/audit-api");
           const out = await handleAuditQuery({
@@ -136,11 +147,11 @@ for (let attempt = 1; ; attempt++) {
         }
         // RETENTION DATA MATCH EXCEPTIONS API (stage 3a) — management-only
         // queue + manual-resolve actions (audited, sticky, never re-matched).
-        // Same passphrase gate as every other route.
+        // Same passphrase gate as every other route, via the SHARED requireGate.
         if (pathname === "/api/retention-exceptions") {
-          const { resolveGate } = await import("./src/server/auth");
-          const gate = await resolveGate(req);
-          if (gate.kind !== "allow") return gate.response;
+          const { requireGate } = await import("./src/server/api-gate");
+          const denied = await requireGate(req);
+          if (denied) return denied;
           const { getStore } = await import("./src/server/store");
           const { handleExceptionsQuery, handleExceptionAction } = await import("./src/server/retention/exceptions-api");
           const store = await getStore();

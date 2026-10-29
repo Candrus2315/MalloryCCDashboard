@@ -8,30 +8,37 @@
  * else (RPC/API) gets a 401 JSON response. When the secret is unset the gate
  * is open and Settings shows a warning.
  *
- * The session cookie is signed: `v1.<expiryMs>.<sig>` where sig is a keyed
- * digest over the expiry using the current passphrase. Tokens expire (7d) and
- * are invalidated automatically when the passphrase changes. No server-side
- * session state — a signed cookie is enough per the SPEC.
+ * The session cookie is signed: `v2.<expiryMs>.<sig>` where sig is
+ * HMAC-SHA-256 (keyed with the current passphrase) over the versioned expiry.
+ * SECURITY (2026-10-28, owner directive): the previous scheme was a custom
+ * FNV-style digest — replaced with the standard cryptographic MAC. HMAC-SHA-256
+ * comes from node:crypto (createHmac) rather than Web Crypto's SubtleCrypto
+ * deliberately: verification must stay SYNCHRONOUS because
+ * pip-rbac.assertPipManager() (the second, independent manager check inside
+ * every PIP server function) throws synchronously — an async verify would
+ * ripple through that whole endpoint surface. node:crypto's HMAC is still a
+ * standard MAC, and node:crypto also gives timingSafeEqual for the comparison.
+ * Tokens expire (7d), are bound to the passphrase (changing the passphrase
+ * invalidates every outstanding session), and the version bump means all
+ * pre-existing v1 (FNV) sessions are invalid on deploy — stateless tokens, so
+ * there is nothing to migrate. No server-side session state — a signed cookie
+ * is enough per the SPEC.
  *
  * The login endpoint (POST /auth/login) is handled INSIDE the gate itself so
  * there is no unauthenticated route to protect-by-exception.
  */
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { getSecret } from "./env";
 
 export const SESSION_COOKIE = "mallory_session";
 export const LOGIN_PATH = "/auth/login";
 export const SESSION_TTL_MS = 7 * 24 * 3600_000;
 
-/** Keyed FNV-style digest (deterministic, Bun/WebCrypto-free, sync). */
-function digest(input: string): string {
-  let h1 = 0x811c9dc5;
-  let h2 = 0x01000193;
-  for (let i = 0; i < input.length; i++) {
-    const c = input.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 16777619) >>> 0;
-    h2 = Math.imul(h2 + c, 2246822519) >>> 0;
-  }
-  return `${h1.toString(16).padStart(8, "0")}${h2.toString(16).padStart(8, "0")}`;
+const TOKEN_VERSION = "v2";
+
+/** HMAC-SHA-256 over the versioned expiry, keyed with the passphrase. */
+function sessionSignature(expiry: number, passphrase: string): string {
+  return createHmac("sha256", passphrase).update(`${TOKEN_VERSION}::${expiry}`).digest("base64url");
 }
 
 export function isPassphraseConfigured(): boolean {
@@ -41,22 +48,72 @@ export function isPassphraseConfigured(): boolean {
 /** Signed session token; expires after ttlMs and is bound to the passphrase. */
 export function createSessionToken(passphrase: string, now = Date.now(), ttlMs = SESSION_TTL_MS): string {
   const expiry = Math.floor(now + ttlMs);
-  return `v1.${expiry}.${digest(`v1::${expiry}::${passphrase}`)}`;
+  return `${TOKEN_VERSION}.${expiry}.${sessionSignature(expiry, passphrase)}`;
 }
 
-/** Constant-time-ish token check: valid version, unexpired, signature matches. */
+/**
+ * Token check: valid version, integer expiry in the future, HMAC matches.
+ * Comparison runs through node:crypto timingSafeEqual over equal-length
+ * buffers (a length mismatch returns early — the length of the expected
+ * signature is not secret).
+ */
 export function verifySessionToken(token: string | null | undefined, passphrase: string, now = Date.now()): boolean {
   if (!token) return false;
   const parts = token.split(".");
-  if (parts.length !== 3 || parts[0] !== "v1") return false;
+  if (parts.length !== 3 || parts[0] !== TOKEN_VERSION) return false;
   const expiry = Number(parts[1]);
-  if (!Number.isFinite(expiry) || expiry < Math.floor(now)) return false;
-  const expected = digest(`v1::${expiry}::${passphrase}`);
-  const sig = parts[2];
-  if (sig.length !== expected.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
-  return diff === 0;
+  if (!Number.isInteger(expiry) || expiry < Math.floor(now)) return false;
+  const expected = sessionSignature(expiry, passphrase);
+  const presented = Buffer.from(parts[2], "utf8");
+  const wanted = Buffer.from(expected, "utf8");
+  if (presented.length !== wanted.length) return false;
+  return timingSafeEqual(presented, wanted);
+}
+
+// ---------------------------------------------------------------------------
+// Session cookie construction — SECURITY (2026-10-28): HttpOnly; SameSite=Lax;
+// Path=/; Max-Age preserved; Secure ONLY in production HTTPS environments.
+// The Secure flag is gated on the RUNTIME (never on a request header), so it
+// can never break plain-HTTP localhost/dev logins: vite dev never sets the
+// prod flag, and the published bundle sets it in serve.ts before binding
+// (markProdServeRuntime). Tests exercise both sides explicitly.
+// ---------------------------------------------------------------------------
+
+declare global {
+  // Global because serve.ts (prod boot) and the built SSR bundle are separate
+  // module graphs in one process; var is required for globalThis augmentation.
+  // eslint-disable-next-line no-var
+  var __MALLORY_SERVE_PROD__: boolean | undefined;
+}
+
+/** Called once by production serve.ts at boot, BEFORE the server binds. */
+export function markProdServeRuntime(): void {
+  globalThis.__MALLORY_SERVE_PROD__ = true;
+}
+
+function isProdServeRuntime(): boolean {
+  if (globalThis.__MALLORY_SERVE_PROD__ === true) return true;
+  try {
+    // Belt: vite build statically replaces `import.meta.env.PROD` with `true`
+    // in the published bundle; vite dev keeps it false; plain bun (tests)
+    // mirrors process.env, where no PROD key exists → false.
+    return import.meta.env.PROD === true;
+  } catch {
+    return false;
+  }
+}
+
+/** The exact Set-Cookie header for a fresh session. */
+export function sessionSetCookie(token: string, opts: { secure: boolean }): string {
+  const attrs = [
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+  ];
+  if (opts.secure) attrs.push("Secure");
+  return attrs.join("; ");
 }
 
 /** Parse the session cookie value out of a raw Cookie header. */
@@ -156,7 +213,7 @@ async function handleLogin(request: Request, passphrase: string, now: number): P
         status: 303,
         headers: {
           location: safeRedirectTarget(redirectTo),
-          "set-cookie": `${SESSION_COOKIE}=${encodeURIComponent(token)}; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}; Path=/; HttpOnly; SameSite=Lax`,
+          "set-cookie": sessionSetCookie(token, { secure: isProdServeRuntime() }),
           "cache-control": "no-store",
         },
       }),

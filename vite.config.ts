@@ -3,86 +3,30 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
+import { devAuditApiHandler, devRetentionExceptionsApiHandler } from "./src/server/api-gate";
 
 /**
- * DEV-ONLY JSON endpoint: GET /api/audit?rep=<repId|all|unassigned>&date=YYYY-MM-DD
- * Same shared handler the production serve.ts exposes (src/server/audit-api.ts)
- * so the read-only audit API works identically on the working (dev) site and the
- * published server. Read-only DB reads; no live harvesting on page load.
+ * DEV API ENDPOINTS (working site) — SECURITY (2026-10-28, owner directive):
+ * both middlewares run the SAME passphrase gate as production serve.ts
+ * (src/server/api-gate.requireGate → auth.resolveGate — one shared decision,
+ * so dev and prod can never drift). The handler bodies themselves live in
+ * src/server/api-gate.ts so they stay unit-testable.
+ *
+ * With DASHBOARD_PASSPHRASE set: unauthenticated GETs get the same 401 as prod
+ * (lock-screen HTML for browser navigations, JSON otherwise) and unauthenticated
+ * POSTs are denied BEFORE the store is resolved — nothing can mutate. With the
+ * passphrase unset the gate is open (same as prod; Settings warns) — dev
+ * ergonomics unchanged.
  */
-function auditApiDevPlugin(): Plugin {
+function devApiEndpointsPlugin(): Plugin {
   return {
-    name: "mallory-audit-api-dev",
+    name: "mallory-dev-api-endpoints",
     apply: "serve",
     configureServer(server: ViteDevServer) {
-      server.middlewares.use("/api/audit", (req, res) => {
-        void (async () => {
-          try {
-            const { handleAuditQuery } = await import("./src/server/audit-api");
-            // connect strips the mount prefix, so req.url is "/?rep=…&date=…"
-            const url = new URL(req.url ?? "/", "http://localhost");
-            const out = await handleAuditQuery({
-              rep: url.searchParams.get("rep"),
-              date: url.searchParams.get("date"),
-            });
-            res.statusCode = out.status;
-            res.setHeader("content-type", "application/json; charset=utf-8");
-            res.end(JSON.stringify(out.body));
-          } catch (e) {
-            res.statusCode = 500;
-            res.setHeader("content-type", "application/json; charset=utf-8");
-            res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
-          }
-        })();
-      });
-      // RETENTION DATA MATCH EXCEPTIONS API (stage 3a) — dev mirror of the
-      // serve.ts endpoint (same handler core): GET list + POST resolve /
-      // resolve_new / dismiss (audited, sticky, never re-matched).
-      server.middlewares.use("/api/retention-exceptions", (req, res) => {
-        void (async () => {
-          try {
-            const { getStore } = await import("./src/server/store");
-            const { handleExceptionsQuery, handleExceptionAction } = await import("./src/server/retention/exceptions-api");
-            const store = await getStore();
-            if (req.method === "POST") {
-              const chunks: Buffer[] = [];
-              for await (const chunk of req) chunks.push(chunk as Buffer);
-              let parsed: Record<string, unknown> = {};
-              try {
-                parsed = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as Record<string, unknown>;
-              } catch {
-                res.statusCode = 400;
-                res.setHeader("content-type", "application/json; charset=utf-8");
-                res.end(JSON.stringify({ error: "invalid JSON body" }));
-                return;
-              }
-              const str = (k: string) => (typeof parsed[k] === "string" ? (parsed[k] as string) : undefined);
-              const out = await handleExceptionAction(store, {
-                action: str("action") ?? "",
-                id: str("id"),
-                internalClientId: str("internalClientId"),
-                displayName: str("displayName"),
-                phone: str("phone"),
-                email: str("email"),
-                resolvedBy: str("resolvedBy"),
-              });
-              res.statusCode = out.status;
-              res.setHeader("content-type", "application/json; charset=utf-8");
-              res.end(JSON.stringify(out.body));
-              return;
-            }
-            const url = new URL(req.url ?? "/", "http://localhost");
-            const out = await handleExceptionsQuery(store, { status: url.searchParams.get("status") });
-            res.statusCode = out.status;
-            res.setHeader("content-type", "application/json; charset=utf-8");
-            res.end(JSON.stringify(out.body));
-          } catch (e) {
-            res.statusCode = 500;
-            res.setHeader("content-type", "application/json; charset=utf-8");
-            res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
-          }
-        })();
-      });
+      server.middlewares.use("/api/audit", devAuditApiHandler());
+      // GET list + POST resolve / resolve_new / dismiss (audited, sticky,
+      // never re-matched) — read-only + management actions, gated like prod.
+      server.middlewares.use("/api/retention-exceptions", devRetentionExceptionsApiHandler());
     },
   };
 }
@@ -113,7 +57,7 @@ export default defineConfig({
     },
   },
   plugins: [
-    auditApiDevPlugin(),
+    devApiEndpointsPlugin(),
     tailwindcss(),
     tsConfigPaths({
       projects: ["./tsconfig.json"],
