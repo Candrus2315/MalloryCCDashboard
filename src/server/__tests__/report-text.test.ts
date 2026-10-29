@@ -218,8 +218,12 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
 
     expect(m.bookingsAnchorDay).toBe(2); // cancelled excluded
     expect(m.bookingsWtd).toBe(3);
-    expect(m.bookingsLeft).toBe(76); // 79 - 3
-    expect(m.dailyBookingsNeeded).toBe(Math.ceil(76 / 1)); // Friday → 1 WORKING day left (Mon–Fri)
+    expect(m.bookingsLeft).toBe(76); // 79 - 3 (live weekly remaining)
+    // FROZEN START-OF-DAY TARGET (owner rev 90): wins BEFORE Friday = 2 (a1, a3;
+    // a4 is Friday's) → deficit 77 ÷ 1 Friday workday = 77 — NOT the live 76,
+    // which would compare Friday's booking against a requirement containing it.
+    expect(m.winsBeforeToday).toBe(2);
+    expect(m.dailyBookingsNeeded).toBe(Math.ceil(77 / 1)); // Friday → 1 WORKING day left (Mon–Fri)
     expect(m.conversationConversion).toBeCloseTo(1 / 1, 6); // a1 from 300s call; a3 unattributed
     expect(m.assignedLeadConversion).toBeCloseTo(2 / 2, 6); // 2 bookings ÷ 2 leads worked yesterday
     expect(m.goalAchievement).toBeCloseTo(3 / 79, 6);
