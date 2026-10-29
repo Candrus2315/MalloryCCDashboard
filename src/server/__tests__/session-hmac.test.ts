@@ -40,8 +40,10 @@ function req(path: string, opts: RequestInit = {}): Request {
   return new Request(`${ORIGIN}${path}`, opts);
 }
 
-// NOTE: must await the body INSIDE try/finally — a sync helper would restore
-// the env before the body's awaits complete and the gate would see it unset.
+// HERMETIC ENV (PR #117 completion): EVERY call site awaits this helper, so
+// the set AND the restore happen inside the test's own lifecycle — no promise
+// outlives the test, and a failure inside fails THAT test instead of surfacing
+// as an unhandled rejection attributed to whichever file bun runs next.
 async function withPassphrase<T>(fn: () => T | Promise<T>): Promise<T> {
   const prev = process.env.DASHBOARD_PASSPHRASE;
   process.env.DASHBOARD_PASSPHRASE = PASSPHRASE;
@@ -167,7 +169,7 @@ describe("session cookie attributes (Secure gated on environment)", () => {
   });
 
   test("login flow in DEV runtime sets the cookie WITHOUT Secure (localhost logins keep working)", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       delete (globalThis as { __MALLORY_SERVE_PROD__?: boolean }).__MALLORY_SERVE_PROD__;
       try {
         const gate = await resolveGate(req("/auth/login", { method: "POST", body: new URLSearchParams({ passphrase: PASSPHRASE, redirectTo: "/settings" }) }));
@@ -186,7 +188,7 @@ describe("session cookie attributes (Secure gated on environment)", () => {
   });
 
   test("login flow in PROD runtime (markProdServeRuntime) sets the cookie WITH Secure", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       markProdServeRuntime();
       try {
         const gate = await resolveGate(req("/auth/login", { method: "POST", body: new URLSearchParams({ passphrase: PASSPHRASE, redirectTo: "/settings" }) }));
@@ -205,7 +207,7 @@ describe("session cookie attributes (Secure gated on environment)", () => {
 
 describe("no secret leakage", () => {
   test("denial bodies and lock screen never contain the passphrase or a token", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const rpc = await resolveGate(req("/_serverFn/fake", { method: "POST" }));
       if (rpc.kind !== "response") throw new Error("expected denial");
       const rpcBody = await rpc.response.text();
@@ -217,8 +219,9 @@ describe("no secret leakage", () => {
       // wrong-passphrase login error message echoes nothing secret either
       const bad = await resolveGate(req("/auth/login", { method: "POST", body: new URLSearchParams({ passphrase: "wrong-guess", redirectTo: "/" }) }));
       if (bad.kind !== "response") throw new Error("expected denial");
-      expect(await bad.response.text()).not.toContain(PASSPHRASE);
-      expect(await bad.response.text()).not.toContain("wrong-guess");
+      const badBody = await bad.response.text(); // read ONCE — a Response body is single-use
+      expect(badBody).not.toContain(PASSPHRASE);
+      expect(badBody).not.toContain("wrong-guess");
     });
   });
 });

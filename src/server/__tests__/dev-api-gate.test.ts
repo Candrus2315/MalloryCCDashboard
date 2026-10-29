@@ -33,11 +33,20 @@ import { createSessionToken } from "../auth";
 const PASSPHRASE = "dev-gate-battery-passphrase-4d21";
 const ORIGIN = "https://dashboard.example.com";
 
-// NOTE: must await the body INSIDE try/finally — a sync helper would restore
-// the env before the body's awaits complete and the gate would see it unset.
-async function withPassphrase<T>(fn: () => T | Promise<T>): Promise<T> {
+// HERMETIC ENV (PR #117 completion): EVERY call site awaits this helper, so
+// the set AND the restore happen inside the test's own lifecycle — no promise
+// outlives the test, so passphrase state can never leak into another test or
+// file (bun test shares one process across files). `passphrase = null`
+// exercises the unset (open-gate) path under the same save/restore guarantee;
+// the bare `delete process.env.DASHBOARD_PASSPHRASE` statements this replaces
+// never restored, which is what let gate state drift across files.
+async function withPassphrase<T>(
+  fn: () => T | Promise<T>,
+  passphrase: string | null = PASSPHRASE,
+): Promise<T> {
   const prev = process.env.DASHBOARD_PASSPHRASE;
-  process.env.DASHBOARD_PASSPHRASE = PASSPHRASE;
+  if (passphrase === null) delete process.env.DASHBOARD_PASSPHRASE;
+  else process.env.DASHBOARD_PASSPHRASE = passphrase;
   try {
     return await fn();
   } finally {
@@ -117,7 +126,7 @@ async function seedOpenException(store: MemoryStore): Promise<{ exceptionId: str
 
 describe("dev /api/audit — gated like production", () => {
   test("unauthenticated GET → 401 JSON; the audit handler never runs", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       let handlerRuns = 0;
       const handler = devAuditApiHandler(async () => {
         handlerRuns++;
@@ -134,7 +143,7 @@ describe("dev /api/audit — gated like production", () => {
   });
 
   test("authenticated GET → allowed; handler receives the full query (mount path reconstructed)", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       let handlerRuns = 0;
       let seen: { rep?: string | null; date?: string | null } | null = null;
       const handler = devAuditApiHandler(async (params) => {
@@ -154,7 +163,7 @@ describe("dev /api/audit — gated like production", () => {
   });
 
   test("unauthenticated browser navigation (Accept: text/html) gets the lock screen, like prod", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const handler = devAuditApiHandler(async () => ({ status: 200, body: { ok: true } }));
       const res = fakeRes();
       handler(fakeReq({ headers: { accept: "text/html" } }), res);
@@ -166,23 +175,24 @@ describe("dev /api/audit — gated like production", () => {
   });
 
   test("DASHBOARD_PASSPHRASE unset → gate open, dev ergonomics unchanged", async () => {
-    delete process.env.DASHBOARD_PASSPHRASE;
-    let handlerRuns = 0;
-    const handler = devAuditApiHandler(async () => {
-      handlerRuns++;
-      return { status: 200, body: { ok: true } };
-    });
-    const res = fakeRes();
-    handler(fakeReq({ url: "/?rep=all" }), res); // no cookie at all
-    await res.done;
-    expect(handlerRuns).toBe(1);
-    expect(res.statusCode).toBe(200);
+    await withPassphrase(async () => {
+      let handlerRuns = 0;
+      const handler = devAuditApiHandler(async () => {
+        handlerRuns++;
+        return { status: 200, body: { ok: true } };
+      });
+      const res = fakeRes();
+      handler(fakeReq({ url: "/?rep=all" }), res); // no cookie at all
+      await res.done;
+      expect(handlerRuns).toBe(1);
+      expect(res.statusCode).toBe(200);
+    }, null); // null = UNSET passphrase (open-gate path), restored after
   });
 });
 
 describe("dev /api/retention-exceptions — gated like production", () => {
   test("unauthenticated POST resolve CANNOT mutate state (gate denies before the store is touched)", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const store = new MemoryStore();
       const { exceptionId, clientId } = await seedOpenException(store);
       let storeResolved = 0;
@@ -217,7 +227,7 @@ describe("dev /api/retention-exceptions — gated like production", () => {
   });
 
   test("authenticated POST resolve mutates state (allowed path works end-to-end)", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const store = new MemoryStore();
       const { exceptionId, clientId } = await seedOpenException(store);
       const handler = devRetentionExceptionsApiHandler(async () => store);
@@ -242,7 +252,7 @@ describe("dev /api/retention-exceptions — gated like production", () => {
   });
 
   test("unauthenticated GET list → 401; store never consulted", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       let storeTouched = 0;
       const handler = devRetentionExceptionsApiHandler(async () => {
         storeTouched++;
@@ -257,20 +267,21 @@ describe("dev /api/retention-exceptions — gated like production", () => {
   });
 
   test("DASHBOARD_PASSPHRASE unset → gate open, the queue API answers", async () => {
-    delete process.env.DASHBOARD_PASSPHRASE;
-    const store = new MemoryStore();
-    const handler = devRetentionExceptionsApiHandler(async () => store);
-    const res = fakeRes();
-    handler(fakeReq({ url: "/?status=open" }), res);
-    await res.done;
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toContain('"counts"');
+    await withPassphrase(async () => {
+      const store = new MemoryStore();
+      const handler = devRetentionExceptionsApiHandler(async () => store);
+      const res = fakeRes();
+      handler(fakeReq({ url: "/?status=open" }), res);
+      await res.done;
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('"counts"');
+    }, null); // null = UNSET passphrase (open-gate path), restored after
   });
 });
 
 describe("requireGate — the one shared decision", () => {
   test("allowed request → null (caller proceeds); denied POST → 401 JSON Response", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const allowed = await requireGate(new Request(`${ORIGIN}/api/audit?rep=all`, { headers: { cookie: tokenCookie() } }));
       expect(allowed).toBeNull();
       const denied = await requireGate(new Request(`${ORIGIN}/api/retention-exceptions`, { method: "POST" }));
@@ -281,13 +292,14 @@ describe("requireGate — the one shared decision", () => {
   });
 
   test("unset passphrase → always null (open gate, same as production)", async () => {
-    delete process.env.DASHBOARD_PASSPHRASE;
-    expect(await requireGate(new Request(`${ORIGIN}/api/audit`))).toBeNull();
-    expect(await requireGate(new Request(`${ORIGIN}/api/retention-exceptions`, { method: "POST" }))).toBeNull();
+    await withPassphrase(async () => {
+      expect(await requireGate(new Request(`${ORIGIN}/api/audit`))).toBeNull();
+      expect(await requireGate(new Request(`${ORIGIN}/api/retention-exceptions`, { method: "POST" }))).toBeNull();
+    }, null); // null = UNSET passphrase (open-gate path), restored after
   });
 
   test("gateConnectRequest reconstructs the FULL mounted path for the gate decision", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       // cookie is invalid → deny. The point is the gate SAW /api/audit (mounted
       // path), not the prefix-stripped "/?rep=…" connect hands the middleware.
       const res = fakeRes();

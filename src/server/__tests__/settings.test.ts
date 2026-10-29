@@ -28,9 +28,16 @@ function req(path: string, opts: RequestInit = {}): Request {
   return new Request(`${ORIGIN}${path}`, opts);
 }
 
-async function withPassphrase<T>(fn: () => Promise<T> | T): Promise<T> {
+// HERMETIC ENV (PR #117 completion): every call site awaits this helper, so
+// passphrase set/restore happens inside the test's own lifecycle — previously
+// some call sites were not awaited, so leaked promises mutated process.env
+// AFTER the test finished (bun test shares one process across files).
+// `passphrase = null` exercises the unset (open-gate) path with the same
+// save/restore guarantee; the bare delete this replaces never restored.
+async function withPassphrase<T>(fn: () => Promise<T> | T, passphrase: string | null = PASSPHRASE): Promise<T> {
   const prev = process.env.DASHBOARD_PASSPHRASE;
-  process.env.DASHBOARD_PASSPHRASE = PASSPHRASE;
+  if (passphrase === null) delete process.env.DASHBOARD_PASSPHRASE;
+  else process.env.DASHBOARD_PASSPHRASE = passphrase;
   try {
     return await fn();
   } finally {
@@ -162,14 +169,15 @@ describe("manual override audit trail", () => {
 
 describe("server-side passphrase gate", () => {
   test("unset passphrase → everything open, isPassphraseConfigured false", async () => {
-    delete process.env.DASHBOARD_PASSPHRASE;
-    expect(isPassphraseConfigured()).toBe(false);
-    const gate = await resolveGate(req("/"));
-    expect(gate.kind).toBe("allow");
+    await withPassphrase(async () => {
+      expect(isPassphraseConfigured()).toBe(false);
+      const gate = await resolveGate(req("/"));
+      expect(gate.kind).toBe("allow");
+    }, null); // null = UNSET passphrase (open-gate path), restored after
   });
 
   test("set passphrase: page without cookie → 401 lock-screen HTML; RPC → 401 JSON", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const page = await resolveGate(req("/", { headers: { accept: "text/html" } }));
       if (page.kind === "response") {
         expect(page.response.status).toBe(401);
@@ -185,7 +193,7 @@ describe("server-side passphrase gate", () => {
   });
 
   test("set passphrase: valid signed cookie → allowed; invalid/forged → blocked", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const token = createSessionToken(PASSPHRASE);
       const ok = await resolveGate(req("/settings", { headers: { cookie: `${SESSION_COOKIE}=${token}`, accept: "text/html" } }));
       expect(ok.kind).toBe("allow");
@@ -203,7 +211,7 @@ describe("server-side passphrase gate", () => {
   });
 
   test("POST /auth/login sets a signed cookie and redirects; wrong passphrase re-locks", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const good = await resolveGate(req("/auth/login", { method: "POST", body: new URLSearchParams({ passphrase: PASSPHRASE, redirectTo: "/settings" }) }));
       expect(good.kind).toBe("response");
       if (good.kind === "response") {
@@ -221,7 +229,7 @@ describe("server-side passphrase gate", () => {
   });
 
   test("asset prefixes stay open; redirect targets are sanitized", async () => {
-    withPassphrase(async () => {
+    await withPassphrase(async () => {
       const g = await resolveGate(req("/assets/app-abc123.js"));
       expect(g.kind).toBe("allow");
       expect(safeRedirectTarget("https://evil.example.com")).toBe("/");
