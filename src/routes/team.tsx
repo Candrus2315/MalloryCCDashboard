@@ -655,7 +655,7 @@ function TeamPage() {
               <Eyebrow>Team Performance</Eyebrow>
               <p className="kpi-label mt-5 flex items-center gap-1.5">
                 Total Bookings
-                <InfoTip tip="Non-cancelled bookings, counted by created date (America/New_York)" label="About Total Bookings" />
+                <InfoTip tip="Booking wins — paid deposit, not cancelled — counted by deposit date (America/New_York); created date only for legacy rows without one" label="About Total Bookings" />
               </p>
               <p className="mt-2 flex flex-wrap items-baseline gap-x-2.5 gap-y-1 tabular-nums">
                 <span className="text-6xl font-semibold leading-none tracking-tight text-(--text-primary)">
@@ -665,7 +665,7 @@ function TeamPage() {
                   <span className="text-3xl font-medium text-(--text-muted)">/ {formatCount(ps.goalValue)} bookings</span>
                 )}
               </p>
-              <p className="kpi-sub mt-1.5">bookings created in range</p>
+              <p className="kpi-sub mt-1.5">booking wins by deposit date in range</p>
               <div className="mt-6">
                 {/* goal pacing bar — the pacing module's exact geometry + hit tone */}
                 {ps.barPct != null && (
@@ -1022,7 +1022,7 @@ function TeamPage() {
         Metric definitions &amp; methodology
         <InfoTip
           side="above"
-          tip="Bookings counted by created_at (America/New_York) · leads by work_date · team goal = weekly goals summed over the range's weeks · Daily Pace Needed = bookings remaining ÷ working days left in the range's final week (never negative). Every figure comes from the same metrics layer as every other page."
+          tip="Bookings = wins counted by deposit date (America/New_York; created-date fallback for legacy rows) · leads by work_date · team goal = weekly goals summed over the range's weeks · Daily Pace Needed = bookings remaining ÷ working days left in the range's final week (never negative). Every figure comes from the same metrics layer as every other page."
           label="Metric definitions and methodology"
         />
       </p>

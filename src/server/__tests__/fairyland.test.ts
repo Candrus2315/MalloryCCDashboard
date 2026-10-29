@@ -98,14 +98,17 @@ describe("three-way splits — Fairyland never silently counts as Family", () =>
     expect(splitLeadsByType(leads)).toEqual({ family: 2, animalia: 1, fairyland: 2, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0, total: 5 });
   });
 
-  test("splitLeadRows (trend split) covers fairyland; junk types still land in neither split", () => {
+  test("splitLeadRows (trend split) uses the canonical genre chain — junk text falls through to the family catch-all", () => {
     const leads = [
       lead("l1", "family"),
       lead("l2", "fairyland"),
       lead("l3", "animalia"),
       lead("l4", ""),
     ];
-    expect(splitLeadRows(leads)).toEqual({ family: 1, animalia: 1, fairyland: 1, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0 });
+    // INC-9 alignment (10/29): the trend split now matches splitLeadsByType /
+    // classifyLeadSource EXACTLY — /animalia/i, then /fairyland/i-or-sheet,
+    // then family catch-all (no more "neither split" limbo for odd text).
+    expect(splitLeadRows(leads)).toEqual({ family: 2, animalia: 1, fairyland: 1, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0 });
   });
 });
 
@@ -130,10 +133,10 @@ describe("sheet-identity fallback — fairyland-sheet rows typed \"Fairies\" rep
   test("splitLeadRows (trend split) applies the same sheet-identity fallback", () => {
     const leads = [
       lead("f1", "Fairies", { source_sheet: "fairyland" }),
-      lead("f2", "Fairies", { source_sheet: "family" }), // unrecognized text → NEITHER split (no family catch-all — never guessed)
+      lead("f2", "Fairies", { source_sheet: "family" }), // "Fairies" text matches no genre word; family sheet ≠ fairyland → family catch-all (canonical chain)
       lead("f3", "fairyland", { source_sheet: "fairyland" }),
     ];
-    expect(splitLeadRows(leads)).toEqual({ family: 0, animalia: 0, fairyland: 2, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0 });
+    expect(splitLeadRows(leads)).toEqual({ family: 1, animalia: 0, fairyland: 2, auction_register_certificate: 0, google_ads_leads: 0, alliance_activate_certificate: 0, website_applications: 0 });
   });
 
   test("leadsToday already fell back by sheet identity (PR #94) — 'Fairies' text included", () => {

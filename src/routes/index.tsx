@@ -22,6 +22,7 @@ import {
   pooledPtsDelta,
   repPerfLink,
   studioClosedOn,
+  todayPaceView,
   weekElapsedFraction,
   type GoalProgressView,
   type PooledRate,
@@ -210,6 +211,19 @@ function TodayPage() {
       : m.bookings.goalAchievement >= weekElapsed
         ? "on"
         : "off";
+
+  // TODAY'S TARGET presentation (owner spec 10/29): pure display mapping of
+  // the payload's pace fields — target is paceNeeded verbatim (the formula,
+  // the Mon–Fri denominator and the 18:30 cutoff are untouched), the day
+  // states (open / closed / weekend) carry the honest copy.
+  const pace = todayPaceView({
+    paceDayState: m.paceDayState,
+    paceNextWorkday: m.paceNextWorkday,
+    paceNeeded: m.bookings.paceNeeded,
+    bookedToday: m.bookings.today,
+    remaining: m.bookings.remaining,
+    weeklyGoal: m.bookings.weeklyGoal,
+  });
 
   // Lead-band presentation values (Wave 1, Daily Report §3 geometry): the mix
   // bar widths are shares of TODAY'S total — the legend always prints the
@@ -425,17 +439,57 @@ function TodayPage() {
                 </div>
               </div>
             </div>
-            {/* right / supporting — today's pace and activity, secondary to the goal */}
+            {/* right / supporting — today's pace and activity, secondary to the goal.
+                TODAY'S TARGET presentation (owner spec 10/29): the old
+                "Daily Pace Needed: N" was the TOTAL daily target but read like
+                N still needed. The target number, the day-state copy and the
+                18:30 roll come from todayPaceView — the paceNeeded formula,
+                the Mon–Fri denominator and the cutoff semantics are untouched. */}
             <div className="border-t border-(--table-border-weak) p-5 lg:border-t-0">
               <Eyebrow>Today's Pace</Eyebrow>
               <dl className="mt-4 space-y-4">
                 <div>
-                  <dt className="text-[13px] font-medium text-(--text-body)">Daily Pace Needed</dt>
+                  <dt className="text-[13px] font-medium text-(--text-body)">Today's Target</dt>
+                  {pace.state === "open" ? (
+                    <dd className="mt-0.5">
+                      <p className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                          {pace.target}
+                        </span>
+                        <span className="kpi-sub">bookings</span>
+                      </p>
+                      <p className="kpi-sub mt-1 tabular-nums">{pace.progressLine}</p>
+                    </dd>
+                  ) : pace.state === "closed" ? (
+                    <dd className="mt-0.5">
+                      {pace.windowClosedLine && <p className="kpi-sub">{pace.windowClosedLine}</p>}
+                      {pace.nextWorkdayLine ? (
+                        <p className="mt-1 flex flex-wrap items-baseline gap-2">
+                          <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                            {pace.target}
+                          </span>
+                          <span className="kpi-sub tabular-nums">{pace.nextWorkdayLine}</span>
+                        </p>
+                      ) : (
+                        pace.offLine && <p className="kpi-sub mt-1">{pace.offLine}</p>
+                      )}
+                    </dd>
+                  ) : (
+                    <dd className="mt-0.5 flex flex-wrap items-baseline gap-2">
+                      <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                        {pace.target}
+                      </span>
+                      <span className="kpi-sub">{pace.offLine}</span>
+                    </dd>
+                  )}
+                </div>
+                <div>
+                  <dt className="text-[13px] font-medium text-(--text-body)">Weekly Remaining</dt>
                   <dd className="mt-0.5 flex flex-wrap items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-                      {m.bookings.paceNeeded}
+                      {m.bookings.remaining}
                     </span>
-                    <span className="kpi-sub">{m.paceWeekend ? "team is off — pace resumes Monday" : "to hit goal"}</span>
+                    <span className="kpi-sub tabular-nums">bookings left to hit {m.bookings.weeklyGoal}</span>
                   </dd>
                 </div>
                 <div>

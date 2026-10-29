@@ -36,9 +36,11 @@ import {
   etToday,
   formatDateHuman,
   getLeadCohort,
+  isWorkday,
   mondaysInRange,
   repOperatingState,
   weekStart,
+  weekday,
 } from "../date-logic";
 import { isFormSourceSheet } from "../../components/lead-sources";
 // Availability engine (runtime import — availability.ts depends on this
@@ -745,6 +747,24 @@ export interface TodayMetrics {
    */
   paceDaysLeft: number;
   paceWeekend: boolean;
+  /**
+   * TODAY'S TARGET presentation day-state (owner spec 10/29) — derived from
+   * the SAME etNowMinutes rule as paceDaysLeft, no new date logic:
+   *   "open"    = weekday before the 18:30 ET cutoff (today's target is live)
+   *   "closed"  = weekday at/after 18:30 ET (production window closed — the
+   *               pace requirement has rolled to the next workday)
+   *   "weekend" = Sat/Sun (team off; pace resumes Monday)
+   * Legacy callers without a clock stay "open" (today counts) — matches the
+   * daysLeftInWorkWeek fallback.
+   */
+  paceDayState: "open" | "closed" | "weekend";
+  /**
+   * When "closed" and working days remain: the next workday (ET date) the
+   * pace target applies to (Thursday evening → Friday). NULL when the state
+   * is open/weekend or when no working day remains (Friday after the cutoff —
+   * no weekend target is ever fabricated).
+   */
+  paceNextWorkday: string | null;
   callsToday: CallsSummary;
   conversionsToday: {
     conversation: number | null;
@@ -869,6 +889,23 @@ export function buildTodayMetrics(input: {
     input.etNowMinutes == null
       ? daysLeftInWorkWeek(reportDate) // working days only — agents work Mon–Fri
       : daysLeftInWorkWeekAt(reportDate, input.etNowMinutes);
+  // Presentation day-state (owner 10/29 spec) — same cutoff rule as dLeft.
+  const paceWd = weekday(reportDate);
+  const paceDayState: TodayMetrics["paceDayState"] =
+    paceWd === 0 || paceWd === 6
+      ? "weekend"
+      : input.etNowMinutes != null && input.etNowMinutes >= PACE_DAY_CUTOFF_ET_MINUTES
+        ? "closed"
+        : "open";
+  // Rolled next-workday requirement (Thu evening → Fri; Mon evening → Tue …).
+  // Friday after the cutoff has NO remaining workday — paceNextWorkday stays
+  // null so the UI never fabricates a weekend target.
+  let paceNextWorkday: string | null = null;
+  if (paceDayState === "closed" && dLeft > 0) {
+    let next = addDays(reportDate, 1);
+    while (!isWorkday(next)) next = addDays(next, 1);
+    paceNextWorkday = next;
+  }
 
   const repRows = buildRepPerformanceRows({
     reps: input.reps,
@@ -899,6 +936,8 @@ export function buildTodayMetrics(input: {
     },
     paceDaysLeft: dLeft,
     paceWeekend: dLeft === 0,
+    paceDayState,
+    paceNextWorkday,
     callsToday,
     conversionsToday: {
       conversation: conversationConversion(fromOverToday.length, callsToday.overThreshold),
@@ -1436,9 +1475,11 @@ export interface LeadSplit {
  * cohort logic: rows counted here are exactly the rows the caller already
  * aggregated into a `leads` total. A row from one of the four form-workbook
  * sheets counts under ITS source (sheet identity — lead_type text is never a
- * genre vote); any other row counts as family/animalia when its lead_type
- * (source_sheet fallback) names that sheet; rows with any other or blank type
- * stay in the total but in NEITHER split (never guessed).
+ * genre vote); every other row goes through the CANONICAL genre text chain
+ * (INC-9 alignment, 10/29): /animalia/i first, then /fairyland/i-or-fairyland-
+ * sheet, and family as the catch-all — EXACTLY summarizeLeadRows /
+ * splitLeadsByType / classifyLeadSource, so the trend tooltip genre split can
+ * never disagree with the same rows' genre counts anywhere else.
  */
 export function splitLeadRows(leads: LeadRow[]): LeadSplit {
   let family = 0;
@@ -1453,13 +1494,13 @@ export function splitLeadRows(leads: LeadRow[]): LeadSplit {
     if (l.source_sheet === "google_ads_leads") { google_ads_leads += 1; continue; }
     if (l.source_sheet === "alliance_activate_certificate") { alliance_activate_certificate += 1; continue; }
     if (l.source_sheet === "website_applications") { website_applications += 1; continue; }
-    const t = (l.lead_type || l.source_sheet || "").trim().toLowerCase();
-    if (t === "family") family += 1;
-    else if (t === "animalia") animalia += 1;
-    // SHEET-IDENTITY FALLBACK (owner directive 2026-10-27, item 4): same rule
-    // as splitLeadsByType — a row from the fairyland sheet is fairyland even
-    // when its lead_type text ("Fairies") never matches the genre word.
-    else if (t === "fairyland" || l.source_sheet === "fairyland") fairyland += 1;
+    // CANONICAL GENRE TEXT CHAIN (same order + regexes as splitLeadsByType —
+    // no exact-match comparison): animalia text first, fairyland text or the
+    // fairyland SHEET (sheet-identity fallback — "Fairies" campaign text never
+    // matches the genre word), then family as the catch-all.
+    if (/animalia/i.test(l.lead_type)) animalia += 1;
+    else if (/fairyland/i.test(l.lead_type) || l.source_sheet === "fairyland") fairyland += 1;
+    else family += 1;
   }
   return { family, animalia, fairyland, auction_register_certificate, google_ads_leads, alliance_activate_certificate, website_applications };
 }
