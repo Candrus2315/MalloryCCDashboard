@@ -1,13 +1,29 @@
 # MALLORY CC PERFORMANCE DASHBOARD — OWNER SPEC (SOURCE OF TRUTH)
 
-Lightweight internal web app for the Mallory Portraits Client Concierge (CC) team.
+Internal web app for the Mallory Portraits Client Concierge (CC) team.
 
 It is NOT a CRM, LMS, messaging app, employee management system, task manager, or AI coaching platform. Its job is to automatically combine GoHighLevel/HighLevel, Acuity Scheduling, and Google Sheets and give Christopher one trustworthy place to see CC performance, lead volume, goals, bookings, and studio availability.
 
-## PRIMARY NAVIGATION
-Today · Reps · Team · Availability · Daily Report · Settings
+> **DOC STATUS (updated 2026-10-28).** This file carries the owner's original spec
+> forward as present-tense truth. The original V1 wording is kept where it is still
+> the rationale for a behavior; passages the product has outgrown are marked
+> **SUPERSEDED** with the current rule inline. Nothing here rewrites history —
+> superseded text is preserved so the *why* behind each change stays auditable.
 
-Keep V1 lightweight.
+## PRIMARY NAVIGATION
+Today · Reps · Team · Availability · Daily Report · Weekly · Performance · Retention · Settings · Audit · Status
+
+**SUPERSEDED (2026-09→10).** The original nav was the six V1 tabs "Today · Reps · Team · Availability · Daily Report · Settings". Four management modules have since been added — Weekly (owner's Monday leadership report, 2026-09-29), Performance (PIP module), Retention, and the ops pair Audit + Status — and the six originals all shipped as specified. "Keep V1 lightweight" was the build-order directive for V1 and remains the design discipline for every addition (reporting + management documentation only; the DO NOT ADD list still governs).
+
+## CURRENT SCOPE (2026-10-28)
+The app is no longer the original lightweight six-tab build; it is a complete management module set on the same single-store, single-metrics-source core:
+
+- **Reporting pages** — Today, Reps, Team, Availability, Daily Report, Weekly. Weekly answers the owner's four operational questions (Weekly Leads / Gross Bookings / Cancellations / Net Bookings) and nothing else by design.
+- **Performance module** — PIPs (performance improvement plans) with evidence snapshots, check-ins, templates, and an event log; both stores implement identical semantics.
+- **Retention module** — identity chain, attempt ledger + outcomes, cancellations/no-show/transfers ledgers, append-if-new scorecards, read-only owner history. Live on the dashboard.
+- **Audit module** — record-level booking reconciliation views (see also `docs/audits/` for preserved audit artifacts, e.g. `audit-79v84` for the 84/5/79 booking audit).
+- **Status** — read-only health view: per-provider sync freshness, sync heartbeat, supervisor/boot/running guards, recent sync runs with errors verbatim.
+- **Commissions are MANUAL by owner directive (2026-10-19)** — tracked outside the app; no commission-calculation feature is to be built.
 
 ## INTEGRATIONS
 
@@ -24,12 +40,19 @@ Appointment ID · Client name · Phone · Email · Appointment creation timestam
 Acuity is the PRIMARY booking and studio availability source. Christopher can select which Acuity calendars and appointment types count toward CC reporting.
 
 ### Google Sheets — lead counts
+Genre lead-ads sheets (three; lead_type text first, sheet-identity fallback for Fairyland's "Fairies" campaign):
 Family Sheet ID: 1_5d1TDrOLg_E3RICEY6M7K9wnM97M9wkHLUN-C0oIvg
 Animalia Sheet ID: 1Zp_ghywl-u4e13NHMoPRubZ9DCZC-Khv1ePL6PVahZU
+Fairyland Sheet ID: configured via Settings integration (not hardcoded here). **Parked owner decision:** the Fairyland spreadsheet's un-ingested `LEADS` tab (~24,437 rows of pure 2020–2024 history, zero overlap with stored leads) — options survey in the team's `shared/fairyland-leads-survey.md`.
+
+**Forms Data — Mallory Portraits workbook** (added per owner directive 2026-10-27; four tabs = four independent lead sources through the SAME pipeline as the genre sheets, identical count/dedupe rules):
+Workbook ID: 1ePTLKCpHVzvYo7zRUoAbE-rL3adXtkgjIsWXWtdf8Ms — tabs: Auction Register Certificate · Google Ads Leads · Alliance Activate Certificate · Website Applications.
 
 Allow configurable column mapping instead of hardcoding columns.
 
-Metrics: Family Leads Today · Animalia Leads Today · Total Leads Today · Weekly Leads · Weekly Lead Budget · % Budget Used · Leads Remaining. Default weekly lead budget = 700, editable.
+Metrics: per-source leads (all seven sources) · Total Leads Today · Weekly Leads · Weekly Lead Budget · % Budget Used · Leads Remaining. Default weekly lead budget = 700, editable.
+
+**SUPERSEDED (2026-09→10).** The original integration listed only the Family and Animalia sheets and the per-metric list "Family Leads Today · Animalia Leads Today". Five further sources (Fairyland + the four workbook tabs) were added by owner directive; every downstream lead consumer now carries them as named buckets.
 
 ## CRITICAL LEAD DATE LOGIC
 
@@ -44,16 +67,36 @@ Never simply filter Google Sheets for today's date. Create one centralized funct
 
 Operational reporting uses work_date. Historical reporting can use source_date. Use America/New_York for all Mallory operational date logic.
 
+### WEEKLY LEAD LOGIC (current, 2026-10-28)
+- The **operational lead count uses `work_date`** — every weekly/operational lead number is a work-date cohort, never a raw source-date slice.
+- The Mallory weekly lead cohort follows the **existing Friday-through-Thursday source-date cadence that maps into the Mon–Fri work-date week**: `getWorkDate` maps a Fri/Sat/Sun source lead to Monday (Fri +3, Sat +2, Sun +1) and Mon–Thu source leads to the next calendar day (Tue–Fri). A lead's *work week* is therefore the Mon–Sun window containing its `work_date`, and the source dates feeding that work week are always the preceding Fri–Thu window.
+- **Explicitly NOT raw Mon–Sun `source_date` filtering.** A lead received Friday belongs to the *following* work week even though its source_date may fall inside the label week. (The weekly report's cohort slice is `work_date IN [weekStart..weekEnd]` — see `src/server/page-data.ts`, "WORK-DATE COHORT slice".)
+- `getWorkDate` and `getLeadCohort` (in `src/server/date-logic.ts`) are THE centralized functions; pages must never re-derive or filter sheets by "today".
+
 ## BOOKING ATTRIBUTION
 
 Booking Attribution Engine connecting HighLevel calls with Acuity appointments. Match contacts by priority: 1) Contact ID 2) Phone 3) Email.
 
 A booking counts as "Booking From Calls Over 2 Minutes" when: a rep had a call with that contact longer than 120 seconds AND the appointment was created within the configured attribution window (default 24 hours). If multiple reps spoke to the client, attribute to the most recent qualifying call before the booking. If attribution is unclear, put it in UNATTRIBUTED BOOKINGS and allow Christopher to manually assign. Do not silently guess attribution.
 
+## WEEKLY BOOKING PRODUCTION (current — Final Booking Logic, owner directive 2026-10-28; shipped + live-verified)
+The Weekly dashboard's hero answers four operational questions: **Weekly Leads · Gross Bookings · Cancellations · Net Bookings.**
+
+- **Gross Bookings** = every qualifying (paid-deposit) booking **originally created** during the selected Mon–Sun report week, identity-deduped, **cancellations included**. The **original booking-creation week owns the production credit permanently** — a booking is never re-bucketed by later reschedules, and its credit never moves between weeks.
+- **Cancellations** are displayed separately: the **true cancellations among that gross** (same-week cancel-and-rebook dedupes to a reschedule, not a cancellation).
+- **Net Bookings = Gross − true cancellations.**
+- **Reschedules never move production credit between weeks, and the session date is NOT the booking-production date.** Production follows the original `created_at` / `created_business_date` (deposit/creation business date).
+- **Why this is safe (reschedule-lineage audit, 2026-10-28; tests: `src/server/__tests__/reschedule-lineage.test.ts`, 7 regression tests):** Acuity's only reschedule mechanism is `PUT /appointments/{id}/reschedule` — an **in-place same-ID update** of the appointment object; there is no reschedule that mints a new appointment, and the raw payload carries no lineage/`datetimeChanged` metadata. Our sync upserts by `acuity_appointment_id`, so a reschedule UPDATEs the stored row in place while `created_at`/`created_business_date` re-derive from the payload's `datetimeCreated`, which a reschedule never changes — the creation week is stable by construction. **Cancelled is terminal** in Acuity's model, so a same-ID row cannot come back from cancelled in a later week. Live verification: 825 stored appointments, 0 duplicate `acuity_appointment_id` rows.
+
+## COHORT METRICS — do not confuse weekly production with cohort conversion
+**Cohort-produced conversion** (of the week's lead cohort, how many leads produced a booking: cohort bookings ÷ cohort leads) exists internally and on rep-level analysis where still required (e.g. the Reps page's assigned-lead conversion per the standing rep-cohort directive). It is **NOT the Weekly headline production number**: Weekly Gross/Cancellations/Net are booked-week production figures, not cohort-produced figures, and cohort-produced machinery is deliberately off the Weekly UI. When reading any bookings-per-leads number, first ask which basis it is on — lead-cohort-produced vs booking-week-produced — and label it.
+
 ## METRIC DEFINITIONS
 - CONVERSATION CONVERSION = Bookings From Calls Over 2 Minutes / Calls Over 2 Minutes
 - ASSIGNED LEAD CONVERSION = Total Bookings / Assigned Leads (always labeled "Assigned Lead Conversion")
 - GOAL ACHIEVEMENT = Actual Bookings / Booking Goal
+
+These are **rep-level conversion metrics** (calls/leads → bookings). The Weekly page's production block (Gross/Cancellations/Net) is a different basis — see COHORT METRICS above — and one must never be presented as the other. See also WORK-DATE ALIGNMENT: weekly leads cohort on the Fri–Thu source cadence → Mon–Fri work-date week (above).
 
 ## TODAY DASHBOARD
 Landing page answers the most important questions within seconds. Show: Today's Bookings · Yesterday's Bookings · Bookings WTD · Weekly Booking Goal · Bookings Remaining · Daily Pace Needed · Today's Total Calls · Today's Calls Over 2 Minutes · Today's Conversation Conversion · Today's Assigned Lead Conversion · Average Call Duration · Family Leads Today · Animalia Leads Today · Total Leads Today · Weekly Leads · Weekly Lead Budget · % Lead Budget Used · Open Studio Slots Today · Open Studio Slots Tomorrow.
