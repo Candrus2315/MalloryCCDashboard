@@ -301,10 +301,16 @@ function TodayPage() {
 
   // Real <button> sort headers with aria-sort (spec §3.6); idle caret hints the
   // direction the next click applies (name ascends, numbers descend).
-  // Mobile shell header is 68px tall — sticky offsets pair via top-[68px]
-  // md:top-14. The rep column is sticky LEFT too (opaque bg, team.tsx pattern)
-  // so horizontal scroll on phones never loses row identity (stickyLeft on the
-  // FIRST column only; `left` remains pure text alignment).
+  // The rep column is sticky LEFT (opaque bg, team.tsx pattern) so horizontal
+  // scroll on phones never loses row identity (stickyLeft on the FIRST column
+  // only; `left` remains pure text alignment).
+  // LAYOUT INTEGRITY 10/29: the table lives inside an `overflow-x-auto` wrapper
+  // — that wrapper (not the page) is the sticky containing block, so a
+  // `top-[68px]/md:top-14` offset pinned the header row 56–68px DOWN into the
+  // tbody, painting the column labels over the first rep row (Allison Wittner's
+  // name rendered clipped/overlapped — owner-reported). `top-0` pins the header
+  // at its natural position inside the wrapper: no overlap, horizontal
+  // left-sticky preserved.
   const th = (key: SortKey, label: string, opts?: { left?: boolean; hideBelowMd?: boolean; stickyLeft?: boolean }) => {
     const active = sortKey === key;
     const caret = active ? (sortAsc ? "↑" : "↓") : key === "name" ? "↑" : "↓";
@@ -312,7 +318,7 @@ function TodayPage() {
       <th
         scope="col"
         aria-sort={active ? (sortAsc ? "ascending" : "descending") : undefined}
-        className={`sticky top-[68px] z-[2] md:top-14 ${opts?.stickyLeft ? "left-0 z-[3] bg-(--card-bg)" : "bg-(--sticky-header-bg) backdrop-blur-sm"} ${opts?.left ? "text-left" : "text-right"} ${opts?.hideBelowMd ? "hidden md:table-cell" : ""}`}
+        className={`sticky top-0 z-[2] ${opts?.stickyLeft ? "left-0 z-[3] bg-(--card-bg)" : "bg-(--sticky-header-bg) backdrop-blur-sm"} ${opts?.left ? "text-left" : "text-right"} ${opts?.hideBelowMd ? "hidden md:table-cell" : ""}`}
       >
         <button type="button" className="th-sort-btn" onClick={() => sortBy(key)}>
           {label}

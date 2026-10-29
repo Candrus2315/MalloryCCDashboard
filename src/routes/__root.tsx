@@ -163,7 +163,7 @@ function AppShell({ children }: { children: ReactNode }) {
                     to={item.to}
                     aria-current={active ? "page" : undefined}
                     className={
-                      "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors " +
+                      "whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors " +
                       (active
                         ? "bg-(--accent-solid) text-(--accent-solid-fg)"
                         : "text-(--text-caption) hover:bg-(--surface-subtle) hover:text-(--text-primary)")

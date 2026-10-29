@@ -644,8 +644,12 @@ function RepsPage() {
               </div>
               {gp && goalViewRaw ? (
                 <>
-                  <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-                    <div>
+                  {/* LAYOUT INTEGRITY 10/29: stack on phones — at 390px the
+                      two-column grid clipped the Goal Achievement hero value
+                      ("111.4%") at the panel's right edge. min-w-0 keeps any
+                      future narrow cell from overflowing its track. */}
+                  <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-4 min-[420px]:grid-cols-2 sm:grid-cols-3">
+                    <div className="min-w-0">
                       <p className="kpi-label">{goalViewRaw.label}</p>
                       <p className="kpi-hero mt-2">
                         {formatInt(gp.wtd)}
@@ -655,12 +659,12 @@ function RepsPage() {
                       </p>
                       {goalViewRaw.sub && <p className="kpi-sub mt-1.5">{goalViewRaw.sub}</p>}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="kpi-label">Goal Achievement</p>
                       <p className="kpi-hero mt-2">{num(formatPercent(gp.achievement, 1))}</p>
                       <p className="kpi-sub mt-1.5">{gp.goal != null ? "of weekly goal" : "—"}</p>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="kpi-label">Remaining</p>
                       <p
                         className={
@@ -775,7 +779,7 @@ function RepsPage() {
             <div className="overflow-x-auto scroll-x">
               {/* Metric column pinned on horizontal scroll (phones) so the
                   metric name stays visible while the numbers slide. */}
-              <table className="data-table min-w-[640px] [&_td]:py-2.5 [&_td]:text-right [&_td:first-child]:text-left">
+              <table className="data-table min-w-[640px] [&_td]:py-2.5 [&_td]:text-right [&_td:first-child]:text-left [&_td:last-child]:pr-2 [&_th:last-child]:pr-2">
                 <thead>
                   <tr>
                     {th("metric", "Metric", { left: true, stickyLeft: true })}
@@ -1000,7 +1004,7 @@ function RepsPage() {
           <table className="data-table min-w-[820px]">
             <thead>
               <tr>
-                <th scope="col" className="sticky left-0 z-[2] bg-(--card-bg) pr-3 text-left">Rep</th>
+                <th scope="col" className="sticky left-0 z-[2] bg-(--card-bg) pr-3 text-left min-w-[120px]">Rep</th>
                 {assignedGrid.dates.map((date, i) => (
                   <th
                     key={date}
@@ -1265,7 +1269,10 @@ function AssignedGridRow({ r, weekend, other }: { r: AssignedByDayRow; weekend: 
 function KpiMid({ label, value, sub, info }: { label: string; value: string; sub?: string; info?: string }) {
   return (
     <div>
-      <p className="kpi-label flex items-center gap-1.5">
+      {/* LAYOUT INTEGRITY 10/29: min-height ≈ two label lines — when one label
+          wraps ("Bookings From Calls Over 2 Minutes") the value no longer sits
+          lower than its single-line neighbors. Copy untouched. */}
+      <p className="kpi-label flex min-h-[2.6em] items-center gap-1.5">
         {label}
         {info && <InfoTip tip={info} label={`About ${label}`} />}
       </p>
