@@ -10,7 +10,10 @@
     "publish": "bash ./publish.sh",
     "go-live": "bash ./go-live.sh",
     "format": "prettier --write .",
-    "test": "bun test src/server"
+    "test": "bun test src/server",
+    "test:all": "bun test",
+    "typecheck": "bun test src/server/__tests__/typecheck.test.ts",
+    "ci": "bun run typecheck && bun run test:all && bun run build"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
