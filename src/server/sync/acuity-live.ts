@@ -52,6 +52,7 @@ import { withSyncWriteRetry } from "../store/sync-write-retry";
 import { makeRunDeadline } from "../store/ingest-batch";
 import { raceBodyRead } from "./body-read";
 import { syncFetchTimeoutMs, timedFetch } from "./fetch-timeout";
+import { raceAcuityRunBudget, type AcuityRunBudget } from "./acuity-run-budget";
 import type { NormalizedAppointment } from "./adapters";
 
 // ---------- credentials ----------
@@ -309,7 +310,18 @@ export class AcuityLiveAdapter {
   private async getJson(path: string, params: Record<string, string>, opts?: { notFoundOk?: boolean }): Promise<unknown> {
     const gapMs = 1_100;
     const sinceLast = Date.now() - this.lastRequestAt;
-    if (this.lastRequestAt > 0 && sinceLast < gapMs) await this.sleep(gapMs - sinceLast);
+    if (this.lastRequestAt > 0 && sinceLast < gapMs) {
+      // CLOCK-STEP CLAMP (2026-10-30 wedge, investigation cause #1 — the only
+      // truly unbounded await in the lane): a BACKWARD wall-clock step (NTP
+      // correction, host resume) makes sinceLast negative, and the naive
+      // `gapMs - sinceLast` slept gapMs + |step| — a 12-min backward step
+      // parked the 19:31:08Z pass ~13 min BEFORE its first request, looking
+      // exactly like a silent hang. Clamp to the ordinary gap: the sleep is
+      // never longer than the healthy worst case. Healthy path is byte-
+      // identical: for 0 ≤ sinceLast < gapMs both Math.min and Math.max are
+      // no-ops, so the sleep stays exactly gapMs - sinceLast.
+      await this.sleep(Math.max(0, Math.min(gapMs, gapMs - sinceLast)));
+    }
     this.lastRequestAt = Date.now();
 
     const qs = new URLSearchParams(params).toString();
@@ -477,11 +489,29 @@ export function resolveAcuityAdapterForSync(): AcuityLiveAdapter | null {
  */
 export const ACUITY_CANCEL_PROBE_CAP = 300;
 
+/**
+ * PROBE TRAWL TIME BUDGET (2026-10-30 wedge fix, investigation cause #2 /
+ * fix candidate #3): the cap above bounds the COUNT of probes, but nothing
+ * bounded their WALL CLOCK — 300 probes × (1.1s pacing + up to 90s per
+ * timed-out probe) ≈ 7.6 h worst case when many in-window rows are absent
+ * from the list while the API stalls (cancel sweep, reschedule storm): a
+ * per-call-bounded chain that reads as a hung run. After this budget elapses
+ * the trawl STOPS GRACEFULLY — rows left unprobed are warned and reconcile on
+ * the next pass (same contract as the 300-probe cap) and the run still
+ * finishes `success`. Sized 10 min: a healthy full-cap trawl (300 × ~1.1s ≈
+ * 5.5 min of pacing) always fits, so this only binds when probes are SLOW —
+ * and it sits well under the 25-min per-run budget (acuity-run-budget.ts),
+ * which remains the hard ceiling for the pass as a whole. Measured with the
+ * injectable `now` clock; overridable per call via options.probeBudgetMs
+ * (tests pin both the trip and the never-trips-on-healthy behavior).
+ */
+export const ACUITY_PROBE_BUDGET_MS = 10 * 60_000;
+
 export interface CancellationReconciliationReport {
   /** In-window local scheduled rows absent from the list (probe candidates). */
   candidates: number;
   probed: number;
-  /** Candidates beyond the cap — left for the next pass, warned. */
+  /** Candidates left for the next pass — beyond the probe cap, OR unprobed because the probe/run budget stopped the trawl — warned either way. */
   capped: number;
   /** Rows CONFIRMED cancelled (canceled:true) and marked in the store. */
   markedCancelled: number;
@@ -490,6 +520,37 @@ export interface CancellationReconciliationReport {
   /** Probes that returned 404 — the row vanished upstream; left untouched, warned. */
   notFound: number;
   warnings: string[];
+}
+
+/**
+ * One cancellation probe under the run budget — the makeBudgetBoundedFetch
+ * pattern (body-read.ts:83-98) applied at probe level. Without a budget
+ * signal this is a plain passthrough (behavior byte-identical to before).
+ * With one: a probe refuses to start once the budget is exhausted, and an
+ * IN-FLIGHT probe rejects mid-flight instead of dangling on its own 90s cap,
+ * so the trawl stops cleanly the moment the run budget fires. The abort
+ * listener is removed when the probe settles so a full-cap trawl (300 probes)
+ * never accumulates listeners on the shared budget signal.
+ */
+async function probeUnderBudget(
+  adapter: AcuityLiveAdapter,
+  id: string,
+  budgetSignal?: AbortSignal,
+): Promise<NormalizedAppointment | null> {
+  if (!budgetSignal) return adapter.fetchAppointmentById(id);
+  if (budgetSignal.aborted) {
+    throw new Error("acuity cancellation probe: run budget exhausted — probe refused before it started");
+  }
+  let onAbort: (() => void) | undefined;
+  const budgetAbort = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new Error("acuity cancellation probe: run budget exhausted — probe aborted mid-flight"));
+    budgetSignal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([adapter.fetchAppointmentById(id), budgetAbort]);
+  } finally {
+    if (onAbort) budgetSignal.removeEventListener("abort", onAbort);
+  }
 }
 
 /**
@@ -503,15 +564,27 @@ export interface CancellationReconciliationReport {
  * payload + win evidence untouched); live response → the full row is
  * upserted (reschedules refresh honestly); 404 → warned, left untouched.
  * Idempotent: a re-run probes nothing already marked and never moves a stamp.
+ *
+ * TOTAL PROBE BUDGET (2026-10-30 wedge fix, fix candidate #3): beyond the
+ * 300-probe COUNT cap the trawl now stops after a TIME budget
+ * (ACUITY_PROBE_BUDGET_MS — the "time" half of the investigation's
+ * time-or-consecutive-failures alternative, chosen because it bounds EVERY
+ * slow-probe shape: timeouts, stalls, slow-but-successful probes alike,
+ * while the per-run budget remains the outer hard ceiling) and when the
+ * caller's run-budget signal is aborted (in-flight probes reject via
+ * probeUnderBudget). Rows left unprobed are warned + reconciled next pass —
+ * the same graceful contract as the cap; the run still finishes normally.
  */
 export async function reconcileCancellations(
   store: Store,
   adapter: AcuityLiveAdapter,
   fetched: NormalizedAppointment[],
-  options?: { now?: () => Date; maxProbes?: number },
+  options?: { now?: () => Date; maxProbes?: number; probeBudgetMs?: number; budgetSignal?: AbortSignal },
 ): Promise<CancellationReconciliationReport> {
   const now = options?.now ?? (() => new Date());
   const maxProbes = options?.maxProbes ?? ACUITY_CANCEL_PROBE_CAP;
+  const probeBudgetMs = options?.probeBudgetMs ?? ACUITY_PROBE_BUDGET_MS;
+  const budgetSignal = options?.budgetSignal;
   const report: CancellationReconciliationReport = {
     candidates: 0, probed: 0, capped: 0, markedCancelled: 0, refreshedMissing: 0, notFound: 0, warnings: [],
   };
@@ -541,11 +614,28 @@ export async function reconcileCancellations(
   }
   const confirmedIds: string[] = [];
   const refreshBatch: NormalizedAppointment[] = [];
+  // TOTAL PROBE BUDGET anchors at trawl start on the injectable clock (same
+  // clock the cancellation stamps use), so tests pin the trip without sleeping.
+  const probeDeadlineMs = now().getTime() + probeBudgetMs;
   for (const row of toProbe) {
+    // STOP CONDITIONS (fix candidate #3): the run budget was aborted, or the
+    // probe time budget elapsed. Everything unprobed reconciles on the next
+    // pass — warned, counted in `capped`, run still finishes normally.
+    if (budgetSignal?.aborted || now().getTime() >= probeDeadlineMs) {
+      const remaining = toProbe.length - report.probed;
+      if (remaining > 0) {
+        report.capped += remaining;
+        const why = budgetSignal?.aborted
+          ? "run budget exhausted"
+          : `probe time budget (${Math.round(probeBudgetMs / 60_000)} min) elapsed`;
+        report.warnings.push(`${why} — ${remaining} in-window rows left unprobed, they reconcile on the next pass`);
+      }
+      break;
+    }
     const id = row.acuity_appointment_id as string;
     let parsed: NormalizedAppointment | null;
     try {
-      parsed = await adapter.fetchAppointmentById(id);
+      parsed = await probeUnderBudget(adapter, id, budgetSignal);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       report.warnings.push(`cancellation probe for ${id} failed (${msg}) — retried on the next pass`);
@@ -735,13 +825,29 @@ export async function availabilityTick(options?: {
 
   const runId = await store.insertSyncRun("acuity");
   try {
-    const appts = await adapter.fetchAppointments();
-    // demo slots never mix with live data (owner spec)
-    await store.deleteDemoAcuityRows();
-    const count = await upsertAcuityAppointments(store, appts);
-    // CANCELLATION RECONCILIATION (owner report 10/6): rows absent from the
-    // list are probed against the single-appointment GET and marked cancelled.
-    const reconciliation = await reconcileCancellations(store, adapter, appts, { now });
+    // PER-RUN WALL-CLOCK BUDGET (2026-10-30 wedge fix #2, acuity-run-budget.ts):
+    // the whole pass — list pull, upsert, reconciliation trawl — races a
+    // 25-min budget, safely under the 30-min reap window. A breach rejects
+    // HERE so the catch below finishes the row with an honest "run budget
+    // exceeded" error instead of parking `running` (guard-blocking every
+    // background pass) until the reaper. The budget signal feeds
+    // reconcileCancellations so queued probes refuse and in-flight probes
+    // reject (makeBudgetBoundedFetch pattern, body-read.ts:83-98); the
+    // detached remainder of the body stays bounded by per-request caps and
+    // the ingest deadline (see the module docblock in acuity-run-budget.ts).
+    const { count, reconciliation } = await raceAcuityRunBudget(async (budget: AcuityRunBudget) => {
+      const appts = await adapter.fetchAppointments();
+      // demo slots never mix with live data (owner spec)
+      await store.deleteDemoAcuityRows();
+      const count = await upsertAcuityAppointments(store, appts);
+      // CANCELLATION RECONCILIATION (owner report 10/6): rows absent from the
+      // list are probed against the single-appointment GET and marked cancelled.
+      const reconciliation = await reconcileCancellations(store, adapter, appts, {
+        now,
+        budgetSignal: budget.signal,
+      });
+      return { count, reconciliation };
+    });
     await store.finishSyncRun(runId, "success", count, null);
     const report = adapter.lastRun;
     const note = report
