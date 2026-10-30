@@ -20,6 +20,7 @@ import { makeRunDeadline } from "../store/ingest-batch";
 import { migrateSheetsLeadKeys } from "./sheets-rekey";
 import { createHighLevelAdapter, type LiveHighLevelAdapter } from "./highlevel-live";
 import { reconcileCancellations, resolveAcuityAdapterForSync, upsertAcuityAppointments, writeAcuityConnection, type AcuityLiveAdapter } from "./acuity-live";
+import { raceAcuityRunBudget } from "./acuity-run-budget";
 import type { GoogleSheetsAdapter } from "./adapters";
 
 async function runProvider(
@@ -55,6 +56,72 @@ export async function recomputeAttributions(
   const { computeAndPersistAttributions } = await import("./attribution-tick");
   const res = await computeAndPersistAttributions(store, settings, options);
   return (res.attributed ?? 0) + (res.unattributed ?? 0);
+}
+
+/**
+ * One Acuity pass body for runDemoSync — the LIVE path (credentials resolve:
+ * list pull → demo purge → upsert → cancellation reconciliation, with the
+ * failure mapping into an error RESULT the runProvider row records) and the
+ * DEMO path (seeded dataset, labeled demo), exactly as before the extraction.
+ * Extracted verbatim (2026-10-30 wedge fix #2) only so the per-run budget can
+ * race it: runDemoSync wraps this in raceAcuityRunBudget and passes the
+ * budget signal into reconcileCancellations (probes stop cleanly — see
+ * acuity-run-budget.ts for the 30-min reap relationship and the 40-min
+ * ingest-deadline interaction). Behavior is unchanged on the healthy path.
+ */
+async function runAcuityPass(
+  store: Store,
+  liveAcuity: AcuityLiveAdapter | null,
+  demoAcuity: ReturnType<typeof createDemoAdapters>["acuity"],
+  budgetSignal: AbortSignal,
+): Promise<{ count: number; error?: string } & Record<string, unknown>> {
+  if (liveAcuity) {
+    try {
+      const appts = await liveAcuity.fetchAppointments();
+      // first thing a successful live sync does: purge demo Acuity rows so
+      // demo slots can never blend into live availability
+      const purged = await store.deleteDemoAcuityRows();
+      const count = await upsertAcuityAppointments(store, appts);
+      // CANCELLATION RECONCILIATION (owner report 10/6): rows absent from
+      // the list are probed against the single-appointment GET and marked
+      // cancelled — the list endpoint never returns cancelled rows.
+      const reconciliation = await reconcileCancellations(store, liveAcuity, appts, { budgetSignal });
+      const report = liveAcuity.lastRun;
+      const note = [
+        report ? `window ${report.window.minDate} → ${report.window.maxDate}` : null,
+        `${count} appointments`,
+        purged.appointments + purged.blocked > 0 ? `demo rows purged: ${purged.appointments} appointments, ${purged.blocked} blocks` : null,
+        reconciliation.markedCancelled > 0 ? `cancellations confirmed: ${reconciliation.markedCancelled}` : null,
+        reconciliation.notFound > 0 ? `missing-from-list rows probed: ${reconciliation.probed}, not found: ${reconciliation.notFound}` : null,
+        report?.truncated ? "TRUNCATED at cap" : null,
+        ...(report?.warnings ?? []).slice(0, 2),
+        ...reconciliation.warnings.slice(0, 2),
+      ]
+        .filter(Boolean)
+        .join(" · ")
+        .slice(0, 500);
+      return { count, live: true, note, purged };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return {
+        count: 0,
+        error: msg,
+        live: false,
+        liveError: msg,
+        note: "Live Acuity sync failed — demo seed skipped; showing last synced data",
+      };
+    }
+  }
+  // Demo path (no credentials): the seeded demo dataset, labeled demo.
+  let count = 0;
+  const appts = await demoAcuity.fetchAppointments();
+  count += await upsertAcuityAppointments(store, appts);
+  const blocked = await demoAcuity.fetchBlockedTimes();
+  await store.upsertBlockedTimes(
+    blocked.map((b) => ({ provider: "acuity", external_id: b.external_id, start_at: b.startAt, end_at: b.endAt, reason: b.reason })),
+  );
+  count += blocked.length;
+  return { count, live: false, note: null };
 }
 
 export interface SyncResult {
@@ -295,55 +362,24 @@ export async function runDemoSync(options?: {
   const liveAcuity: AcuityLiveAdapter | null = options && "acuityAdapter" in options
     ? options.acuityAdapter ?? null
     : resolveAcuityAdapterForSync();
-  const acuityRes = await runProvider(store, "acuity", async () => {
-    if (liveAcuity) {
-      try {
-        const appts = await liveAcuity.fetchAppointments();
-        // first thing a successful live sync does: purge demo Acuity rows so
-        // demo slots can never blend into live availability
-        const purged = await store.deleteDemoAcuityRows();
-        const count = await upsertAcuityAppointments(store, appts);
-        // CANCELLATION RECONCILIATION (owner report 10/6): rows absent from
-        // the list are probed against the single-appointment GET and marked
-        // cancelled — the list endpoint never returns cancelled rows.
-        const reconciliation = await reconcileCancellations(store, liveAcuity, appts);
-        const report = liveAcuity.lastRun;
-        const note = [
-          report ? `window ${report.window.minDate} → ${report.window.maxDate}` : null,
-          `${count} appointments`,
-          purged.appointments + purged.blocked > 0 ? `demo rows purged: ${purged.appointments} appointments, ${purged.blocked} blocks` : null,
-          reconciliation.markedCancelled > 0 ? `cancellations confirmed: ${reconciliation.markedCancelled}` : null,
-          reconciliation.notFound > 0 ? `missing-from-list rows probed: ${reconciliation.probed}, not found: ${reconciliation.notFound}` : null,
-          report?.truncated ? "TRUNCATED at cap" : null,
-          ...(report?.warnings ?? []).slice(0, 2),
-          ...reconciliation.warnings.slice(0, 2),
-        ]
-          .filter(Boolean)
-          .join(" · ")
-          .slice(0, 500);
-        return { count, live: true, note, purged };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return {
-          count: 0,
-          error: msg,
-          live: false,
-          liveError: msg,
-          note: "Live Acuity sync failed — demo seed skipped; showing last synced data",
-        };
-      }
-    }
-    // Demo path (no credentials): the seeded demo dataset, labeled demo.
-    let count = 0;
-    const appts = await acuity.fetchAppointments();
-    count += await upsertAcuityAppointments(store, appts);
-    const blocked = await acuity.fetchBlockedTimes();
-    await store.upsertBlockedTimes(
-      blocked.map((b) => ({ provider: "acuity", external_id: b.external_id, start_at: b.startAt, end_at: b.endAt, reason: b.reason })),
-    );
-    count += blocked.length;
-    return { count, live: false, note: null };
-  });
+  const acuityRes = await runProvider(store, "acuity", () =>
+    // PER-RUN WALL-CLOCK BUDGET (2026-10-30 wedge fix #2, acuity-run-budget.ts):
+    // the whole Acuity pass races a 25-min budget, safely under the 30-min
+    // reap window, in BOTH entry paths (this one and availabilityTick). A
+    // breach rejects out of the race; runProvider's own catch below then
+    // finishes the sync_runs row with the honest "run budget exceeded" error
+    // instead of the row parking `running` (guard-blocking background passes)
+    // until the reaper. The live body's internal try/catch stays INSIDE the
+    // raced body so its failure mapping is unchanged. The budget signal is
+    // fed to reconcileCancellations so probes stop cleanly (the
+    // makeBudgetBoundedFetch pattern, body-read.ts:83-98). INGEST-DEADLINE
+    // INTERACTION: the 40-min ingest deadline inside
+    // upsertAcuityAppointments stays untouched as the backstop that bounds
+    // the DETACHED chain after an abort — for this lane the 25-min run
+    // budget supersedes it in practice (a live pass breaches 25 first). The
+    // HighLevel lane above is not wrapped — its semantics are unchanged.
+    raceAcuityRunBudget((budget) => runAcuityPass(store, liveAcuity, acuity, budget.signal)),
+  );
   results.push({ provider: "acuity", count: acuityRes.count, error: acuityRes.error ?? null });
 
   // --- Google Sheets (leads with work_date applied; UPSERT-ONLY under v2 content keys) ---
