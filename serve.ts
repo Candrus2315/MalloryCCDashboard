@@ -51,6 +51,16 @@ const CLIENT_DIR = `${import.meta.dir}/dist/client`;
 {
   const { markProdServeRuntime } = await import("./src/server/auth");
   markProdServeRuntime();
+  // MIGRATION-ACCEPTANCE GATE (2026-10-30): THIS process is the only runtime
+  // allowed to run schema migrations against the business database. The mark
+  // lives on globalThis (read by src/server/store/migration-gate.ts from both
+  // this module graph and the bundled store inside dist/server/server.js) and
+  // is set BEFORE the port binds — same discipline as markProdServeRuntime, so
+  // no request can construct a store before the mark exists. A dev boot,
+  // scratch probe, test harness, or page loader holding Database_URL anywhere
+  // else now fails VISIBLY (MigrationGateError) instead of silently stamping.
+  const { markManagedMigrationContext } = await import("./src/server/store/migration-gate");
+  markManagedMigrationContext("serve.ts (managed production runtime)");
 }
 
 // ---------------------------------------------------------------------------

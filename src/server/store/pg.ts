@@ -99,7 +99,9 @@ import {
 } from "./pip-helpers";
 import { TtlReadCache } from "./read-cache";
 import { runMigrations } from "./migrations/runner";
+import type { MigrationRunCapability } from "./migrations/runner";
 import { MIGRATIONS } from "./migrations/registry";
+import { resolveMigrationCapability } from "./migration-gate";
 
 /*
  * The pips SELECT/RETURNING column list — ONE shared fragment interpolated
@@ -292,6 +294,8 @@ export class PgStore implements Store {
   mode = "postgres" as const;
   private sql: ReturnType<typeof postgres>;
   private schemaReady: Promise<void> | null = null;
+  private readonly databaseUrl: string;
+  private readonly migrationCapability?: MigrationRunCapability;
   /** PERF: short-TTL (20s) read cache — bumped by every write; see store/read-cache.ts. */
   private cache = new TtlReadCache();
 
@@ -307,6 +311,14 @@ export class PgStore implements Store {
        */
       schemaStmtTimeoutMs?: number;
       /**
+       * MIGRATION-ACCEPTANCE GATE: explicit capability for constructions that
+       * are NOT the managed serve but own a disposable database (the real-DB
+       * test battery, one-off local scripts). Ignored/refused elsewhere — see
+       * ./migration-gate.ts; the business database is only ever migrated from
+       * the managed serve context.
+       */
+      migrationCapability?: MigrationRunCapability;
+      /**
        * TEST SEAM (forensics §3 "missing seam"): inject a stubbed/hung sql so
        * the boot path is testable without a real connection. Only ensureSchema
        * + close are meaningful on an injected client.
@@ -314,6 +326,8 @@ export class PgStore implements Store {
       sql?: { unsafe: (stmt: string) => Promise<unknown>; end?: (opts?: unknown) => Promise<unknown> };
     },
   ) {
+    this.databaseUrl = databaseUrl;
+    this.migrationCapability = options?.migrationCapability;
     // TEST SEAM: an injected sql skips pool construction entirely — no real
     // connection is ever opened.
     if (options?.sql) {
@@ -406,6 +420,11 @@ export class PgStore implements Store {
     let attempt: Promise<void> | undefined;
     attempt = (async () => {
       try {
+        // MIGRATION-ACCEPTANCE GATE: resolve WHO may migrate THIS database
+        // before the runner executes anything. Throws MigrationGateError for a
+        // non-serve process holding the business URL — BEFORE even the marker
+        // bootstrap (fail-visible; the probe logs it and falls back honestly).
+        const capability = resolveMigrationCapability(this.databaseUrl, this.migrationCapability);
         await runMigrations(
           {
             // CAPPED EXECUTION: every statement (and every transaction) races
@@ -420,6 +439,7 @@ export class PgStore implements Store {
               ) as Promise<void>,
           },
           MIGRATIONS,
+          capability,
         );
       } catch (e) {
         // RESET (forensics §3 assert iv): never leave the memoized promise
