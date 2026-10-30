@@ -84,7 +84,11 @@ describe("s1 window-interaction ownership (owner-frozen rule)", () => {
     expect(got.evidence?.duration_seconds).toBe(30);
   });
 
-  test("duration is irrelevant for OWNERSHIP: a 0-second dial in-window still owns", () => {
+  test("OWNER RULING 10/30: a 0-second dial as the winning evidence is TEAM-ONLY (no rep credit)", () => {
+    // The 2026-09-27 ownership rule ("any duration is workflow evidence")
+    // still FINDS the interaction; the 2026-10-30 ruling strips CREDIT when
+    // the winning evidence call has no positive duration — the booking stays
+    // team-only under reason_code "self-booked-no-conversation".
     const [got] = matchAppointmentsToCalls(
       [appt({ contact_id: "c-1" })],
       [call("hl-zero", { contact_id: "c-1", rep_id: "rep-1", duration_seconds: 0 })],
@@ -92,8 +96,12 @@ describe("s1 window-interaction ownership (owner-frozen rule)", () => {
       SETTINGS,
       { users: USERS },
     );
-    expect(got.status).toBe("attributed");
-    expect(got.method).toBe("window_interaction");
+    expect(got.status).toBe("unattributed");
+    expect(got.reason).toBe("self-booked-no-conversation");
+    expect(got.reasonCode).toBe("self-booked-no-conversation");
+    expect(got.repId).toBeUndefined();
+    expect(got.evidence?.id).toBe("hl-zero"); // evidence trail kept for the audit note
+    expect(got.evidence?.duration_seconds).toBe(0);
   });
 
   test("NO ALL-TIME FALLBACK: out-of-window evidence never owns (s2 stays diagnostic-only)", () => {

@@ -334,6 +334,10 @@ export const NO_REP_REASON_LABELS: Record<string, string> = {
   "no-contact-identity": "No contact identity on the booking",
   "bad-datetime": "Unreadable booking time",
   ambiguous: "Ambiguous — identity conflict",
+  // OWNER RULING 2026-10-30: online/self-booked bookings stay team-only —
+  // rep credit requires conversation evidence (winning evidence call had no
+  // positive duration). Manual assignment remains available on these rows.
+  "self-booked-no-conversation": "Self-booked — no rep conversation (owner ruling 10/30)",
 };
 
 export interface QueueReasonBucket {
