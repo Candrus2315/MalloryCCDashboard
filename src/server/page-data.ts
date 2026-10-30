@@ -52,6 +52,7 @@ import {
   materializeRecurringBlocks,
   repRangeSummaries,
   resolveRepGoal,
+  totalLeadConversionWeek,
 } from "./metrics/compute";
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "./metrics/report-text";
 import { isFormSourceSheet } from "../components/lead-sources";
@@ -929,7 +930,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
   const poolStartUtc = anchorStart < weekStartUtc ? anchorStart : weekStartUtc;
   const workDatesFrom = anchorDate < ws ? anchorDate : ws;
 
-  const [meta, settings, callsAnchorDay, apptsAnchorDay, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
+  const [meta, settings, callsAnchorDay, apptsAnchorDay, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments, winsWeekRaw] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -947,12 +948,25 @@ export async function dailyReportPageData(deps?: PageDeps) {
       store.getTeamGoal(ws),
       store.getDailyPriorities(today),
       store.getLeadCountAdjustments(dateRange(workDatesFrom, addDays(ws, 6))),
+      // OWNER PARITY DIRECTIVE 10/30: the CURRENT week's canonical production
+      // fetch (client-identity wins) — feeds computeWeeklyProduction below so
+      // the Daily Report's week lines agree digit-for-digit with the Weekly
+      // CC Report for the same week. Same store method the Weekly loader uses.
+      store.getWinsWithClientsBetween(ws, today),
     ]);
 
   const scope = settings.acuity;
   // Scope BEFORE any booking computation (owner directive — see apptsInScope).
   const apptsAnchorDayScoped = apptsInScope(apptsAnchorDay, scope);
   const apptsWtdScoped = apptsInScope(apptsWtd, scope);
+  // OWNER PARITY DIRECTIVE 10/30: the canonical weekly production (Final
+  // Booking Logic 10/28) for the report week — paid rows CREATED Mon–Sun,
+  // identity-deduped, cancellations included. "Bookings for the Week" /
+  // "Left" / % of goal / "Total Lead Conversion — Week" run on its gross so
+  // they agree digit-for-digit with the Weekly CC Report; the frozen-target
+  // chain (winsBeforeToday) is deliberately UNTOUCHED (owner rev 90 keeps
+  // its deposit-date basis).
+  const weekProduction = computeWeeklyProduction(winsWeekRaw, ws, addDays(ws, 6), scope);
 
   // ROSTER ELIGIBILITY (mapping-aware): report call metrics cover roster reps
   // + mapped HL users only, computed at query time (source rows untouched).
@@ -970,6 +984,11 @@ export async function dailyReportPageData(deps?: PageDeps) {
     callsAnchorDay: rosterCallsAnchorDay,
     apptsCreatedAnchorDay: apptsAnchorDayScoped,
     apptsCreatedWtd: apptsWtdScoped,
+    // OWNER PARITY DIRECTIVE 10/30: the week lines run on the canonical gross
+    // (created Mon–Sun, identity-deduped, cancels included) — the SAME basis
+    // as the Weekly CC Report's hero. The frozen-target chain keeps its own
+    // deposit-date basis via apptsCreatedWtd (owner rev 90, untouched).
+    weekProduction,
     allCallsForWeek: rosterCallsForAttribution,
     attributions: attributionsEligible,
     leadsAllRecent: leads,
@@ -991,10 +1010,12 @@ export async function dailyReportPageData(deps?: PageDeps) {
   // day; on a Monday-morning report it names Friday, after EOD it says today.
   const anchorPhrase = anchorDayPhrase(anchorDate, today);
   const warnings: string[] = [];
-  if (metrics.conversationConversion == null)
-    warnings.push(`No qualifying calls recorded ${anchorPhrase} — Conversation Conversion is unavailable.`);
-  if (metrics.assignedLeadConversion == null)
-    warnings.push(`No leads worked ${anchorPhrase} — Assigned Lead Conversion is unavailable.`);
+  // OWNER DIRECTIVE 10/30: the warnings follow the REPLACED lines — the
+  // total-lead conversion lines are the report's conversion figures now.
+  if (metrics.totalLeadConversionYesterday == null)
+    warnings.push(`No leads worked ${anchorPhrase} — Total Lead Conversion — Yesterday is unavailable.`);
+  if (metrics.totalLeadConversionWeek == null)
+    warnings.push("No leads in this week's cohort yet — Total Lead Conversion — Week is unavailable.");
   if (metrics.goalAchievement == null)
     warnings.push("Weekly booking goal is 0 — Goal Achievement is unavailable.");
   if (metrics.leadsToday === 0 && metrics.weeklyLeads === 0)
@@ -1968,6 +1989,23 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       fairyland: assignedFaiOutcome.leads,
     },
   };
+  // TOTAL LEAD CONVERSION — WEEK (owner directive 10/30): the CC report's
+  // headline is the ONE shared weekly conversion — canonical gross ÷ the
+  // week's TOTAL leads (work-date cohort, all seven sources) — the SAME
+  // (bookings, leads) pair the Daily Report's week line converts (parity
+  // suite pins digit identity; NEVER an average of daily or rep rates). The
+  // by-source rates keep the tab's primary-table machinery (sourceCohort)
+  // over the FULL cohort — the assigned-only subset leaves the REPORT (the
+  // Weekly tab's Conversion Efficiency panel and payload.conversion keep
+  // assigned-lead conversion untouched).
+  const cohortConv = (b: SourceBucket) => sourceCohort.find((r) => r.source === b)?.conv ?? null;
+  const leadsWeekSummary = splitLeadsByType(leadsWeek);
+  const weekConversion = {
+    rate: totalLeadConversionWeek(productionWeek.gross, leadsWeekSummary.total),
+    family: cohortConv("family"),
+    animalia: cohortConv("animalia"),
+    fairyland: cohortConv("fairyland"),
+  };
 
   // ---- MTD ----
   const mtdOwnership = splitWinOwnership(winsMtd, attributions);
@@ -2243,15 +2281,16 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     productionMonth: { gross: productionMtd.gross, goal: monthlyGoal },
     channels,
     channelLeads,
-    leads: splitLeadsByType(leadsWeek),
+    leads: leadsWeekSummary,
     // sourcePerformance: REMOVED from the report input — the owner erased the
     // LEAD SOURCE PERFORMANCE section from the CC Report (2026-10-28); the
     // object lives on as data.report.sourcePerformance (Attribution detail).
-    // WORK-DATE ALIGNMENT: the assigned cohort is the week's work-date cohort
-    // and the bookings are cohort-to-date produced (credited by lead
-    // assignment) — same doctrine as the LEAD SOURCE PERFORMANCE lines above;
-    // the SAME object the payload returns (tab <-> report digit identity).
-    conversion: assignedConversion,
+    // OWNER DIRECTIVE 10/30: the report's conversion is the TOTAL-lead
+    // headline — ONE shared function (totalLeadConversionWeek) over the
+    // canonical gross + the week's total work-date leads, digit-identical to
+    // the Daily Report's week line. The assigned-only object stays on the
+    // payload for the Weekly tab's Conversion Efficiency panel only.
+    weekConversion,
     funnel,
     calendar,
     // OWNER HOLES of the report week (9/30) — fills the "Holes" placeholder

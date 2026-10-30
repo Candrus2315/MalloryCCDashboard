@@ -23,6 +23,7 @@ import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "../metrics/we
 import { weeklyPageData } from "../page-data";
 import { MemoryStore } from "../store/memory";
 import type { AppointmentRow, LeadRow } from "../metrics/compute";
+import { totalLeadConversionWeek } from "../metrics/compute";
 
 const EDT = "-04:00"; // September = EDT
 const H = (date: string, time: string) => new Date(`${date}T${time}:00.000${EDT}`).toISOString();
@@ -140,7 +141,7 @@ const baseInput: WeeklyCcReportInput = {
   channels: { alliance: 2, auction: 1, website: null },
   channelLeads: { alliance: 5, auction: 3, website: null },
   leads: { family: 30, animalia: 19, total: 49 },
-  conversion: { overall: 0.4, family: 0.35, animalia: 0.5 },
+  weekConversion: { rate: 0.4, family: 0.35, animalia: 0.5, fairyland: null },
   funnel: { wins: 49, leads: 49, pct: 1 },
   calendar: {
     // slotsOccupied = appointments (no double-bookings in this fixture) — the
@@ -265,7 +266,15 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       channels: data.channels,
       channelLeads: data.channelLeads,
       leads: data.leads,
-      conversion: { overall: data.conversion.overall, family: data.conversion.family, animalia: data.conversion.animalia },
+      // OWNER 10/30: the report's conversion is the TOTAL-lead headline —
+      // reproduce the loader's exact inputs (canonical gross ÷ total weekly
+      // leads; per-source conv from the payload's sourcePerformance rows).
+      weekConversion: {
+        rate: totalLeadConversionWeek(data.bookings.production.gross, data.leads.total),
+        family: data.report.sourcePerformance.rows.find((r) => r.source === "family")?.conv ?? null,
+        animalia: data.report.sourcePerformance.rows.find((r) => r.source === "animalia")?.conv ?? null,
+        fairyland: data.report.sourcePerformance.rows.find((r) => r.source === "fairyland")?.conv ?? null,
+      },
       funnel: data.funnel,
       calendar: {
         thisWeek: {

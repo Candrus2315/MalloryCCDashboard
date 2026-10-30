@@ -44,11 +44,9 @@ export function bookingsAnchorLabel(anchorDate: string, reportDate: string): str
   return `Bookings ${weekdayName(anchorDate, true)}`;
 }
 
-/** Compact label for the copied report's Bookings line ("Bookings" / "Bookings (Fri)" / "Bookings (Today)"). */
+/** Compact label for the copied report's Bookings line (owner 10/30 rename: the line always names the day it covers). */
 export function bookingsAnchorLineLabel(anchorDate: string, reportDate: string): string {
-  if (anchorDate === addDays(reportDate, -1)) return "Bookings";
-  if (anchorDate === reportDate) return "Bookings (Today)";
-  return `Bookings (${weekdayName(anchorDate, false)})`;
+  return bookingsAnchorLabel(anchorDate, reportDate);
 }
 
 /**
@@ -143,16 +141,25 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     "Daily CC Report",
     "",
     `${bookingsAnchorLineLabel(m.anchorDate, m.reportDate)}: ${formatInt(m.bookingsAnchorDay)}`,
-    `Bookings for the Week: ${formatInt(m.bookingsWtd)}`,
+    // OWNER PARITY DIRECTIVE 10/30: the week figure is the canonical weekly
+    // gross (weekBookings) — digit-identical to the Weekly CC Report's
+    // "Bookings (Week)" hero for the same week (parity suite pins it).
+    `Bookings for the Week: ${formatInt(m.weekBookings)}`,
     `Key Driver: ${formatInt(m.weeklyBookingGoal)}`,
     `Left: ${formatInt(m.bookingsLeft)}`,
     `Daily: ${formatInt(m.dailyBookingsNeeded)}`,
     // ONE-DECIMAL convention (owner-flagged precision 2026-10-28): every
     // percentage in the copied report renders like the page above — one
     // decimal, half-up, never float dust (e.g. "71.8%", not 71.7857…%).
-    `Conversion of Calls Over 2 Mins: ${formatPercent(m.conversationConversion, 1)}`,
-    `Conversion of Assigned Leads: ${formatPercent(m.assignedLeadConversion, 1)}`,
-    `% of Appt Achieved: ${formatPercent(m.goalAchievement, 1)}`,
+    // OWNER DIRECTIVE 10/30 (Mallory's metrics): the three legacy performance
+    // lines (Conversion of Calls Over 2 Mins / Conversion of Assigned Leads /
+    // % of Appt Achieved) are REPLACED by the two total-lead conversion lines
+    // + the pickup placeholder. Same structure, same one-decimal convention.
+    `Total Lead Conversion — Yesterday: ${formatPercent(m.totalLeadConversionYesterday, 1)}`,
+    `Total Lead Conversion — Week: ${formatPercent(m.totalLeadConversionWeek, 1)}`,
+    // PICKUP: no approved definition yet (owner 10/30) — the field is null and
+    // renders "—" until the owner approves the proposal. Never a fabricated %.
+    `Daily Pickup Rate: ${formatPercent(m.dailyPickupRate, 1)}`,
     "",
     "Leads:",
     `Weekly Lead Budget: ${formatInt(m.weeklyLeadBudget)}`,

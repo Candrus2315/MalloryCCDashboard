@@ -532,6 +532,32 @@ export function assignedLeadConversion(totalBookings: number, assignedLeads: num
   return pct(totalBookings, assignedLeads);
 }
 
+/**
+ * TOTAL LEAD CONVERSION — WEEK (owner directive 10/30, Mallory's metric): the
+ * week's qualifying bookings ÷ the week's TOTAL leads — the ONE shared weekly
+ * conversion both executive reports render. The Daily Report and the Weekly
+ * CC Report MUST call this same function over the SAME (bookings, leads) pair
+ * so the two "Total Lead Conversion — Week" figures agree digit-for-digit
+ * (parity suite pins it).
+ *
+ *   numerator   = the canonical weekly bookings (Final Booking Logic 10/28):
+ *                 paid-deposit bookings created Mon–Sun, identity-deduped per
+ *                 client, cancellations INCLUDED — the same gross the Weekly
+ *                 CC Report's hero and the Daily Report's "Bookings for the
+ *                 Week" line show. NEVER an assigned-only or rep-attributed
+ *                 subset.
+ *   denominator = the week's TOTAL lead cohort (work-date basis, all seven
+ *                 sources — the same count both reports already display as
+ *                 "Total Weekly Leads" / "Total:").
+ *   0 leads → null ("—", never a fabricated 0%).
+ *
+ * NEVER an average of daily percentages or of rep conversion rates — one
+ * division over pooled counts only.
+ */
+export function totalLeadConversionWeek(bookings: number, leads: number): number | null {
+  return pct(bookings, leads);
+}
+
 export function goalAchievement(actual: number, goal: number): number | null {
   return goal > 0 ? actual / goal : null;
 }
@@ -664,8 +690,20 @@ function applyLeadAdjustments(
 
 /** Leads the team works on reportDate (work_date = reportDate), by type. */
 export function leadsToday(leads: LeadRow[], reportDate: string, adjustments?: LeadCountAdjustment[]): LeadSummary {
-  const rows = leads.filter((l) => l.work_date === reportDate);
-  return applyLeadAdjustments(summarizeLeadRows(rows), adjustments, (a) => a.work_date === reportDate);
+  return leadsOnDate(leads, reportDate, adjustments);
+}
+
+/**
+ * The CANONICAL TOTAL-LEAD COHORT of ONE work date (owner directive 10/30):
+ * every lead whose work_date == date — ALL SEVEN sources, form sheets
+ * included, assigned and unassigned alike; never an assigned-only or
+ * form-excluded subset. The Daily Report's anchor-day conversion denominator
+ * is exactly this count (same summarizer + adjustment rules as
+ * leadsToday/leadsForWeek, so the cohort surfaces can never disagree).
+ */
+export function leadsOnDate(leads: LeadRow[], date: string, adjustments?: LeadCountAdjustment[]): LeadSummary {
+  const rows = leads.filter((l) => l.work_date === date);
+  return applyLeadAdjustments(summarizeLeadRows(rows), adjustments, (a) => a.work_date === date);
 }
 
 function summarizeLeadRows(rows: LeadRow[]): LeadSummary {
@@ -2182,7 +2220,43 @@ export interface DailyReportMetrics {
   conversationConversion: number | null;
   /** Wins on the anchor day ÷ leads worked on the anchor day (work_date logic). */
   assignedLeadConversion: number | null;
-  /** Bookings WTD ÷ weekly booking goal. */
+  /**
+   * TOTAL LEAD CONVERSION — YESTERDAY (owner directive 10/30): anchor-day
+   * pooled bookings ÷ anchor-day TOTAL leads. Numerator = the SAME
+   * bookingsAnchorDay count the "Bookings Yesterday" line shows; denominator
+   * = the anchor day's canonical total-lead cohort (leadsOnDate — all seven
+   * sources, assigned AND unassigned, form sheets included). Pooled counts
+   * only — never an average of rep rates. 0 anchor-day leads → null ("—").
+   */
+  totalLeadConversionYesterday: number | null;
+  /**
+   * TOTAL LEAD CONVERSION — WEEK (owner directive 10/30): the ONE shared
+   * weekly conversion (totalLeadConversionWeek) over the canonical
+   * (weekBookings, weeklyLeads) pair — digit-identical to the Weekly CC
+   * Report's headline for the same week (parity suite pins it). 0 leads →
+   * null ("—").
+   */
+  totalLeadConversionWeek: number | null;
+  /**
+   * DAILY PICKUP RATE — PLACEHOLDER, always null (owner directive 10/30: no
+   * canonical pickup-rate definition exists; implement NOTHING until the
+   * owner approves one — the proposal lives in the PR/report). Renders "—",
+   * never a fabricated number. When a definition is approved, fill this
+   * field and the line lights up with no other change.
+   */
+  dailyPickupRate: number | null;
+  /**
+   * THE WEEK BOOKINGS THE WEEK LINES SHOW (owner parity directive 10/30): the
+   * canonical weekly gross (Final Booking Logic — created Mon–Sun,
+   * identity-deduped, cancellations included) when the loader supplies
+   * weekProduction; else the legacy deposit-basis bookingsWtd (callers
+   * without the production input keep their pre-parity figure). "Bookings for
+   * the Week", "Left", "% of goal" and the week conversion all read THIS
+   * number, so the Daily Report and the Weekly CC Report can never disagree
+   * for the same week.
+   */
+  weekBookings: number;
+  /** The week lines' bookings (weekBookings) ÷ weekly booking goal. */
   goalAchievement: number | null;
   weeklyLeadBudget: number;
   leadsToday: number;
@@ -2211,6 +2285,16 @@ export function buildDailyReportMetrics(input: {
   callsAnchorDay: CallRow[]; // roster-eligible calls started on the anchor day (ET)
   apptsCreatedAnchorDay: AppointmentRow[]; // wins with booking_win_business_date == anchorDate
   apptsCreatedWtd: AppointmentRow[]; // week-to-date, includes anchor+today
+  /**
+   * THE CANONICAL WEEKLY PRODUCTION (owner Final Booking Logic 10/28) for the
+   * report week — computeWeeklyProduction over created-in-week paid rows
+   * (identity-deduped, cancellations included). OPTIONAL: when present, the
+   * week lines (Bookings for the Week / Left / % of goal / Total Lead
+   * Conversion — Week) run on its gross so they agree digit-for-digit with
+   * the Weekly CC Report; absent (legacy callers/tests) keeps the
+   * deposit-basis bookingsWtd everywhere (pre-parity behavior, byte-stable).
+   */
+  weekProduction?: { gross: number; cancellations: number; net: number } | null;
   allCallsForWeek: CallRow[]; // for the over-threshold join
   attributions: AttributionRow[];
   leadsAllRecent: LeadRow[]; // leads whose work_date falls in the week(s) covering anchor+today (incl today's cohort)
@@ -2264,7 +2348,17 @@ export function buildDailyReportMetrics(input: {
   // anchor day's qualifying wins.
   const anchorDayAssignedLeads = assignedLeadsTotal(input.leadsAllRecent, anchorDate, anchorDate, input.activeRepIds);
 
-  const bookingsLeft = Math.max(0, input.teamBookingGoal - bookingsWtd);
+  // OWNER PARITY DIRECTIVE 10/30: the week lines run on the canonical weekly
+  // gross when the loader supplies it (created Mon–Sun, identity-deduped,
+  // cancels included — the SAME number the Weekly CC Report's hero shows for
+  // the same week). The frozen-target chain is deliberately UNTOUCHED:
+  // winsBeforeToday keeps its deposit-date frozen basis (owner rev 90).
+  const weekBookings = input.weekProduction?.gross ?? bookingsWtd;
+  // Anchor-day conversion denominator (owner directive 10/30): the anchor
+  // day's CANONICAL TOTAL-lead cohort — every lead worked that day, all
+  // seven sources, unassigned pool and form sheets included.
+  const anchorDayTotalLeads = leadsOnDate(input.leadsAllRecent, anchorDate, input.leadCountAdjustments).total;
+  const bookingsLeft = Math.max(0, input.teamBookingGoal - weekBookings);
   // PACE days-left (owner 18:30 rule): pace figures only.
   const workDaysLeft =
     input.etNowMinutes == null
@@ -2305,7 +2399,17 @@ export function buildDailyReportMetrics(input: {
     paceWeekend: workDaysLeft === 0,
     conversationConversion: conversationConversion(fromOverAnchor.length, callsAnchorDay.overThreshold),
     assignedLeadConversion: assignedLeadConversion(bookingsAnchorDay, anchorDayAssignedLeads),
-    goalAchievement: goalAchievement(bookingsWtd, input.teamBookingGoal),
+    // OWNER DIRECTIVE 10/30: the two TOTAL-lead conversion lines — pooled
+    // bookings ÷ pooled TOTAL leads, never rep-rate averages. The anchor-day
+    // numerator IS the displayed "Bookings Yesterday" count; the week
+    // numerator IS the displayed "Bookings for the Week" count (the same
+    // pair the Weekly CC Report converts — digit parity).
+    totalLeadConversionYesterday: pct(bookingsAnchorDay, anchorDayTotalLeads),
+    totalLeadConversionWeek: totalLeadConversionWeek(weekBookings, weekly.total),
+    // Pickup: NO definition exists (owner 10/30) — always null until approved.
+    dailyPickupRate: null,
+    weekBookings,
+    goalAchievement: goalAchievement(weekBookings, input.teamBookingGoal),
     weeklyLeadBudget: input.weeklyLeadBudget,
     leadsToday: todayCohort.total,
     familyLeadsToday: todayCohort.family,

@@ -21,11 +21,19 @@ const specExampleMetrics = (): DailyReportMetrics => ({
   leadCohortSourceDates: ["2026-09-24"],
   bookingsAnchorDay: 11,
   bookingsWtd: 37,
+  // OWNER PARITY DIRECTIVE 10/30: the week lines run on the canonical weekly
+  // gross — here the same 37 (the fixture has no separate production input).
+  weekBookings: 37,
   weeklyBookingGoal: 79,
   bookingsLeft: 42,
   dailyBookingsNeeded: 21,
   conversationConversion: 0.6363,
   assignedLeadConversion: 0.1318,
+  // OWNER DIRECTIVE 10/30: the two total-lead conversion lines + pickup
+  // placeholder (null → "—" until the owner approves a definition).
+  totalLeadConversionYesterday: 0.6363,
+  totalLeadConversionWeek: 37 / 594,
+  dailyPickupRate: null,
   goalAchievement: 0.5316,
   weeklyLeadBudget: 700,
   leadsToday: 80,
@@ -51,14 +59,14 @@ const specExampleBig3: Big3Input = {
 const SPEC_EXAMPLE = [
   "Daily CC Report",
   "",
-  "Bookings: 11",
+  "Bookings Yesterday: 11",
   "Bookings for the Week: 37",
   "Key Driver: 79",
   "Left: 42",
   "Daily: 21",
-  "Conversion of Calls Over 2 Mins: 63.6%",
-  "Conversion of Assigned Leads: 13.2%",
-  "% of Appt Achieved: 53.2%",
+  "Total Lead Conversion — Yesterday: 63.6%",
+  "Total Lead Conversion — Week: 6.2%",
+  "Daily Pickup Rate: —",
   "",
   "Leads:",
   "Weekly Lead Budget: 700",
@@ -106,7 +114,12 @@ describe("report text formatting", () => {
       }
       expect(line).not.toMatch(/\d{3,}\.\d/); // no long float tails anywhere
     }
-    expect(text).toContain("Conversion of Calls Over 2 Mins: 63.6%");
+    expect(text).toContain("Total Lead Conversion — Yesterday: 63.6%");
+    expect(text).toContain("Total Lead Conversion — Week: 6.2%");
+    expect(text).toContain("Bookings Yesterday: 11");
+    expect(text).not.toContain("Conversion of Calls Over 2 Mins");
+    expect(text).not.toContain("Conversion of Assigned Leads");
+    expect(text).not.toContain("% of Appt Achieved");
     expect(text).toContain("% of Budget Used: 84.9%");
     expect(text).not.toContain("63.63%");
   });
@@ -218,6 +231,7 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
 
     expect(m.bookingsAnchorDay).toBe(2); // cancelled excluded
     expect(m.bookingsWtd).toBe(3);
+    expect(m.weekBookings).toBe(3); // no weekProduction → legacy basis (byte-stable)
     expect(m.bookingsLeft).toBe(76); // 79 - 3 (live weekly remaining)
     // FROZEN START-OF-DAY TARGET (owner rev 90): wins BEFORE Friday = 2 (a1, a3;
     // a4 is Friday's) → deficit 77 ÷ 1 Friday workday = 77 — NOT the live 76,
@@ -234,6 +248,12 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
     expect(m.leadBudgetUsedPct).toBeCloseTo(6 / 700, 6);
     expect(m.leadsRemaining).toBe(694);
     expect(m.leadCohortSourceDates).toEqual(["2026-09-24"]); // Fri works Thu
+    // OWNER DIRECTIVE 10/30: the total-lead conversion lines. Yesterday = the
+    // SAME pooled numerator as "Bookings Yesterday" (2) ÷ the anchor day's
+    // TOTAL leads (l3+l6 = 2). Week = weekBookings 3 ÷ weekly leads 6.
+    expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 2, 6);
+    expect(m.totalLeadConversionWeek).toBeCloseTo(3 / 6, 6);
+    expect(m.dailyPickupRate).toBeNull(); // definition pending (owner 10/30) — never a number
   });
 
   test("missing yesterday data → null conversions (page shows a warning, not a number)", () => {
@@ -251,6 +271,8 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
     });
     expect(m.conversationConversion).toBeNull();
     expect(m.assignedLeadConversion).toBeNull();
+    expect(m.totalLeadConversionYesterday).toBeNull(); // 0 anchor-day leads → "—", never 0%
+    expect(m.totalLeadConversionWeek).toBeNull(); // 0 weekly leads → "—", never 0%
     expect(m.bookingsAnchorDay).toBe(0);
   });
 
@@ -271,5 +293,96 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
     expect(m.workDaysLeft).toBe(0);
     expect(m.dailyBookingsNeeded).toBe(0);
     expect(m.dailyLeadsNeeded).toBe(0);
+  });
+
+  // ---------- OWNER DIRECTIVE 10/30: TOTAL-lead conversion basis ----------
+
+  describe("Total Lead Conversion lines (owner 10/30 — Mallory's metrics)", () => {
+    const T = "2026-09-25"; // Friday report → anchor = Thursday 2026-09-24
+    const lead = (id: string, type: string, work: string, assigned: string | null): LeadRow => ({
+      id,
+      lead_type: type,
+      source_date: work,
+      work_date: work,
+      contact_id: "k" + id,
+      assigned_rep_id: assigned,
+      source_sheet: type,
+    });
+    const appt = (id: string, createdAt: string, status = "scheduled"): AppointmentRow => ({
+      id,
+      contact_id: "k1",
+      calendar_id: "cal-1",
+      appointment_type: "Family Portrait Session",
+      appointment_datetime: "2026-10-01T14:00:00.000Z",
+      created_at: createdAt,
+      status,
+      cancelled: status === "cancelled",
+    });
+
+    test("Yesterday conversion divides by the ANCHOR DAY'S TOTAL leads — unassigned pool and form sources included", () => {
+      const m = buildDailyReportMetrics({
+        reportDate: T,
+        callsAnchorDay: [],
+        // 2 pooled bookings on the anchor day (the "Bookings Yesterday" number)
+        apptsCreatedAnchorDay: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z")],
+        apptsCreatedWtd: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z")],
+        allCallsForWeek: [],
+        attributions: [],
+        // Anchor day (Thu 9/24) TOTAL cohort = 5 leads: 2 assigned genre rows,
+        // 1 UNASSIGNED genre row, 2 form-workbook rows (assigned_rep_id null
+        // in practice). The legacy assigned-only denominator would be 2 →
+        // 100%; the TOTAL basis is 2 ÷ 5.
+        leadsAllRecent: [
+          lead("l1", "family", "2026-09-24", "r1"),
+          lead("l2", "animalia", "2026-09-24", "r2"),
+          lead("l3", "family", "2026-09-24", null),
+          lead("l4", "auction_register_certificate", "2026-09-24", null),
+          lead("l5", "google_ads_leads", "2026-09-24", null),
+        ],
+        teamBookingGoal: 79,
+        weeklyLeadBudget: 700,
+        thresholdSeconds: 120,
+      });
+      expect(m.bookingsAnchorDay).toBe(2); // the SAME number "Bookings Yesterday" shows
+      expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 5, 6); // pooled ÷ pooled TOTAL
+    });
+
+    test("Week line runs on the CANONICAL weekly gross when the loader supplies weekProduction (parity with the Weekly CC Report)", () => {
+      // Same anchor-day data as above; the week's canonical production is the
+      // Final Booking Logic gross (created Mon–Sun, identity-deduped,
+      // cancels included) — e.g. the 84-shape — which differs from the
+      // deposit-basis winsWtd. The week conversion divides THAT gross by the
+      // week's total leads, exactly what the Weekly CC Report converts.
+      const m = buildDailyReportMetrics({
+        reportDate: T,
+        callsAnchorDay: [],
+        apptsCreatedAnchorDay: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z")],
+        apptsCreatedWtd: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z")],
+        weekProduction: { gross: 84, cancellations: 5, net: 79 },
+        allCallsForWeek: [],
+        attributions: [],
+        leadsAllRecent: [
+          lead("l1", "family", "2026-09-24", "r1"),
+          lead("l2", "animalia", "2026-09-24", "r2"),
+          lead("l3", "family", "2026-09-24", null),
+          lead("l4", "auction_register_certificate", "2026-09-24", null),
+          lead("l5", "google_ads_leads", "2026-09-24", null),
+        ],
+        teamBookingGoal: 79,
+        weeklyLeadBudget: 700,
+        thresholdSeconds: 120,
+      });
+      expect(m.weekBookings).toBe(84); // "Bookings for the Week" shows the canonical gross
+      expect(m.bookingsLeft).toBe(0); // max(0, 79 − 84) — floor holds
+      expect(m.goalAchievement).toBeCloseTo(84 / 79, 6);
+      expect(m.totalLeadConversionWeek).toBeCloseTo(84 / 5, 6);
+      // The frozen-target chain is UNTOUCHED by the production input:
+      // winsBeforeToday keeps its deposit-date basis (both anchors are
+      // before Friday) and the frozen target follows it, not the gross.
+      expect(m.winsBeforeToday).toBe(2);
+      expect(m.dailyBookingsNeeded).toBe(Math.ceil((79 - 2) / 1));
+      // The anchor-day line is independent of the production input.
+      expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 5, 6);
+    });
   });
 });
