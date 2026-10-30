@@ -2271,19 +2271,23 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     overlapNote: sourceOverlap.note,
   };
   // PICKUP RATE BY DAY (owner directive 10/30 evening — OFFICIAL formula):
-  // roster-eligible calls of the REPORT week (the same buildRosterEligibility
-  // + ET-day-window convention every call view uses), each occurred Mon–Fri
-  // day rated individually by the ONE shared function (pickupRateByDay →
-  // pickupRateForDay) as (Calls Over 2 Min + Calls Under 2 Min) ÷ Total
-  // Calls, at settings.meaningful_call_threshold_seconds — the SAME threshold
-  // every "Calls Over 2 Min" surface uses, so the report's per-day figures
+  // REPORTING-eligible calls of the REPORT week — the active roster ∪ the
+  // HISTORICAL reps (buildReportingEligibility), the SAME eligibility every
+  // other Weekly call figure uses — so a departed rep's calls keep their
+  // historical place in the report and the CC Report text stays
+  // byte-identical before/after a departure (historical-reps doctrine (c)).
+  // Each occurred Mon–Fri day is rated individually by the ONE shared
+  // function (pickupRateByDay → pickupRateForDay) as (Calls Over 2 Min +
+  // Calls Under 2 Min) ÷ Total Calls, at
+  // settings.meaningful_call_threshold_seconds — the SAME threshold every
+  // "Calls Over 2 Min" surface uses, so the report's per-day figures
   // recompute exactly from the Call Log's three fields. Only days that have
   // occurred are passed — the report week is a completed week, so that is all
   // five workdays; the d <= today guard keeps the rule honest even if the
   // week basis ever changes. Weekend rows and future days are never passed; a
   // day with no calls rates null → "—". NO weekly average is computed
   // anywhere.
-  const weekCallsEligibility = buildRosterEligibility(rosterUsers, settings.rep_mappings ?? []);
+  const weekCallsEligibility = buildReportingEligibility(allUsers, settings);
   const rosterWeekCalls = applyRosterEligibility(reportWeekCalls, weekCallsEligibility);
   const pickupByDay = pickupRateByDay(
     rosterWeekCalls,
