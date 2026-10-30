@@ -128,10 +128,13 @@ function DailyReportPage() {
               <Eyebrow>Booking Performance</Eyebrow>
               <div className="mt-4 flex flex-wrap items-end justify-between gap-x-10 gap-y-6">
                 <div className="min-w-0">
+                  {/* OWNER PARITY DIRECTIVE 10/30: the week figure is the
+                      canonical weekly gross — the SAME number the Weekly CC
+                      Report's "Bookings (Week)" hero shows for this week. */}
                   <p className="kpi-label">Bookings WTD / Weekly Booking Goal</p>
                   <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                     <span className="text-6xl font-semibold leading-none tracking-tight text-(--text-primary)">
-                      {formatInt(m.bookingsWtd)}
+                      {formatInt(m.weekBookings)}
                     </span>
                     <span className="text-3xl font-medium text-(--text-muted)">/ {formatInt(m.weeklyBookingGoal)}</span>
                   </p>
@@ -170,21 +173,36 @@ function DailyReportPage() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[13px] font-medium text-(--text-body)">Conversation Conversion</dt>
+                  {/* OWNER DIRECTIVE 10/30 (Mallory's metrics): the three
+                      legacy performance lines are replaced by the two
+                      total-lead conversion lines + the pickup placeholder.
+                      Pooled counts ÷ pooled TOTAL leads — never rep rates. */}
+                  <dt className="text-[13px] font-medium text-(--text-body)">Total Lead Conversion — Yesterday</dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-                      {formatPercent(m.conversationConversion, 1)}
+                      {formatPercent(m.totalLeadConversionYesterday, 1)}
                     </span>
                     <span className="kpi-sub">{anchorDayPhrase(m.anchorDate, m.reportDate)}</span>
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[13px] font-medium text-(--text-body)">Assigned Lead Conversion</dt>
+                  <dt className="text-[13px] font-medium text-(--text-body)">Total Lead Conversion — Week</dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-                      {formatPercent(m.assignedLeadConversion, 1)}
+                      {formatPercent(m.totalLeadConversionWeek, 1)}
                     </span>
-                    <span className="kpi-sub">{anchorDayPhrase(m.anchorDate, m.reportDate)}</span>
+                    <span className="kpi-sub">week to date · digit-identical to the Weekly CC Report</span>
+                  </dd>
+                </div>
+                <div>
+                  {/* PICKUP: no approved definition yet (owner 10/30) — honest
+                      "—" placeholder until the proposal is approved. */}
+                  <dt className="text-[13px] font-medium text-(--text-body)">Daily Pickup Rate</dt>
+                  <dd className="mt-0.5 flex items-baseline gap-2">
+                    <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
+                      {formatPercent(m.dailyPickupRate, 1)}
+                    </span>
+                    <span className="kpi-sub">definition pending</span>
                   </dd>
                 </div>
               </dl>

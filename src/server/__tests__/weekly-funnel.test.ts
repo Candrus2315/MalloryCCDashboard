@@ -24,8 +24,9 @@
  *  3. weeklyPageData through the PageDeps seam (MemoryStore + pinned today):
  *     the funnel card (cohort-to-date produced ÷ cohort), the 5-row cohort
  *     series ending at the report week, no in-progress week row.
- *  4. COPY REPORT: "Bookings from Leads: X%" sits directly after
- *     "Conversion of Assigned Leads" (template order otherwise unchanged).
+ *  4. COPY REPORT: the conversion headline is "Total Lead Conversion — Week"
+ *     (owner 10/30) with its indented "by source:" detail directly after it
+ *     (template order otherwise unchanged).
  */
 import { describe, expect, test } from "bun:test";
 import { FUNNEL_SERIES_WEEKS, recentCompletedWeekStarts, weekFunnelRows } from "../metrics/weekly";
@@ -212,15 +213,17 @@ describe("weeklyPageData funnel wiring (MemoryStore, pinned today)", () => {
     expect(rows[4].pct).toBe(data.funnel.pct);
   });
 
-  test("COPY REPORT: the cohort 'Bookings from Leads' line is GONE (Final Booking Logic 10/28 §6) — the assigned-lead conversion line stays", async () => {
+  test("COPY REPORT: the assigned-only line is replaced by the TOTAL-lead headline (owner 10/30) — the by-source detail follows it", async () => {
     const store = await seedFunnelStore();
     const data = await weeklyPageData({ store, today: TODAY });
     const lines = data.report.reportText.split("\n");
-    const i = lines.findIndex((l) => l.startsWith("Conversion of Assigned Leads:"));
+    const i = lines.findIndex((l) => l.startsWith("Total Lead Conversion — Week:"));
     expect(i).toBeGreaterThan(-1);
-    // the cohort funnel line left the report with the tab's panel; the next
-    // line is the blank separator before Calendar / Booked-out
-    expect(lines[i + 1]).toBe("");
+    // the by-source detail rides directly under the headline (subordinate),
+    // then the blank separator before Calendar / Booked-out
+    expect(lines[i + 1]).toMatch(/^\s+by source: Family/);
+    expect(lines[i + 2]).toBe("");
+    expect(lines.some((l) => l.startsWith("Conversion of Assigned Leads:"))).toBe(false);
     expect(lines.some((l) => l.startsWith("Bookings from Leads:"))).toBe(false);
   });
 });
@@ -234,7 +237,7 @@ describe("buildWeeklyCcReportText funnel line (pure) — REMOVED (Final Booking 
     channels: { alliance: 0, auction: 0, website: null },
     channelLeads: { alliance: 0, auction: 0, website: null },
     leads: { family: 3, animalia: 1, fairyland: 0, total: 4 },
-    conversion: { overall: 0.5, family: 0.5, animalia: 0.5 },
+    weekConversion: { rate: 0.5, family: 0.5, animalia: 0.5, fairyland: null },
     funnel: { wins: 2, leads: 4, pct: 0.5 },
     calendar: {
       thisWeek: { appointments: 0, capacity: 63 },
@@ -246,12 +249,13 @@ describe("buildWeeklyCcReportText funnel line (pure) — REMOVED (Final Booking 
     celebrateDefault: null,
   });
 
-  test("the cohort funnel rate renders NOWHERE — not even after 'Conversion of Assigned Leads'", () => {
+  test("the cohort funnel rate renders NOWHERE — not even after the TOTAL-lead headline (owner 10/30 template)", () => {
     const text = buildWeeklyCcReportText(baseInput());
     expect(text).not.toContain("Bookings from Leads");
     const lines = text.split("\n");
-    const i = lines.findIndex((l) => l.startsWith("Conversion of Assigned Leads:"));
-    expect(lines[i + 1]).toBe(""); // the blank separator stays
+    const i = lines.findIndex((l) => l.startsWith("Total Lead Conversion — Week:"));
+    expect(lines[i + 1]).toMatch(/^\s+by source: Family/); // the subordinate detail, then…
+    expect(lines[i + 2]).toBe(""); // …the blank separator stays
   });
   test("zero sheet leads → no fabricated funnel line either", () => {
     const input = baseInput();

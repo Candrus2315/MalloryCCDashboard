@@ -12,7 +12,7 @@
  * Labels/banners name the ACTUAL day: "Bookings Yesterday" only when the
  * anchor really is the calendar prior day; "Bookings Friday" on a Monday
  * morning; "Bookings Today" after EOD; the copied report's line says which
- * day it covers ("Bookings (Fri): 4").
+ * day it covers ("Bookings Friday: 4").
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -165,8 +165,8 @@ describe("buildDailyReportMetrics under the anchor rule (conversions re-dated)",
     expect(m.assignedLeadConversion).toBeNull();
     expect(anchorDayPhrase(m.anchorDate, m.reportDate)).toBe("Friday");
     expect(bookingsAnchorLabel(m.anchorDate, m.reportDate)).toBe("Bookings Friday");
-    expect(bookingsAnchorLineLabel(m.anchorDate, m.reportDate)).toBe("Bookings (Fri)");
-    expect(buildDailyReportText(m, { priority1: "p", priority2: "p", priority3: "p" })).toContain("Bookings (Fri): 0");
+    expect(bookingsAnchorLineLabel(m.anchorDate, m.reportDate)).toBe("Bookings Friday");
+    expect(buildDailyReportText(m, { priority1: "p", priority2: "p", priority3: "p" })).toContain("Bookings Friday: 0");
   });
 
   test("AFTER EOD on a workday: anchor TODAY — 'Bookings Today' label; conversions from today's calls/cohort", () => {
@@ -188,9 +188,9 @@ describe("buildDailyReportMetrics under the anchor rule (conversions re-dated)",
     expect(m.conversationConversion).toBeCloseTo(1 / 1, 6); // a2's call is only 30s — under threshold
     expect(m.assignedLeadConversion).toBeCloseTo(2 / 4, 6);
     const text = buildDailyReportText(m, { priority1: "p", priority2: "p", priority3: "p" });
-    expect(text).toContain("Bookings (Today): 2");
-    expect(buildDailyReportEmail(m, { priority1: "p", priority2: "p", priority3: "p" })).toContain("Bookings (Today): 2");
-    expect(buildDailyReportSlack(m, { priority1: "p", priority2: "p", priority3: "p" })).toContain("Bookings (Today): 2");
+    expect(text).toContain("Bookings Today: 2");
+    expect(buildDailyReportEmail(m, { priority1: "p", priority2: "p", priority3: "p" })).toContain("Bookings Today: 2");
+    expect(buildDailyReportSlack(m, { priority1: "p", priority2: "p", priority3: "p" })).toContain("Bookings Today: 2");
   });
 
   test("WEEKEND report: anchor Friday; leads panel UNCHANGED (Saturday's cohort counts, Sunday-sourced included)", () => {
@@ -219,7 +219,7 @@ describe("buildDailyReportMetrics under the anchor rule (conversions re-dated)",
     // Saturday's anchor IS the calendar prior day → unchanged "yesterday" wording
     expect(anchorDayPhrase(m.anchorDate, m.reportDate)).toBe("yesterday");
     expect(bookingsAnchorLabel(m.anchorDate, m.reportDate)).toBe("Bookings Yesterday");
-    expect(bookingsAnchorLineLabel(m.anchorDate, m.reportDate)).toBe("Bookings");
+    expect(bookingsAnchorLineLabel(m.anchorDate, m.reportDate)).toBe("Bookings Yesterday");
   });
 
   test("WITHOUT a threaded clock (legacy callers/tests): anchor stays the calendar yesterday", () => {
@@ -243,17 +243,17 @@ describe("anchor labels + banner phrases", () => {
   test("anchor == calendar yesterday → unchanged 'yesterday' wording everywhere", () => {
     expect(anchorDayPhrase(THU, FRI)).toBe("yesterday");
     expect(bookingsAnchorLabel(THU, FRI)).toBe("Bookings Yesterday");
-    expect(bookingsAnchorLineLabel(THU, FRI)).toBe("Bookings");
+    expect(bookingsAnchorLineLabel(THU, FRI)).toBe("Bookings Yesterday");
   });
   test("Monday morning → Friday naming (KPI, sublabel, compact line)", () => {
     expect(anchorDayPhrase(FRI, MON)).toBe("Friday");
     expect(bookingsAnchorLabel(FRI, MON)).toBe("Bookings Friday");
-    expect(bookingsAnchorLineLabel(FRI, MON)).toBe("Bookings (Fri)");
+    expect(bookingsAnchorLineLabel(FRI, MON)).toBe("Bookings Friday");
   });
   test("anchor == today (EOD) → 'today' / 'Bookings Today' / 'Bookings (Today)'", () => {
     expect(anchorDayPhrase(TUE, TUE)).toBe("today");
     expect(bookingsAnchorLabel(TUE, TUE)).toBe("Bookings Today");
-    expect(bookingsAnchorLineLabel(TUE, TUE)).toBe("Bookings (Today)");
+    expect(bookingsAnchorLineLabel(TUE, TUE)).toBe("Bookings Today");
   });
 });
 
@@ -331,34 +331,37 @@ describe("dailyReportPageData under the anchor rule", () => {
     expect(data.metrics.bookingsAnchorDay).toBe(1);
     expect(data.metrics.conversationConversion).not.toBeNull();
     expect(data.metrics.assignedLeadConversion).not.toBeNull();
-    expect(data.warnings.some((w) => w.includes("Conversation Conversion is unavailable"))).toBe(false);
-    expect(data.warnings.some((w) => w.includes("Assigned Lead Conversion is unavailable"))).toBe(false);
-    expect(data.reportText).toContain("Bookings (Fri): 1");
-    expect(data.emailText).toContain("Bookings (Fri): 1");
-    expect(data.slackText).toContain("Bookings (Fri): 1");
+    // OWNER 10/30: the conversion warnings follow the REPLACED lines.
+    expect(data.warnings.some((w) => w.includes("Total Lead Conversion — Yesterday is unavailable"))).toBe(false);
+    expect(data.warnings.some((w) => w.includes("Total Lead Conversion — Week is unavailable"))).toBe(false);
+    expect(data.reportText).toContain("Bookings Friday: 1");
+    expect(data.emailText).toContain("Bookings Friday: 1");
+    expect(data.slackText).toContain("Bookings Friday: 1");
   });
 
   test("Monday-morning with NO Friday data: banners name FRIDAY (never 'yesterday')", async () => {
     const { store } = await seedStoreWith({ fridayCalls: false, fridayWins: false, fridayLeads: false });
     const data = await dailyReportPageData({ store, today: MON, etNowMinutes: H0900 });
     expect(data.metrics.anchorDate).toBe(FRI);
-    expect(data.warnings).toContain("No qualifying calls recorded Friday — Conversation Conversion is unavailable.");
-    expect(data.warnings).toContain("No leads worked Friday — Assigned Lead Conversion is unavailable.");
+    expect(data.warnings).toContain("No leads worked Friday — Total Lead Conversion — Yesterday is unavailable.");
   });
 
   test("Tuesday-morning with prior-day data: banners keep the unchanged 'yesterday' wording", async () => {
     const { store } = await seedStoreWith({ fridayCalls: false, fridayWins: false, fridayLeads: false, mondayLeads: false });
     const data = await dailyReportPageData({ store, today: "2026-09-22", etNowMinutes: H0900 });
     expect(data.metrics.anchorDate).toBe(W1_MON);
-    expect(data.warnings).toContain("No qualifying calls recorded yesterday — Conversation Conversion is unavailable.");
-    expect(data.warnings).toContain("No leads worked yesterday — Assigned Lead Conversion is unavailable.");
+    expect(data.warnings).toContain("No leads worked yesterday — Total Lead Conversion — Yesterday is unavailable.");
   });
 
-  test("After EOD on a Monday: anchor is TODAY; report text says 'Bookings (Today)'", async () => {
+  test("After EOD on a Monday: anchor is TODAY; report text says 'Bookings Today'", async () => {
     const { store } = await seedStoreWith({ fridayCalls: false, fridayWins: false, fridayLeads: false });
     const data = await dailyReportPageData({ store, today: MON, etNowMinutes: H1830 });
     expect(data.metrics.anchorDate).toBe(MON);
-    expect(data.reportText).toContain("Bookings (Today): 0");
-    expect(data.warnings).toContain("No qualifying calls recorded today — Conversation Conversion is unavailable.");
+    expect(data.reportText).toContain("Bookings Today: 0");
+    // OWNER 10/30: with Monday leads present the yesterday conversion RENDERS
+    // (0 pooled bookings ÷ 2 Monday leads = 0.0%, a true zero — not "—") so
+    // the unavailable-banner for it never fires.
+    expect(data.metrics.totalLeadConversionYesterday).toBeCloseTo(0, 6);
+    expect(data.warnings.some((w) => w.includes("Total Lead Conversion — Yesterday is unavailable"))).toBe(false);
   });
 });

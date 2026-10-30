@@ -132,7 +132,12 @@ const baseInput = (): WeeklyCcReportInput => ({
   // 2026-09-29); website has no source → null renders "—".
   channelLeads: { alliance: 7, auction: 21, website: null },
   leads: { family: 214, animalia: 178, total: 392 },
-  conversion: { overall: 0.2105, family: 0.1818, animalia: 0.2381 },
+  // OWNER DIRECTIVE 10/30: the report's conversion headline is the TOTAL-lead
+  // weekly conversion (one shared function over the canonical gross + total
+  // weekly leads); the by-source rates ride below it as subordinate detail on
+  // the TOTAL-lead basis. The legacy assigned-only `conversion` input is no
+  // longer rendered (kept on the interface for caller tolerance only).
+  weekConversion: { rate: 0.2105, family: 0.1818, animalia: 0.2381, fairyland: null },
   // BOOKINGS FROM LEADS (owner request 2026-09-29): the owner's reference week —
   // 62 paid bookings / 702 sheet leads = 8.83% overall funnel rate.
   funnel: { wins: 62, leads: 702, pct: 62 / 702 },
@@ -172,7 +177,8 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
         "Fairyland: —",
         "Total: 392",
         "",
-        "Conversion of Assigned Leads: 21.05% (Family 18.18% · Animalia 23.81% · Fairyland —)",
+        "Total Lead Conversion — Week: 21.1%",
+        "  by source: Family 18.2% · Animalia 23.8% · Fairyland —",
         "",
         "Calendar / Booked-out:",
         "This week: 34/63 filled (54%)",
@@ -215,16 +221,34 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
   test("honest states: no monthly goal → 'X/—'; zero conversion denominators → '—'; open-day '—'", () => {
     const input = baseInput();
     input.bookingsMonth.goal = null;
-    input.conversion = { overall: null, family: null, animalia: null };
+    input.weekConversion = { rate: null, family: null, animalia: null, fairyland: null };
     input.calendar.thisWeek = { appointments: 5, slotsOccupied: 5, capacity: 0 };
     input.calendar.firstFullyOpenDay = null;
     input.funnel = { wins: 0, leads: 0, pct: null }; // zero sheet leads → never a fabricated 0%
     const text = buildWeeklyCcReportText(input);
     expect(text).toContain("Bookings (Month-to-Date, September 2026): 239/—");
-    expect(text).toContain("Conversion of Assigned Leads: — (Family — · Animalia — · Fairyland —)");
+    expect(text).toContain("Total Lead Conversion — Week: —");
+    expect(text).toContain("  by source: Family — · Animalia — · Fairyland —");
+    expect(text).not.toContain("Conversion of Assigned Leads"); // replaced (owner 10/30)
     expect(text).not.toContain("Bookings from Leads:"); // cohort funnel line REMOVED (Final Booking Logic 10/28 §6)
     expect(text).toContain("This week: 5/— filled");
     expect(text).toContain("First fully open day: —");
+  });
+
+  test("OWNER 10/30: the headline is the TOTAL-lead conversion — the legacy assigned-only input renders NOWHERE", () => {
+    const input = baseInput();
+    // The retired assigned-only rates (99% here) must never leak into the
+    // report — the headline comes ONLY from the shared weekConversion input.
+    input.conversion = { overall: 0.99, family: 0.99, animalia: 0.99, fairyland: 0.99 };
+    const text = buildWeeklyCcReportText(input);
+    expect(text).toContain("Total Lead Conversion — Week: 21.1%"); // weekConversion.rate, not the assigned 99%
+    expect(text).not.toContain("Conversion of Assigned Leads");
+    expect(text).not.toContain("99%");
+    // Subordination: the by-source detail sits DIRECTLY under the headline,
+    // indented + "by source:" — never readable as the overall definition.
+    const lines = text.split("\n");
+    const i = lines.findIndex((l) => l.startsWith("Total Lead Conversion — Week:"));
+    expect(lines[i + 1]).toMatch(/^\s+by source: Family/);
   });
 
   test("FOUR-NUMBER HERO (Final Booking Logic 10/28): productionWeek renders Gross / Cancellations / Net + goal and suppresses the legacy produced line; productionMonth renders gross MTD", () => {

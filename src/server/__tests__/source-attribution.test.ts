@@ -408,7 +408,10 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE ERASED (owner dire
     channels: { alliance: 1, auction: 2, website: null },
     channelLeads: { alliance: 3, auction: 4, website: null },
     leads: { family: 10, animalia: 4, fairyland: 1, auction_register_certificate: 2, google_ads_leads: 6, alliance_activate_certificate: 0, website_applications: 1, total: 24 },
-    conversion: { overall: 0.5, family: 0.5, animalia: null, fairyland: null },
+    // OWNER 10/30: the report's conversion is the TOTAL-lead headline
+    // (weekConversion); the legacy assigned-only `conversion` input renders
+    // nowhere. rate 0.5 → "50.0%" at the one-decimal parity precision.
+    weekConversion: { rate: 0.5, family: 0.5, animalia: null, fairyland: null },
     funnel: { wins: 5, leads: 24, pct: 5 / 24 },
     calendar: {
       thisWeek: { appointments: 4, slotsOccupied: 4, capacity: 69 },
@@ -449,7 +452,8 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE ERASED (owner dire
     expect(text).toContain("Auction Certificates: 2");
     expect(text).toContain("Total: 24");
     expect(text).toContain("Holes (empty slots): 3");
-    expect(text).toContain("Conversion of Assigned Leads: 50.00%");
+    expect(text).toContain("Total Lead Conversion — Week: 50.0%"); // owner 10/30 template (one-decimal parity precision)
+    expect(text).toContain("  by source: Family 50.0% · Animalia — · Fairyland —");
   });
 
   test("template tolerance preserved: the render differs ONLY by the provided optional inputs — never by a source section", () => {

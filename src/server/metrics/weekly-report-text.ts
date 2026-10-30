@@ -105,7 +105,34 @@ export interface WeeklyCcReportInput {
    * the interface (the page no longer passes it) — nothing of the section
    * survives in the report text for any caller.
    */
-  conversion: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
+  /**
+   * [REMOVED FROM THE RENDER — owner directive 2026-10-30]: the assigned-only
+   * conversion rates. The report's conversion line is now the TOTAL-lead
+   * headline (weekConversion below); these assigned-only rates live on ONLY
+   * in the Weekly tab's own Conversion Efficiency panel (payload.conversion —
+   * assignedLeadConversion everywhere else is out of scope). Kept on the
+   * interface so existing callers compile unchanged (same doctrine as
+   * `funnel`); nothing renders it anymore.
+   */
+  conversion?: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
+  /**
+   * TOTAL LEAD CONVERSION — WEEK (owner directive 2026-10-30, Mallory's
+   * metric) — the headline conversion line: the week's qualifying bookings ÷
+   * the week's TOTAL leads, computed by the ONE shared helper
+   * (totalLeadConversionWeek in compute.ts) over the SAME canonical
+   * (gross, leads) pair the Daily Report's week line uses — digit parity is
+   * pinned by the parity suite. The per-source rates BELOW the headline are
+   * subordinate detail on the TOTAL-lead basis (the full work-date cohort
+   * through computeLeadCohortOutcomes — NOT the assigned-only subset); 0
+   * leads → null ("—", never a fabricated 0%). Rendered at ONE decimal so
+   * both reports show the identical string.
+   */
+  weekConversion: {
+    rate: number | null;
+    family: number | null;
+    animalia: number | null;
+    fairyland: number | null;
+  };
   /**
    * BOOKINGS FROM LEADS (owner request 2026-09-29; work-date alignment): the
    * week's work-date lead cohort ÷ its cohort-to-date produced bookings.
@@ -232,12 +259,18 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   // input; per-source leads live only on the Weekly page's table. The optional
   // inputs stay optional elsewhere (productionWeek/productionMonth/holes…) so
   // the template still renders byte-identical when they are absent.
-  // WORK-DATE ALIGNMENT: the assigned cohort is the week's work-date cohort
-  // and the bookings are cohort-to-date produced (credited by lead
-  // assignment) — the rep-cohort doctrine the owner's standing directive
-  // protects (rep-level detail keeps its own basis, labeled in the UI).
+  // TOTAL LEAD CONVERSION — WEEK (owner directive 2026-10-30): the headline
+  // is the ONE shared weekly conversion (week's qualifying bookings ÷ week's
+  // TOTAL leads — totalLeadConversionWeek in compute.ts, same pair as the
+  // Daily Report's week line). The by-source rates keep their cohort-produced
+  // semantics but on the TOTAL-lead basis (assigned-only subset retired from
+  // this report; the Weekly tab's panel keeps assigned-lead conversion) and
+  // render as a clearly SECONDARY indented line so they never read as the
+  // definition of the overall weekly conversion. ONE decimal, parity-locked
+  // with the Daily Report's identical line.
+  lines.push(`Total Lead Conversion — Week: ${formatPercent(input.weekConversion.rate, 1)}`);
   lines.push(
-    `Conversion of Assigned Leads: ${formatPercent(input.conversion.overall)} (Family ${formatPercent(input.conversion.family)} · Animalia ${formatPercent(input.conversion.animalia)} · Fairyland ${formatPercent(input.conversion.fairyland)})`,
+    `  by source: Family ${formatPercent(input.weekConversion.family, 1)} · Animalia ${formatPercent(input.weekConversion.animalia, 1)} · Fairyland ${formatPercent(input.weekConversion.fairyland, 1)}`,
   );
   // "Bookings from Leads" (the overall cohort funnel rate) REMOVED — Final
   // Booking Logic 10/28 §6: cohort-produced bookings leave the Weekly tab's
