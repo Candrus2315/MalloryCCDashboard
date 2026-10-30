@@ -1314,7 +1314,14 @@ export function repRangeSummaries(input: {
 
 // ---------- rep booking goal (rep_goals with team-share fallback) ----------
 
-export type GoalBasis = "rep-goal" | "team-share" | "mixed";
+/**
+ * GoalBasis — where a resolved goal came from. "not-active" (owner doctrine
+ * 10/30) marks a goal SUPPRESSED because the rep's call_start_date is after
+ * the report date: zero value by rule, regardless of any stored rep_goals row
+ * (stored rows are never deleted or altered — they render again untouched on
+ * and after the start date).
+ */
+export type GoalBasis = "rep-goal" | "team-share" | "mixed" | "not-active";
 
 export interface RepGoalInfo {
   /** Summed over the range's weeks (weekly goals add up over multi-week ranges). */
@@ -1329,14 +1336,35 @@ export interface RepGoalInfo {
  * back per week to an even share of that week's team booking goal when no rep
  * goal is set. The basis says which was actually used ("mixed" when a range
  * spans weeks of both kinds) — the page labels it, never silently guesses.
+ *
+ * OWNER DOCTRINE 10/30 (not-yet-active reps): repActive: false — computed by
+ * the caller FRESH from users.call_start_date vs the report date via
+ * repOperatingState (never cached, never a manual flip) — suppresses the WHOLE
+ * resolution to value 0 / basis "not-active": a pending rep carries zero goal
+ * contribution even when an owner-set rep_goals row exists, and the caller's
+ * repCount must likewise EXCLUDE not-yet-active reps so the remaining reps'
+ * team-share slices are not diluted by a pending rep. On the start date the
+ * rep re-enters the divisor and any stored goal renders automatically — the
+ * exact repOperatingState boundary (start date counts as active).
  */
 export function resolveRepGoal(input: {
   weeks: string[]; // Mondays covering the range (>= 1)
   repGoalsByWeek: Map<string, number>; // this rep's goal per week, when set
   teamGoalByWeek: Map<string, number>; // team booking goal per week (default 79 when absent)
   repCount: number; // active reps — team goal is shared evenly
+  /** OWNER DOCTRINE 10/30: false = not-yet-active rep → zero goal ("not-active"). */
+  repActive?: boolean;
 }): RepGoalInfo | null {
   if (input.weeks.length === 0) return null;
+  // Doctrine check BEFORE the divisor guard: a pending rep gets the honest
+  // zero/basis/note even when no rep is share-eligible (repCount 0).
+  if (input.repActive === false) {
+    return {
+      value: 0,
+      basis: "not-active",
+      note: "not yet active — goal counts from the call start date",
+    };
+  }
   if (input.repCount <= 0) return null;
   let value = 0;
   let repGoalWeeks = 0;

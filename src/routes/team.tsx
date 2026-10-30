@@ -52,6 +52,7 @@ import {
   leadPacing,
   paceSummary,
   repChips,
+  teamStripGoalValue,
   type RepSortKey,
 } from "~/components/team-views";
 // Harmonization Wave 2: the page composes from the shared page primitives
@@ -938,7 +939,10 @@ function TeamPage() {
                           </span>
                         </td>
                         <td className="py-2.5 pr-4 text-right">
-                          <GoalProgress actual={r.totalBookings} goal={r.goal?.value ?? null} />
+                          {/* OWNER DOCTRINE 10/30: a not-yet-active rep's goal cell is the
+                              strip's honest "—" (null) — never "0 / 0". The payload still
+                              carries the suppressed goal info for the expanded basis line. */}
+                          <GoalProgress actual={r.totalBookings} goal={teamStripGoalValue(r)} />
                         </td>
                         <td className="py-2.5 pr-4 text-right tabular-nums text-(--text-primary)">
                           {formatInt(r.callsOverThreshold)}

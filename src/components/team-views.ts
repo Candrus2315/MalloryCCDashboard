@@ -403,6 +403,20 @@ export function goalCell(actual: number, goal: number | null): GoalCellView {
   };
 }
 
+/**
+ * OWNER DOCTRINE 10/30 (not-yet-active reps): the Team strip's goal cell shows
+ * the strip's honest "—" (null) for a pending rep — the payload's suppressed
+ * goal (value 0, basis "not-active") must never render as "0 / 0". Active rows
+ * pass the resolved value through unchanged (null when no goal is resolvable).
+ */
+export function teamStripGoalValue(row: {
+  operatingState: "active" | "not-yet-active";
+  goal: { value: number } | null;
+}): number | null {
+  if (row.operatingState === "not-yet-active") return null;
+  return row.goal?.value ?? null;
+}
+
 // ---------- §11 restraint: thin-sample comparison diffs read as reference ----
 
 /** Shared footnote for the comparison table when any diff is restrained. */
