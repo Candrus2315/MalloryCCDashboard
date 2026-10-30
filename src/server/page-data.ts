@@ -365,13 +365,24 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       const ps = summaries.get(r.id);
       return !!ps && (ps.totalBookings > 0 || ps.totalCalls > 0);
     }).length;
-    const repCountForGoal = currentPeriod ? users.length : participatedRepCount;
+    // OWNER DOCTRINE 10/30 (not-yet-active reps): current periods count only
+    // GOAL-ELIGIBLE reps in the team-share divisor — a rep whose
+    // call_start_date is after the report date never dilutes the remaining
+    // reps' slices. The selected pending rep's own goal is suppressed by
+    // resolveRepGoal's repActive below (owner-set rows render again on the
+    // start date — stored rows are never altered).
+    const goalEligibleCount = users.filter(
+      (u) => repOperatingState(u.call_start_date, today) === "active",
+    ).length;
+    const repCountForGoal = currentPeriod ? goalEligibleCount : participatedRepCount;
     const goal = rep
       ? resolveRepGoal({
           weeks,
           repGoalsByWeek,
           teamGoalByWeek,
           repCount: repCountForGoal,
+          // OWNER DOCTRINE 10/30: zero/"not-active" until the start date.
+          repActive: selectedOperatingState === "active",
         })
       : null;
     const detail = rep && metrics ? buildRepDetail({ rep, metrics, goal, weeks }) : null;
@@ -597,7 +608,15 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
       const ps = summaries.get(r.id);
       return !!ps && (ps.totalBookings > 0 || ps.totalCalls > 0);
     }).length;
-    const repCountForGoal = currentPeriod ? reps.length : participatedRepCount;
+    // OWNER DOCTRINE 10/30 (not-yet-active reps): current periods count only
+    // GOAL-ELIGIBLE reps in the team-share divisor — a rep whose
+    // call_start_date is after the report date never dilutes the remaining
+    // reps' slices (their own row is zeroed by resolveRepGoal's repActive
+    // below). HISTORICAL periods keep the participated fallback untouched.
+    const goalEligibleCount = reps.filter(
+      (r) => repOperatingState(r.call_start_date, today) === "active",
+    ).length;
+    const repCountForGoal = currentPeriod ? goalEligibleCount : participatedRepCount;
 
     const repRows: RepStripRow[] = reps
       .map((r) => {
@@ -618,7 +637,13 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
           conversationConversion: s?.conversationConversion ?? null,
           totalCalls: s?.totalCalls ?? 0,
           avgCallDurationSeconds: s?.avgCallDurationSeconds ?? null,
-          goal: resolveRepGoal({ weeks, repGoalsByWeek, teamGoalByWeek, repCount: repCountForGoal }),
+          goal: resolveRepGoal({
+            weeks,
+            repGoalsByWeek,
+            teamGoalByWeek,
+            repCount: repCountForGoal,
+            repActive: repOperatingState(r.call_start_date, today) === "active",
+          }),
           operatingState: repOperatingState(r.call_start_date, today),
           callStartDate: r.call_start_date ?? null,
         };
@@ -827,10 +852,26 @@ export async function todayPageData(deps?: PageDeps) {
   const todayReps = users.map((u) => ({ id: u.id, name: u.name, call_start_date: u.call_start_date }));
   const teamGoalByWeek = new Map<string, number>();
   if (teamGoal) teamGoalByWeek.set(teamGoal.week_start, teamGoal.booking_goal);
+  // OWNER DOCTRINE 10/30 (not-yet-active reps): the team-share divisor counts
+  // GOAL-ELIGIBLE reps only (call_start_date null or <= today — the
+  // repOperatingState boundary) so a pending rep never dilutes the remaining
+  // reps' slices, and the pending rep's OWN resolution is suppressed to
+  // zero/"not-active" (owner-set rep_goals rows render again untouched on the
+  // start date). Computed fresh from this request's users read — no caching,
+  // no manual flip.
+  const goalEligibleCount = todayReps.filter(
+    (r) => repOperatingState(r.call_start_date, today) === "active",
+  ).length;
   const resolvedRepGoals = todayReps.map((r) => {
     const repGoalsByWeek = new Map<string, number>();
     for (const g of repGoals) if (g.rep_id === r.id) repGoalsByWeek.set(g.week_start, g.goal);
-    const resolved = resolveRepGoal({ weeks: [ws], repGoalsByWeek, teamGoalByWeek, repCount: todayReps.length });
+    const resolved = resolveRepGoal({
+      weeks: [ws],
+      repGoalsByWeek,
+      teamGoalByWeek,
+      repCount: goalEligibleCount,
+      repActive: repOperatingState(r.call_start_date, today) === "active",
+    });
     return {
       rep_id: r.id,
       week_start: ws,

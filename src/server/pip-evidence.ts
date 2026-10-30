@@ -28,7 +28,7 @@
  * sync staleness raises warnings (WarningList) instead of silent zeros.
  * Nothing here scores, labels, or recommends — counts and comparisons only.
  */
-import { etToday, etDayStartUtc, mondaysInRange, addDays, weekStart } from "./date-logic";
+import { etToday, etDayStartUtc, mondaysInRange, addDays, repOperatingState, weekStart } from "./date-logic";
 import {
   bookingsByRep,
   filterApptsInWinBucketRange,
@@ -189,7 +189,13 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
 
   const rep = allUsers.find((u) => u.id === input.repId);
   if (!rep) throw new Error("Unknown rep — pick a rep from this database");
-  const repCount = rosterUsers.length; // team-share fallback denominator, same as the pages
+  // Team-share fallback denominator — the pages' CURRENT-period rule (owner
+  // doctrine 10/30, not-yet-active reps): roster members whose call_start_date
+  // is after the report date are EXCLUDED, so a pending rep never dilutes the
+  // share the pages display for the same rep+week.
+  const repCount = rosterUsers.filter(
+    (u) => repOperatingState(u.call_start_date, today) === "active",
+  ).length;
 
   // ROSTER ELIGIBILITY — the same query-time gate repsPageData applies.
   const eligibility = buildRosterEligibility(allUsers, settings.rep_mappings ?? []);
@@ -255,7 +261,16 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
     if (teamRow) teamGoalByWeek.set(teamRow.week_start, teamRow.booking_goal);
   }
   const currentDashboardGoal = repGoalsByWeek.has(currentWeekStart) || teamGoalByWeek.has(currentWeekStart)
-    ? resolveRepGoal({ weeks: [currentWeekStart], repGoalsByWeek, teamGoalByWeek, repCount })
+    ? resolveRepGoal({
+        weeks: [currentWeekStart],
+        repGoalsByWeek,
+        teamGoalByWeek,
+        repCount,
+        // Owner doctrine 10/30: a PIP rep whose call_start_date is after the
+        // report date carries a ZERO dashboard goal ("not-active") — owner-set
+        // rep_goals rows render again untouched on the start date.
+        repActive: repOperatingState(rep.call_start_date, today) === "active",
+      })
     : null;
 
   const warnings: string[] = syncStaleWarnings(connections);
@@ -274,7 +289,16 @@ export async function pipEvidenceCore(store: Store, input: PipEvidenceInput): Pr
     // Activity (audit 10/1): future weeks are NOT yet evaluable → null fields,
     // honest "—" in the UI. In-progress weeks carry the real partial counts.
     const activity = state === "future" ? null : activityFor(clampedStart, clampedEnd);
-    const resolved = resolveRepGoal({ weeks: [ws], repGoalsByWeek, teamGoalByWeek, repCount });
+    // Owner doctrine 10/30: a week that closed before the rep's call_start_date
+    // carries a ZERO dashboard goal ("not-active") — the rep was not yet on the
+    // roster; the goal re-enters automatically on/after the start date.
+    const resolved = resolveRepGoal({
+      weeks: [ws],
+      repGoalsByWeek,
+      teamGoalByWeek,
+      repCount,
+      repActive: repOperatingState(rep.call_start_date, clampedEnd) === "active",
+    });
     const met = state === "completed" && input.weeklyGoalMin != null && actual != null
       ? actual >= input.weeklyGoalMin
       : null;
