@@ -930,7 +930,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
   const poolStartUtc = anchorStart < weekStartUtc ? anchorStart : weekStartUtc;
   const workDatesFrom = anchorDate < ws ? anchorDate : ws;
 
-  const [meta, settings, callsAnchorDay, apptsAnchorDay, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments, winsWeekRaw] =
+  const [meta, settings, callsAnchorDay, apptsAnchorDay, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -948,26 +948,12 @@ export async function dailyReportPageData(deps?: PageDeps) {
       store.getTeamGoal(ws),
       store.getDailyPriorities(today),
       store.getLeadCountAdjustments(dateRange(workDatesFrom, addDays(ws, 6))),
-      // OWNER PARITY DIRECTIVE 10/30: the CURRENT week's canonical production
-      // fetch (client-identity wins) — feeds computeWeeklyProduction below so
-      // the Daily Report's week lines agree digit-for-digit with the Weekly
-      // CC Report for the same week. Same store method the Weekly loader uses.
-      store.getWinsWithClientsBetween(ws, today),
     ]);
 
   const scope = settings.acuity;
   // Scope BEFORE any booking computation (owner directive — see apptsInScope).
   const apptsAnchorDayScoped = apptsInScope(apptsAnchorDay, scope);
   const apptsWtdScoped = apptsInScope(apptsWtd, scope);
-  // OWNER PARITY DIRECTIVE 10/30: the canonical weekly production (Final
-  // Booking Logic 10/28) for the report week — paid rows CREATED Mon–Sun,
-  // identity-deduped, cancellations included. "Bookings for the Week" /
-  // "Left" / % of goal / "Total Lead Conversion — Week" run on its gross so
-  // they agree digit-for-digit with the Weekly CC Report; the frozen-target
-  // chain (winsBeforeToday) is deliberately UNTOUCHED (owner rev 90 keeps
-  // its deposit-date basis).
-  const weekProduction = computeWeeklyProduction(winsWeekRaw, ws, addDays(ws, 6), scope);
-
   // ROSTER ELIGIBILITY (mapping-aware): report call metrics cover roster reps
   // + mapped HL users only, computed at query time (source rows untouched).
   const rosterUsers = await store.getUsers();
@@ -984,11 +970,12 @@ export async function dailyReportPageData(deps?: PageDeps) {
     callsAnchorDay: rosterCallsAnchorDay,
     apptsCreatedAnchorDay: apptsAnchorDayScoped,
     apptsCreatedWtd: apptsWtdScoped,
-    // OWNER PARITY DIRECTIVE 10/30: the week lines run on the canonical gross
-    // (created Mon–Sun, identity-deduped, cancels included) — the SAME basis
-    // as the Weekly CC Report's hero. The frozen-target chain keeps its own
-    // deposit-date basis via apptsCreatedWtd (owner rev 90, untouched).
-    weekProduction,
+    // OWNER DIRECTIVE 10/30 (post-#126 fix): the week lines (Bookings WTD /
+    // Left / % of goal / Total Lead Conversion — Week numerator) consume the
+    // canonical QUALIFYING WTD chain inside buildDailyReportMetrics — the
+    // SAME deposit-date count the Today strip shows (pending payments and
+    // cancelled-after-payment rows never count). No weekProduction input:
+    // the created-Mon–Sun gross stays the WEEKLY hero's display only.
     allCallsForWeek: rosterCallsForAttribution,
     attributions: attributionsEligible,
     leadsAllRecent: leads,
@@ -1989,19 +1976,23 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       fairyland: assignedFaiOutcome.leads,
     },
   };
-  // TOTAL LEAD CONVERSION — WEEK (owner directive 10/30): the CC report's
-  // headline is the ONE shared weekly conversion — canonical gross ÷ the
-  // week's TOTAL leads (work-date cohort, all seven sources) — the SAME
-  // (bookings, leads) pair the Daily Report's week line converts (parity
-  // suite pins digit identity; NEVER an average of daily or rep rates). The
-  // by-source rates keep the tab's primary-table machinery (sourceCohort)
-  // over the FULL cohort — the assigned-only subset leaves the REPORT (the
-  // Weekly tab's Conversion Efficiency panel and payload.conversion keep
-  // assigned-lead conversion untouched).
+  // TOTAL LEAD CONVERSION — WEEK (owner directive 10/30, post-#126 fix): the
+  // CC report's headline is the ONE shared weekly conversion — the week's
+  // QUALIFYING bookings ÷ the week's TOTAL leads (work-date cohort, all
+  // seven sources). The numerator is the SAME deposit-week wins chain this
+  // report's goal logic already uses (winsLw → bookingsWeek.total) — the
+  // same Booking-Win qualification and cutoff the Daily Report's "Bookings
+  // WTD" covers for its week — NOT the hero's created-Mon–Sun gross (that
+  // counts cancellations; the hero stays exactly as shipped). Parity suite
+  // pins digit identity with the Daily Report; NEVER an average of daily or
+  // rep rates. The by-source rates keep the tab's primary-table machinery
+  // (sourceCohort) over the FULL cohort — the assigned-only subset leaves
+  // the REPORT (the Weekly tab's Conversion Efficiency panel and
+  // payload.conversion keep assigned-lead conversion untouched).
   const cohortConv = (b: SourceBucket) => sourceCohort.find((r) => r.source === b)?.conv ?? null;
   const leadsWeekSummary = splitLeadsByType(leadsWeek);
   const weekConversion = {
-    rate: totalLeadConversionWeek(productionWeek.gross, leadsWeekSummary.total),
+    rate: totalLeadConversionWeek(winsLw.length, leadsWeekSummary.total),
     family: cohortConv("family"),
     animalia: cohortConv("animalia"),
     fairyland: cohortConv("fairyland"),
@@ -2285,10 +2276,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     // sourcePerformance: REMOVED from the report input — the owner erased the
     // LEAD SOURCE PERFORMANCE section from the CC Report (2026-10-28); the
     // object lives on as data.report.sourcePerformance (Attribution detail).
-    // OWNER DIRECTIVE 10/30: the report's conversion is the TOTAL-lead
-    // headline — ONE shared function (totalLeadConversionWeek) over the
-    // canonical gross + the week's total work-date leads, digit-identical to
-    // the Daily Report's week line. The assigned-only object stays on the
+    // OWNER DIRECTIVE 10/30 (post-#126 fix): the report's conversion is the
+    // TOTAL-lead headline — ONE shared function (totalLeadConversionWeek)
+    // over the QUALIFYING week bookings (winsLw, the goal-tracker chain) +
+    // the week's total work-date leads, digit-identical to the Daily
+    // Report's week line. The assigned-only object stays on the
     // payload for the Weekly tab's Conversion Efficiency panel only.
     weekConversion,
     funnel,

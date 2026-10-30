@@ -128,9 +128,12 @@ function DailyReportPage() {
               <Eyebrow>Booking Performance</Eyebrow>
               <div className="mt-4 flex flex-wrap items-end justify-between gap-x-10 gap-y-6">
                 <div className="min-w-0">
-                  {/* OWNER PARITY DIRECTIVE 10/30: the week figure is the
-                      canonical weekly gross — the SAME number the Weekly CC
-                      Report's "Bookings (Week)" hero shows for this week. */}
+                  {/* OWNER DIRECTIVE 10/30 (post-#126 fix): the week figure
+                      is the canonical QUALIFYING WTD count — the SAME
+                      numerator the Today strip shows and the Weekly CC
+                      Report's goal tracker uses for this week (pending
+                      payments and cancelled-after-payment rows never count
+                      toward goal achievement). */}
                   <p className="kpi-label">Bookings WTD / Weekly Booking Goal</p>
                   <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                     <span className="text-6xl font-semibold leading-none tracking-tight text-(--text-primary)">

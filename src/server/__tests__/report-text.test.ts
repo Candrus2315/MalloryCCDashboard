@@ -231,7 +231,7 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
 
     expect(m.bookingsAnchorDay).toBe(2); // cancelled excluded
     expect(m.bookingsWtd).toBe(3);
-    expect(m.weekBookings).toBe(3); // no weekProduction → legacy basis (byte-stable)
+    expect(m.weekBookings).toBe(3); // the canonical qualifying WTD count (the ONLY basis — owner 10/30 post-#126)
     expect(m.bookingsLeft).toBe(76); // 79 - 3 (live weekly remaining)
     // FROZEN START-OF-DAY TARGET (owner rev 90): wins BEFORE Friday = 2 (a1, a3;
     // a4 is Friday's) → deficit 77 ÷ 1 Friday workday = 77 — NOT the live 76,
@@ -347,18 +347,23 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
       expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 5, 6); // pooled ÷ pooled TOTAL
     });
 
-    test("Week line runs on the CANONICAL weekly gross when the loader supplies weekProduction (parity with the Weekly CC Report)", () => {
-      // Same anchor-day data as above; the week's canonical production is the
-      // Final Booking Logic gross (created Mon–Sun, identity-deduped,
-      // cancels included) — e.g. the 84-shape — which differs from the
-      // deposit-basis winsWtd. The week conversion divides THAT gross by the
-      // week's total leads, exactly what the Weekly CC Report converts.
+    test("Week line runs on the CANONICAL QUALIFYING WTD count (owner 10/30 post-#126) — cancelled-after-payment rows never count toward goal", () => {
+      // The week lines' numerator is the SAME qualifying Booking-Win chain the
+      // Today strip shows (deposit-date basis; pending payments AND
+      // cancelled-after-payment rows never count toward goal achievement).
+      // A paid-then-cancelled row created in-week (what the Weekly hero's
+      // created-basis gross would count) must NOT reach "Bookings for the
+      // Week" / "Left" / "% of goal" / the week conversion numerator.
       const m = buildDailyReportMetrics({
         reportDate: T,
         callsAnchorDay: [],
         apptsCreatedAnchorDay: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z")],
-        apptsCreatedWtd: [appt("a1", "2026-09-24T16:00:00.000Z"), appt("a2", "2026-09-24T17:00:00.000Z")],
-        weekProduction: { gross: 84, cancellations: 5, net: 79 },
+        apptsCreatedWtd: [
+          appt("a1", "2026-09-24T16:00:00.000Z"),
+          appt("a2", "2026-09-24T17:00:00.000Z"),
+          appt("cx", "2026-09-24T18:00:00.000Z", "cancelled"), // paid-then-cancelled (gross counts it, qualifying never does)
+          { ...appt("pd", "2026-09-24T19:00:00.000Z"), raw: { paid: "no", priceSold: "300.00" } }, // pending payment
+        ],
         allCallsForWeek: [],
         attributions: [],
         leadsAllRecent: [
@@ -372,16 +377,16 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
         weeklyLeadBudget: 700,
         thresholdSeconds: 120,
       });
-      expect(m.weekBookings).toBe(84); // "Bookings for the Week" shows the canonical gross
-      expect(m.bookingsLeft).toBe(0); // max(0, 79 − 84) — floor holds
-      expect(m.goalAchievement).toBeCloseTo(84 / 79, 6);
-      expect(m.totalLeadConversionWeek).toBeCloseTo(84 / 5, 6);
-      // The frozen-target chain is UNTOUCHED by the production input:
-      // winsBeforeToday keeps its deposit-date basis (both anchors are
-      // before Friday) and the frozen target follows it, not the gross.
+      expect(m.weekBookings).toBe(2); // the qualifying count — NOT gross-with-cancellations
+      expect(m.bookingsLeft).toBe(77); // max(0, 79 − 2)
+      expect(m.goalAchievement).toBeCloseTo(2 / 79, 6);
+      expect(m.totalLeadConversionWeek).toBeCloseTo(2 / 5, 6); // numerator = the SAME qualifying count
+      // The frozen-target chain is UNTOUCHED: winsBeforeToday keeps its
+      // deposit-date basis (both anchors are before Friday) and the frozen
+      // target follows it, not the week-bookings figure.
       expect(m.winsBeforeToday).toBe(2);
       expect(m.dailyBookingsNeeded).toBe(Math.ceil((79 - 2) / 1));
-      // The anchor-day line is independent of the production input.
+      // The anchor-day line is unaffected.
       expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 5, 6);
     });
   });
