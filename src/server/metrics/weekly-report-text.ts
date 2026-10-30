@@ -139,6 +139,18 @@ export interface WeeklyCcReportInput {
     fairyland: number | null;
   };
   /**
+   * PICKUP RATE BY DAY (owner decision 10/30 — FINAL): the report week's
+   * Mon–Fri rows — EACH day's rate individually, only days that have occurred
+   * (the loader passes no future days and no weekend rows), computed by the
+   * ONE shared definition (pickupRateByDay → pickupRateForDay in compute.ts —
+   * completed outbound ÷ (completed + no-answer + voicemail outbound)). A day
+   * with no dial outcomes → null → "—". OPTIONAL: absent/null keeps the
+   * template byte-identical (same doctrine as weekConversion). NO weekly
+   * average exists — the owner explicitly declined an averaged weekly pickup
+   * rate; the block is structurally per-day rows only.
+   */
+  pickupByDay?: { date: string; label: string; rate: number | null }[] | null;
+  /**
    * BOOKINGS FROM LEADS (owner request 2026-09-29; work-date alignment): the
    * week's work-date lead cohort ÷ its cohort-to-date produced bookings.
    * NO LONGER RENDERED — Final Booking Logic 10/28 §6 removes the
@@ -282,6 +294,22 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
     lines.push(
       `  by source: Family ${formatPercent(input.weekConversion.family, 1)} · Animalia ${formatPercent(input.weekConversion.animalia, 1)} · Fairyland ${formatPercent(input.weekConversion.fairyland, 1)}`,
     );
+  }
+  // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): the report week's
+  // Mon–Fri rows, EACH day's rate individually — the same ONE shared
+  // definition (pickupRateForDay) the Daily Report's "Daily Pickup Rate"
+  // line consumes. The loader passes only days that have occurred (no future
+  // days, no weekend rows); a day with no dial outcomes renders "—" (honest
+  // missing data, never 0%). NO weekly average exists — the owner explicitly
+  // declined an averaged weekly pickup rate; the block is per-day rows only.
+  // TEMPLATE TOLERANCE: when the caller does not provide pickupByDay
+  // (pre-production callers/tests with minimal inputs), the block is OMITTED
+  // — the template renders byte-identical to its pre-directive shape.
+  if (input.pickupByDay && input.pickupByDay.length > 0) {
+    lines.push("Pickup Rate by day (Mon–Fri):");
+    for (const d of input.pickupByDay) {
+      lines.push(`  ${d.label}: ${formatPercent(d.rate, 1)}`);
+    }
   }
   // "Bookings from Leads" (the overall cohort funnel rate) REMOVED — Final
   // Booking Logic 10/28 §6: cohort-produced bookings leave the Weekly tab's

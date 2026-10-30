@@ -27,12 +27,14 @@ import {
   formatDateHumanFull,
   isHistoricalWeek,
   isRangeMode,
+  isWorkday,
   mondaysInRange,
   recentMondays,
   repOperatingState,
   resolveRange,
   weekStart,
   weekday,
+  weekdayName,
   type RangeMode,
 } from "./date-logic";
 import {
@@ -50,6 +52,7 @@ import {
   appointmentPaymentStateOf,
   isBookingWin,
   materializeRecurringBlocks,
+  pickupRateByDay,
   repRangeSummaries,
   resolveRepGoal,
   totalLeadConversionWeek,
@@ -1811,7 +1814,7 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // recent-completed-weeks strip (report week included — one fetch serves both).
   const seriesMon = addDays(lwMon, -7 * (FUNNEL_SERIES_WEEKS - 1));
 
-  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, reportWeekSessions, channelLeadOpps, winsJoinRaw, leadsJoin, leadsCohort] =
+  const [meta, settings, winsWindowRaw, winsMtdRaw, attributions, rosterUsers, allUsers, leadsSeries, teamGoal, futureAppts, storedRules, connections, monthlyGoalRow, reportNotesRow, reportWeekSessions, channelLeadOpps, winsJoinRaw, leadsJoin, leadsCohort, reportWeekCalls] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -1866,6 +1869,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       // definition everywhere (week labeled Mon 10/19 ⇒ work_date 10/19–10/25
       // ⇒ sheet dates Fri 10/16–Thu 10/22).
       store.getLeadsByWorkDates(dateRange(seriesMon, lwSun)),
+      // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): the report week's
+      // calls — the EXISTING ET day-window convention (calls STARTED on the
+      // ET day), Mon 00:00 ET through Sun 23:59 ET of the report week. Day
+      // membership is re-derived from started_at downstream (pickupRateForDay).
+      store.getCallsBetween(etDayStartUtc(lwMon), etDayEndUtc(lwSun)),
     ]);
 
   const scope = settings.acuity;
@@ -2254,6 +2262,21 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     worst: sourceBestWorst.worst,
     overlapNote: sourceOverlap.note,
   };
+  // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): roster-eligible calls
+  // of the REPORT week (the same buildRosterEligibility + ET-day-window
+  // convention every call view uses), each occurred Mon–Fri day rated
+  // individually by the ONE shared function (pickupRateByDay →
+  // pickupRateForDay). Only days that have occurred are passed — the report
+  // week is a completed week, so that is all five workdays; the d <= today
+  // guard keeps the rule honest even if the week basis ever changes. Weekend
+  // rows and future days are never passed; a day with no dial outcomes rates
+  // null → "—". NO weekly average is computed anywhere.
+  const weekCallsEligibility = buildRosterEligibility(rosterUsers, settings.rep_mappings ?? []);
+  const rosterWeekCalls = applyRosterEligibility(reportWeekCalls, weekCallsEligibility);
+  const pickupByDay = pickupRateByDay(
+    rosterWeekCalls,
+    dateRange(lwMon, lwSun).filter((d) => isWorkday(d) && d <= today),
+  ).map((r) => ({ date: r.date, label: weekdayName(r.date), rate: r.rate }));
   const reportText = buildWeeklyCcReportText({
     week: { start: lwMon, end: lwSun },
     monthKey,
@@ -2283,6 +2306,8 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     // Report's week line. The assigned-only object stays on the
     // payload for the Weekly tab's Conversion Efficiency panel only.
     weekConversion,
+    // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): per-day Mon–Fri rows.
+    pickupByDay,
     funnel,
     calendar,
     // OWNER HOLES of the report week (9/30) — fills the "Holes" placeholder
