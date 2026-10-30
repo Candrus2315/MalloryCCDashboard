@@ -27,6 +27,12 @@
  * cancellations / net figures stay displayed as production reporting in the
  * same line (displayed, never goal-driving). The MTD comparison rides the
  * qualifying MTD chain (bookingsMonth.total == mtd.total) the same way.
+ * FOURTH-SURFACE PARITY (rev-97 follow-up): the Weekly tab's Month-to-Date
+ * panel — the LAST gross-basis "vs goal" rendering — consumes the SAME
+ * qualifying MTD chain (mtd.total == bookingsMonth.total, the deposit-date
+ * winsMtd chain) as the CC Report's MTD line, so the goal comparisons agree
+ * everywhere they appear; the panel's Gross / Cancellations / Net MTD stay
+ * displayed as its production block.
  * Mirrors the frozen-target suite's pure-builder parity pattern, then proves
  * the loader wiring end-to-end on a MemoryStore (Daily for a Sunday vs the
  * Weekly CC Report for that same just-completed week), then replays the
@@ -355,6 +361,34 @@ describe("loader-level parity (MemoryStore): Daily (Sunday of week W) == Weekly 
     );
     expect(lineOf(daily.reportText, "Total Weekly Leads:")).toBe("Total Weekly Leads: 4");
     expect(lineOf(weekly.report.reportText, "Total:")).toBe("Total: 4");
+  });
+
+  test("FOURTH-SURFACE MTD PARITY (rev-97 follow-up): the Weekly tab's MTD panel == the CC Report MTD line — same qualifying comparison, same cutoff", async () => {
+    // Same fixture, PLUS the monthly goal stored for THIS month's key so the
+    // goal comparison is a real "X/G (±N)" (not the honest "X/—").
+    const store = await seedParityStore();
+    await store.upsertMonthlyGoal({ month: "2026-09", goal: 316 });
+    const weekly = await weeklyPageData({ store, today: "2026-09-28" });
+
+    // The MTD panel renders signedDelta(mtd.total, mtd.goal) next to
+    // formatInt(mtd.total) / formatInt(mtd.goal) — the SAME digits
+    // goalVsActual(mtd.total, mtd.goal) carries (same sign convention).
+    expect(weekly.mtd.goal).toBe(316);
+    expect(weekly.mtd.total).toBe(3); // qualifying MTD (deposit-date winsMtd chain)
+    expect(weekly.mtd.gross).toBe(4); // production MTD (cancellations included)
+    expect(weekly.mtd.total).not.toBe(weekly.mtd.gross); // the pin can't pass on equal values
+    const panelComparison = goalVsActual(weekly.mtd.total, weekly.mtd.goal);
+    expect(panelComparison).toBe("3/316 (−313)");
+
+    // PARITY: the CC Report's MTD line carries the panel's exact comparison —
+    // ONE qualifying chain (bookingsMonth.total == mtd.total == winsMtd.length).
+    const mtdLine = lineOf(weekly.report.reportText, "Bookings (Month-to-Date,");
+    expect(mtdLine).toBe(
+      `Bookings (Month-to-Date, September 2026): ${panelComparison} qualifying · Gross (cancellations included): ${weekly.mtd.gross}`,
+    );
+    // And the gross-based comparison NEVER renders on either surface — the
+    // goal comparison moved to qualifying, gross stays production-only.
+    expect(mtdLine).not.toContain(goalVsActual(weekly.mtd.gross, weekly.mtd.goal)); // "4/316 (−312)"
   });
 
   test("the Weekly headline never moves when assigned-only counts change (total-lead basis, not assigned)", async () => {

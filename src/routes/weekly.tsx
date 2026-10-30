@@ -29,7 +29,7 @@ export const Route = createFileRoute("/weekly")({
      4. REP CONTRIBUTION      — ranked table | CONVERSION EFFICIENCY (one block)
      5. LEAD COMPOSITION      — the work-date cohort (Leads-only)
      6. SECONDARY BAND        — calendar fill + Alliance/Auction/Website
-     7. MONTH TO DATE         — GROSS basis tracker
+     7. MONTH TO DATE         — qualifying goal anchor + gross production block (rev 97)
      8. CC REPORT             — management action: narrative + COPY REPORT
    OWNER'S FOUR OPERATIONAL QUESTIONS (Final Booking Logic 10/28): Weekly
    Leads (work-date cohort) · Gross Bookings · Cancellations · Net Bookings.
@@ -1039,10 +1039,13 @@ function WeeklyPage() {
         </Panel>
       </section>
 
-      {/* 7 — MONTH TO DATE (secondary analysis; GROSS basis — owner Final
-          Booking Logic 10/28: one production basis page-wide). The rep rows and
-          Top performer stay on the protected active-wins/attribution basis,
-          labeled in the InfoTip. */}
+      {/* 7 — MONTH TO DATE (rev-97 goal basis, owner directive 10/30): the
+          goal anchor is the QUALIFYING MTD count — paid-AND-active wins,
+          deposit-date basis (the same winsMtd chain the CC Report's
+          Month-to-Date line compares, bookingsMonth.total) — never gross.
+          Gross / Cancellations / Net MTD display underneath as the PRODUCTION
+          block (historical reporting). The rep rows and Top performer stay on
+          the protected active-wins/attribution basis, labeled in the InfoTip. */}
       <section aria-label="Month to date">
         <div className="mb-3 flex flex-wrap items-center gap-1.5">
           <Eyebrow>
@@ -1051,30 +1054,60 @@ function WeeklyPage() {
           </Eyebrow>
           <InfoTip
             label="How month to date is counted"
-            tip="Gross bookings MTD: qualifying (paid-deposit) bookings ORIGINALLY CREATED in the current calendar month through today (ET) — identity-deduped per client, cancellations included; reschedules never move credit. Same produced basis as the hero's Gross. Rep rows and Top performer count active paid wins (attribution basis); later cancellations excluded."
+            tip="Gross bookings MTD: qualifying (paid-deposit) bookings ORIGINALLY CREATED in the current calendar month through today (ET) — identity-deduped per client, cancellations included; reschedules never move credit. Same produced basis as the hero's Gross. Rep rows and Top performer count active paid wins (attribution basis); later cancellations excluded. GOAL BASIS (owner rev-97 directive 10/30): the MTD goal comparison tracks the QUALIFYING booking count — paid AND active (the deposit-date goal-tracker chain, the same figure the CC Report's Month-to-Date line compares) — never the gross; gross stays here as production reporting only."
           />
         </div>
         <Panel className="overflow-hidden">
           <div className="grid sm:grid-cols-[minmax(0,1fr)_minmax(0,280px)] sm:divide-x sm:divide-(--table-border-weak)">
             <div className="p-5">
-              <p className="kpi-label">Gross bookings MTD</p>
+              {/* GOAL ANCHOR — the QUALIFYING MTD count (mtd.total, the
+                  deposit-date winsMtd chain — the same figure the CC Report's
+                  Month-to-Date line compares) vs the monthly goal. NEVER gross
+                  (owner rev-97 directive 10/30). */}
+              <p className="kpi-label">Qualifying Bookings MTD / Monthly Goal</p>
               <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                 <span className="text-4xl font-semibold leading-none tracking-tight text-(--text-primary)">
-                  {formatInt(mtd.gross)}
+                  {formatInt(mtd.total)}
                 </span>
                 {mtd.goal != null && <span className="text-xl font-medium text-(--text-muted)">/ {formatInt(mtd.goal)}</span>}
               </p>
               <div className="mt-3 max-w-md">
-                <RatioBar ratio={mtd.goal != null && mtd.goal > 0 ? mtd.gross / mtd.goal : null} height="h-1" max="max-w-none" />
+                <RatioBar ratio={mtd.goal != null && mtd.goal > 0 ? mtd.total / mtd.goal : null} height="h-1" max="max-w-none" />
               </div>
               <p className="kpi-sub mt-2 tabular-nums">
-                {mtd.goal != null ? `${signedDelta(mtd.gross, mtd.goal)} vs goal · ` : ""}
+                {mtd.goal != null ? `${signedDelta(mtd.total, mtd.goal)} vs goal · ` : ""}
                 {formatDateHuman(data.month.start)} – {formatDateHuman(data.month.end)}
               </p>
-              <p className="mt-1 text-xs leading-snug text-(--text-muted)">
+              {/* PRODUCTION BLOCK (hero mirror, owner §4 layout): Gross /
+                  Cancellations / Net MTD — historical reporting, rev 97; the
+                  qualifying anchor above is the only goal-driving figure. */}
+              <div className="mt-4 flex gap-10 border-t border-(--table-border-weak) pt-3">
+                <div>
+                  <p className="kpi-label">Gross Bookings MTD</p>
+                  <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
+                    {formatInt(mtd.gross)}
+                  </p>
+                  <p className="kpi-sub mt-1 tabular-nums">cancellations included</p>
+                </div>
+                <div>
+                  <p className="kpi-label">Cancellations MTD</p>
+                  <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
+                    {formatInt(mtd.cancellations)}
+                  </p>
+                </div>
+                <div>
+                  <p className="kpi-label">Net MTD</p>
+                  <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
+                    {formatInt(mtd.net)}
+                  </p>
+                  <p className="kpi-sub mt-1 tabular-nums">gross − cancellations</p>
+                </div>
+              </div>
+              <p className="mt-3 text-xs leading-snug text-(--text-muted)">
                 Gross = qualifying paid bookings originally created {formatDateHuman(data.month.start)} –{" "}
-                {formatDateHuman(data.month.end)} (identity-deduped; cancellations included). Cancellations MTD:{" "}
-                {formatInt(mtd.cancellations)} · Net MTD: {formatInt(mtd.net)}.
+                {formatDateHuman(data.month.end)} (identity-deduped; cancellations included). The goal anchor tracks the
+                QUALIFYING count (paid and active, deposit-date basis) — gross is production reporting and never
+                goal-driving (owner rev-97 directive, 10/30).
               </p>
             </div>
             <div className="border-t border-(--table-border-weak) p-5 sm:border-t-0">
