@@ -66,6 +66,19 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * takes over automatically — the recovery path). `force` bypasses for a
  * deliberate owner-directed recompute.
  *
+ * v6 = OWNER RULING 2026-10-30: online/self-booked bookings stay TEAM-ONLY —
+ *      rep credit requires conversation evidence. A window_interaction verdict
+ *      whose winning evidence is a CALL with duration_seconds <= 0 (0s dial
+ *      attempt / unknown length) becomes an UNATTRIBUTED row (rep NULL,
+ *      method 'none') under the distinct reason_code
+ *      "self-booked-no-conversation", with the evidence trail (evidence id +
+ *      dur + the ruling) on the note. Team totals (Weekly Gross/Cancel/Net,
+ *      qualifying wins) are UNCHANGED — these remain wins; only rep-level
+ *      credit drops. Named case: Ariana Freddura. Selection logic unchanged
+ *      (most-recent-wins over any duration); manual_override rows are never
+ *      touched; the next scheduled tick re-derives affected rows (no data
+ *      migration). The version bump retires v5 writers, whose conflict-updates
+ *      would re-credit the ruled-out rows.
  * v5 = OWNER RULE auction→Allison (owner directive 2026-10-19, verbatim "if
  *      there is ever any auction bookings it came from Allison, always
  *      contribute those to her"): auction-genre appointments attribute to
@@ -90,7 +103,7 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * no version check — operationally retired by the 9/27 republish; from s6 on
  * every shipped writer carries the guard).
  */
-export const ATTRIBUTION_WRITER_VERSION = 5;
+export const ATTRIBUTION_WRITER_VERSION = 6;
 /** sync_checkpoints key holding the latest writer version that has written. */
 export const ATTRIBUTION_WRITER_VERSION_KEY = "attribution-writer-version";
 

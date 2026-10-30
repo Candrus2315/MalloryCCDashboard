@@ -235,11 +235,15 @@ export type AttributionMethod =
   | typeof OWNER_RULE_AUCTION_METHOD;
 
 /**
- * ONE s1 window interaction (owner-frozen s1 rule, 2026-09-27): a VERIFIED
- * ROSTER-REP interaction — a normalized call (rep resolved through the roster
- * machinery) or a harvested conversation call message whose parent
- * conversation is owned by an active roster user. Duration is IRRELEVANT for
- * OWNERSHIP (a 30-second dial is workflow evidence); the >120s threshold
+ * ONE s1 window interaction (owner-frozen s1 rule, 2026-09-27; credit refined
+ * by the owner ruling 2026-10-30): a VERIFIED ROSTER-REP interaction — a
+ * normalized call (rep resolved through the roster machinery) or a harvested
+ * conversation call message whose parent conversation is owned by an active
+ * roster user. Duration is IRRELEVANT for finding the interaction (a 0-second
+ * dial still names the workflow); since the 10/30 ruling a winning CALL
+ * without a positive duration cannot CREDIT a rep (the engine's
+ * self-booked-no-conversation gate). Harvested conversation messages are
+ * unaffected — the message itself is the conversation. The >120s threshold
  * lives ONLY in the "Bookings From Calls >2 Minutes" metric. The caller
  * pre-resolves rep_id (the caller owns roster truth — same convention as the
  * engine's users option); rows without a resolved rep are NOT evidence.
@@ -287,7 +291,10 @@ export interface AttributionMatch {
    * roster reps — manual assignment required), "no-qualifying-call" (identity
    * known but no call over threshold within the window dates before the
    * booking), "bad-datetime" (unparseable creation/session time — never
-   * guessed against a broken anchor).
+   * guessed against a broken anchor), "self-booked-no-conversation" (owner
+   * ruling 2026-10-30: the winning window_interaction evidence was a call with
+   * no positive duration — a dial attempt, no conversation — so the booking
+   * stays TEAM-ONLY; rep credit requires conversation evidence).
    */
   reason?: string;
   /**
@@ -313,7 +320,12 @@ export interface AttributionMatch {
    * writer) — triage-groupable, without overloading the audit note.
    */
   noRepReason?: string;
-  /** Evidence tier that produced an attribution (attributed only). */
+  /**
+   * Evidence tier that produced an attribution (attributed rows), OR — on the
+   * owner-ruling team-only verdict ("self-booked-no-conversation") — the tier
+   * that was EVALUATED and ruled insufficient for credit, so the sync wiring
+   * keeps the evidence trail on the stored row's note.
+   */
   method?: AttributionMethod;
   /**
    * Ambiguity evidence detail (auditable; feeds the manual-assignment queue):
@@ -324,7 +336,10 @@ export interface AttributionMatch {
    * s1 evidence audit (window_interaction rows only): the exact interaction
    * that owns the booking — id, source table, start, duration. Persisted in
    * the attribution row's note by the sync wiring, so every s1 ownership is
-   * auditable without re-deriving.
+   * auditable without re-deriving. On the owner-ruling team-only verdict
+   * ("self-booked-no-conversation") it records the interaction that was RULED
+   * insufficient (the 0/unknown-duration call) — the audit trail shows both
+   * the evidence and the ruling on the stored row.
    */
   evidence?: {
     id: string;
@@ -750,18 +765,23 @@ export function matchAppointmentsToCalls(
     };
 
     /**
-     * s1 OWNERSHIP LAYER (owner-frozen rule, 2026-09-27). Fires ONLY when the
-     * >threshold rule produced NO verdict (no-qualifying-call): rep ownership
-     * = the most-recent VERIFIED ROSTER-REP interaction within the SAME
-     * date-granularity window, REGARDLESS of duration — a 30-second dial is
-     * workflow evidence. Evidence = normalized calls (rep resolved through
-     * the roster machinery, the same eligibleRepId path as qualifying calls)
-     * + harvested conversation interactions (parent-conversation user
-     * ownership, pre-resolved by the caller). NO all-time fallback (s2 stays
-     * diagnostic-only), NO fuzzy identity, NO auto-assigned web/self-service
-     * bookings. Multi-rep evidence is AMBIGUOUS — manual queue, never a
-     * silent most-recent pick. Returns null when there is no evidence at all
-     * (the caller keeps the honest no-qualifying-call verdict).
+     * s1 OWNERSHIP LAYER (owner-frozen rule, 2026-09-27; CREDIT refined by the
+     * owner ruling 2026-10-30). Fires ONLY when the >threshold rule produced
+     * NO verdict (no-qualifying-call): rep ownership = the most-recent
+     * VERIFIED ROSTER-REP interaction within the SAME date-granularity window,
+     * REGARDLESS of duration — the interaction FINDS the workflow (triage),
+     * but CREDIT now requires conversation evidence: a winning CALL with
+     * duration_seconds <= 0 (0s dial attempt / unknown length) is ruled
+     * "self-booked-no-conversation" (team-only) by the gate below. Evidence =
+     * normalized calls (rep resolved through the roster machinery, the same
+     * eligibleRepId path as qualifying calls) + harvested conversation
+     * interactions (parent-conversation user ownership, pre-resolved by the
+     * caller — real conversation messages, unaffected by the ruling). NO
+     * all-time fallback (s2 stays diagnostic-only), NO fuzzy identity, NO
+     * auto-assigned web/self-service bookings. Multi-rep evidence is
+     * AMBIGUOUS — manual queue, never a silent most-recent pick. Returns null
+     * when there is no evidence at all (the caller keeps the honest
+     * no-qualifying-call verdict).
      */
     const s1Verdict = (candidates: string[]): AttributionMatch | null => {
       const inter: Array<{
@@ -810,6 +830,32 @@ export function matchAppointmentsToCalls(
       let best = inter[0];
       for (const i of inter.slice(1)) {
         if (i.ms > best.ms || (i.ms === best.ms && i.id > best.id)) best = i;
+      }
+      // OWNER RULING (directive 2026-10-30): rep credit requires CONVERSATION
+      // evidence. When the winning evidence is a CALL with no positive duration
+      // (0s = a dial attempt; null = unknown length), no conversation happened —
+      // a booking the client made themselves online must never be credited to a
+      // rep. The row goes TEAM-ONLY (unattributed, rep NULL) under the distinct
+      // reason_code "self-booked-no-conversation", with the evidence trail kept
+      // on the note (evidence id + dur + the ruling) so the audit log stays
+      // honest. SELECTION IS UNCHANGED (still most-recent-wins over any
+      // duration — the s1 layer's workflow-evidence role for finding the
+      // interaction survives); only the CREDIT outcome of a conversation-less
+      // winner changes. Harvest-message evidence (a real conversation message)
+      // and every stronger tier (contact_id/phone/email/manual/owner rule) are
+      // unaffected. Named case: Ariana Freddura — window_interaction 0.6 whose
+      // ONLY evidence was a 0-duration call.
+      if (best.source === "calls" && !(best.dur != null && best.dur > 0)) {
+        return {
+          appointmentId: apptId,
+          status: "unattributed",
+          reason: "self-booked-no-conversation",
+          reasonCode: "self-booked-no-conversation",
+          detail: `owner ruling 2026-10-30: winning window_interaction evidence is a ${best.dur === 0 ? "0-second" : "unknown-duration"} call (a dial attempt, no conversation) — a self-booked booking stays team-only`,
+          method: "window_interaction",
+          evidence: { id: best.id, source: best.source, started_at: best.started_at, duration_seconds: best.dur },
+          window: windowMarker,
+        };
       }
       return {
         appointmentId: apptId,
