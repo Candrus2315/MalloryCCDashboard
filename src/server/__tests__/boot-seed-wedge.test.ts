@@ -100,6 +100,10 @@ function makePg(fakeSql: unknown, schemaStmtTimeoutMs: number): PgStore {
 /* scenario ② — bounded cap + reset                                    */
 /* ------------------------------------------------------------------ */
 
+/* ③ tests stage their fake URL into the env for probePg — under the migration-acceptance gate that
+   is exactly the "non-serve process holding a URL from the env" posture, so each store states its
+   serve-simulated grant explicitly. */
+const CAP3 = { grantedBy: "boot-seed wedge ③ tests (serve-simulated)" };
 describe("boot-seed wedge ② — ensureSchema bounded cap + reset", () => {
   test("DEFAULT_SCHEMA_STMT_TIMEOUT_MS is the documented 90s cap", () => {
     expect(DEFAULT_SCHEMA_STMT_TIMEOUT_MS).toBe(90_000);
@@ -245,7 +249,7 @@ describe("boot-seed wedge ③ — probePg/getStore bounded + honest memory fallb
   test("a hung probe returns null within the backstop; getDbStatus reports the honest reason", async () => {
     await withProbeUrl(async () => {
       const { sql } = makeFakeSql({ hangOn: isUsersSeed });
-      const hung = new PgStore(FAKE_URL, { sql: sql as never, schemaStmtTimeoutMs: 0 }); // cap disabled — backstop must carry
+      const hung = new PgStore(FAKE_URL, { migrationCapability: CAP3,  sql: sql as never, schemaStmtTimeoutMs: 0 }); // cap disabled — backstop must carry
       const start = Date.now();
       const res: Store | null = await probePg({ probeTimeoutMs: 80, storeFactory: () => hung });
       expect(res).toBeNull();
@@ -261,7 +265,7 @@ describe("boot-seed wedge ③ — probePg/getStore bounded + honest memory fallb
   test("getStore falls back to the MemoryStore instead of hanging (the amplifier chain closed)", async () => {
     await withProbeUrl(async () => {
       const { sql } = makeFakeSql({ hangOn: isUsersSeed });
-      const hung = new PgStore(FAKE_URL, { sql: sql as never, schemaStmtTimeoutMs: 0 });
+      const hung = new PgStore(FAKE_URL, { migrationCapability: CAP3,  sql: sql as never, schemaStmtTimeoutMs: 0 });
       const opts: ProbeOptions = { probeTimeoutMs: 80, storeFactory: () => hung };
       const store = await getStore(opts);
       // pre-fix: every concurrent getStore() caller shared ONE hung promise forever
@@ -273,7 +277,7 @@ describe("boot-seed wedge ③ — probePg/getStore bounded + honest memory fallb
   test("a healthy probe succeeds and the registry memoizes it (healthy path byte-compatible)", async () => {
     await withProbeUrl(async () => {
       const { sql } = makeFakeSql();
-      const healthy = new PgStore(FAKE_URL, { sql: sql as never });
+      const healthy = new PgStore(FAKE_URL, { migrationCapability: CAP3,  sql: sql as never });
       const res = await probePg({ storeFactory: () => healthy });
       expect(res).toBe(healthy);
       // second probe for the same URL is served from the registry — the factory must not run again
@@ -289,12 +293,12 @@ describe("boot-seed wedge ③ — probePg/getStore bounded + honest memory fallb
   test("recovery without restart: a timed-out probe succeeds on re-probe after the blocker clears", async () => {
     await withProbeUrl(async () => {
       const { sql } = makeFakeSql({ hangOn: isUsersSeed });
-      const hung = new PgStore(FAKE_URL, { sql: sql as never, schemaStmtTimeoutMs: 0 });
+      const hung = new PgStore(FAKE_URL, { migrationCapability: CAP3,  sql: sql as never, schemaStmtTimeoutMs: 0 });
       const first = await probePg({ probeTimeoutMs: 80, storeFactory: () => hung });
       expect(first).toBeNull();
       // the DB recovers (lock released / stall healed): a fresh probe succeeds
       // and gets registered — no process restart needed
-      const healthy = new PgStore(FAKE_URL, { sql: makeFakeSql().sql as never });
+      const healthy = new PgStore(FAKE_URL, { migrationCapability: CAP3,  sql: makeFakeSql().sql as never });
       const second = await probePg({ storeFactory: () => healthy });
       expect(second).toBe(healthy);
     });

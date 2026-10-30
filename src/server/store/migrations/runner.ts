@@ -75,6 +75,28 @@ export interface MigrationRecord {
   checksum: string;
 }
 
+/**
+ * MIGRATION-ACCEPTANCE GATE (2026-10-30): the capability a caller must state
+ * to run migrations at all. Every runMigrations call names WHO authorized the
+ * run; the managed serve context threads its identity from serve.ts, local
+ * disposable databases state their own grant. Refused otherwise — see
+ * docs/migrations-acceptance/2026-10-30-migration-1-baseline-acceptance.md
+ * (the out-of-band stamp that put a dev checksum on prod could only happen
+ * because construction-with-a-URL alone used to run migrations).
+ */
+export interface MigrationRunCapability {
+  /** Human-auditable identity of the grantor; non-empty. */
+  grantedBy: string;
+}
+
+/** Named refusal when migrations are attempted without a stated capability. */
+export class MigrationGateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MigrationGateError";
+  }
+}
+
 /** Injected I/O — pg.ts supplies capped execution; tests supply a fake. */
 export interface MigrationRunnerIo {
   /** Execute one statement, bounded by the caller's per-statement cap. */
@@ -137,13 +159,28 @@ export interface MigrationRunResult {
  * Ensure the database is at the registry's current version. Reads the
  * marker, verifies every recorded migration (presence, order, checksum),
  * then applies pending migrations in order, recording each.
+ *
+ * GATE: `capability` is REQUIRED and validated before ANY statement (not even
+ * the marker bootstrap) runs — an unstated grantor throws MigrationGateError
+ * with nothing executed. The store layer (pg.ts) resolves the capability from
+ * the managed serve context / explicit grant / non-business URL; direct
+ * callers (tests, one-off scripts on disposable databases) state their own.
  */
 export async function runMigrations(
   io: MigrationRunnerIo,
   migrations: readonly Migration[],
+  capability: MigrationRunCapability,
   done?: (result: MigrationRunResult) => void,
 ): Promise<MigrationRunResult> {
   const log = io.log ?? ((msg: string) => console.log(`[schema] ${msg}`));
+  if (!capability || typeof capability.grantedBy !== "string" || capability.grantedBy.trim().length === 0) {
+    throw new MigrationGateError(
+      "runMigrations requires an explicit migration capability { grantedBy } naming who authorized the run " +
+        "(managed serve context, or an explicit grant for a disposable local database). " +
+        "Nothing was executed. See docs/migrations-acceptance/2026-10-30-migration-1-baseline-acceptance.md.",
+    );
+  }
+  log(`migrations authorized by: ${capability.grantedBy.trim()}`);
   // Registry invariants — strictly sequential 1..N, statement-or-up present.
   for (let i = 0; i < migrations.length; i++) {
     const m = migrations[i];
