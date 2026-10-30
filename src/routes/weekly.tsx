@@ -316,10 +316,27 @@ function WeeklyPage() {
   const achievement = b.goal > 0 ? b.total / b.goal : null;
   const diff = b.total - b.goal;
   const deltaPhrase = diff < 0 ? `${formatInt(Math.abs(diff))} below goal` : diff > 0 ? `${formatInt(diff)} above goal` : "at goal";
-  const mixSeg = (n: number) => (b.production.gross > 0 ? Math.min(100, (n / b.production.gross) * 100) : 0);
+  // Layout-note 2 (2026-10-30): mix bars now distribute with flex-grow over a
+  // flexBasis of 0 — real nonzero segments get a 6px visibility floor
+  // (minWidth), zero segments stay 0px — so a 1-count source can no longer
+  // collapse into a sub-pixel sliver at the bar's rounded cap. Order, color
+  // tokens and the exact legend numbers are untouched; presentation only.
+  const mixRows = [
+    { n: b.grossMix.animalia, cls: "bg-(--bar-fill)" },
+    { n: b.grossMix.family, cls: "bg-(--text-muted)" },
+    { n: b.grossMix.fairyland, cls: "bg-(--genre-fairyland)" },
+  ];
 
   // ---- lead composition mix bar (§E) ----
-  const leadMixSeg = (n: number) => (data.leads.total > 0 ? Math.min(100, (n / data.leads.total) * 100) : 0);
+  const leadRows = [
+    { n: data.leads.animalia, cls: "bg-(--bar-fill)" },
+    { n: data.leads.family, cls: "bg-(--text-muted)" },
+    { n: data.leads.fairyland, cls: "bg-(--genre-fairyland)" },
+    { n: data.leads.auction_register_certificate, cls: "bg-(--src-auction)" },
+    { n: data.leads.google_ads_leads, cls: "bg-(--src-ads)" },
+    { n: data.leads.alliance_activate_certificate, cls: "bg-(--src-alliance)" },
+    { n: data.leads.website_applications, cls: "bg-(--src-website)" },
+  ];
 
   return (
     <div className="space-y-6">
@@ -446,9 +463,13 @@ function WeeklyPage() {
                 <span className="kpi-sub">gross bookings</span>
               </p>
               <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
-                <div className="bg-(--bar-fill)" style={{ width: `${mixSeg(b.grossMix.animalia)}%` }} />
-                <div className="bg-(--text-muted)" style={{ width: `${mixSeg(b.grossMix.family)}%` }} />
-                <div className="bg-(--genre-fairyland)" style={{ width: `${mixSeg(b.grossMix.fairyland)}%` }} />
+                {mixRows.map((s, i) => (
+                  <div
+                    key={i}
+                    className={s.cls}
+                    style={{ flexGrow: s.n, flexShrink: 1, flexBasis: 0, minWidth: s.n > 0 ? 6 : 0 }}
+                  />
+                ))}
               </div>
               <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
                 <li className="flex items-center gap-1.5">
@@ -616,13 +637,13 @@ function WeeklyPage() {
               <span className="kpi-sub">leads received (work-date cohort) · 7 sources — 3 genre sheets + 4 Forms Data tabs</span>
             </p>
             <div className="mt-4 flex h-2.5 w-full overflow-hidden rounded-full bg-(--bar-track)" aria-hidden="true">
-              <div className="bg-(--bar-fill)" style={{ width: `${leadMixSeg(data.leads.animalia)}%` }} />
-              <div className="bg-(--text-muted)" style={{ width: `${leadMixSeg(data.leads.family)}%` }} />
-              <div className="bg-(--genre-fairyland)" style={{ width: `${leadMixSeg(data.leads.fairyland)}%` }} />
-              <div className="bg-(--src-auction)" style={{ width: `${leadMixSeg(data.leads.auction_register_certificate)}%` }} />
-              <div className="bg-(--src-ads)" style={{ width: `${leadMixSeg(data.leads.google_ads_leads)}%` }} />
-              <div className="bg-(--src-alliance)" style={{ width: `${leadMixSeg(data.leads.alliance_activate_certificate)}%` }} />
-              <div className="bg-(--src-website)" style={{ width: `${leadMixSeg(data.leads.website_applications)}%` }} />
+              {leadRows.map((s, i) => (
+                <div
+                  key={i}
+                  className={s.cls}
+                  style={{ flexGrow: s.n, flexShrink: 1, flexBasis: 0, minWidth: s.n > 0 ? 6 : 0 }}
+                />
+              ))}
             </div>
             <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-(--text-body)">
               <li className="flex items-center gap-1.5">

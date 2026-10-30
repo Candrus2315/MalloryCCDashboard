@@ -94,9 +94,16 @@ const W = 340;
 const WIDE_W = 720;
 const H = 176;
 const WIDE_H = 200;
-const M = { l: 40, r: 10, t: 12, b: 20 };
+// Layout-note 1 (2026-10-30): the dashed partial-bucket ring (r 5.5 + 0.9
+// stroke) needs clear air at the plot's right edge — with the historical
+// r=10 margin the last-point ring visually collided with the panel edge.
+// Cards WITH a partial marker widen the right margin to 16; historical views
+// (no partial marker) keep DEFAULT_M and render byte-identical.
+const DEFAULT_M = { l: 40, r: 10, t: 12, b: 20 } as const;
 
 export function TrendCard({ title, points, unit, refLine, note, info, wide, meta, onPointClick, tooltip, formatValue, mobileStats }: TrendCardProps) {
+  const hasPartialRing = meta?.some((m) => m?.isPartial) === true;
+  const M = hasPartialRing ? { ...DEFAULT_M, r: 16 } : DEFAULT_M;
   const w = wide ? WIDE_W : W;
   const h = wide ? WIDE_H : H;
   const PW = w - M.l - M.r;
