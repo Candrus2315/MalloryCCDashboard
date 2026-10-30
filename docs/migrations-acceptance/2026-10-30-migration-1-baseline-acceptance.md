@@ -72,3 +72,24 @@ Evidence: `shared/migration1-audit-evidence/serve-log-reconnect-excerpt.txt` + `
   harness, or page-data loader constructing PgStore against `Database_URL` now fails VISIBLY with a named
   `MigrationGateError` instead of silently stamping. Regression tests pin the checksum pair and the gate; see
   `src/server/__tests__/migration-acceptance-gate.test.ts`.
+
+## POST-CORRECTION VERIFICATION (2026-10-30 13:32–13:40 UTC) — ALL SIX CHECKS PASS
+Executed by agent-lead after the executing session's work budget expired mid-verification. The serve rebooted at
+13:32:40 UTC (managed serve context, branch `feat/migration-acceptance-gate` @ `97ff9c2` — the gate code in this
+record was the code running at boot; /health reports commit `97ff9c2`).
+
+| # | Owner's check | Result |
+|---|---|---|
+| 1 | Connection restored | **PASS** — store connected to Postgres from first boot tick; no fallback since |
+| 2 | Migration 1 recognized as applied | **PASS** — `[schema] database at schema version 1 — up to date` |
+| 3 | Zero migration statements executed | **PASS** — runner logged `zero migration statements run` |
+| 4 | Recorded checksum matches shipped code | **PASS** — the boot's own verification: DB row checksum == shipped baseline checksum (94ceeb1f…); no mismatch since restart (all probe-failure lines predate the 13:32 boot) |
+| 5 | Out of in-memory fallback | **PASS** — /health reports the live store; no in-memory line after boot |
+| 6 | Real data being served | **PASS** — /health: HighLevel last success 13:39:06Z (age 0.6 min), Acuity 13:37:48Z (1.9 min), Google Sheets 13:35:00Z (4.7 min) — all `status: ok`; syncs pulled +39 calls / +4,163 leads; freshness watchdog auto-recovered Acuity |
+
+- `applied_at` preserved: 2026-10-29T20:24:37Z (the row was changed only in the approved checksum correction).
+- No DDL executed at any point during verification (read-only checks; the correction itself was the guarded single-row UPDATE).
+- Note: a caught error object (`parse_utilcmd.c` / `transformCreateStmt`) is logged at boot immediately before the
+  schema line — present in every boot including all healthy ones; boot completes and verifies. Non-blocking; source
+  identification filed as follow-up.
+- Evidence: serve.log boot + sync excerpts at `shared/migration1-audit-evidence/post-correction-verification.log-excerpts.md`.
