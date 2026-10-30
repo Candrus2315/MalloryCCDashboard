@@ -198,14 +198,16 @@ function DailyReportPage() {
                   </dd>
                 </div>
                 <div>
-                  {/* PICKUP: no approved definition yet (owner 10/30) — honest
-                      "—" placeholder until the proposal is approved. */}
+                  {/* PICKUP (owner decision 10/30 — FINAL): the anchor day's
+                      outbound rate via the ONE shared pickupRateForDay —
+                      completed outbound ÷ (completed + no-answer + voicemail
+                      outbound). Zero denominator renders "—", never 0%. */}
                   <dt className="text-[13px] font-medium text-(--text-body)">Daily Pickup Rate</dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
                       {formatPercent(m.dailyPickupRate, 1)}
                     </span>
-                    <span className="kpi-sub">definition pending</span>
+                    <span className="kpi-sub">outbound · voicemail counts as not picked up</span>
                   </dd>
                 </div>
               </dl>

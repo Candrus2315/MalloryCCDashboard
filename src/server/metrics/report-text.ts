@@ -156,11 +156,14 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     // OWNER DIRECTIVE 10/30 (Mallory's metrics): the three legacy performance
     // lines (Conversion of Calls Over 2 Mins / Conversion of Assigned Leads /
     // % of Appt Achieved) are REPLACED by the two total-lead conversion lines
-    // + the pickup placeholder. Same structure, same one-decimal convention.
+    // + the pickup line (owner decision 10/30 — the approved formula).
+    // Same structure, same one-decimal convention.
     `Total Lead Conversion — Yesterday: ${formatPercent(m.totalLeadConversionYesterday, 1)}`,
     `Total Lead Conversion — Week: ${formatPercent(m.totalLeadConversionWeek, 1)}`,
-    // PICKUP: no approved definition yet (owner 10/30) — the field is null and
-    // renders "—" until the owner approves the proposal. Never a fabricated %.
+    // PICKUP (owner decision 10/30 — FINAL): the anchor day's outbound pickup
+    // rate — completed outbound ÷ (completed + no-answer + voicemail
+    // outbound), the ONE shared definition (pickupRateForDay). Null (no dial
+    // outcomes) renders "—" — never a fabricated 0%.
     `Daily Pickup Rate: ${formatPercent(m.dailyPickupRate, 1)}`,
     "",
     "Leads:",

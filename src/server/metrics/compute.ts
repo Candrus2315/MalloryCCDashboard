@@ -33,6 +33,7 @@ import {
   daysLeftInWorkWeekAt,
   PACE_DAY_CUTOFF_ET_MINUTES,
   workingDaysBetween,
+  etDateStrFromInstant,
   etToday,
   formatDateHuman,
   getLeadCohort,
@@ -385,6 +386,56 @@ export function callsByRep(calls: CallRow[], thresholdSeconds: number): Map<stri
   return new Map([...m.entries()].map(([rep, rows]) => [rep, summarizeCalls(rows, thresholdSeconds)]));
 }
 
+// ---------- PICKUP RATE (owner decision 10/30 — FINAL) ----------
+/**
+ * THE PICKUP RATE (owner-approved formula, canonical — use everywhere):
+ *
+ *   Daily Pickup Rate = completed OUTBOUND ÷ (completed + no-answer + voicemail OUTBOUND)
+ *
+ * - Numerator: direction="outbound" AND call_status="completed".
+ * - Denominator: direction="outbound" AND call_status IN
+ *   ("completed","no-answer","voicemail") — voicemail counts as NOT picked up
+ *   (denominator only).
+ * - Excluded entirely: inbound calls; failed/busy/ringing attempts; rows with
+ *   a missing/blank status (protective — the 10/30 census found zero such rows
+ *   in the full call history, coverage 100%).
+ * - Zero denominator → rate null → the reports render "—", never a fabricated
+ *   number. "completed" is carrier-level line-answered (owner-accepted
+ *   semantics; no duration thresholds, no human/voicemail inference).
+ * - The day boundary is the app's EXISTING call convention: calls STARTED on
+ *   the ET date — the same etDayStartUtc/etDayEndUtc window every call view
+ *   uses. No new boundary is invented.
+ */
+export interface PickupRateForDay {
+  /** Outbound calls with call_status "completed" (the numerator). */
+  picked: number;
+  /** Outbound completed + no-answer + voicemail (the denominator). */
+  denominator: number;
+  /** picked ÷ denominator; null when the denominator is 0 (renders "—"). */
+  rate: number | null;
+}
+/** Statuses that keep an outbound attempt IN the denominator (picked up only when "completed"). */
+const PICKUP_DENOMINATOR_STATUSES: ReadonlySet<string> = new Set(["completed", "no-answer", "voicemail"]);
+/** The ONE pickup-rate definition — consumed by the Daily Report AND the Weekly CC Report. */
+export function pickupRateForDay(calls: CallRow[], day: string): PickupRateForDay {
+  let picked = 0;
+  let denominator = 0;
+  for (const c of calls) {
+    if (etDateStrFromInstant(Date.parse(c.started_at)) !== day) continue; // the ET started-on-day boundary
+    if (c.direction !== "outbound") continue; // inbound + unknown direction excluded entirely
+    if (c.call_status == null || c.call_status === "") continue; // protective: missing status excluded
+    if (c.call_status === "completed") picked += 1;
+    if (PICKUP_DENOMINATOR_STATUSES.has(c.call_status)) denominator += 1;
+  }
+  return { picked, denominator, rate: denominator > 0 ? picked / denominator : null };
+}
+/** Per-day pickup rates for an explicit day list (the Weekly CC Report's Mon–Fri rows). */
+export function pickupRateByDay(
+  calls: CallRow[],
+  days: string[],
+): { date: string; picked: number; denominator: number; rate: number | null }[] {
+  return days.map((day) => ({ date: day, ...pickupRateForDay(calls, day) }));
+}
 // ---------- bookings ----------
 
 export function isBooking(a: AppointmentRow): boolean {
@@ -2241,11 +2292,13 @@ export interface DailyReportMetrics {
    */
   totalLeadConversionWeek: number | null;
   /**
-   * DAILY PICKUP RATE — PLACEHOLDER, always null (owner directive 10/30: no
-   * canonical pickup-rate definition exists; implement NOTHING until the
-   * owner approves one — the proposal lives in the PR/report). Renders "—",
-   * never a fabricated number. When a definition is approved, fill this
-   * field and the line lights up with no other change.
+   * DAILY PICKUP RATE (owner decision 10/30 — FINAL): the anchor day's
+   * outbound pickup rate — completed outbound ÷ (completed + no-answer +
+   * voicemail outbound) via pickupRateForDay over input.callsAnchorDay (the
+   * same roster-eligible, ET-day-bounded call set every anchor-day call
+   * metric uses). Voicemail counts as NOT picked up; inbound calls,
+   * failed/busy/ringing attempts and missing-status rows are excluded
+   * entirely. Zero denominator → null → renders "—" (never 0%).
    */
   dailyPickupRate: number | null;
   /**
@@ -2403,8 +2456,9 @@ export function buildDailyReportMetrics(input: {
     // pair the Weekly CC Report converts — digit parity).
     totalLeadConversionYesterday: pct(bookingsAnchorDay, anchorDayTotalLeads),
     totalLeadConversionWeek: totalLeadConversionWeek(weekBookings, weekly.total),
-    // Pickup: NO definition exists (owner 10/30) — always null until approved.
-    dailyPickupRate: null,
+    // PICKUP RATE (owner decision 10/30 — FINAL): the anchor day's outbound
+    // rate via the ONE shared function (pickupRateForDay) on callsAnchorDay.
+    dailyPickupRate: pickupRateForDay(input.callsAnchorDay, anchorDate).rate,
     weekBookings,
     goalAchievement: goalAchievement(weekBookings, input.teamBookingGoal),
     weeklyLeadBudget: input.weeklyLeadBudget,

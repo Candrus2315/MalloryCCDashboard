@@ -253,7 +253,7 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
     // TOTAL leads (l3+l6 = 2). Week = weekBookings 3 ÷ weekly leads 6.
     expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 2, 6);
     expect(m.totalLeadConversionWeek).toBeCloseTo(3 / 6, 6);
-    expect(m.dailyPickupRate).toBeNull(); // definition pending (owner 10/30) — never a number
+    expect(m.dailyPickupRate).toBeNull(); // fixture has no OUTBOUND dial outcomes → denominator 0 → "—" (owner formula 10/30)
   });
 
   test("missing yesterday data → null conversions (page shows a warning, not a number)", () => {

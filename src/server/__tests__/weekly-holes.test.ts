@@ -24,6 +24,7 @@ import { weeklyPageData } from "../page-data";
 import { MemoryStore } from "../store/memory";
 import type { AppointmentRow, LeadRow } from "../metrics/compute";
 import { totalLeadConversionWeek } from "../metrics/compute";
+import { addDays, dateRange, isWorkday, weekdayName } from "../date-logic";
 
 const EDT = "-04:00"; // September = EDT
 const H = (date: string, time: string) => new Date(`${date}T${time}:00.000${EDT}`).toISOString();
@@ -311,6 +312,15 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       },
       productionMonth: { gross: data.mtd.gross, goal: data.mtd.goal },
       holes: null,
+      // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): reproduce the
+      // loader's exact rows — every occurred Mon–Fri workday of the completed
+      // report week, weekdayName labels. This fixture seeds no calls, so
+      // every day's rate is null ("—") — same doctrine as the other
+      // reproduced loader inputs above (the Holes line stays the ONE
+      // difference this comparison can find).
+      pickupByDay: dateRange(data.week.start, addDays(data.week.start, 6))
+        .filter((d) => isWorkday(d) && d <= "2026-09-29")
+        .map((d) => ({ date: d, label: weekdayName(d), rate: null })),
     }).split("\n");
     const actual = data.report.reportText.split("\n");
     expect(legacy.length).toBe(actual.length);
