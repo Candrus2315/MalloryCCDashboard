@@ -127,7 +127,7 @@ export interface WeeklyCcReportInput {
    * leads → null ("—", never a fabricated 0%). Rendered at ONE decimal so
    * both reports show the identical string.
    */
-  weekConversion: {
+  weekConversion?: {
     rate: number | null;
     family: number | null;
     animalia: number | null;
@@ -267,11 +267,17 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
   // this report; the Weekly tab's panel keeps assigned-lead conversion) and
   // render as a clearly SECONDARY indented line so they never read as the
   // definition of the overall weekly conversion. ONE decimal, parity-locked
-  // with the Daily Report's identical line.
-  lines.push(`Total Lead Conversion — Week: ${formatPercent(input.weekConversion.rate, 1)}`);
-  lines.push(
-    `  by source: Family ${formatPercent(input.weekConversion.family, 1)} · Animalia ${formatPercent(input.weekConversion.animalia, 1)} · Fairyland ${formatPercent(input.weekConversion.fairyland, 1)}`,
-  );
+  // with the Daily Report's identical line. TEMPLATE TOLERANCE: when the
+  // caller does not provide weekConversion (pre-production callers/tests with
+  // minimal inputs), the two lines are OMITTED — the template renders
+  // byte-identical to its pre-directive shape (same doctrine as the other
+  // optional inputs above). Zero-denominator nulls still render as "—".
+  if (input.weekConversion) {
+    lines.push(`Total Lead Conversion — Week: ${formatPercent(input.weekConversion.rate, 1)}`);
+    lines.push(
+      `  by source: Family ${formatPercent(input.weekConversion.family, 1)} · Animalia ${formatPercent(input.weekConversion.animalia, 1)} · Fairyland ${formatPercent(input.weekConversion.fairyland, 1)}`,
+    );
+  }
   // "Bookings from Leads" (the overall cohort funnel rate) REMOVED — Final
   // Booking Logic 10/28 §6: cohort-produced bookings leave the Weekly tab's
   // panel AND this report; production reports as Gross / Cancellations / Net
