@@ -251,7 +251,7 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
     expect(lines[i + 1]).toMatch(/^\s+by source: Family/);
   });
 
-  test("FOUR-NUMBER HERO (Final Booking Logic 10/28): productionWeek renders Gross / Cancellations / Net + goal and suppresses the legacy produced line; productionMonth renders gross MTD", () => {
+  test("FOUR-NUMBER HERO (Final Booking Logic 10/28 + rev-97 goal basis): productionWeek renders the goal comparison on the QUALIFYING count + Gross / Cancellations / Net as production figures; productionMonth renders the gross MTD figure with its goal comparison on the qualifying MTD chain", () => {
     const input: WeeklyCcReportInput = {
       ...baseInput(),
       productionWeek: { gross: 84, cancellations: 5, net: 79, goal: 69 },
@@ -259,9 +259,18 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
       bookingsProduced: 84, // present but SUPPRESSED — gross IS the produced figure
     };
     const text = buildWeeklyCcReportText(input);
-    expect(text).toContain("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
-    expect(text).toContain("Bookings (Month-to-Date, September 2026): 246/316 (−70) gross");
+    // REV-97 (owner 10/30): the ±goal comparison is the QUALIFYING count —
+    // bookingsWeek.total (62), the goal-tracker chain, NEVER the gross (84).
+    // The goal figure is the same week's goal the comparison always used (69).
+    // Gross / Cancellations / Net stay displayed as production reporting.
+    expect(text).toContain("Bookings (Week): 62/69 (−7) qualifying · Gross: 84 · Cancellations: 5 · Net: 79");
+    // MTD: the comparison is the QUALIFYING MTD count (bookingsMonth.total 239)
+    // vs the monthly goal — the gross 246 stays as its production figure.
+    expect(text).toContain(
+      "Bookings (Month-to-Date, September 2026): 239/316 (−77) qualifying · Gross (cancellations included): 246",
+    );
     expect(text).not.toContain("Bookings Produced (Mon–Sun):"); // superseded by the hero
+    expect(text).not.toContain("84/"); // the gross never drives the goal comparison
   });
 
   test("LEAD SOURCE PERFORMANCE is ERASED from the report (owner directive 10/28): no header, no per-source lead lines, no Total — Leads, no audit footnote — the section cannot render for ANY input", () => {
@@ -294,8 +303,10 @@ describe("buildWeeklyCcReportText (pure, deterministic)", () => {
     expect(text).not.toContain("Booking-period audit:");
     expect(text).not.toContain("detail on the Weekly tab");
     // the kept sections survive: hero, MTD, the genre Leads block, Total
-    expect(text).toContain("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
-    expect(text).toContain("Bookings (Month-to-Date, September 2026): 246/316 (−70) gross");
+    expect(text).toContain("Bookings (Week): 62/69 (−7) qualifying · Gross: 84 · Cancellations: 5 · Net: 79");
+    expect(text).toContain(
+      "Bookings (Month-to-Date, September 2026): 239/316 (−77) qualifying · Gross (cancellations included): 246",
+    );
     expect(text).toContain("Fairyland: 66");
     expect(text).toContain("Total: 970");
     expect(text).toContain("Holes (empty slots): 7");

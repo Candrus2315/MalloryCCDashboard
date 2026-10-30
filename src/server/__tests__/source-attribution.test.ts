@@ -446,9 +446,11 @@ describe("buildWeeklyCcReportText — LEAD SOURCE PERFORMANCE ERASED (owner dire
     expect(text).not.toContain("No reliable link:");
     expect(text).not.toContain("Coverage:");
     expect(text).not.toContain("detail on the Weekly tab");
-    // the kept sections survive intact around the erasure
-    expect(text).toContain("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
-    expect(text).toContain("Bookings (Month-to-Date, October 2026): 246/316 (−70) gross");
+    // the kept sections survive intact around the erasure — REV-97: the goal
+    // comparisons ride the QUALIFYING counts (bookingsWeek 5 / bookingsMonth
+    // 12), gross stays as the production figures
+    expect(text).toContain("Bookings (Week): 5/69 (−64) qualifying · Gross: 84 · Cancellations: 5 · Net: 79");
+    expect(text).toContain("Bookings (Month-to-Date, October 2026): 12/316 (−304) qualifying · Gross (cancellations included): 246");
     expect(text).toContain("Auction Certificates: 2");
     expect(text).toContain("Total: 24");
     expect(text).toContain("Holes (empty slots): 3");

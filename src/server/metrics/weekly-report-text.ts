@@ -3,8 +3,10 @@
  *
  * ONE pure builder assembles the full "CC Report" the owner posts every
  * Monday, in the owner's template order:
- *   Bookings (Week — Gross / Cancellations / Net ± goal) ·
- *   Bookings (Month-to-Date, gross ± goal) ·
+ *   Bookings (Week — QUALIFYING ± goal; Gross / Cancellations / Net as
+ *   production reporting) ·
+ *   Bookings (Month-to-Date — QUALIFYING ± goal, gross as the production
+ *   figure) ·
  *   Alliance/Auction/Website (leads + bookings) · Leads ·
  *   Lead Conversion (+ by genre) · Calendar/booked-out ·
  *   placeholder fields (Empty appointments / Holes / 1st Call Completed) ·
@@ -47,8 +49,8 @@ export interface WeeklyCcReportInput {
   bookingsWeek: { total: number; goal: number | null };
   bookingsMonth: { total: number; goal: number | null };
   /**
-   * THE OWNER'S FOUR-NUMBER VIEW (Final Booking Logic 10/28, audit-79v84).
-   * When provided, the Bookings (Week) hero line renders
+   * THE OWNER'S PRODUCTION VIEW (Final Booking Logic 10/28, audit-79v84).
+   * When provided, the Bookings (Week) line renders the production figures
    * "Gross / Cancellations / Net" — gross = qualifying (paid-deposit) bookings
    * ORIGINALLY CREATED in the Mon–Sun week, identity-deduped per client,
    * cancellations INCLUDED (Oct 19–25 = 84, audit-exact); cancellations = true
@@ -58,6 +60,16 @@ export interface WeeklyCcReportInput {
    * cancellations. While present, the standalone "Bookings Produced (Mon–Sun)"
    * line is SUPPRESSED (gross IS the produced figure, now the hero) — the
    * Weekly tab ↔ Report digit identity holds for all four numbers.
+   *
+   * GOAL BASIS (owner rev-97 directive 10/30, codified): the ±goal comparison
+   * in the line is computed on the QUALIFYING booking count — the
+   * deposit-date isBookingWin goal-tracker chain (bookingsWeek.total, the
+   * SAME source the conversion headline uses) — NEVER on gross. Gross /
+   * Cancellations / Net stay in the line as HISTORICAL PRODUCTION reporting:
+   * displayed, never goal-driving. The goal figure is `goal` here (the same
+   * week's goal the gross comparison used; identical to bookingsWeek.goal in
+   * the real loader).
+   *
    * OPTIONAL: absent/null keeps the legacy "Bookings (Week)" line (and the
    * legacy Bookings Produced line when bookingsProduced is provided) — the
    * template stays byte-identical for callers that don't pass it.
@@ -67,8 +79,15 @@ export interface WeeklyCcReportInput {
    * GROSS MTD (owner Final Booking Logic 10/28 — one production basis with the
    * weekly hero): qualifying paid bookings ORIGINALLY CREATED month-to-date,
    * identity-deduped, cancellations included. When provided, the MTD line
-   * renders the gross figure vs the monthly goal. OPTIONAL: absent keeps the
-   * legacy MTD line byte-identical.
+   * renders the gross figure as its PRODUCTION figure.
+   *
+   * GOAL BASIS (owner rev-97 directive 10/30): the ±goal comparison in the MTD
+   * line is computed on the QUALIFYING month-to-date count — the deposit-date
+   * isBookingWin chain (bookingsMonth.total, the same qualification rules as
+   * Today's WTD over the month window) — NEVER on gross. The goal figure is
+   * `goal` here (the monthly goal the gross comparison used; identical to
+   * bookingsMonth.goal in the real loader). OPTIONAL: absent keeps the legacy
+   * MTD line byte-identical.
    */
   productionMonth?: { gross: number; goal: number | null } | null;
   /**
@@ -211,14 +230,21 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
 
   lines.push(`CC Report — Week of ${formatDateHumanFull(input.week.start)} – ${formatDateHumanFull(input.week.end)}`);
   lines.push("");
-  // THE OWNER'S FOUR-NUMBER HERO (Final Booking Logic 10/28): Gross /
-  // Cancellations / Net on the produced (created-in-week) basis, + goal.
-  // Digit identity with the Weekly tab's production block is structural — the
-  // page passes the SAME payload numbers it renders.
+  // THE OWNER'S PRODUCTION VIEW (Final Booking Logic 10/28): the line carries
+  // the Gross / Cancellations / Net production figures, digit-identical with
+  // the Weekly tab's production block — the page passes the SAME payload
+  // numbers it renders.
+  // GOAL BASIS — REV-97 (owner directive 10/30, codified): goal achievement
+  // NEVER runs on Gross. The ±goal comparison is computed on the QUALIFYING
+  // booking count — bookingsWeek.total, the deposit-date isBookingWin
+  // goal-tracker chain, the SAME source the conversion headline uses — while
+  // Gross / Cancellations / Net stay displayed as HISTORICAL PRODUCTION
+  // reporting (displayed, never goal-driving). The goal figure is the same
+  // week's goal the comparison always used (pw.goal).
   if (input.productionWeek != null) {
     const pw = input.productionWeek;
     lines.push(
-      `Bookings (Week): ${goalVsActual(pw.gross, pw.goal)} gross · Cancellations: ${formatInt(pw.cancellations)} · Net: ${formatInt(pw.net)}`,
+      `Bookings (Week): ${goalVsActual(input.bookingsWeek.total, pw.goal)} qualifying · Gross: ${formatInt(pw.gross)} · Cancellations: ${formatInt(pw.cancellations)} · Net: ${formatInt(pw.net)}`,
     );
   } else {
     lines.push(`Bookings (Week): ${goalVsActual(input.bookingsWeek.total, input.bookingsWeek.goal)}`);
@@ -231,11 +257,16 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
       );
     }
   }
-  // GROSS MTD — one production basis with the hero (created-in-month gross
-  // vs the monthly goal). Absent input keeps the legacy MTD line.
+  // MTD — REV-97 GOAL BASIS (owner directive 10/30): the ±goal comparison is
+  // the QUALIFYING month-to-date count (bookingsMonth.total — the deposit-date
+  // isBookingWin chain, the same qualification rules as Today's WTD over the
+  // month window) vs the monthly goal — NEVER gross. The gross MTD figure
+  // stays in the line as its PRODUCTION figure ("cancellations included" —
+  // why it can run ahead of the qualifying count). Absent input keeps the
+  // legacy MTD line byte-identical.
   lines.push(
     input.productionMonth != null
-      ? `Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.productionMonth.gross, input.productionMonth.goal)} gross`
+      ? `Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.bookingsMonth.total, input.productionMonth.goal)} qualifying · Gross (cancellations included): ${formatInt(input.productionMonth.gross)}`
       : `Bookings (Month-to-Date, ${monthKeyLabel(input.monthKey)}): ${goalVsActual(input.bookingsMonth.total, input.bookingsMonth.goal)}`,
   );
   lines.push("");
