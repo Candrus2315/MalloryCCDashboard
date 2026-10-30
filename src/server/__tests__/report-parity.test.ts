@@ -1,22 +1,38 @@
 /**
- * CROSS-REPORT PARITY (owner directive 10/30, hard requirement) — the Daily
- * Report and the Weekly CC Report must agree DIGIT-FOR-DIGIT for the same
- * week and cutoff on the three overlapping figures:
+ * CROSS-REPORT PARITY (owner directive 10/30, hard requirement; post-PR-#126
+ * booking-numerator fix) — for the same week and cutoff:
  *
- *   1. Bookings for the Week (Daily)      == Bookings (Week) (Weekly CC)
- *   2. Total Weekly Leads (Daily)         == Total (Weekly CC leads)
- *   3. Total Lead Conversion — Week (Daily) == Total Lead Conversion — Week (Weekly CC)
+ *   1. Bookings for the Week / Bookings WTD (Daily) == the Weekly's
+ *      QUALIFYING goal-tracker count (bookingsWeek.total — the deposit-week
+ *      Booking-Win chain its goal logic already uses). DELIBERATELY NOT the
+ *      Weekly hero's created-Mon–Sun gross: that figure counts
+ *      cancelled-after-payment rows, so it ran ahead of the qualifying count
+ *      (72 vs 69 on the owner's live data) and broke goal achievement.
+ *   2. Total Weekly Leads (Daily) == Total (Weekly CC leads)
+ *   3. Total Lead Conversion — Week (Daily) == Total Lead Conversion — Week
+ *      (Weekly CC)
  *
  * The conversion is computed by ONE shared function — totalLeadConversionWeek
- * (compute.ts) — over ONE canonical (bookings, leads) pair: the Final Booking
- * Logic gross (created Mon–Sun, identity-deduped, cancellations included) and
- * the work-date lead cohort total (all seven sources). NO mean-of-rates
- * anywhere. Mirrors the frozen-target suite's pure-builder parity pattern,
- * then proves the loader wiring end-to-end on a MemoryStore (Daily for a
- * Sunday vs the Weekly CC Report for that same just-completed week).
+ * (compute.ts) — over ONE canonical (bookings, leads) pair: the QUALIFYING
+ * booking count (deposit-date basis; pending payments AND cancelled-after-
+ * payment rows never count) and the work-date lead cohort total (all seven
+ * sources). NO mean-of-rates anywhere. Also pinned: the TODAY strip's WTD
+ * count is the very same numerator the Daily Report's week lines consume.
+ * Mirrors the frozen-target suite's pure-builder parity pattern, then proves
+ * the loader wiring end-to-end on a MemoryStore (Daily for a Sunday vs the
+ * Weekly CC Report for that same just-completed week), then replays the
+ * owner's live 10/30 shape (69 qualifying + 3 paid-then-cancelled = 72 gross
+ * + 3 unpaid pendings over 834 leads).
  */
 import { describe, expect, test } from "bun:test";
-import { buildDailyReportMetrics, totalLeadConversionWeek, type AppointmentRow, type LeadRow } from "../metrics/compute";
+import {
+  buildDailyReportMetrics,
+  buildTodayMetrics,
+  appointmentPaymentStateOf,
+  totalLeadConversionWeek,
+  type AppointmentRow,
+  type LeadRow,
+} from "../metrics/compute";
 import { buildDailyReportText } from "../metrics/report-text";
 import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "../metrics/weekly-report-text";
 import { splitLeadsByType } from "../metrics/weekly";
@@ -24,17 +40,19 @@ import { dailyReportPageData, weeklyPageData } from "../page-data";
 import { MemoryStore } from "../store/memory";
 
 // Week of Mon 2026-09-21 … Sun 2026-09-27 — the owner's reference weekly
-// shape: gross 84 (created Mon–Sun, identity-deduped, cancels included) over
-// 957 work-date leads (audit-79v84 proportion).
+// shape: the HERO gross is 3 (2 qualifying wins + 1 paid-then-cancelled) over
+// 957 work-date leads (audit-79v84 proportion). The goal/conversion numerator
+// is the QUALIFYING pair (2) — never the gross.
 const MON = "2026-09-21";
 const THU = "2026-09-24";
 const FRI = "2026-09-25";
 const SUN = "2026-09-27";
-const GROSS = 84;
+const QUAL = 2; // qualifying WTD wins (the goal/conversion numerator)
+const GROSS = 3; // hero gross = QUAL + 1 cancelled-after-payment
 const GOAL = 79;
 
 /** The week's canonical (bookings, leads) pair through the ONE shared function. */
-const sharedRate = () => totalLeadConversionWeek(GROSS, weekLeadRows().length);
+const sharedRate = (leads: LeadRow[]) => totalLeadConversionWeek(QUAL, leads.length);
 
 const weekLeadRows = (): LeadRow[] => {
   const rows: LeadRow[] = [];
@@ -77,15 +95,20 @@ const anchorAppt = (id: string, etDate: string): AppointmentRow => ({
   cancelled: false,
 });
 
+/** Paid-then-cancelled in-week row — the hero gross counts it, the qualifying chain never does. */
+const cancelledAppt = (id: string, etDate: string): AppointmentRow => ({
+  ...anchorAppt(id, etDate),
+  status: "cancelled",
+  cancelled: true,
+});
+
 /** The Daily Report for FRIDAY of the parity week (anchor = Thursday). */
 function dailyMetrics(leads: LeadRow[]) {
   return buildDailyReportMetrics({
     reportDate: FRI,
     callsAnchorDay: [],
     apptsCreatedAnchorDay: [anchorAppt("d1", THU), anchorAppt("d2", THU)],
-    apptsCreatedWtd: [anchorAppt("d1", THU), anchorAppt("d2", THU)],
-    // The canonical weekly production — the SAME gross the Weekly CC hero shows.
-    weekProduction: { gross: GROSS, cancellations: 5, net: GROSS - 5 },
+    apptsCreatedWtd: [anchorAppt("d1", THU), anchorAppt("d2", THU), cancelledAppt("cx", THU)],
     allCallsForWeek: [],
     attributions: [],
     leadsAllRecent: leads,
@@ -95,26 +118,26 @@ function dailyMetrics(leads: LeadRow[]) {
   });
 }
 
-/** The Weekly CC Report for the SAME week, fed by the SAME shared rate. */
+/** The Weekly CC Report for the SAME week: hero gross separate, goal tracker qualifying. */
 function weeklyReport(leads: LeadRow[]): string {
   const leadsSummary = splitLeadsByType(leads);
   const input: WeeklyCcReportInput = {
     week: { start: MON, end: SUN },
     monthKey: "2026-09",
-    bookingsWeek: { total: GROSS, goal: GOAL },
+    bookingsWeek: { total: QUAL, goal: GOAL },
     bookingsMonth: { total: 246, goal: 316 },
-    productionWeek: { gross: GROSS, cancellations: 5, net: GROSS - 5, goal: GOAL },
+    productionWeek: { gross: GROSS, cancellations: 1, net: QUAL, goal: GOAL },
     productionMonth: { gross: 246, goal: 316 },
     channels: { alliance: 0, auction: 0, website: null },
     channelLeads: { alliance: 0, auction: 0, website: null },
     leads: leadsSummary,
     weekConversion: {
-      rate: totalLeadConversionWeek(GROSS, leadsSummary.total),
+      rate: totalLeadConversionWeek(QUAL, leadsSummary.total),
       family: 30 / 470,
       animalia: 25 / 350,
       fairyland: 5 / 60,
     },
-    funnel: { wins: GROSS, leads: leadsSummary.total, pct: null },
+    funnel: { wins: QUAL, leads: leadsSummary.total, pct: null },
     calendar: {
       thisWeek: { appointments: 0, slotsOccupied: 0, capacity: 69 },
       nextWeek: { appointments: 0, slotsOccupied: 0, capacity: 69 },
@@ -136,10 +159,16 @@ describe("CROSS-REPORT PARITY (owner 10/30): Daily Report == Weekly CC Report, s
   const dailyText = buildDailyReportText(m, { priority1: "a", priority2: "b", priority3: "c" });
   const weeklyText = weeklyReport(leads);
 
-  test("1 — Bookings for the Week (Daily) == Bookings (Week) gross (Weekly CC)", () => {
-    expect(m.weekBookings).toBe(GROSS);
-    expect(lineOf(dailyText, "Bookings for the Week:")).toBe(`Bookings for the Week: ${GROSS}`);
-    expect(weeklyText).toContain(`Bookings (Week): ${GROSS}/${GOAL} (+${GROSS - GOAL}) gross`);
+  test("1 — Bookings for the Week (Daily) == the Weekly's QUALIFYING goal-tracker count — NOT the hero gross", () => {
+    expect(m.weekBookings).toBe(QUAL);
+    expect(lineOf(dailyText, "Bookings for the Week:")).toBe(`Bookings for the Week: ${QUAL}`);
+    // The hero still shows the gross — a deliberately DIFFERENT display.
+    expect(weeklyText).toContain(`Bookings (Week): ${GROSS}/${GOAL} (−${GOAL - GROSS}) gross`);
+    // SUPERSEDED PIN (post-#126 fix): Daily-WTD == Weekly-gross no longer
+    // holds — the gross counts the cancelled-after-payment row, the
+    // goal/conversion numerator must not.
+    expect(GROSS).not.toBe(QUAL);
+    expect(m.weekBookings).not.toBe(GROSS);
   });
 
   test("2 — Total Weekly Leads (Daily) == Total (Weekly CC)", () => {
@@ -153,20 +182,20 @@ describe("CROSS-REPORT PARITY (owner 10/30): Daily Report == Weekly CC Report, s
 
   test("3 — Total Lead Conversion — Week: ONE shared function, digit-identical strings", () => {
     // Same float (identical expression, not an approximation)…
-    expect(m.totalLeadConversionWeek).toBe(sharedRate());
+    expect(m.totalLeadConversionWeek).toBe(sharedRate(leads));
     // …and the same rendered string at the parity-locked one-decimal precision.
     expect(lineOf(dailyText, "Total Lead Conversion — Week:")).toBe(
       lineOf(weeklyText, "Total Lead Conversion — Week:"),
     );
-    expect(lineOf(weeklyText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 8.8%");
+    expect(lineOf(weeklyText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 0.2%");
   });
 
   test("4 — never a mean of per-source or rep rates (pooled division only)", () => {
-    // The three by-source rates average to 7.3%, the pooled division is 8.8% —
-    // the headline MUST be the pooled division.
+    // The three by-source rates average to 7.3%, the pooled division is 0.2% —
+    // the headline MUST be the pooled division over the qualifying numerator.
     const mean = (30 / 470 + 25 / 350 + 5 / 60) / 3;
     expect(m.totalLeadConversionWeek).not.toBeCloseTo(mean, 2);
-    expect(m.totalLeadConversionWeek).toBeCloseTo(GROSS / leads.length, 10);
+    expect(m.totalLeadConversionWeek).toBeCloseTo(QUAL / leads.length, 10);
   });
 
   test("5 — the parity trio sits inside both templates' unchanged structure", () => {
@@ -182,6 +211,30 @@ describe("CROSS-REPORT PARITY (owner 10/30): Daily Report == Weekly CC Report, s
     const i = lines.findIndex((l) => l.startsWith("Total Lead Conversion — Week:"));
     expect(lines[i + 1]).toBe("  by source: Family 6.4% · Animalia 7.1% · Fairyland 8.3%");
     expect(weeklyText).not.toContain("Conversion of Assigned Leads");
+  });
+
+  test("6 — the TODAY strip's WTD count is the SAME numerator the Daily week lines consume", () => {
+    // Same fixture rows into both pure builders: Today's canonical WTD
+    // (deposit-date Booking-Win chain) == Daily "Bookings for the Week".
+    const t = buildTodayMetrics({
+      reportDate: FRI,
+      calls: [],
+      apptsCreatedToday: [],
+      apptsCreatedYesterday: [],
+      apptsCreatedWtd: [anchorAppt("d1", THU), anchorAppt("d2", THU), cancelledAppt("cx", THU)],
+      callsWtd: [],
+      allCallsForWeek: [],
+      attributions: [],
+      leadsAllRecent: [],
+      teamBookingGoal: GOAL,
+      weeklyLeadBudget: 700,
+      thresholdSeconds: 120,
+      openSlotsByDay: [],
+      reps: [],
+      repGoals: [],
+    });
+    expect(t.bookings.wtd).toBe(QUAL);
+    expect(t.bookings.wtd).toBe(m.weekBookings);
   });
 });
 
@@ -219,12 +272,18 @@ const loaderLead = (id: string, workDate: string, assigned: string | null = null
 async function seedParityStore(): Promise<MemoryStore> {
   const store = new MemoryStore();
   await store.saveSettings({ acuity: { calendars_included: [], types_included: [] } });
-  // Three paid wins created inside the parity week (created basis = gross 3)
-  // + one pending row that never counts anywhere.
+  // Three paid wins created inside the parity week (created basis = gross 4
+  // once the paid-then-cancelled row lands) + one pending row that never
+  // counts anywhere + one paid-then-cancelled row (hero gross counts it —
+  // cancellations included — the qualifying chain never does).
   await store.upsertAppointments([paidWin("p-w1", "2026-09-22"), paidWin("p-w2", "2026-09-24"), paidWin("p-w3", "2026-09-26"), {
     ...paidWin("p-pending", "2026-09-23"),
     raw: { paid: "no", priceSold: "300.00" },
     booking_win_business_date: null,
+  }, {
+    ...paidWin("p-cx", "2026-09-25"),
+    status: "cancelled",
+    cancelled: true,
   }]);
   // The parity week's work-date cohort: 4 leads (work dates Mon–Thu).
   await store.upsertLeads([
@@ -237,27 +296,37 @@ async function seedParityStore(): Promise<MemoryStore> {
 }
 
 describe("loader-level parity (MemoryStore): Daily (Sunday of week W) == Weekly CC (Monday after W)", () => {
-  test("weekBookings / weeklyLeads / week conversion agree digit-for-digit from the canonical pair", async () => {
+  test("weekBookings == the Weekly's QUALIFYING goal-tracker count; hero gross stays separate", async () => {
     const store = await seedParityStore();
     // The Daily Report rendered ON Sunday 9/27 covers the CURRENT week (9/21–27).
     const daily = await dailyReportPageData({ store, today: SUN, etNowMinutes: 10 * 60 });
     // The Weekly CC Report rendered the NEXT Monday covers LAST week (9/21–27) — the same week.
     const weekly = await weeklyPageData({ store, today: "2026-09-28" });
 
-    expect(daily.metrics.weekBookings).toBe(weekly.bookings.production.gross); // gross basis, both
+    // Hero gross = 4 (3 active + 1 paid-then-cancelled); cancellations 1; net 3.
+    expect(weekly.bookings.production.gross).toBe(4);
+    expect(weekly.bookings.production.cancellations).toBe(1);
+    expect(weekly.bookings.production.net).toBe(3);
+    // The Daily's week figure is the QUALIFYING count (3), NOT the gross (4).
+    expect(daily.metrics.weekBookings).toBe(3);
+    // PARITY: Daily WTD == the Weekly's own qualifying goal-tracker count.
+    expect(weekly.bookings.total).toBe(3);
+    expect(daily.metrics.weekBookings).toBe(weekly.bookings.total);
+    expect(daily.metrics.weekBookings).toBe(weekly.funnel.wins);
     expect(daily.metrics.weeklyLeads).toBe(weekly.leads.total); // same work-date cohort total
     // ONE shared function over the SAME pair — exact float equality.
     expect(daily.metrics.totalLeadConversionWeek).toBe(
-      totalLeadConversionWeek(weekly.bookings.production.gross, weekly.leads.total),
+      totalLeadConversionWeek(weekly.bookings.total, weekly.leads.total),
     );
     // And the rendered headlines are the identical string.
     const dailyLine = lineOf(daily.reportText, "Total Lead Conversion — Week:");
     const weeklyLine = lineOf(weekly.report.reportText, "Total Lead Conversion — Week:");
     expect(dailyLine).toBe(weeklyLine);
-    expect(dailyLine).toBe("Total Lead Conversion — Week: 75.0%"); // 3 gross ÷ 4 leads
+    expect(dailyLine).toBe("Total Lead Conversion — Week: 75.0%"); // 3 qualifying ÷ 4 leads
     // Bookings/leads parity in the copied text too.
     expect(lineOf(daily.reportText, "Bookings for the Week:")).toBe("Bookings for the Week: 3");
-    expect(weekly.report.reportText).toContain("Bookings (Week): 3/79 (−76) gross");
+    // The hero keeps its gross display (superseded equality — gross 4 ≠ Daily 3).
+    expect(weekly.report.reportText).toContain("Bookings (Week): 4/79 (−75) gross");
     expect(lineOf(daily.reportText, "Total Weekly Leads:")).toBe("Total Weekly Leads: 4");
     expect(lineOf(weekly.report.reportText, "Total:")).toBe("Total: 4");
   });
@@ -284,5 +353,101 @@ describe("loader-level parity (MemoryStore): Daily (Sunday of week W) == Weekly 
     // …while the payload's assigned-only conversion block (the Weekly tab's
     // panel — out of the report) does move with the assignments.
     expect(after.conversion.overall).not.toBeNull();
+  });
+});
+
+// ---------- OWNER LIVE-SHAPE REGRESSION (10/30): 69 qualifying + 3 paid-cancelled = 72 gross, 3 unpaid pendings, 834 leads ----------
+
+const WMON = "2026-10-26";
+const WDATES = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30"];
+const N_QUAL = 69;
+const N_CX = 3;
+const N_PEND = 3;
+const N_LEADS = 834;
+
+/** October paid win with a correct session datetime. */
+const octWin = (id: string, date: string): AppointmentRow & { client_phone: string | null; client_email: string | null } => ({
+  id,
+  acuity_appointment_id: id,
+  contact_id: null,
+  calendar_id: null,
+  appointment_type: "Portrait Session",
+  appointment_datetime: `${date}T18:00:00Z`,
+  created_at: `${date}T12:00:00Z`,
+  created_business_date: date,
+  booking_win_business_date: date,
+  raw: { paid: "yes", priceSold: "300.00", amountPaid: "300.00" },
+  status: "scheduled",
+  cancelled: false,
+  client_phone: null,
+  client_email: null,
+});
+
+async function seedOwnerShapeStore(): Promise<MemoryStore> {
+  const store = new MemoryStore();
+  await store.saveSettings({ acuity: { calendars_included: [], types_included: [] } });
+  const appts: (AppointmentRow & { client_phone: string | null; client_email: string | null })[] = [];
+  for (let i = 0; i < N_QUAL; i++) appts.push(octWin(`q-${i}`, WDATES[i % WDATES.length]));
+  for (let i = 0; i < N_CX; i++) {
+    appts.push({ ...octWin(`cx-${i}`, WDATES[i]), status: "cancelled", cancelled: true }); // paid-then-cancelled, created in-week
+  }
+  for (let i = 0; i < N_PEND; i++) {
+    appts.push({
+      ...octWin(`pd-${i}`, "2026-10-30"),
+      raw: { paid: "no", priceSold: "300.00" },
+      booking_win_business_date: null, // unpaid → no win date, never buckets
+    });
+  }
+  await store.upsertAppointments(appts);
+  const leads: LeadRow[] = [];
+  for (let i = 0; i < N_LEADS; i++) {
+    leads.push(loaderLead(`ol-${i}`, WDATES[i % WDATES.length]));
+  }
+  await store.upsertLeads(leads);
+  return store;
+}
+
+describe("BOOKING-NUMERATOR REGRESSION (owner live shape 10/30): goal/conversion surfaces use the QUALIFYING count", () => {
+  test("Daily WTD 69 (not gross 72); conversion 69÷834; Weekly qualifying 69 with gross 72 / cancels 3 / net 69 on the hero", async () => {
+    const store = await seedOwnerShapeStore();
+    // Daily Report on Friday 10/30 (before the 18:30 cutoff) — week 10/26–11/1.
+    const daily = await dailyReportPageData({ store, today: "2026-10-30", etNowMinutes: 10 * 60 });
+    // Weekly CC Report the NEXT Monday — same reporting week.
+    const weekly = await weeklyPageData({ store, today: "2026-11-02" });
+
+    // THE FIX: every goal/conversion surface reads the qualifying 69…
+    expect(daily.metrics.weekBookings).toBe(N_QUAL);
+    expect(daily.metrics.bookingsWtd).toBe(N_QUAL);
+    expect(daily.metrics.goalAchievement).toBeCloseTo(N_QUAL / 79, 10);
+    expect(daily.metrics.bookingsLeft).toBe(79 - N_QUAL);
+    expect(daily.metrics.totalLeadConversionWeek).toBeCloseTo(N_QUAL / N_LEADS, 12);
+    expect(lineOf(daily.reportText, "Bookings for the Week:")).toBe(`Bookings for the Week: ${N_QUAL}`);
+    expect(lineOf(daily.reportText, "Key Driver:")).toBe("Key Driver: 79");
+    expect(lineOf(daily.reportText, "Left:")).toBe("Left: 10");
+    expect(lineOf(daily.reportText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 8.3%"); // 69÷834, NOT 72÷834 (8.6%)
+
+    // …while the Weekly hero's gross block (Final Booking Logic, untouched)
+    // keeps showing 72 gross / 3 cancellations / 69 net — the 3 delta rows
+    // (paid-then-cancelled) stay visible exactly where they were.
+    expect(weekly.bookings.production.gross).toBe(72);
+    expect(weekly.bookings.production.cancellations).toBe(N_CX);
+    expect(weekly.bookings.production.net).toBe(N_QUAL);
+    expect(weekly.report.reportText).toContain("Bookings (Week): 72/79 (−7) gross");
+
+    // The Weekly's qualifying goal-tracker chain agrees with the Daily.
+    expect(weekly.bookings.total).toBe(N_QUAL);
+    expect(weekly.funnel.wins).toBe(N_QUAL);
+    const dailyLine = lineOf(daily.reportText, "Total Lead Conversion — Week:");
+    expect(lineOf(weekly.report.reportText, "Total Lead Conversion — Week:")).toBe(dailyLine);
+
+    // Denominator unchanged: 834 total weekly leads on both sides.
+    expect(daily.metrics.weeklyLeads).toBe(N_LEADS);
+    expect(weekly.leads.total).toBe(N_LEADS);
+
+    // The 3 unpaid pendings exist, are persisted pending_payment, and count
+    // toward NOTHING in these figures (gross and qualifying both exclude them).
+    const wtdRows = await store.getAppointmentsByWinBusinessDateBetween(WMON, "2026-10-30");
+    const pendings = wtdRows.filter((r) => appointmentPaymentStateOf(r) === "pending_payment" && !r.cancelled);
+    expect(pendings.length).toBe(N_PEND);
   });
 });

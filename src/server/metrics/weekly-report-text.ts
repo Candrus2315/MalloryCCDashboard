@@ -117,11 +117,16 @@ export interface WeeklyCcReportInput {
   conversion?: { overall: number | null; family: number | null; animalia: number | null; fairyland: number | null };
   /**
    * TOTAL LEAD CONVERSION — WEEK (owner directive 2026-10-30, Mallory's
-   * metric) — the headline conversion line: the week's qualifying bookings ÷
-   * the week's TOTAL leads, computed by the ONE shared helper
+   * metric; post-#126 fix) — the headline conversion line: the week's
+   * QUALIFYING bookings ÷ the week's TOTAL leads — the numerator is the
+   * deposit-week wins chain the goal logic already uses (bookingsWeek.total),
+   * the SAME Booking-Win qualification and Mon–Sun cutoff the Daily Report's
+   * "Bookings WTD" covers for its week; computed by the ONE shared helper
    * (totalLeadConversionWeek in compute.ts) over the SAME canonical
-   * (gross, leads) pair the Daily Report's week line uses — digit parity is
-   * pinned by the parity suite. The per-source rates BELOW the headline are
+   * (qualifying, leads) pair the Daily Report's week line uses — digit parity
+   * is pinned by the parity suite. NOT the hero gross (cancellations
+   * included — the hero block above stays exactly as shipped). The per-source
+   * rates BELOW the headline are
    * subordinate detail on the TOTAL-lead basis (the full work-date cohort
    * through computeLeadCohortOutcomes — NOT the assigned-only subset); 0
    * leads → null ("—", never a fabricated 0%). Rendered at ONE decimal so

@@ -141,9 +141,11 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     "Daily CC Report",
     "",
     `${bookingsAnchorLineLabel(m.anchorDate, m.reportDate)}: ${formatInt(m.bookingsAnchorDay)}`,
-    // OWNER PARITY DIRECTIVE 10/30: the week figure is the canonical weekly
-    // gross (weekBookings) — digit-identical to the Weekly CC Report's
-    // "Bookings (Week)" hero for the same week (parity suite pins it).
+    // OWNER DIRECTIVE 10/30 (post-#126 fix): the week figure is the canonical
+    // QUALIFYING WTD count (weekBookings) — the same deposit-date numerator
+    // the Today strip shows and the Weekly CC Report's goal tracker uses for
+    // the same cutoff (parity suite pins it). The Weekly hero's created-basis
+    // gross is a different display and is NOT reproduced here.
     `Bookings for the Week: ${formatInt(m.weekBookings)}`,
     `Key Driver: ${formatInt(m.weeklyBookingGoal)}`,
     `Left: ${formatInt(m.bookingsLeft)}`,

@@ -540,12 +540,15 @@ export function assignedLeadConversion(totalBookings: number, assignedLeads: num
  * so the two "Total Lead Conversion — Week" figures agree digit-for-digit
  * (parity suite pins it).
  *
- *   numerator   = the canonical weekly bookings (Final Booking Logic 10/28):
- *                 paid-deposit bookings created Mon–Sun, identity-deduped per
- *                 client, cancellations INCLUDED — the same gross the Weekly
- *                 CC Report's hero and the Daily Report's "Bookings for the
- *                 Week" line show. NEVER an assigned-only or rep-attributed
- *                 subset.
+ *   numerator   = the canonical weekly QUALIFYING bookings (the Booking-Win
+ *                 chain — deposit-date basis; unpaid/pending rows and
+ *                 cancelled-after-payment rows NEVER count): the SAME count
+ *                 the Today strip and the Daily Report's "Bookings WTD" line
+ *                 show, and the same count the Weekly CC Report's goal
+ *                 tracker (bookingsWeek) uses for the same Mon–Sun cutoff.
+ *                 NEVER the created-Mon–Sun production gross (that counts
+ *                 cancellations and ran ahead of goal achievement), and
+ *                 NEVER an assigned-only or rep-attributed subset.
  *   denominator = the week's TOTAL lead cohort (work-date basis, all seven
  *                 sources — the same count both reports already display as
  *                 "Total Weekly Leads" / "Total:").
@@ -2246,14 +2249,15 @@ export interface DailyReportMetrics {
    */
   dailyPickupRate: number | null;
   /**
-   * THE WEEK BOOKINGS THE WEEK LINES SHOW (owner parity directive 10/30): the
-   * canonical weekly gross (Final Booking Logic — created Mon–Sun,
-   * identity-deduped, cancellations included) when the loader supplies
-   * weekProduction; else the legacy deposit-basis bookingsWtd (callers
-   * without the production input keep their pre-parity figure). "Bookings for
-   * the Week", "Left", "% of goal" and the week conversion all read THIS
-   * number, so the Daily Report and the Weekly CC Report can never disagree
-   * for the same week.
+   * THE WEEK BOOKINGS THE WEEK LINES SHOW (owner directive 10/30, post-#126
+   * fix): the CANONICAL QUALIFYING WTD COUNT — the same deposit-date
+   * Booking-Win numerator the Today strip shows (unpaid/pending AND
+   * cancelled-after-payment rows never count toward goal achievement).
+   * "Bookings for the Week" / "Bookings WTD", "Left", "% of goal" and the
+   * Total Lead Conversion — Week numerator all read THIS number, so the Daily
+   * Report, the Today strip and the Weekly CC Report's goal tracker can never
+   * disagree for the same cutoff. The Weekly hero's gross (Final Booking
+   * Logic) stays a SEPARATE display on the Weekly report only.
    */
   weekBookings: number;
   /** The week lines' bookings (weekBookings) ÷ weekly booking goal. */
@@ -2285,16 +2289,6 @@ export function buildDailyReportMetrics(input: {
   callsAnchorDay: CallRow[]; // roster-eligible calls started on the anchor day (ET)
   apptsCreatedAnchorDay: AppointmentRow[]; // wins with booking_win_business_date == anchorDate
   apptsCreatedWtd: AppointmentRow[]; // week-to-date, includes anchor+today
-  /**
-   * THE CANONICAL WEEKLY PRODUCTION (owner Final Booking Logic 10/28) for the
-   * report week — computeWeeklyProduction over created-in-week paid rows
-   * (identity-deduped, cancellations included). OPTIONAL: when present, the
-   * week lines (Bookings for the Week / Left / % of goal / Total Lead
-   * Conversion — Week) run on its gross so they agree digit-for-digit with
-   * the Weekly CC Report; absent (legacy callers/tests) keeps the
-   * deposit-basis bookingsWtd everywhere (pre-parity behavior, byte-stable).
-   */
-  weekProduction?: { gross: number; cancellations: number; net: number } | null;
   allCallsForWeek: CallRow[]; // for the over-threshold join
   attributions: AttributionRow[];
   leadsAllRecent: LeadRow[]; // leads whose work_date falls in the week(s) covering anchor+today (incl today's cohort)
@@ -2348,12 +2342,15 @@ export function buildDailyReportMetrics(input: {
   // anchor day's qualifying wins.
   const anchorDayAssignedLeads = assignedLeadsTotal(input.leadsAllRecent, anchorDate, anchorDate, input.activeRepIds);
 
-  // OWNER PARITY DIRECTIVE 10/30: the week lines run on the canonical weekly
-  // gross when the loader supplies it (created Mon–Sun, identity-deduped,
-  // cancels included — the SAME number the Weekly CC Report's hero shows for
-  // the same week). The frozen-target chain is deliberately UNTOUCHED:
-  // winsBeforeToday keeps its deposit-date frozen basis (owner rev 90).
-  const weekBookings = input.weekProduction?.gross ?? bookingsWtd;
+  // OWNER DIRECTIVE 10/30 (post-PR-#126 parity fix): the week lines consume
+  // THE CANONICAL QUALIFYING WTD COUNT — the exact same Bookings WTD numerator
+  // the Today strip shows (deposit-date basis, pending payments AND
+  // cancelled-after-payment rows never count). NOT the created-Mon–Sun
+  // production gross: that figure counts cancellations, so it ran ahead of the
+  // qualifying count and broke goal achievement (72 vs 69 on the owner's live
+  // data). The frozen-target chain is deliberately UNTOUCHED: winsBeforeToday
+  // keeps its deposit-date frozen basis (owner rev 90).
+  const weekBookings = bookingsWtd;
   // Anchor-day conversion denominator (owner directive 10/30): the anchor
   // day's CANONICAL TOTAL-lead cohort — every lead worked that day, all
   // seven sources, unassigned pool and form sheets included.
