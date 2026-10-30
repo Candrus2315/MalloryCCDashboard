@@ -18,6 +18,15 @@
  * payment rows never count) and the work-date lead cohort total (all seven
  * sources). NO mean-of-rates anywhere. Also pinned: the TODAY strip's WTD
  * count is the very same numerator the Daily Report's week lines consume.
+ *
+ * REV-97 GOAL-BASIS PARITY (owner directive 10/30, codified): goal achievement
+ * uses the canonical QUALIFYING booking count — never Gross — on BOTH reports.
+ * The CC Report's "Bookings (Week)" ±goal comparison consumes the SAME
+ * qualifying chain (bookingsWeek.total) the conversion headline uses, so the
+ * goal comparisons ACROSS reports agree for the same cutoff; the gross /
+ * cancellations / net figures stay displayed as production reporting in the
+ * same line (displayed, never goal-driving). The MTD comparison rides the
+ * qualifying MTD chain (bookingsMonth.total == mtd.total) the same way.
  * Mirrors the frozen-target suite's pure-builder parity pattern, then proves
  * the loader wiring end-to-end on a MemoryStore (Daily for a Sunday vs the
  * Weekly CC Report for that same just-completed week), then replays the
@@ -35,7 +44,7 @@ import {
 } from "../metrics/compute";
 import { buildDailyReportText } from "../metrics/report-text";
 import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "../metrics/weekly-report-text";
-import { splitLeadsByType } from "../metrics/weekly";
+import { goalVsActual, splitLeadsByType } from "../metrics/weekly";
 import { dailyReportPageData, weeklyPageData } from "../page-data";
 import { MemoryStore } from "../store/memory";
 
@@ -162,8 +171,13 @@ describe("CROSS-REPORT PARITY (owner 10/30): Daily Report == Weekly CC Report, s
   test("1 — Bookings for the Week (Daily) == the Weekly's QUALIFYING goal-tracker count — NOT the hero gross", () => {
     expect(m.weekBookings).toBe(QUAL);
     expect(lineOf(dailyText, "Bookings for the Week:")).toBe(`Bookings for the Week: ${QUAL}`);
-    // The hero still shows the gross — a deliberately DIFFERENT display.
-    expect(weeklyText).toContain(`Bookings (Week): ${GROSS}/${GOAL} (−${GOAL - GROSS}) gross`);
+    // REV-97: the CC Report's ±goal comparison rides the QUALIFYING count —
+    // the same figure the Daily reports — while Gross / Cancellations / Net
+    // stay in the line as production reporting (deliberately different
+    // numbers: gross counts the cancelled-after-payment row).
+    expect(lineOf(weeklyText, "Bookings (Week):")).toBe(
+      `Bookings (Week): ${goalVsActual(QUAL, GOAL)} qualifying · Gross: ${GROSS} · Cancellations: 1 · Net: ${QUAL}`,
+    );
     // SUPERSEDED PIN (post-#126 fix): Daily-WTD == Weekly-gross no longer
     // holds — the gross counts the cancelled-after-payment row, the
     // goal/conversion numerator must not.
@@ -325,8 +339,20 @@ describe("loader-level parity (MemoryStore): Daily (Sunday of week W) == Weekly 
     expect(dailyLine).toBe("Total Lead Conversion — Week: 75.0%"); // 3 qualifying ÷ 4 leads
     // Bookings/leads parity in the copied text too.
     expect(lineOf(daily.reportText, "Bookings for the Week:")).toBe("Bookings for the Week: 3");
-    // The hero keeps its gross display (superseded equality — gross 4 ≠ Daily 3).
-    expect(weekly.report.reportText).toContain("Bookings (Week): 4/79 (−75) gross");
+    // REV-97 PARITY PIN: the CC Report's week goal comparison consumes the
+    // SAME qualifying count the Daily reports (weekBookings 3) vs the same
+    // weekly goal — goal comparisons across reports agree for the same
+    // cutoff; the gross (4) stays in the line as its production figure.
+    expect(lineOf(weekly.report.reportText, "Bookings (Week):")).toBe(
+      `Bookings (Week): ${goalVsActual(daily.metrics.weekBookings, weekly.bookings.goal)} qualifying · Gross: 4 · Cancellations: 1 · Net: 3`,
+    );
+    // REV-97 PARITY PIN (MTD): the report's MTD ±goal comparison is the
+    // QUALIFYING MTD count (mtd.total — the deposit-date chain) vs the same
+    // monthly goal; gross stays as the production figure. (No monthly goal is
+    // stored in this fixture → the honest "X/—".)
+    expect(lineOf(weekly.report.reportText, "Bookings (Month-to-Date,")).toBe(
+      `Bookings (Month-to-Date, September 2026): ${goalVsActual(weekly.mtd.total, weekly.mtd.goal)} qualifying · Gross (cancellations included): ${weekly.mtd.gross}`,
+    );
     expect(lineOf(daily.reportText, "Total Weekly Leads:")).toBe("Total Weekly Leads: 4");
     expect(lineOf(weekly.report.reportText, "Total:")).toBe("Total: 4");
   });
@@ -426,13 +452,27 @@ describe("BOOKING-NUMERATOR REGRESSION (owner live shape 10/30): goal/conversion
     expect(lineOf(daily.reportText, "Left:")).toBe("Left: 10");
     expect(lineOf(daily.reportText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 8.3%"); // 69÷834, NOT 72÷834 (8.6%)
 
-    // …while the Weekly hero's gross block (Final Booking Logic, untouched)
+    // …while the Weekly hero's production block (Final Booking Logic, untouched)
     // keeps showing 72 gross / 3 cancellations / 69 net — the 3 delta rows
     // (paid-then-cancelled) stay visible exactly where they were.
     expect(weekly.bookings.production.gross).toBe(72);
     expect(weekly.bookings.production.cancellations).toBe(N_CX);
     expect(weekly.bookings.production.net).toBe(N_QUAL);
-    expect(weekly.report.reportText).toContain("Bookings (Week): 72/79 (−7) gross");
+    // REV-97 PARITY PIN: the copied week line's ±goal comparison is the
+    // QUALIFYING count (69) vs the same goal — identical to the Daily's
+    // qualifying figure at the same cutoff — with the production figures
+    // (gross 72 / cancellations 3 / net 69) displayed alongside.
+    expect(lineOf(weekly.report.reportText, "Bookings (Week):")).toBe(
+      `Bookings (Week): ${goalVsActual(daily.metrics.weekBookings, weekly.bookings.goal)} qualifying · Gross: 72 · Cancellations: ${N_CX} · Net: ${N_QUAL}`,
+    );
+    expect(lineOf(weekly.report.reportText, "Bookings (Week):")).toBe(
+      "Bookings (Week): 69/79 (−10) qualifying · Gross: 72 · Cancellations: 3 · Net: 69",
+    );
+    // REV-97 PARITY PIN (MTD): the qualifying MTD chain (mtd.total) drives the
+    // report's MTD ±goal comparison; gross stays as the production figure.
+    expect(lineOf(weekly.report.reportText, "Bookings (Month-to-Date,")).toBe(
+      `Bookings (Month-to-Date, November 2026): ${goalVsActual(weekly.mtd.total, weekly.mtd.goal)} qualifying · Gross (cancellations included): ${weekly.mtd.gross}`,
+    );
 
     // The Weekly's qualifying goal-tracker chain agrees with the Daily.
     expect(weekly.bookings.total).toBe(N_QUAL);

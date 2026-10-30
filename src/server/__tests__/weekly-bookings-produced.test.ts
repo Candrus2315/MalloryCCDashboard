@@ -343,7 +343,7 @@ describe("CC Report — LEGACY Bookings Produced line (pre-production callers; t
 });
 
 describe("CC Report — FOUR-NUMBER HERO (Final Booking Logic 10/28: Gross / Cancellations / Net)", () => {
-  test("hero renders gross vs goal + Cancellations + Net; the standalone produced line is SUPPRESSED", () => {
+  test("hero renders the goal comparison on the QUALIFYING count + Gross / Cancellations / Net as production figures; the standalone produced line is SUPPRESSED", () => {
     const text = buildWeeklyCcReportText({
       ...REPORT_BASE,
       productionWeek: { gross: 84, cancellations: 5, net: 79, goal: 69 },
@@ -351,25 +351,36 @@ describe("CC Report — FOUR-NUMBER HERO (Final Booking Logic 10/28: Gross / Can
       bookingsProduced: 84, // present but suppressed — gross IS the produced figure
     });
     const lines = text.split("\n");
-    const i = lines.indexOf("Bookings (Week): 84/69 (+15) gross · Cancellations: 5 · Net: 79");
+    // REV-97 (owner 10/30): the ±goal comparison is the QUALIFYING count —
+    // bookingsWeek.total (79), NEVER the gross (84) — vs the same week's goal
+    // the comparison always used (the hero's own `goal` field, 69 here;
+    // identical to bookingsWeek.goal in the real loader). Production figures
+    // stay in the line.
+    const i = lines.indexOf("Bookings (Week): 79/69 (+10) qualifying · Gross: 84 · Cancellations: 5 · Net: 79");
     expect(i).toBeGreaterThanOrEqual(0);
-    // the very next line is the gross MTD — no standalone produced line between
-    expect(lines[i! + 1]).toBe("Bookings (Month-to-Date, October 2026): 246/316 (−70) gross");
+    // the very next line is the MTD line — comparison on the QUALIFYING MTD
+    // count (bookingsMonth.total 162) vs the monthly goal; gross 246 stays as
+    // its production figure — no standalone produced line between
+    expect(lines[i! + 1]).toBe(
+      "Bookings (Month-to-Date, October 2026): 162/316 (−154) qualifying · Gross (cancellations included): 246",
+    );
     expect(text).not.toContain("Bookings Produced (Mon–Sun):");
+    expect(text).not.toContain("84/"); // the gross never drives the goal comparison
   });
 
-  test("missing goal renders honestly: '84/— gross'; absent production inputs keep the legacy lines", () => {
+  test("missing goal renders honestly: '79/— qualifying'; absent production inputs keep the legacy lines", () => {
     const noGoal = buildWeeklyCcReportText({
       ...REPORT_BASE,
       productionWeek: { gross: 84, cancellations: 5, net: 79, goal: null },
       productionMonth: { gross: 246, goal: null },
     });
-    expect(noGoal).toContain("Bookings (Week): 84/— gross · Cancellations: 5 · Net: 79");
-    expect(noGoal).toContain("Bookings (Month-to-Date, October 2026): 246/— gross");
+    expect(noGoal).toContain("Bookings (Week): 79/— qualifying · Gross: 84 · Cancellations: 5 · Net: 79");
+    expect(noGoal).toContain("Bookings (Month-to-Date, October 2026): 162/— qualifying · Gross (cancellations included): 246");
     // absent inputs → legacy lines (template tolerance)
     const legacy = buildWeeklyCcReportText({ ...REPORT_BASE, bookingsProduced: 84 });
     expect(legacy).toContain("Bookings (Week): 79/79 (±0)");
     expect(legacy).toContain("Bookings Produced (Mon–Sun): 84");
+    expect(legacy).not.toContain("qualifying · Gross:"); // the production-figure hero shape is gone in the legacy path
     expect(legacy).not.toContain("gross · Cancellations:");
   });
 });
@@ -437,11 +448,17 @@ describe("weekly page payload — bookings.production (the owner's four-number v
     expect(data.mtd.gross).toBe(2);
     expect(data.mtd.cancellations).toBe(1);
     expect(data.mtd.net).toBe(1);
-    // The copied report's hero carries the SAME digits (tab ↔ report identity);
-    // goal 79 = the app-wide default (no team goal stored); MTD goal unset → "2/—"
-    expect(data.report.reportText).toContain("Bookings (Week): 2/79 (−77) gross · Cancellations: 1 · Net: 1");
-    expect(data.report.reportText).toContain("Bookings (Month-to-Date, October 2026): 2/— gross");
+    // The copied report's line carries the SAME production digits (tab ↔
+    // report identity) and the goal comparison on the QUALIFYING count (1 —
+    // only the active win); goal 79 = the app-wide default (no team goal
+    // stored); MTD goal unset → "1/—", gross 2 as the production figure.
+    expect(data.report.reportText).toContain("Bookings (Week): 1/79 (−78) qualifying · Gross: 2 · Cancellations: 1 · Net: 1");
+    expect(data.report.reportText).toContain(
+      "Bookings (Month-to-Date, October 2026): 1/— qualifying · Gross (cancellations included): 2",
+    );
     expect(data.report.reportText).not.toContain("Bookings Produced (Mon–Sun):");
-    expect(data.report.reportText).not.toContain("Bookings (Week): 1/"); // legacy hero line gone — replaced by the gross hero
+    // the legacy qualifying-only hero line is gone — replaced by the new line
+    // (which pairs the qualifying comparison with the production figures)
+    expect(data.report.reportText).not.toMatch(/Bookings \(Week\): 1\/79 \(−78\)\n/);
   });
 });

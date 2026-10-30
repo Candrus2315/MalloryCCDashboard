@@ -297,13 +297,16 @@ describe("GROUP 4 — funnel/report alignment (one cohort definition everywhere)
     expect(lines.some((l) => l.startsWith("Total — Leads:"))).toBe(false);
     expect(lines.some((l) => l.startsWith("Booking-period audit:"))).toBe(false);
     // the four-number hero rides the SAME produced machinery (tab ↔ report
-    // identity) — goalVsActual formatting (±N suffix) on the gross
+    // identity) — REV-97 (owner 10/30): the ±goal comparison is the QUALIFYING
+    // count (bookings.total, the goal-tracker chain) vs the same goal, while
+    // Gross / Cancellations / Net stay as the production figures
+    const qual = data.bookings.total;
     const gross = data.bookings.production.gross;
     const goal = data.bookings.goal;
-    const d = gross - goal;
-    const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
+    const dq = goal == null ? null : qual - goal;
+    const signQ = dq == null ? "" : dq > 0 ? "+" : dq < 0 ? "−" : "±";
     expect(data.report.reportText).toContain(
-      `Bookings (Week): ${gross}/${goal} (${sign}${Math.abs(d)}) gross · Cancellations: ${data.bookings.production.cancellations} · Net: ${data.bookings.production.net}`,
+      `Bookings (Week): ${qual}/${goal == null ? "—" : goal}${dq == null ? "" : ` (${signQ}${Math.abs(dq)})`} qualifying · Gross: ${gross} · Cancellations: ${data.bookings.production.cancellations} · Net: ${data.bookings.production.net}`,
     );
   });
 });

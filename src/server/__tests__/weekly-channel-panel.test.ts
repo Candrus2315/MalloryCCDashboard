@@ -130,8 +130,12 @@ describe("Weekly channel panel (owner directive 10/28) — payload level", () =>
     expect(data.report.reportText).not.toContain("Booking-period audit:");
     expect(data.report.reportText).not.toContain("detail on the Weekly tab");
     // the kept template survives: hero + MTD gross + the channel lines
-    expect(data.report.reportText).toContain("Bookings (Week): 3/79 (−76) gross · Cancellations: 0 · Net: 3");
-    expect(data.report.reportText).toMatch(/Bookings \(Month-to-Date, October 2026\): 3\/— gross/);
+    // (rev-97: the ±goal comparison rides the QUALIFYING count — 3 active
+    // wins here — while Gross / Cancellations / Net stay as production figures)
+    expect(data.report.reportText).toContain("Bookings (Week): 3/79 (−76) qualifying · Gross: 3 · Cancellations: 0 · Net: 3");
+    expect(data.report.reportText).toMatch(
+      /Bookings \(Month-to-Date, October 2026\): 3\/— qualifying · Gross \(cancellations included\): 3/,
+    );
     expect(data.report.reportText).toContain("Alliance — Leads: 0 · Bookings: 1");
   });
 

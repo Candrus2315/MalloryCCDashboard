@@ -304,12 +304,17 @@ function WeeklyPage() {
   };
 
   // ---- hero geometry (presentation-only ratios of payload numbers) ----
-  // GROSS basis (owner Final Booking Logic 10/28): the hero tracks the
-  // production block — Gross / Cancellations / Net; the mix segments are
-  // shares of the gross. `b.total` (paid-AND-active wins) remains the basis
+  // GOAL BASIS — REV-97 (owner directive 10/30, codified): goal achievement
+  // NEVER runs on Gross. The anchor pair, the % of goal and the ±N delta
+  // track `b.total` — the QUALIFYING (paid-AND-active) goal-tracker chain
+  // (winsLw → bookings.total), the SAME source the report's conversion
+  // headline and the CC Report's week goal comparison use. Gross /
+  // Cancellations / Net stay displayed underneath as the PRODUCTION block —
+  // historical reporting only, never goal-driving. The mix segments remain
+  // shares of the gross (labeled as such). `b.total` also remains the basis
   // of the rep-level detail below (By-Rep table, per-day grid, MTD reps).
-  const achievement = b.goal > 0 ? b.production.gross / b.goal : null;
-  const diff = b.production.gross - b.goal;
+  const achievement = b.goal > 0 ? b.total / b.goal : null;
+  const diff = b.total - b.goal;
   const deltaPhrase = diff < 0 ? `${formatInt(Math.abs(diff))} below goal` : diff > 0 ? `${formatInt(diff)} above goal` : "at goal";
   const mixSeg = (n: number) => (b.production.gross > 0 ? Math.min(100, (n / b.production.gross) * 100) : 0);
 
@@ -344,14 +349,17 @@ function WeeklyPage() {
       {/* missing-data warnings — never a plausible number */}
       <WarningList items={data.warnings} />
 
-      {/* 2 — WEEK RESULT HERO (owner Final Booking Logic 10/28): GROSS /
-          CANCELLATIONS / NET on the produced basis, anchored on the goal.
-          Gross = qualifying (paid-deposit) bookings ORIGINALLY CREATED in the
-          Mon–Sun week — identity-deduped, cancellations INCLUDED (Oct 19–25 =
-          84, audit-79v84); the mix column splits the SAME gross rows. The
-          superseded "Bookings Produced (Mon–Sun)" additive figure is gone —
-          gross IS that figure. Rep-level detail below stays on the protected
-          active-wins/attribution basis, labeled. */}
+      {/* 2 — WEEK RESULT HERO (owner Final Booking Logic 10/28 + rev-97 goal
+          basis 10/30): the goal anchor is the QUALIFYING count (paid-AND-active
+          wins, deposit-date basis) vs the weekly goal — never gross; Gross /
+          Cancellations / Net display underneath as the PRODUCTION block
+          (historical reporting). Gross = qualifying (paid-deposit) bookings
+          ORIGINALLY CREATED in the Mon–Sun week — identity-deduped,
+          cancellations INCLUDED (Oct 19–25 = 84, audit-79v84); the mix column
+          splits the SAME gross rows. The superseded "Bookings Produced
+          (Mon–Sun)" additive figure is gone — gross IS that figure. Rep-level
+          detail below stays on the protected active-wins/attribution basis,
+          labeled. */}
       <section aria-label="Week result">
         <Panel className="overflow-hidden">
           <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)] lg:divide-x lg:divide-(--table-border-weak)">
@@ -370,15 +378,17 @@ function WeeklyPage() {
                       cancellation. Cancellations: true cancellations among that gross (cancelled bookings with no active
                       rebook in the week) — Oct 19–25 = 5. Net = Gross − Cancellations — Oct 19–25 = 79. The session-type mix
                       splits the same gross rows; the rep-level detail below counts attributed ACTIVE paid wins
-                      (attribution basis) and is labeled as such.
+                      (attribution basis) and is labeled as such. GOAL BASIS (owner rev-97 directive 10/30): the big goal
+                      anchor and the % of goal / ±N phrase track the QUALIFYING booking count — paid AND active (the
+                      deposit-date goal-tracker chain) — never the gross; gross stays here as production reporting only.
                     </>
                   }
                 />
               </Eyebrow>
-              <p className="kpi-label mt-5">Gross Bookings / Weekly Goal</p>
+              <p className="kpi-label mt-5">Qualifying Bookings / Weekly Goal</p>
               <p className="mt-2 flex items-baseline gap-2.5 tabular-nums">
                 <span className="text-6xl font-semibold leading-none tracking-tight text-(--text-primary)">
-                  {formatInt(b.production.gross)}
+                  {formatInt(b.total)}
                 </span>
                 <span className="text-3xl font-medium text-(--text-muted)">/ {formatInt(b.goal)}</span>
               </p>
@@ -388,8 +398,17 @@ function WeeklyPage() {
                   {formatPercent(achievement)} of goal · {deltaPhrase}
                 </p>
               </div>
-              {/* owner §4 layout: Cancellations + Net directly underneath */}
+              {/* owner §4 layout: the PRODUCTION block directly underneath —
+                  Gross / Cancellations / Net (historical reporting, rev 97;
+                  the qualifying anchor above is the only goal-driving figure) */}
               <div className="mt-6 flex gap-10 border-t border-(--table-border-weak) pt-4">
+                <div>
+                  <p className="kpi-label">Gross Bookings</p>
+                  <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
+                    {formatInt(b.production.gross)}
+                  </p>
+                  <p className="kpi-sub mt-1 tabular-nums">cancellations included</p>
+                </div>
                 <div>
                   <p className="kpi-label">Cancellations</p>
                   <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
@@ -407,7 +426,9 @@ function WeeklyPage() {
               <p className="mt-4 border-t border-(--table-border-weak) pt-3 text-xs leading-snug text-(--text-muted)">
                 Gross = qualifying paid bookings originally created Mon–Sun of the report week (identity-deduped per client;
                 cancellations included). Reschedules never move a booking between weeks and never count as cancellations —
-                credit stays on the original booking week. Cancellations are shown separately; the goal line tracks Gross.
+                credit stays on the original booking week. Cancellations are shown separately; the goal anchor tracks the
+                QUALIFYING count (paid and active) — gross is production reporting and never goal-driving (owner rev-97
+                directive, 10/30).
               </p>
             </div>
             {/* right / supporting — the week's GROSS booking mix as one visual system.

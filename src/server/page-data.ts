@@ -1686,7 +1686,15 @@ export interface WeeklyPageData {
     gross: number;
     cancellations: number;
     net: number;
-    /** "X/Goal (±N)" on the GROSS basis — goalVsActual(gross, goal). */
+    /**
+     * REV-97 GOAL BASIS (owner directive 10/30, codified): the MTD goal
+     * comparison is the QUALIFYING month-to-date count — the deposit-date
+     * isBookingWin chain (winsMtd, the same qualification rules as Today's
+     * WTD over the month window) — NEVER gross. Historical field name kept
+     * for payload compatibility; by construction it now equals `goalLine`
+     * above. The gross MTD figure remains displayed as production reporting
+     * (`gross`), never goal-driving.
+     */
     grossGoalLine: string;
   };
   calendar: {
@@ -2282,9 +2290,13 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     monthKey,
     bookingsWeek: { total: winsLw.length, goal: weeklyGoal },
     bookingsMonth: { total: winsMtd.length, goal: monthlyGoal },
-    // THE PRODUCTION BLOCK — the SAME numbers the payload's hero renders
-    // (tab <-> report digit identity): Gross / Cancellations / Net for the
-    // week + gross MTD. The standalone Bookings Produced line is superseded —
+    // THE PRODUCTION BLOCK — the SAME production figures the payload's hero
+    // renders (tab <-> report digit identity): Gross / Cancellations / Net for
+    // the week + gross MTD. REV-97 (owner 10/30): the ±goal comparisons ride
+    // the QUALIFYING chains (bookingsWeek/bookingsMonth — the same winsLw/
+    // winsMtd the goal tracker and conversion headline use), NEVER these gross
+    // figures — they stay displayed as historical production reporting only.
+    // The standalone Bookings Produced line is superseded —
     // gross IS the produced figure, now the hero.
     productionWeek: {
       gross: productionWeek.gross,
@@ -2364,7 +2376,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       gross: productionMtd.gross,
       cancellations: productionMtd.cancellations,
       net: productionMtd.net,
-      grossGoalLine: goalVsActual(productionMtd.gross, monthlyGoal),
+      // REV-97 (owner 10/30): the goal comparison is the QUALIFYING MTD count
+      // (winsMtd — the deposit-date isBookingWin chain) vs the monthly goal,
+      // never the gross; equals goalLine above by construction. The gross MTD
+      // figure stays displayed as production reporting only.
+      grossGoalLine: goalVsActual(winsMtd.length, monthlyGoal),
     },
     calendar,
     report: {
