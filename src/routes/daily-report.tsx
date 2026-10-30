@@ -198,16 +198,17 @@ function DailyReportPage() {
                   </dd>
                 </div>
                 <div>
-                  {/* PICKUP (owner decision 10/30 — FINAL): the anchor day's
-                      outbound rate via the ONE shared pickupRateForDay —
-                      completed outbound ÷ (completed + no-answer + voicemail
-                      outbound). Zero denominator renders "—", never 0%. */}
+                  {/* PICKUP (owner directive 10/30 evening — OFFICIAL
+                      formula): the anchor day's rate via the ONE shared
+                      pickupRateForDay — (Calls Over 2 Min + Calls Under 2 Min)
+                      ÷ Total Calls. A pickup = a person actually spoken with;
+                      zero denominator renders "—", never 0%. */}
                   <dt className="text-[13px] font-medium text-(--text-body)">Daily Pickup Rate</dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
                       {formatPercent(m.dailyPickupRate, 1)}
                     </span>
-                    <span className="kpi-sub">outbound · voicemail counts as not picked up</span>
+                    <span className="kpi-sub">spoke with · (over 2 min + under 2 min) ÷ total calls</span>
                   </dd>
                 </div>
               </dl>

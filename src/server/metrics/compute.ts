@@ -386,55 +386,79 @@ export function callsByRep(calls: CallRow[], thresholdSeconds: number): Map<stri
   return new Map([...m.entries()].map(([rep, rows]) => [rep, summarizeCalls(rows, thresholdSeconds)]));
 }
 
-// ---------- PICKUP RATE (owner decision 10/30 — FINAL) ----------
+// ---------- PICKUP RATE (owner directive 10/30 evening — OFFICIAL formula) ----------
 /**
- * THE PICKUP RATE (owner-approved formula, canonical — use everywhere):
+ * THE PICKUP RATE (owner's official definition, 10/30 evening — supersedes the
+ * PR #128 connect-semantics formula EVERYWHERE):
  *
- *   Daily Pickup Rate = completed OUTBOUND ÷ (completed + no-answer + voicemail OUTBOUND)
+ *   Pickup Rate = (Calls Over 2 Min + Calls Under 2 Min) ÷ Total Calls
  *
- * - Numerator: direction="outbound" AND call_status="completed".
- * - Denominator: direction="outbound" AND call_status IN
- *   ("completed","no-answer","voicemail") — voicemail counts as NOT picked up
- *   (denominator only).
- * - Excluded entirely: inbound calls; failed/busy/ringing attempts; rows with
- *   a missing/blank status (protective — the 10/30 census found zero such rows
- *   in the full call history, coverage 100%).
+ * Owner verbatim: "A pickup means the number of people we actually spoke
+ * with" — BOTH long and short conversations count as pickups. Worked example:
+ * Over=20, Under=10, Total=50 → (20+10)÷50 = 60%.
+ *
+ * - Numerator: the EXISTING "Calls Over 2 Min" field (duration_seconds >
+ *   thresholdSeconds — the exact summarizeCalls().overThreshold quantity the
+ *   Team page shows) PLUS "Calls Under 2 Min" (0 < duration_seconds ≤
+ *   thresholdSeconds — an answered conversation shorter than the threshold).
+ *   A null/zero duration NEVER qualifies (voicemail/no-answer/failed attempts
+ *   spoke with no one). Not "Over 2 Min alone" — answered calls UNDER the
+ *   threshold are pickups too.
+ * - Denominator: the EXISTING "Total Calls" field — every call attempt in
+ *   scope (summarizeCalls().total). NO direction filter, NO status filter,
+ *   nothing excluded: the same scope "Calls" already has everywhere.
+ * - Threshold + scope: the fields' own conventions — thresholdSeconds is the
+ *   SAME setting every "Calls Over 2 Min" surface uses
+ *   (settings.meaningful_call_threshold_seconds, default 120); the call set is
+ *   whatever the caller already scoped (roster-eligible, ET-day window).
  * - Zero denominator → rate null → the reports render "—", never a fabricated
- *   number. "completed" is carrier-level line-answered (owner-accepted
- *   semantics; no duration thresholds, no human/voicemail inference).
+ *   number.
  * - The day boundary is the app's EXISTING call convention: calls STARTED on
  *   the ET date — the same etDayStartUtc/etDayEndUtc window every call view
  *   uses. No new boundary is invented.
  */
 export interface PickupRateForDay {
-  /** Outbound calls with call_status "completed" (the numerator). */
+  /** Existing "Calls Over 2 Min" count (duration_seconds > thresholdSeconds). */
+  overTwoMin: number;
+  /** "Calls Under 2 Min" count (0 < duration_seconds ≤ thresholdSeconds). */
+  underTwoMin: number;
+  /** Existing "Total Calls" count — every call attempt in scope. */
+  totalCalls: number;
+  /** picked = overTwoMin + underTwoMin — the people actually spoken with. */
   picked: number;
-  /** Outbound completed + no-answer + voicemail (the denominator). */
+  /** The denominator = totalCalls (unchanged alias for report copy). */
   denominator: number;
-  /** picked ÷ denominator; null when the denominator is 0 (renders "—"). */
+  /** picked ÷ totalCalls; null when the denominator is 0 (renders "—"). */
   rate: number | null;
 }
-/** Statuses that keep an outbound attempt IN the denominator (picked up only when "completed"). */
-const PICKUP_DENOMINATOR_STATUSES: ReadonlySet<string> = new Set(["completed", "no-answer", "voicemail"]);
 /** The ONE pickup-rate definition — consumed by the Daily Report AND the Weekly CC Report. */
-export function pickupRateForDay(calls: CallRow[], day: string): PickupRateForDay {
-  let picked = 0;
-  let denominator = 0;
+export function pickupRateForDay(calls: CallRow[], day: string, thresholdSeconds: number): PickupRateForDay {
+  let overTwoMin = 0;
+  let underTwoMin = 0;
+  let totalCalls = 0;
   for (const c of calls) {
     if (etDateStrFromInstant(Date.parse(c.started_at)) !== day) continue; // the ET started-on-day boundary
-    if (c.direction !== "outbound") continue; // inbound + unknown direction excluded entirely
-    if (c.call_status == null || c.call_status === "") continue; // protective: missing status excluded
-    if (c.call_status === "completed") picked += 1;
-    if (PICKUP_DENOMINATOR_STATUSES.has(c.call_status)) denominator += 1;
+    totalCalls += 1; // "Total Calls" — every attempt, any direction/status
+    if (c.duration_seconds > thresholdSeconds) overTwoMin += 1; // "Calls Over 2 Min"
+    else if (c.duration_seconds > 0) underTwoMin += 1; // "Calls Under 2 Min" — spoke, briefly
   }
-  return { picked, denominator, rate: denominator > 0 ? picked / denominator : null };
+  const picked = overTwoMin + underTwoMin;
+  return {
+    overTwoMin,
+    underTwoMin,
+    totalCalls,
+    picked,
+    denominator: totalCalls,
+    rate: totalCalls > 0 ? picked / totalCalls : null,
+  };
 }
 /** Per-day pickup rates for an explicit day list (the Weekly CC Report's Mon–Fri rows). */
 export function pickupRateByDay(
   calls: CallRow[],
   days: string[],
-): { date: string; picked: number; denominator: number; rate: number | null }[] {
-  return days.map((day) => ({ date: day, ...pickupRateForDay(calls, day) }));
+  thresholdSeconds: number,
+): { date: string; overTwoMin: number; underTwoMin: number; totalCalls: number; picked: number; denominator: number; rate: number | null }[] {
+  return days.map((day) => ({ date: day, ...pickupRateForDay(calls, day, thresholdSeconds) }));
 }
 // ---------- bookings ----------
 
@@ -2292,13 +2316,14 @@ export interface DailyReportMetrics {
    */
   totalLeadConversionWeek: number | null;
   /**
-   * DAILY PICKUP RATE (owner decision 10/30 — FINAL): the anchor day's
-   * outbound pickup rate — completed outbound ÷ (completed + no-answer +
-   * voicemail outbound) via pickupRateForDay over input.callsAnchorDay (the
-   * same roster-eligible, ET-day-bounded call set every anchor-day call
-   * metric uses). Voicemail counts as NOT picked up; inbound calls,
-   * failed/busy/ringing attempts and missing-status rows are excluded
-   * entirely. Zero denominator → null → renders "—" (never 0%).
+   * DAILY PICKUP RATE (owner directive 10/30 evening — OFFICIAL formula): the
+   * anchor day's pickup rate — (Calls Over 2 Min + Calls Under 2 Min) ÷ Total
+   * Calls via pickupRateForDay over input.callsAnchorDay (the same
+   * roster-eligible, ET-day-bounded call set every anchor-day call metric
+   * uses) at input.thresholdSeconds (the Team page's "Calls Over 2 Min"
+   * threshold). A pickup = a person actually spoken with — answered calls
+   * under AND over 2 minutes both count; voicemail/no-answer (null/zero
+   * duration) never do. Zero denominator → null → renders "—" (never 0%).
    */
   dailyPickupRate: number | null;
   /**
@@ -2456,9 +2481,11 @@ export function buildDailyReportMetrics(input: {
     // pair the Weekly CC Report converts — digit parity).
     totalLeadConversionYesterday: pct(bookingsAnchorDay, anchorDayTotalLeads),
     totalLeadConversionWeek: totalLeadConversionWeek(weekBookings, weekly.total),
-    // PICKUP RATE (owner decision 10/30 — FINAL): the anchor day's outbound
-    // rate via the ONE shared function (pickupRateForDay) on callsAnchorDay.
-    dailyPickupRate: pickupRateForDay(input.callsAnchorDay, anchorDate).rate,
+    // PICKUP RATE (owner directive 10/30 evening — OFFICIAL formula): the
+    // anchor day's (Over 2 Min + Under 2 Min) ÷ Total Calls via the ONE
+    // shared function (pickupRateForDay) on callsAnchorDay at the SAME
+    // thresholdSeconds the Team page's "Calls Over 2 Min" uses.
+    dailyPickupRate: pickupRateForDay(input.callsAnchorDay, anchorDate, input.thresholdSeconds).rate,
     weekBookings,
     goalAchievement: goalAchievement(weekBookings, input.teamBookingGoal),
     weeklyLeadBudget: input.weeklyLeadBudget,

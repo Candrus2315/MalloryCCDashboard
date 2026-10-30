@@ -253,7 +253,7 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
     // TOTAL leads (l3+l6 = 2). Week = weekBookings 3 ÷ weekly leads 6.
     expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 2, 6);
     expect(m.totalLeadConversionWeek).toBeCloseTo(3 / 6, 6);
-    expect(m.dailyPickupRate).toBeNull(); // fixture has no OUTBOUND dial outcomes → denominator 0 → "—" (owner formula 10/30)
+    expect(m.dailyPickupRate).toBe(1); // (1 over + 1 under) ÷ 2 total calls — the OFFICIAL duration-based formula (directive 10/30 evening)
   });
 
   test("missing yesterday data → null conversions (page shows a warning, not a number)", () => {

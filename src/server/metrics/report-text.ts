@@ -160,10 +160,11 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     // Same structure, same one-decimal convention.
     `Total Lead Conversion — Yesterday: ${formatPercent(m.totalLeadConversionYesterday, 1)}`,
     `Total Lead Conversion — Week: ${formatPercent(m.totalLeadConversionWeek, 1)}`,
-    // PICKUP (owner decision 10/30 — FINAL): the anchor day's outbound pickup
-    // rate — completed outbound ÷ (completed + no-answer + voicemail
-    // outbound), the ONE shared definition (pickupRateForDay). Null (no dial
-    // outcomes) renders "—" — never a fabricated 0%.
+    // PICKUP (owner directive 10/30 evening — OFFICIAL formula): the anchor
+    // day's pickup rate — (Calls Over 2 Min + Calls Under 2 Min) ÷ Total
+    // Calls, the ONE shared definition (pickupRateForDay): a pickup = a
+    // person actually spoken with, short and long conversations alike. Null
+    // (no calls that day) renders "—" — never a fabricated 0%.
     `Daily Pickup Rate: ${formatPercent(m.dailyPickupRate, 1)}`,
     "",
     "Leads:",

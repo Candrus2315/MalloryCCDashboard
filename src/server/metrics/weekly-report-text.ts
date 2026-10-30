@@ -158,15 +158,16 @@ export interface WeeklyCcReportInput {
     fairyland: number | null;
   };
   /**
-   * PICKUP RATE BY DAY (owner decision 10/30 — FINAL): the report week's
-   * Mon–Fri rows — EACH day's rate individually, only days that have occurred
-   * (the loader passes no future days and no weekend rows), computed by the
-   * ONE shared definition (pickupRateByDay → pickupRateForDay in compute.ts —
-   * completed outbound ÷ (completed + no-answer + voicemail outbound)). A day
-   * with no dial outcomes → null → "—". OPTIONAL: absent/null keeps the
-   * template byte-identical (same doctrine as weekConversion). NO weekly
-   * average exists — the owner explicitly declined an averaged weekly pickup
-   * rate; the block is structurally per-day rows only.
+   * PICKUP RATE BY DAY (owner directive 10/30 evening — OFFICIAL formula): the
+   * report week's Mon–Fri rows — EACH day's rate individually, only days that
+   * have occurred (the loader passes no future days and no weekend rows),
+   * computed by the ONE shared definition (pickupRateByDay →
+   * pickupRateForDay in compute.ts — (Calls Over 2 Min + Calls Under 2 Min) ÷
+   * Total Calls at the Team page's threshold). A day with no calls → null →
+   * "—". OPTIONAL: absent/null keeps the template byte-identical (same
+   * doctrine as weekConversion). NO weekly average exists — the owner
+   * explicitly declined an averaged weekly pickup rate; the block is
+   * structurally per-day rows only.
    */
   pickupByDay?: { date: string; label: string; rate: number | null }[] | null;
   /**
@@ -326,13 +327,15 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
       `  by source: Family ${formatPercent(input.weekConversion.family, 1)} · Animalia ${formatPercent(input.weekConversion.animalia, 1)} · Fairyland ${formatPercent(input.weekConversion.fairyland, 1)}`,
     );
   }
-  // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): the report week's
-  // Mon–Fri rows, EACH day's rate individually — the same ONE shared
-  // definition (pickupRateForDay) the Daily Report's "Daily Pickup Rate"
-  // line consumes. The loader passes only days that have occurred (no future
-  // days, no weekend rows); a day with no dial outcomes renders "—" (honest
-  // missing data, never 0%). NO weekly average exists — the owner explicitly
-  // declined an averaged weekly pickup rate; the block is per-day rows only.
+  // PICKUP RATE BY DAY (owner directive 10/30 evening — OFFICIAL formula):
+  // the report week's Mon–Fri rows, EACH day's rate individually — the same
+  // ONE shared definition (pickupRateForDay) the Daily Report's "Daily Pickup
+  // Rate" line consumes: (Calls Over 2 Min + Calls Under 2 Min) ÷ Total Calls
+  // at the Team page's threshold. The loader passes only days that have
+  // occurred (no future days, no weekend rows); a day with no calls renders
+  // "—" (honest missing data, never 0%). NO weekly average exists — the owner
+  // explicitly declined an averaged weekly pickup rate; the block is per-day
+  // rows only.
   // TEMPLATE TOLERANCE: when the caller does not provide pickupByDay
   // (pre-production callers/tests with minimal inputs), the block is OMITTED
   // — the template renders byte-identical to its pre-directive shape.
