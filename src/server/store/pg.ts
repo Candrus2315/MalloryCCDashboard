@@ -102,6 +102,7 @@ import { runMigrations } from "./migrations/runner";
 import type { MigrationRunCapability } from "./migrations/runner";
 import { MIGRATIONS } from "./migrations/registry";
 import { resolveMigrationCapability } from "./migration-gate";
+import { formatPgNoticeLine, isExpectedIdempotentDdlNotice } from "./pg-notices";
 
 /*
  * The pips SELECT/RETURNING column list — ONE shared fragment interpolated
@@ -384,6 +385,21 @@ export class PgStore implements Store {
         statement_timeout: 300_000,
       },
       ...(needsSsl ? { ssl: "require" } : {}),
+      // NOTICE ROUTING (2026-10-30; root cause:
+      // docs/root-cause-parse-utilcmd-boot-notice-2026-10-30.md): postgres.js
+      // 3.4.9's DEFAULT notice handler is console.log(noticeObject)
+      // (cjs/src/connection.js:916-918), so the migration runner's marker
+      // bootstrap `CREATE TABLE IF NOT EXISTS schema_migrations ...`
+      // (migrations/runner.ts SCHEMA_MIGRATIONS_DDL) prints a bare 9-line
+      // 42P07 parse_utilcmd.c "already exists, skipping" object on EVERY
+      // healthy boot. It is a NOTICE (not an error) — Postgres skips the
+      // create and the boot proceeds. Expected idempotent-DDL notices route
+      // to ONE compact line; every other notice prints exactly as the
+      // default did. No statements, baseline, or migration semantics change.
+      onnotice: (notice: { severity?: string; code?: string; message?: string }) => {
+        if (isExpectedIdempotentDdlNotice(notice)) console.log(formatPgNoticeLine(notice));
+        else console.log(notice);
+      },
     });
   }
 
