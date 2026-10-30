@@ -219,10 +219,19 @@ describe("weeklyPageData funnel wiring (MemoryStore, pinned today)", () => {
     const lines = data.report.reportText.split("\n");
     const i = lines.findIndex((l) => l.startsWith("Total Lead Conversion — Week:"));
     expect(i).toBeGreaterThan(-1);
-    // the by-source detail rides directly under the headline (subordinate),
-    // then the blank separator before Calendar / Booked-out
+    // the by-source detail rides directly under the headline (subordinate);
+    // then the PICKUP RATE BY DAY block (owner decision 10/30 — FINAL: each
+    // occurred Mon–Fri day individually, never a weekly average — this
+    // fixture seeds no calls, so every day renders "—"); then the blank
+    // separator before Calendar / Booked-out.
     expect(lines[i + 1]).toMatch(/^\s+by source: Family/);
-    expect(lines[i + 2]).toBe("");
+    expect(lines[i + 2]).toBe("Pickup Rate by day (Mon–Fri):");
+    expect(lines[i + 3]).toBe("  Monday: —");
+    expect(lines[i + 4]).toBe("  Tuesday: —");
+    expect(lines[i + 5]).toBe("  Wednesday: —");
+    expect(lines[i + 6]).toBe("  Thursday: —");
+    expect(lines[i + 7]).toBe("  Friday: —");
+    expect(lines[i + 8]).toBe("");
     expect(lines.some((l) => l.startsWith("Conversion of Assigned Leads:"))).toBe(false);
     expect(lines.some((l) => l.startsWith("Bookings from Leads:"))).toBe(false);
   });
