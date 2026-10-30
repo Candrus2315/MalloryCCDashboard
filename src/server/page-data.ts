@@ -2270,20 +2270,25 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
     worst: sourceBestWorst.worst,
     overlapNote: sourceOverlap.note,
   };
-  // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): roster-eligible calls
-  // of the REPORT week (the same buildRosterEligibility + ET-day-window
-  // convention every call view uses), each occurred Mon–Fri day rated
-  // individually by the ONE shared function (pickupRateByDay →
-  // pickupRateForDay). Only days that have occurred are passed — the report
-  // week is a completed week, so that is all five workdays; the d <= today
-  // guard keeps the rule honest even if the week basis ever changes. Weekend
-  // rows and future days are never passed; a day with no dial outcomes rates
-  // null → "—". NO weekly average is computed anywhere.
+  // PICKUP RATE BY DAY (owner directive 10/30 evening — OFFICIAL formula):
+  // roster-eligible calls of the REPORT week (the same buildRosterEligibility
+  // + ET-day-window convention every call view uses), each occurred Mon–Fri
+  // day rated individually by the ONE shared function (pickupRateByDay →
+  // pickupRateForDay) as (Calls Over 2 Min + Calls Under 2 Min) ÷ Total
+  // Calls, at settings.meaningful_call_threshold_seconds — the SAME threshold
+  // every "Calls Over 2 Min" surface uses, so the report's per-day figures
+  // recompute exactly from the Call Log's three fields. Only days that have
+  // occurred are passed — the report week is a completed week, so that is all
+  // five workdays; the d <= today guard keeps the rule honest even if the
+  // week basis ever changes. Weekend rows and future days are never passed; a
+  // day with no calls rates null → "—". NO weekly average is computed
+  // anywhere.
   const weekCallsEligibility = buildRosterEligibility(rosterUsers, settings.rep_mappings ?? []);
   const rosterWeekCalls = applyRosterEligibility(reportWeekCalls, weekCallsEligibility);
   const pickupByDay = pickupRateByDay(
     rosterWeekCalls,
     dateRange(lwMon, lwSun).filter((d) => isWorkday(d) && d <= today),
+    settings.meaningful_call_threshold_seconds,
   ).map((r) => ({ date: r.date, label: weekdayName(r.date), rate: r.rate }));
   const reportText = buildWeeklyCcReportText({
     week: { start: lwMon, end: lwSun },
