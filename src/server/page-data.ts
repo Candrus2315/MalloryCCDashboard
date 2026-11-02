@@ -964,6 +964,15 @@ export async function dailyReportPageData(deps?: PageDeps) {
   const store = deps?.store ?? (await getStore());
 
   const ws = weekStart(today);
+  // OWNER DECISION 11/2 (LAST COMPLETED WEEK): the week-conversion line shows
+  // the COMPLETED Mon–Sun week — the Weekly CC Report headline's EXACT pairing
+  // — not the week to date. The WTD figure collapsed every Monday morning:
+  // the weekend fold loads Fri–Sun leads into Monday's cohort (live 11/2:
+  // 320 leads) while weekend deposits sit in last week's window (1 win) → a
+  // meaningless 0.3%. Same week selection the Weekly CC Report uses
+  // (lastCompletedWeekStart); the pair is computed on the SAME chains below.
+  const lwMon = lastCompletedWeekStart(today);
+  const lwSun = addDays(lwMon, 6);
 
   const todayStart = etDayStartUtc(today);
   const anchorStart = etDayStartUtc(anchorDate);
@@ -974,7 +983,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
   const poolStartUtc = anchorStart < weekStartUtc ? anchorStart : weekStartUtc;
   const workDatesFrom = anchorDate < ws ? anchorDate : ws;
 
-  const [meta, settings, callsAnchorDay, apptsAnchorDay, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments] =
+  const [meta, settings, callsAnchorDay, apptsAnchorDay, apptsWtd, callsForAttribution, leads, teamGoal, priorities, leadAdjustments, apptsLastWeekRaw, leadsLastWeekRaw] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -992,12 +1001,33 @@ export async function dailyReportPageData(deps?: PageDeps) {
       store.getTeamGoal(ws),
       store.getDailyPriorities(today),
       store.getLeadCountAdjustments(dateRange(workDatesFrom, addDays(ws, 6))),
+      // OWNER 11/2: the LAST COMPLETED week's rows for the week-conversion
+      // line — the SAME two chains the Weekly CC Report's weekConversion
+      // consumes for its headline: deposit-week wins (the winsLw fetch shape)
+      // + the work-date lead cohort of [lwMon..lwSun]. Same-batch (no
+      // sequential round trips); the filters below mirror weeklyPageData
+      // EXACTLY (filterApptsInWinBucketRange + isBookingWin +
+      // appointmentInScope; splitLeadsByType) so the two reports stay
+      // digit-identical by construction.
+      store.getAppointmentsByWinBusinessDateBetween(lwMon, lwSun),
+      store.getLeadsByWorkDates(dateRange(lwMon, lwSun)),
     ]);
 
   const scope = settings.acuity;
   // Scope BEFORE any booking computation (owner directive — see apptsInScope).
   const apptsAnchorDayScoped = apptsInScope(apptsAnchorDay, scope);
   const apptsWtdScoped = apptsInScope(apptsWtd, scope);
+  // OWNER 11/2: the completed week's QUALIFYING wins — the Weekly CC Report's
+  // EXACT winsLw filter stack (win-bucket slice + isBookingWin + scope), so
+  // the numerator can never drift from the report's headline. The fetch floor
+  // [lwMon..lwSun] is a subset of weeklyPageData's window; the win-bucket
+  // slice below is the same idempotent filter, so the set is identical.
+  const winsLastWeek = filterApptsInWinBucketRange(apptsLastWeekRaw, lwMon, lwSun).filter(
+    (a) => isBookingWin(a) && appointmentInScope(a, scope),
+  );
+  // The completed week's TOTAL work-date cohort through splitLeadsByType — the
+  // report's EXACT denominator (no adjustments, same as leadsWeekSummary).
+  const leadsLastWeek = splitLeadsByType(leadsLastWeekRaw).total;
   // ROSTER ELIGIBILITY (mapping-aware): report call metrics cover roster reps
   // + mapped HL users only, computed at query time (source rows untouched).
   const rosterUsers = await store.getUsers();
@@ -1026,6 +1056,10 @@ export async function dailyReportPageData(deps?: PageDeps) {
     leadCountAdjustments: leadAdjustments,
     teamBookingGoal: teamGoal?.booking_goal ?? 79,
     weeklyLeadBudget: teamGoal?.lead_budget ?? 700,
+    // OWNER 11/2: the LAST COMPLETED week's (qualifying winsLw, leadsWeek)
+    // pair — the exact pairing the Weekly CC Report's weekConversion.rate
+    // computes; ONE shared function (totalLeadConversionWeek) downstream.
+    lastWeekConversion: { wins: winsLastWeek.length, leads: leadsLastWeek },
     thresholdSeconds: settings.meaningful_call_threshold_seconds,
     // OWNER RULING 10/29 (WRONG-1): anchor-day Assigned Lead Conversion counts
     // assigned leads credited to ACTIVE reps only (Team-page rule).
@@ -1047,6 +1081,10 @@ export async function dailyReportPageData(deps?: PageDeps) {
     warnings.push(`No leads worked ${anchorPhrase} — Total Lead Conversion — Yesterday is unavailable.`);
   if (metrics.totalLeadConversionWeek == null)
     warnings.push("No leads in this week's cohort yet — Total Lead Conversion — Week is unavailable.");
+  if (metrics.totalLeadConversionLastWeek == null)
+    warnings.push(
+      `No qualifying wins or leads recorded ${formatDateHuman(lwMon)} – ${formatDateHuman(lwSun)} — Total Lead Conversion — Last Week is unavailable.`,
+    );
   if (metrics.goalAchievement == null)
     warnings.push("Weekly booking goal is 0 — Goal Achievement is unavailable.");
   if (metrics.leadsToday === 0 && metrics.weeklyLeads === 0)

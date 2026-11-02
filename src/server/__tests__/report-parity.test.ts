@@ -9,8 +9,13 @@
  *      cancelled-after-payment rows, so it ran ahead of the qualifying count
  *      (72 vs 69 on the owner's live data) and broke goal achievement.
  *   2. Total Weekly Leads (Daily) == Total (Weekly CC leads)
- *   3. Total Lead Conversion — Week (Daily) == Total Lead Conversion — Week
- *      (Weekly CC)
+ *   3. Total Lead Conversion — Last Week (Daily, owner decision 11/2) ==
+ *      Total Lead Conversion — Week (Weekly CC): the Daily's week line shows
+ *      the LAST COMPLETED week — the EXACT pairing the Weekly CC Report's
+ *      headline computes (its qualifying winsLw ÷ its total work-date cohort
+ *      for lastCompletedWeekStart(today)…+6). The week-TO-DATE figure it
+ *      replaces collapsed every Monday morning (weekend leads fold into
+ *      Monday's cohort while weekend deposits sit in last week's window).
  *
  * The conversion is computed by ONE shared function — totalLeadConversionWeek
  * (compute.ts) — over ONE canonical (bookings, leads) pair: the QUALIFYING
@@ -127,6 +132,10 @@ function dailyMetrics(leads: LeadRow[]) {
     allCallsForWeek: [],
     attributions: [],
     leadsAllRecent: leads,
+    // OWNER 11/2: the completed week's pair, exactly what page-data feeds —
+    // here the SAME (QUAL, leads) pair the Weekly CC Report's weekConversion
+    // uses below, so the two rendered headlines are the same digits.
+    lastWeekConversion: { wins: QUAL, leads: leads.length },
     teamBookingGoal: GOAL,
     weeklyLeadBudget: 700,
     thresholdSeconds: 120,
@@ -200,14 +209,26 @@ describe("CROSS-REPORT PARITY (owner 10/30): Daily Report == Weekly CC Report, s
     expect(lineOf(weeklyText, "Total:")).toBe(`Total: ${leads.length}`);
   });
 
-  test("3 — Total Lead Conversion — Week: ONE shared function, digit-identical strings", () => {
-    // Same float (identical expression, not an approximation)…
-    expect(m.totalLeadConversionWeek).toBe(sharedRate(leads));
-    // …and the same rendered string at the parity-locked one-decimal precision.
-    expect(lineOf(dailyText, "Total Lead Conversion — Week:")).toBe(
-      lineOf(weeklyText, "Total Lead Conversion — Week:"),
-    );
+  test("3 — Total Lead Conversion — Last Week (Daily) == the Weekly CC headline: ONE shared function, digit-identical strings", () => {
+    // OWNER 11/2 PARITY: the Daily's week line carries the LAST COMPLETED
+    // week's pairing — the same (winsLw, leadsWeek) pair the Weekly CC
+    // Report's weekConversion.rate computes. Same float (identical expression,
+    // not an approximation)…
+    expect(m.totalLeadConversionLastWeek).toBe(sharedRate(leads));
+    // …and the same rendered VALUE at the parity-locked one-decimal precision
+    // (the labels differ by design: Daily names the Last Week basis, the
+    // Weekly CC Report's headline keeps its Week naming for the same pairing).
+    expect(lineOf(dailyText, "Total Lead Conversion — Last Week:")).toBe("Total Lead Conversion — Last Week: 0.2%");
     expect(lineOf(weeklyText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 0.2%");
+    expect(lineOf(dailyText, "Total Lead Conversion — Last Week:").split(": ")[1]).toBe(
+      lineOf(weeklyText, "Total Lead Conversion — Week:").split(": ")[1],
+    );
+    // The collapsing week-TO-DATE week line is GONE from the Daily surfaces;
+    // the WTD metric itself still exists for the goal tracker (unpinned here —
+    // test 6 covers the WTD numerator).
+    expect(dailyText).not.toContain("Total Lead Conversion — Week:");
+    // The Week metric still runs on the canonical WTD pair (unchanged behavior).
+    expect(m.totalLeadConversionWeek).toBe(totalLeadConversionWeek(m.weekBookings, m.weeklyLeads));
   });
 
   test("4 — never a mean of per-source or rep rates (pooled division only)", () => {
@@ -338,11 +359,24 @@ describe("loader-level parity (MemoryStore): Daily (Sunday of week W) == Weekly 
     expect(daily.metrics.totalLeadConversionWeek).toBe(
       totalLeadConversionWeek(weekly.bookings.total, weekly.leads.total),
     );
-    // And the rendered headlines are the identical string.
-    const dailyLine = lineOf(daily.reportText, "Total Lead Conversion — Week:");
-    const weeklyLine = lineOf(weekly.report.reportText, "Total Lead Conversion — Week:");
-    expect(dailyLine).toBe(weeklyLine);
-    expect(dailyLine).toBe("Total Lead Conversion — Week: 75.0%"); // 3 qualifying ÷ 4 leads
+    // OWNER 11/2: on the Sunday render the Daily's LAST COMPLETED week is the
+    // PRIOR week (9/14–20) — no rows in this fixture → the honest em dash,
+    // never a fabricated number; and the collapsing WTD week line is GONE
+    // from the copied text.
+    expect(daily.metrics.totalLeadConversionLastWeek).toBeNull();
+    expect(lineOf(daily.reportText, "Total Lead Conversion — Last Week:")).toBe("Total Lead Conversion — Last Week: —");
+    expect(daily.reportText).not.toContain("Total Lead Conversion — Week:");
+    // THE NEW PARITY PAIRING: render the Daily the NEXT Monday morning — its
+    // LAST COMPLETED week is exactly the week the Weekly CC Report covers —
+    // and the two headlines are digit-identical.
+    const dailyMonday = await dailyReportPageData({ store, today: "2026-09-28", etNowMinutes: 10 * 60 });
+    expect(dailyMonday.metrics.totalLeadConversionLastWeek).toBe(
+      totalLeadConversionWeek(weekly.bookings.total, weekly.leads.total), // 3 ÷ 4
+    );
+    expect(lineOf(dailyMonday.reportText, "Total Lead Conversion — Last Week:")).toBe(
+      "Total Lead Conversion — Last Week: 75.0%", // 3 qualifying ÷ 4 leads — the completed week, not Monday's WTD (0 ÷ 0 → but rendered from last week's pair)
+    );
+    expect(lineOf(weekly.report.reportText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 75.0%");
     // Bookings/leads parity in the copied text too.
     expect(lineOf(daily.reportText, "Bookings for the Week:")).toBe("Bookings for the Week: 3");
     // REV-97 PARITY PIN: the CC Report's week goal comparison consumes the
@@ -484,7 +518,12 @@ describe("BOOKING-NUMERATOR REGRESSION (owner live shape 10/30): goal/conversion
     expect(lineOf(daily.reportText, "Bookings for the Week:")).toBe(`Bookings for the Week: ${N_QUAL}`);
     expect(lineOf(daily.reportText, "Key Driver:")).toBe("Key Driver: 79");
     expect(lineOf(daily.reportText, "Left:")).toBe("Left: 10");
-    expect(lineOf(daily.reportText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 8.3%"); // 69÷834, NOT 72÷834 (8.6%)
+    // OWNER 11/2: the Daily's week line is the LAST COMPLETED week now. On
+    // this 10/30 render that is 10/19–25 — no rows in the fixture → the
+    // honest em dash. The WTD conversion still runs as a METRIC (line above:
+    // 69÷834) but no longer renders as the week line.
+    expect(lineOf(daily.reportText, "Total Lead Conversion — Last Week:")).toBe("Total Lead Conversion — Last Week: —");
+    expect(daily.reportText).not.toContain("Total Lead Conversion — Week:");
 
     // …while the Weekly hero's production block (Final Booking Logic, untouched)
     // keeps showing 72 gross / 3 cancellations / 69 net — the 3 delta rows
@@ -511,8 +550,20 @@ describe("BOOKING-NUMERATOR REGRESSION (owner live shape 10/30): goal/conversion
     // The Weekly's qualifying goal-tracker chain agrees with the Daily.
     expect(weekly.bookings.total).toBe(N_QUAL);
     expect(weekly.funnel.wins).toBe(N_QUAL);
-    const dailyLine = lineOf(daily.reportText, "Total Lead Conversion — Week:");
-    expect(lineOf(weekly.report.reportText, "Total Lead Conversion — Week:")).toBe(dailyLine);
+    // OWNER 11/2 PARITY (the exact owner scenario): render the Daily the
+    // NEXT Monday morning — its LAST COMPLETED week is the SAME Mon–Sun week
+    // the Weekly CC Report covers — the two headlines are digit-identical,
+    // and the Daily's value is the COMPLETED week's rate (69÷834 = 8.3%),
+    // NOT Monday's collapsing WTD (weekend leads in Monday's cohort, weekend
+    // deposits in last week's window).
+    const dailyMonday = await dailyReportPageData({ store, today: "2026-11-02", etNowMinutes: 10 * 60 });
+    expect(dailyMonday.metrics.totalLeadConversionLastWeek).toBe(
+      totalLeadConversionWeek(weekly.bookings.total, weekly.leads.total), // 69 ÷ 834, float-identical
+    );
+    expect(lineOf(dailyMonday.reportText, "Total Lead Conversion — Last Week:")).toBe(
+      "Total Lead Conversion — Last Week: 8.3%", // 69÷834, NOT 72÷834 (8.6%)
+    );
+    expect(lineOf(weekly.report.reportText, "Total Lead Conversion — Week:")).toBe("Total Lead Conversion — Week: 8.3%");
 
     // Denominator unchanged: 834 total weekly leads on both sides.
     expect(daily.metrics.weeklyLeads).toBe(N_LEADS);

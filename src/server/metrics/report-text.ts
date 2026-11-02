@@ -175,7 +175,12 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     // + the pickup line (owner decision 10/30 — the approved formula).
     // Same structure, same one-decimal convention.
     `Total Lead Conversion — Yesterday: ${formatPercent(m.totalLeadConversionYesterday, 1)}`,
-    `Total Lead Conversion — Week: ${formatPercent(m.totalLeadConversionWeek, 1)}`,
+    // OWNER DECISION 11/2: the week line reports the LAST COMPLETED week —
+    // the exact pairing the Weekly CC Report's headline uses — because the
+    // week-TO-DATE ratio collapsed every Monday morning (weekend leads fold
+    // into Monday's cohort while weekend deposits sit in last week's window).
+    // Same metric the page renders (totalLeadConversionLastWeek).
+    `Total Lead Conversion — Last Week: ${formatPercent(m.totalLeadConversionLastWeek, 1)}`,
     // PICKUP (owner directive 10/30 evening — OFFICIAL formula): the anchor
     // day's pickup rate — (Calls Over 2 Min + Calls Under 2 Min) ÷ Total
     // Calls, the ONE shared definition (pickupRateForDay): a pickup = a

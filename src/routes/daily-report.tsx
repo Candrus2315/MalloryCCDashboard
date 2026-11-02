@@ -194,12 +194,22 @@ function DailyReportPage() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-[13px] font-medium text-(--text-body)">Total Lead Conversion — Week</dt>
+                  {/* OWNER DECISION 11/2: the week conversion line shows the
+                      LAST COMPLETED week — the EXACT pairing the Weekly CC
+                      Report's headline already uses (its qualifying winsLw ÷
+                      its total work-date cohort, ONE shared function) — not
+                      the week to date, which collapsed every Monday morning
+                      (weekend leads fold into Monday's cohort; weekend
+                      deposits sit in last week's window). The FIRST line's
+                      anchor-day label (PR #137) and every other Week figure
+                      (Bookings WTD, leads/budget, goal tracker) stay
+                      current-week WTD. */}
+                  <dt className="text-[13px] font-medium text-(--text-body)">Total Lead Conversion — Last Week</dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
-                      {formatPercent(m.totalLeadConversionWeek, 1)}
+                      {formatPercent(m.totalLeadConversionLastWeek, 1)}
                     </span>
-                    <span className="kpi-sub">week to date · digit-identical to the Weekly CC Report</span>
+                    <span className="kpi-sub">last completed week · digit-identical to the Weekly CC Report</span>
                   </dd>
                 </div>
                 <div>

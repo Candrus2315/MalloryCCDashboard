@@ -2344,6 +2344,20 @@ export interface DailyReportMetrics {
    */
   totalLeadConversionWeek: number | null;
   /**
+   * TOTAL LEAD CONVERSION — LAST WEEK (owner decision 11/2): the COMPLETED
+   * week's rate — the EXACT pairing the Weekly CC Report's headline already
+   * uses (its weekConversion.rate): the completed week's qualifying winsLw ÷
+   * its total work-date lead cohort, through the ONE shared
+   * totalLeadConversionWeek function (no re-implementation). Replaces the
+   * week-TO-DATE week line, which collapsed every Monday morning (the weekend
+   * fold loads Fri–Sun leads into Monday's cohort while weekend deposits sit
+   * in last week's Mon–Sun window). The pair arrives precomputed from the
+   * caller (page-data runs the winsLw/leadsWeek chain); omitted (legacy
+   * callers/tests) → null ("—"). Zero completed-week leads → null — never a
+   * fabricated 0%.
+   */
+  totalLeadConversionLastWeek: number | null;
+  /**
    * DAILY PICKUP RATE (owner directive 10/30 evening — OFFICIAL formula): the
    * anchor day's pickup rate — (Calls Over 2 Min + Calls Under 2 Min) ÷ Total
    * Calls via pickupRateForDay over input.callsAnchorDay (the same
@@ -2402,6 +2416,16 @@ export function buildDailyReportMetrics(input: {
   teamBookingGoal: number;
   weeklyLeadBudget: number;
   thresholdSeconds: number;
+  /**
+   * OWNER 11/2: the LAST COMPLETED week's (qualifying wins, total leads) pair
+   * — the caller (dailyReportPageData) computes it from the SAME chains the
+   * Weekly CC Report's weekConversion uses: winsLw = filterApptsInWinBucketRange
+   * over the deposit-week window + isBookingWin + appointmentInScope; leads =
+   * splitLeadsByType(work-date cohort).total. ONE shared conversion function
+   * consumes it (totalLeadConversionWeek). Optional — legacy callers/tests
+   * without it render "—" (null), never a fabricated 0%.
+   */
+  lastWeekConversion?: { wins: number; leads: number };
   /**
    * OWNER RULING 10/29 (WRONG-1): the active-roster rep ids. When given, the
    * anchor-day Assigned Lead Conversion denominator counts assigned leads
@@ -2509,6 +2533,13 @@ export function buildDailyReportMetrics(input: {
     // pair the Weekly CC Report converts — digit parity).
     totalLeadConversionYesterday: pct(bookingsAnchorDay, anchorDayTotalLeads),
     totalLeadConversionWeek: totalLeadConversionWeek(weekBookings, weekly.total),
+    // OWNER 11/2: the COMPLETED week's pairing through the ONE shared
+    // function — digit-identical to the Weekly CC Report's weekConversion.rate
+    // when the caller feeds it the same (winsLw, leadsWeek) pair (parity suite
+    // pins it). Unset (legacy callers) or zero completed-week leads → null.
+    totalLeadConversionLastWeek: input.lastWeekConversion
+      ? totalLeadConversionWeek(input.lastWeekConversion.wins, input.lastWeekConversion.leads)
+      : null,
     // PICKUP RATE (owner directive 10/30 evening — OFFICIAL formula): the
     // anchor day's (Over 2 Min + Under 2 Min) ÷ Total Calls via the ONE
     // shared function (pickupRateForDay) on callsAnchorDay at the SAME
