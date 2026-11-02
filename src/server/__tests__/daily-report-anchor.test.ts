@@ -29,8 +29,11 @@ import {
   buildDailyReportEmail,
   buildDailyReportSlack,
   buildDailyReportText,
+  totalLeadConversionAnchorLabel,
 } from "../metrics/report-text";
 import { dailyReportAnchorDate, weekdayName } from "../date-logic";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { MemoryStore } from "../store/memory";
 import { dailyReportPageData } from "../page-data";
 
@@ -337,6 +340,13 @@ describe("dailyReportPageData under the anchor rule", () => {
     expect(data.reportText).toContain("Bookings Friday: 1");
     expect(data.emailText).toContain("Bookings Friday: 1");
     expect(data.slackText).toContain("Bookings Friday: 1");
+    // The anchor-day conversion line's dt label follows the SAME anchor
+    // helper as the Bookings line (totalLeadConversionAnchorLabel): on this
+    // Monday-morning fixture (etNowMinutes 09:00, before the 18:30 cutoff)
+    // it names FRIDAY — it must never say "Yesterday" about Friday's data.
+    const conversionLabel = totalLeadConversionAnchorLabel(data.metrics.anchorDate, data.metrics.reportDate);
+    expect(conversionLabel).toContain("Friday");
+    expect(conversionLabel).not.toContain("Yesterday");
   });
 
   test("Monday-morning with NO Friday data: banners name FRIDAY (never 'yesterday')", async () => {
@@ -363,5 +373,19 @@ describe("dailyReportPageData under the anchor rule", () => {
     // the unavailable-banner for it never fires.
     expect(data.metrics.totalLeadConversionYesterday).toBeCloseTo(0, 6);
     expect(data.warnings.some((w) => w.includes("Total Lead Conversion — Yesterday is unavailable"))).toBe(false);
+  });
+});
+
+// ---------- route source pin: the dt label is DERIVED, never hardcoded ----------
+describe("daily-report route source: the conversion dt label derives from the anchor", () => {
+  const ROUTE_SOURCE = readFileSync(join(import.meta.dir, "../../routes/daily-report.tsx"), "utf8");
+
+  test("the anchor-day conversion dt renders totalLeadConversionAnchorLabel(m.anchorDate, m.reportDate)", () => {
+    expect(ROUTE_SOURCE).toContain("totalLeadConversionAnchorLabel(m.anchorDate, m.reportDate)");
+  });
+
+  test("no hardcoded 'Total Lead Conversion — Yesterday' dt; the Week line stays static", () => {
+    expect(ROUTE_SOURCE).not.toMatch(/>Total Lead Conversion — Yesterday</);
+    expect(ROUTE_SOURCE).toContain("Total Lead Conversion — Week");
   });
 });

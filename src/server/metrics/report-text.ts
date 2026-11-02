@@ -44,6 +44,22 @@ export function bookingsAnchorLabel(anchorDate: string, reportDate: string): str
   return `Bookings ${weekdayName(anchorDate, true)}`;
 }
 
+/**
+ * KPI label for the anchor-day total-lead conversion figure (the "Mallory's
+ * metrics" lines, owner directive 10/30). SAME day selection as
+ * bookingsAnchorLabel — one source of truth for the hero block's day naming:
+ * "Total Lead Conversion — Yesterday" only when the anchor really is the
+ * calendar prior day; "Total Lead Conversion — Friday" on a Monday-morning
+ * report (the anchor is the most recent PRIOR workday — the label must never
+ * say "Yesterday" about a day that isn't); "Total Lead Conversion — Today"
+ * after the EOD cutoff.
+ */
+export function totalLeadConversionAnchorLabel(anchorDate: string, reportDate: string): string {
+  if (anchorDate === reportDate) return "Total Lead Conversion — Today";
+  if (anchorDate === addDays(reportDate, -1)) return "Total Lead Conversion — Yesterday";
+  return `Total Lead Conversion — ${weekdayName(anchorDate, true)}`;
+}
+
 /** Compact label for the copied report's Bookings line (owner 10/30 rename: the line always names the day it covers). */
 export function bookingsAnchorLineLabel(anchorDate: string, reportDate: string): string {
   return bookingsAnchorLabel(anchorDate, reportDate);
