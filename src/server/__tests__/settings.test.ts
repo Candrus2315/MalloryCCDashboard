@@ -311,34 +311,20 @@ describe("roster mapping payload (non-roster panel)", () => {
     ["u_laura", 500], // active rep — never appears in the panel
   ]);
 
-  test("payload carries callCount + isActive + zeroCallCount; server sends ALL inactive users (data preserved — the PANEL is what stops listing them)", () => {
-    const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel(ALL_USERS, new Set(["r_laura", "r_admin"]), CALLS, []);
-    expect(nonRosterUsers).toHaveLength(6); // every inactive user stays in the PAYLOAD (owner directive 2026-11-02 gates the panel, not the data)
-    expect(nonRosterUsers.every((u) => u.isActive === false)).toBe(true); // the flag the visibility gate reads
-    expect(nonRosterUsers.map((u) => [u.name, u.callCount])).toEqual([
-      ["Christy West", 349], // sort: callCount desc…
-      ["Meg Morton", 1],
-      ["Moe Ahm", 0], // …then name; the two Moe Ahm duplicates both survive
-      ["Moe Ahm", 0],
-      ["Rocket App", 0],
-      ["TEST BOOKER", 0],
-    ]);
-    expect(zeroCallCount).toBe(4);
-  });
-
-  test("OWNER DIRECTIVE 2026-11-02: the panel lists NO inactive user — not mapped, not with calls, not show-all", () => {
+  test("OWNER DIRECTIVE 2026-11-02 (erase follow-up): payload contains no inactive users; existing mappings unaffected", () => {
     const mappings = [{ external_user_id: "u_test", rep_id: "r_laura" }];
     const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel(ALL_USERS, new Set(["r_laura", "r_admin"]), CALLS, mappings);
-    expect(nonRosterUsers.find((u) => u.externalId === "u_test")).toEqual({
-      externalId: "u_test",
-      name: "TEST BOOKER",
-      callCount: 0,
-      mappedTo: "r_laura", // mapping resolves even with zero calls
-      isActive: false,
-    });
-    expect(zeroCallCount).toBe(4);
-    // the display-layer gate: inactive rows are invisible in BOTH view states —
-    // no toggle can reveal them; existing mappings stay active in the payload
+    expect(nonRosterUsers).toEqual([]); // no inactive name reaches the browser — no row, no count, nothing
+    expect(zeroCallCount).toBe(0); // derived from the EMITTED rows — never a guessed count
+    expect(mappings).toEqual([{ external_user_id: "u_test", rep_id: "r_laura" }]); // existing mappings untouched
+  });
+
+  test("mapped + called inactive users are absent too — no view state can reveal a name the payload never carried", () => {
+    const mappings = [{ external_user_id: "u_test", rep_id: "r_laura" }];
+    const { nonRosterUsers } = buildNonRosterPanel(ALL_USERS, new Set(["r_laura", "r_admin"]), CALLS, mappings);
+    expect(nonRosterUsers.find((u) => u.externalId === "u_christy")).toBeUndefined(); // 349 calls — still absent
+    expect(nonRosterUsers.find((u) => u.externalId === "u_test")).toBeUndefined(); // mapped + zero calls — still absent
+    // the display-layer gate stays as a second line of defense over the payload:
     expect(rosterPanelVisibleRows(nonRosterUsers, false)).toEqual([]);
     expect(rosterPanelVisibleRows(nonRosterUsers, true)).toEqual([]);
   });

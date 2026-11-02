@@ -286,7 +286,10 @@ describe("rosterPanelVisibleRows", () => {
     mappedTo,
     isActive,
   });
-  // The live panel shape: EVERY row is an INACTIVE (non-roster) user.
+  // The live panel shape: EVERY row is an INACTIVE (non-roster) user. Since
+  // the erase follow-up (owner directive 2026-11-02) the server payload carries
+  // NO inactive user at all — these pins keep the view gate as the second line
+  // of defense (and cover any legacy caller that still passes such rows).
   const ROWS = [row("u_christy", 349), row("u_meg", 1), row("u_test", 0, "r_laura"), row("u_rocket", 0)];
 
   test("OWNER DIRECTIVE 2026-11-02: inactive users are NEVER listed — no toggle reveals them", () => {

@@ -1433,10 +1433,11 @@ function RosterMappingSection({ data, busy, onSave }: {
   onSave: (mappings: { external_user_id: string; rep_id: string }[]) => void;
 }) {
   // OWNER DIRECTIVE (2026-11-02, supersedes the 10/20 zero-call-only default):
-  // INACTIVE users are never listed in the panel — rosterPanelVisibleRows gates
-  // them out unconditionally (no show-all toggle). The server payload still
-  // sends ALL inactive users (data preserved, mappings untouched); the row
-  // machinery below stays for any non-inactive row the payload may ever carry.
+  // INACTIVE users are never listed in the panel — and since the erase
+  // follow-up the server payload carries NO inactive user at all (their names
+  // never reach the browser). The row machinery below stays for any
+  // non-inactive row the payload may ever carry; the visibility gate
+  // (rosterPanelVisibleRows) remains as a second line of defense.
   const visibleRows = rosterPanelVisibleRows(data.nonRosterUsers, false);
   // draft rep choice per non-roster HL user (prefilled with any existing mapping)
   const [draft, setDraft] = useState<Record<string, string>>(() =>
@@ -1465,17 +1466,14 @@ function RosterMappingSection({ data, busy, onSave }: {
         records are never rewritten: the original HL user id, message ids and timestamps stay untouched, and removing
         a mapping excludes that user&apos;s calls from roster reporting again.
       </p>
-      {data.nonRosterUsers.length > 0 && (
-        <p className="text-xs text-(--text-muted)">
-          Inactive users are no longer listed here (owner directive 2026-11-02) — {data.nonRosterUsers.length}{" "}
-          non-roster {data.nonRosterUsers.length === 1 ? "user" : "users"} remain in the data, and existing mappings
-          below stay active.
-        </p>
-      )}
+      {/* ERASE FOLLOW-UP (owner directive 2026-11-02): the payload carries no
+          inactive user, so this panel lists nobody by design — the line states
+          that honestly instead of implying an empty database. */}
       <div className="card card-nest space-y-1 p-0">
-        {data.nonRosterUsers.length === 0 && (
-          <p className="p-5 text-sm text-(--text-muted)">No non-roster HighLevel users seen in calls yet.</p>
-        )}
+        <p className="p-5 text-sm text-(--text-muted)">
+          Inactive users are never listed here (owner directive 2026-11-02) — no inactive user&apos;s name reaches this
+          panel or the page payload at all. Existing mappings below stay active.
+        </p>
         {visibleRows.map((u) => {
           const val = draft[u.externalId] ?? "";
           return (

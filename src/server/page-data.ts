@@ -286,7 +286,7 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
 
     // ASSIGNED LEADS BY DAY grid (owner directive 2026-10-01) — pure builder
     // over the two verified sources; no new math (module doc: assigned-by-day).
-    const assignedByDay: AssignedByDayGrid = buildAssignedLeadsByDay({
+    const assignedGrid = buildAssignedLeadsByDay({
       leads: assignedWeekLeads,
       opps: channelOpps,
       rosterReps: reps.map((r) => ({ id: r.id, name: r.name })),
@@ -294,6 +294,21 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       mon: assignedMon,
       sun: assignedSun,
     });
+    // OWNER DIRECTIVE 2026-11-02 (erase follow-up): inactive users' NAMES must
+    // never reach the browser — the Other Lead Owners group previously revealed
+    // departed/inactive owners row by row (Jennifer Stitt, Amy Clark, …). Rows
+    // for is_active=false users are dropped HERE, at payload level; the group
+    // header recomputes from the remaining rows on the client and renders no
+    // group at all when none remain. CRITICAL: only the NAME rows disappear —
+    // dayTotals/weekTotal above stay the builder's full-grid rollup over ALL
+    // assigned leads (non-roster owners' leads included), so the Team Total
+    // row is unchanged by the drop. Dropped owners' per-owner rows also leave
+    // the client CSV export (names out of the browser entirely).
+    const inactiveUserIds = new Set(allUsers.filter((u) => !u.is_active).map((u) => u.id));
+    const assignedByDay: AssignedByDayGrid = {
+      ...assignedGrid,
+      rows: assignedGrid.rows.filter((r) => !inactiveUserIds.has(r.rep_id)),
+    };
 
     // PER-SOURCE BOOKING ATTRIBUTION (owner directive 2026-10-27, Step 3):
     // which sources a rep's ATTRIBUTED bookings came from — bookings counted

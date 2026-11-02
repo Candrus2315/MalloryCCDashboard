@@ -266,11 +266,13 @@ describe("HISTORICAL REPS — (c) Weekly output for the departed rep equals pre-
   });
 });
 
-// ---------- Reps page: picker is ACTIVE-ROSTER-ONLY (owner directive 2026-11-02,
-// superseding the 10/20 UI presentation of departed reps; data rows preserved) ----------
+// ---------- Reps page: picker is ACTIVE-ROSTER-ONLY and the assigned grid
+// carries NO inactive row (owner directive 2026-11-02 + erase follow-up,
+// superseding the 10/20 UI presentation of departed reps; REPORTING data
+// preserved — Weekly/team totals still include departed reps' contribution) ----------
 
-describe("HISTORICAL REPS — Reps page picker lists ONLY the active roster (directive 2026-11-02)", () => {
-  test("the departed rep is erased from the picker; her data rows and the unreachable detail branch stay", async () => {
+describe("HISTORICAL REPS — Reps page lists ONLY the active roster (directive 2026-11-02 + erase follow-up)", () => {
+  test("the departed rep is erased from the picker AND the assigned grid; her reporting numbers and the unreachable detail branch stay", async () => {
     const departed = await seedLauraWeek("departed");
     const reps = await repsPageData({ range: "last-week", week: LW_MON }, { store: departed.store, today: TODAY });
 
@@ -283,13 +285,18 @@ describe("HISTORICAL REPS — Reps page picker lists ONLY the active roster (dir
     // longer carries the nonRoster rollup (the underlying call rows untouched).
     expect("nonRoster" in reps).toBe(false);
 
-    // Her preserved historical row STAYS in the assigned-leads grid (data
-    // preserved); with the active-only picker she now groups under the
-    // collapsed "Other Lead Owners" set (her rep_id is not in repList).
+    // OWNER DIRECTIVE 2026-11-02 (erase follow-up): inactive users never appear
+    // as grid rows or group labels — Laura's row is dropped from the payload
+    // entirely (no row, no name; her rep_id is not in repList, so she can never
+    // regroup under "Other Lead Owners" either — with no visible rows the group
+    // renders not at all). Totals are UNCHANGED when rows are dropped:
+    // dayTotals/weekTotal stay computed from ALL assigned leads, so her family
+    // lead still counts in the Team Total and its day column.
     const gridLaura = reps.assignedByDay.rows.find((r) => r.rep_name === "Laura Rivera");
-    expect(gridLaura).toBeDefined();
-    expect(gridLaura!.total.family).toBe(1);
-    expect(reps.repList.some((r) => r.id === gridLaura!.rep_id)).toBe(false);
+    expect(gridLaura).toBeUndefined();
+    expect(reps.assignedByDay.rows.map((r) => r.rep_name).sort()).toEqual(["Allison Wittner", "Dan McKillop"]);
+    expect(reps.assignedByDay.weekTotal.family).toBe(2); // Laura's + Allison's lead — the dropped row costs the totals nothing
+    expect(reps.assignedByDay.dayTotals[1].family).toBe(2); // Tue Oct 13 work date — both leads still in the day column
 
     // Selectable? NO — never from the UI. A directly-linked ?rep=<lauraId>
     // still resolves her detail (the historical branch is unreachable, not

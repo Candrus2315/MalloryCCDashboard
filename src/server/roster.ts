@@ -218,13 +218,15 @@ export function applyAttributionEligibility<
  * with its 30-day call count (calls carry the RAW HL user id — immutable) and
  * any existing mapping. Sorted callCount desc, then name.
  *
- * OWNER DIRECTIVE ("erase everyone not on my roster"): zero-call rows
- * (test/app/marketing accounts) are noise — the PANEL hides them by default
- * behind a show-all toggle (see rosterPanelVisibleRows in components/
- * settings-views.ts). This builder still returns ALL inactive users — the
- * server payload never excludes them (data preserved). Since the owner
- * directive 2026-11-02 the panel itself lists NO inactive user at all (see
- * rosterPanelVisibleRows); the payload keeps the rows for data parity.
+ * OWNER DIRECTIVE 2026-11-02 ("erase everyone not on my roster") + erase
+ * follow-up: the panel lists NO inactive user — first the VIEW was gated
+ * (rosterPanelVisibleRows in components/settings-views.ts), and now the
+ * PAYLOAD carries no inactive user at all: their names must never reach the
+ * browser. Every candidate row below is an inactive user by construction (the
+ * panel is defined over non-roster users), so the emitted list is always
+ * empty. DB rows are untouched; existing mappings stay active from
+ * settings.rep_mappings (the "Active mappings" line renders from there, never
+ * from this payload).
  */
 export interface NonRosterPanelRow {
   externalId: string;
@@ -246,7 +248,7 @@ export function buildNonRosterPanel(
   callsByExternalId: Map<string, number>,
   repMappings: RepMapping[],
 ): { nonRosterUsers: NonRosterPanelRow[]; zeroCallCount: number } {
-  const nonRosterUsers = allUsers
+  const candidates = allUsers
     .filter((u) => !u.is_active && !activeUserIds.has(u.id))
     .map((u) => ({
       externalId: u.external_id,
@@ -256,5 +258,11 @@ export function buildNonRosterPanel(
       isActive: u.is_active,
     }))
     .sort((a, b) => b.callCount - a.callCount || a.name.localeCompare(b.name));
+  // ERASE FOLLOW-UP (owner directive 2026-11-02): an inactive user's name never
+  // reaches the browser — only rows whose source user is NOT inactive are
+  // emitted. Every candidate above is inactive by construction, so this is
+  // always [] — written as a filter (not a bare return) so the rule is
+  // explicit and a future caller passing non-inactive rows keeps working.
+  const nonRosterUsers = candidates.filter((u) => u.isActive);
   return { nonRosterUsers, zeroCallCount: nonRosterUsers.filter((u) => u.callCount === 0).length };
 }
