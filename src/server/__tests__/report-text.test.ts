@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { buildDailyReportMetrics, type DailyReportMetrics } from "../metrics/compute";
 import {
   big3Incomplete,
@@ -422,5 +423,61 @@ describe("totalLeadConversionAnchorLabel (dt label — same anchor helper as the
 
   test("anchor == report date (after the EOD cutoff) → 'Today'", () => {
     expect(totalLeadConversionAnchorLabel(TUE, TUE)).toBe("Total Lead Conversion — Today");
+  });
+});
+
+// ---------- OWNER DECISION 11/2 ("update copy"): the copied anchor-day
+// conversion label is DERIVED from the anchor — the SAME
+// totalLeadConversionAnchorLabel call the page's metric block renders with the
+// SAME (anchorDate, reportDate) pair, so copied text == the page exactly. ----
+
+describe("buildDailyReportText — copied anchor-day conversion label follows the anchor (owner decision 11/2)", () => {
+  const REPORT_SOURCE = readFileSync(new URL("../metrics/report-text.ts", import.meta.url), "utf8");
+
+  /** The SPEC fixture re-dated into the Monday-morning shape: anchor Friday 9/25, report Monday 9/28. */
+  const mondayMorningMetrics = (): DailyReportMetrics => ({ ...specExampleMetrics(), reportDate: "2026-09-28", anchorDate: "2026-09-25" });
+
+  test("MONDAY MORNING (anchor = prior workday Friday): the copy names FRIDAY, never 'Yesterday'", () => {
+    const text = buildDailyReportText(mondayMorningMetrics(), specExampleBig3);
+    expect(text).toContain("Total Lead Conversion — Friday: 63.6%");
+    expect(text).not.toContain("Total Lead Conversion — Yesterday");
+    // All three copy buttons ride the ONE builder.
+    expect(buildDailyReportEmail(mondayMorningMetrics(), specExampleBig3)).toContain("Total Lead Conversion — Friday: 63.6%");
+    expect(buildDailyReportSlack(mondayMorningMetrics(), specExampleBig3)).toContain("Total Lead Conversion — Friday: 63.6%");
+  });
+
+  test("ONLY the anchor-day LABELS move — every other line stays byte-identical to the SPEC example", () => {
+    // Two lines carry anchor-day labels: the Bookings line (dynamic since the
+    // owner's 10/30 rename) and the conversion line (owner decision 11/2).
+    // Both follow the SAME anchor; every other line is byte-identical.
+    const monday = buildDailyReportText(mondayMorningMetrics(), specExampleBig3);
+    const expected = SPEC_EXAMPLE.split("\n")
+      .map((l) =>
+        l === "Bookings Yesterday: 11" ? "Bookings Friday: 11"
+        : l === "Total Lead Conversion — Yesterday: 63.6%" ? "Total Lead Conversion — Friday: 63.6%"
+        : l,
+      )
+      .join("\n");
+    expect(monday).toBe(expected);
+  });
+
+  test("anchor == calendar yesterday (Tue–Fri mornings): the SPEC example keeps '— Yesterday' verbatim", () => {
+    // specExampleMetrics anchors to 2026-09-24, the calendar prior day of its
+    // 2026-09-25 report — the SPEC's byte-pin text is UNCHANGED under the
+    // dynamic label (the calendar-yesterday branch renders the same words).
+    expect(buildDailyReportText(specExampleMetrics(), specExampleBig3)).toBe(SPEC_EXAMPLE);
+  });
+
+  test("AFTER the EOD cutoff (anchor == report date): the copy says '— Today'", () => {
+    const text = buildDailyReportText({ ...specExampleMetrics(), reportDate: "2026-09-24", anchorDate: "2026-09-24" }, specExampleBig3);
+    expect(text).toContain("Total Lead Conversion — Today: 63.6%");
+    expect(text).not.toContain("Total Lead Conversion — Yesterday");
+  });
+
+  test("source pin: the copy derives the label via the SHARED helper; the hardcoded literal is gone", () => {
+    expect(REPORT_SOURCE).toContain("totalLeadConversionAnchorLabel(m.anchorDate, m.reportDate)");
+    // The template-literal copy label (with its trailing colon) no longer
+    // exists in the builder; the label function's own branch (no colon) stays.
+    expect(REPORT_SOURCE).not.toContain("Total Lead Conversion — Yesterday:");
   });
 });

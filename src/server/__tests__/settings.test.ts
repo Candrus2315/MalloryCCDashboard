@@ -5,6 +5,7 @@
  * NEVER getStore(), which would touch the live Postgres from tests.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { MemoryStore } from "../store/memory";
 import {
   createSessionToken,
@@ -18,7 +19,8 @@ import {
 import { runDemoSync } from "../sync/run";
 import { applySheetMapping, columnLetterToIndex, sampleSheetRow } from "../sync/adapters";
 import { leadsToday, leadsForWeek, materializeRecurringBlocks } from "../metrics/compute";
-import { buildNonRosterPanel } from "../roster";
+import { buildNonRosterPanel, buildReportingEligibility } from "../roster";
+import { settingsPageSettings } from "../queries";
 import { rosterPanelVisibleRows } from "../../components/settings-views";
 
 const PASSPHRASE = "test-pass-1234";
@@ -333,5 +335,83 @@ describe("roster mapping payload (non-roster panel)", () => {
     const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel([], new Set(), CALLS, []);
     expect(nonRosterUsers).toEqual([]);
     expect(zeroCallCount).toBe(0);
+  });
+});
+
+// ---------- SETTINGS PAGE PAYLOAD TRIM — OWNER ERASE DIRECTIVE 2026-11-02 ----------
+// historical_reps (departed users' names + emails — Rule B email-identity
+// inputs, never display data) must not reach the browser on /settings.
+// Display/payload-only: the STORE keeps the field (buildReportingEligibility /
+// historicalRepIds read it from store.getSettings()), and the page's save
+// paths patch narrow fields with the store falling an absent key back to the
+// stored value — so the trim can never wipe the persisted list either.
+
+describe("settings page payload trim — historical_reps never reaches the browser", () => {
+  const LAURA = { name: "Laura Rivera", emails: ["laura@malloryportraits.com"] };
+
+  async function seededStore() {
+    const store = new MemoryStore();
+    await store.upsertUsers([
+      { provider: "highlevel", external_id: "allison", name: "Allison Wittner", email: "allison@malloryportraits.com", is_active: true, call_start_date: null },
+      { provider: "highlevel", external_id: "laura", name: "Laura Rivera", email: "laura@malloryportraits.com", is_active: false, call_start_date: null },
+    ]);
+    // The live 11/2 state shape: Laura is OFF the active roster and ON the
+    // historical list — so "Laura Rivera" in the stored settings can only be
+    // riding in via historical_reps (the default roster would leak her name
+    // through a DIFFERENT, legitimate field and mask the assertion).
+    await store.saveSettings({
+      active_roster: [
+        { name: "Allison Wittner", emails: ["allison@malloryportraits.com"] },
+        { name: "Carmine Morgano", emails: ["carmine@malloryportraits.com"] },
+        { name: "Gavin Hadji", emails: ["gavin@malloryportraits.com"] },
+      ],
+      historical_reps: [LAURA],
+    });
+    return store;
+  }
+
+  test("the payload omits historical_reps entirely; every other settings field rides through identical", async () => {
+    const store = await seededStore();
+    const stored = await store.getSettings();
+    expect(stored.historical_reps).toEqual([LAURA]); // the store keeps it
+
+    const payload = settingsPageSettings(stored);
+    expect("historical_reps" in payload).toBe(false);
+    const { historical_reps: _omitted, ...rest } = stored;
+    expect(JSON.stringify(payload)).toBe(JSON.stringify(rest)); // deep-equal minus the one key
+
+    // The departed user's name + email are nowhere in the serialized payload
+    // (the exact leak the owner's erase directive closes).
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("Laura Rivera");
+    expect(serialized).not.toContain("laura@malloryportraits.com");
+  });
+
+  test("the backend Rule B matcher is UNAFFECTED — reporting eligibility still admits the departed rep", async () => {
+    const store = await seededStore();
+    const stored = await store.getSettings();
+    const allUsers = await store.getAllUsers();
+    const laura = allUsers.find((u) => u.name === "Laura Rivera")!;
+    const reporting = buildReportingEligibility(allUsers, stored);
+    expect(reporting.activeIds.has(laura.id)).toBe(true); // preserved (Rule B / historical union)
+
+    // …while the payload the browser would see carries neither her id, her
+    // name, nor her email.
+    const serialized = JSON.stringify(settingsPageSettings(stored));
+    expect(serialized).not.toContain(laura.id);
+    expect(serialized).not.toContain("Laura Rivera");
+  });
+
+  test("a narrow save AFTER the trim preserves the persisted historical_reps (normalize falls the absent key back)", async () => {
+    const store = await seededStore();
+    const stored = await store.getSettings();
+    settingsPageSettings(stored); // the trimmed payload is what the browser holds
+    await store.saveSettings({ meaningful_call_threshold_seconds: 150 });
+    expect((await store.getSettings()).historical_reps).toEqual([LAURA]);
+  });
+
+  test("source pin: the settings loader ships the trimmed payload (queries.ts)", () => {
+    const q = readFileSync(new URL("../queries.ts", import.meta.url), "utf8");
+    expect(q).toContain("settings: settingsPageSettings(settings)");
   });
 });

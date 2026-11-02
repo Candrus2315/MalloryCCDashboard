@@ -174,7 +174,14 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     // % of Appt Achieved) are REPLACED by the two total-lead conversion lines
     // + the pickup line (owner decision 10/30 — the approved formula).
     // Same structure, same one-decimal convention.
-    `Total Lead Conversion — Yesterday: ${formatPercent(m.totalLeadConversionYesterday, 1)}`,
+    // OWNER DECISION 11/2 ("update copy"): the anchor-day line's dt label is
+    // DERIVED from the anchor — the same totalLeadConversionAnchorLabel call
+    // the PAGE's metric block renders with the SAME (anchorDate, reportDate)
+    // pair — so the copied text always names the day the figures cover
+    // ("— Friday" on a Monday-morning report, "— Yesterday" only when the
+    // anchor really is the calendar prior day, "— Today" after the EOD
+    // cutoff). Every other line stays byte-identical (SPEC pin).
+    `${totalLeadConversionAnchorLabel(m.anchorDate, m.reportDate)}: ${formatPercent(m.totalLeadConversionYesterday, 1)}`,
     // OWNER DECISION 11/2: the week line reports the LAST COMPLETED week —
     // the exact pairing the Weekly CC Report's headline uses — because the
     // week-TO-DATE ratio collapsed every Monday morning (weekend leads fold

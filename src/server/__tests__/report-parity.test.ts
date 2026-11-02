@@ -254,6 +254,21 @@ describe("CROSS-REPORT PARITY (owner 10/30): Daily Report == Weekly CC Report, s
     expect(weeklyText).not.toContain("Conversion of Assigned Leads");
   });
 
+  test("5b — the copied anchor-day label follows the anchor (owner decision 11/2): Monday morning names FRIDAY, every other line byte-identical", () => {
+    // The same report re-dated to the Monday-morning shape (anchor Friday
+    // 9/25, report Monday 9/28): the copied conversion line says "— Friday" —
+    // the SAME totalLeadConversionAnchorLabel output the page renders — the
+    // Bookings line's label moves with the same anchor (already dynamic since
+    // 10/30), and every OTHER line is byte-identical to the render above.
+    const mondayText = buildDailyReportText({ ...m, reportDate: "2026-09-28", anchorDate: FRI }, { priority1: "a", priority2: "b", priority3: "c" });
+    expect(lineOf(mondayText, "Total Lead Conversion — Friday:")).toBe("Total Lead Conversion — Friday: 1.0%");
+    expect(lineOf(mondayText, "Bookings Friday:")).toBe("Bookings Friday: 2");
+    expect(mondayText).not.toContain("Total Lead Conversion — Yesterday");
+    expect(mondayText.split("\n").filter((l) => l !== "Total Lead Conversion — Friday: 1.0%" && l !== "Bookings Friday: 2")).toEqual(
+      dailyText.split("\n").filter((l) => l !== "Total Lead Conversion — Yesterday: 1.0%" && l !== "Bookings Yesterday: 2"),
+    );
+  });
+
   test("6 — the TODAY strip's WTD count is the SAME numerator the Daily week lines consume", () => {
     // Same fixture rows into both pure builders: Today's canonical WTD
     // (deposit-date Booking-Win chain) == Daily "Bookings for the Week".
