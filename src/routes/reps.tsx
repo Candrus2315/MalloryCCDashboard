@@ -104,9 +104,10 @@ function RepsPage() {
   const router = useRouter();
   const search = Route.useSearch();
   const d = data.detail;
-  // HISTORICAL REP (owner directive 2026-10-20): the selected rep is a departed
-  // rep kept on the reporting surfaces — the detail header shows a Past-rep
-  // chip so her historical numbers are never read as current output.
+  // PAST REP marker: unreachable via the UI since the owner directive
+  // 2026-11-02 — the picker (data.repList) lists ONLY active-roster users, so
+  // a selected historical rep can only come from a directly-linked URL. The
+  // branch stays harmless; the chip keeps any deep link honest.
   const selectedRepHistorical = data.repList.find((r) => r.isSelected)?.historical ?? false;
 
   const [customFrom, setCustomFrom] = useState(search.from ?? "");
@@ -184,14 +185,14 @@ function RepsPage() {
 
   // ---------- ASSIGNED GRID GROUPING (owner redesign, presentation only) ----
   // CC roster vs other lead owners is DERIVED from the payload, not hardcoded:
-  // data.repList is the exact active-roster list the grid's builder seeds as
-  // rosterReps (page-data maps the same `reps` array), so a row whose rep_id
-  // is in repList is a CC roster rep and everything else (Mallory Portraits
-  // Accounts, Amy Clark, Lexa Brandis …) is an "Other Lead Owner". Dan
-  // McKillop keeps his existing derived behavior — roster-active ⇒ CC group.
-  // Both groups render the SAME verified rows in the builder's order; nothing
-  // is filtered, recomputed, or dropped. Team Total below stays the builder's
-  // full-grid rollup (dayTotals + weekTotal include every lead owner).
+  // data.repList is the ACTIVE-ROSTER-ONLY picker list (owner directive
+  // 2026-11-02 — inactive/departed users are never presented as CC reps), so a
+  // row whose rep_id is in repList is a CC roster rep and everything else
+  // (Mallory Portraits Accounts, Amy Clark, Lexa Brandis … a departed rep's
+  // preserved historical row) is an "Other Lead Owner". Both groups render the
+  // SAME verified rows in the builder's order; nothing is filtered, recomputed,
+  // or dropped. Team Total below stays the builder's full-grid rollup
+  // (dayTotals + weekTotal include every lead owner).
   const assignedGrid = data.assignedByDay;
   const rosterIdSet = useMemo(() => new Set(data.repList.map((r) => r.id)), [data.repList]);
   const ccRows = assignedGrid.rows.filter((r) => rosterIdSet.has(r.rep_id));
@@ -525,56 +526,17 @@ function RepsPage() {
           </div>
           <p className="mt-2 text-xs text-(--text-muted)">Bookings · calls in the selected range.</p>
 
-          {/* CALL-OWNERSHIP BUCKETS (design/data-terminology.md — three, mutually
-              exclusive). "Non Roster Calls" = a KNOWN HL user outside the CC
-              roster; "Unattributed" = ONLY rows with no determinable owner.
-              Both stay visible here and are EXCLUDED from every roster/team
-              total; mapping a user (Settings) moves them into roster math at
-              query time without touching any source record. */}
-          {data.nonRoster && (
-            <div className="mt-4">
-              <p className="section-heading mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                Non Roster Calls
-                <InfoTip
-                  tip="Calls from valid HighLevel users outside the CC roster. Fully visible and auditable but excluded from CC rep metrics, team metrics, conversions, goal progress and coaching logic — unless the user is mapped to the roster in Settings → Roster Mapping. Raw rows: Audit page → Non Roster Calls."
-                  label="What Non Roster Calls means"
-                />
-              </p>
-              <div className="card p-3">
-                {data.nonRoster.users.length === 0 ? (
-                  <p className="text-[12px] text-(--text-caption)">No non-roster calls in this window.</p>
-                ) : (
-                  <ul className="divide-y divide-(--table-border-weak)">
-                    {data.nonRoster.users.map((u) => (
-                      <li key={u.key} className="flex items-baseline justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
-                        <span className="min-w-0 truncate text-[12px] font-medium text-(--text-body)" title={u.key}>
-                          {u.name ?? u.key}
-                        </span>
-                        <span className="shrink-0 tabular-nums text-[12px] text-(--text-caption)">
-                          {formatInt(u.calls)} call{u.calls === 1 ? "" : "s"} ·{" "}
-                          {formatInt(u.overThreshold)} &gt;{data.thresholdSeconds}s
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {data.nonRoster.totalCalls > 0 && (
-                  <p className="mt-2 border-t border-(--table-border-weak) pt-2 text-xs tabular-nums text-(--text-caption)">
-                    Total: {formatInt(data.nonRoster.totalCalls)} calls ·{" "}
-                    {formatInt(data.nonRoster.totalOverThreshold)} over threshold — excluded from roster and team
-                    totals.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
+          {/* CALL-OWNERSHIP BUCKET (design/data-terminology.md): Unattributed =
+              ONLY rows with no determinable owner. It stays visible here and is
+              EXCLUDED from every roster/team total. ("Non Roster Calls" was
+              erased from the UI by owner directive 2026-11-02; the underlying
+              call rows are untouched.) */}
           {data.unattributed && (
             <div className="mt-4">
               <p className="section-heading mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                 Unattributed
                 <InfoTip
-                  tip="Reserved EXCLUSIVELY for call records whose ownership genuinely cannot be determined (no HighLevel user id). Never used for non-roster users; excluded from every roster and team total."
+                  tip="Reserved EXCLUSIVELY for call records whose ownership genuinely cannot be determined (no HighLevel user id). Excluded from every roster and team total."
                   label="What Unattributed means"
                 />
               </p>

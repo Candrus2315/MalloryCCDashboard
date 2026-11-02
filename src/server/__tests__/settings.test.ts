@@ -311,9 +311,10 @@ describe("roster mapping payload (non-roster panel)", () => {
     ["u_laura", 500], // active rep — never appears in the panel
   ]);
 
-  test("payload carries callCount + zeroCallCount; server sends ALL inactive users (zero-call rows included, never server-filtered)", () => {
+  test("payload carries callCount + isActive + zeroCallCount; server sends ALL inactive users (data preserved — the PANEL is what stops listing them)", () => {
     const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel(ALL_USERS, new Set(["r_laura", "r_admin"]), CALLS, []);
-    expect(nonRosterUsers).toHaveLength(6); // every inactive user — the panel hides zero-call rows client-side only
+    expect(nonRosterUsers).toHaveLength(6); // every inactive user stays in the PAYLOAD (owner directive 2026-11-02 gates the panel, not the data)
+    expect(nonRosterUsers.every((u) => u.isActive === false)).toBe(true); // the flag the visibility gate reads
     expect(nonRosterUsers.map((u) => [u.name, u.callCount])).toEqual([
       ["Christy West", 349], // sort: callCount desc…
       ["Meg Morton", 1],
@@ -322,10 +323,10 @@ describe("roster mapping payload (non-roster panel)", () => {
       ["Rocket App", 0],
       ["TEST BOOKER", 0],
     ]);
-    expect(zeroCallCount).toBe(4); // toggle label "Show all (4)"
+    expect(zeroCallCount).toBe(4);
   });
 
-  test("zero-call user stays in the payload WITH its mapping — select still works when shown (UI-default filter only)", () => {
+  test("OWNER DIRECTIVE 2026-11-02: the panel lists NO inactive user — not mapped, not with calls, not show-all", () => {
     const mappings = [{ external_user_id: "u_test", rep_id: "r_laura" }];
     const { nonRosterUsers, zeroCallCount } = buildNonRosterPanel(ALL_USERS, new Set(["r_laura", "r_admin"]), CALLS, mappings);
     expect(nonRosterUsers.find((u) => u.externalId === "u_test")).toEqual({
@@ -333,11 +334,13 @@ describe("roster mapping payload (non-roster panel)", () => {
       name: "TEST BOOKER",
       callCount: 0,
       mappedTo: "r_laura", // mapping resolves even with zero calls
+      isActive: false,
     });
     expect(zeroCallCount).toBe(4);
-    // panel default hides it; show-all reveals it with the select's data intact
-    expect(rosterPanelVisibleRows(nonRosterUsers, false).some((u) => u.externalId === "u_test")).toBe(false);
-    expect(rosterPanelVisibleRows(nonRosterUsers, true).find((u) => u.externalId === "u_test")?.mappedTo).toBe("r_laura");
+    // the display-layer gate: inactive rows are invisible in BOTH view states —
+    // no toggle can reveal them; existing mappings stay active in the payload
+    expect(rosterPanelVisibleRows(nonRosterUsers, false)).toEqual([]);
+    expect(rosterPanelVisibleRows(nonRosterUsers, true)).toEqual([]);
   });
 
   test("empty inactive set → empty rows, zeroCallCount 0 (never a guessed count)", () => {

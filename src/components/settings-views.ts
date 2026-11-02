@@ -377,16 +377,21 @@ export function queueReasonBreakdown(rows: { reason: string | null; reason_code?
 
 // ---------- 7 — Roster Mapping panel visibility (owner directive) ----------
 /**
- * Roster Mapping panel rows for the CURRENT view state. Owner directive
- * ("erase everyone not on my roster"): by default the panel lists only
- * non-roster HighLevel users WITH calls in the last 30-day window — zero-call
- * rows (test/app/marketing accounts) stay behind a show-all toggle. This is a
- * CLIENT-DEFAULT filter only: the server payload always sends every inactive
- * user, and a zero-call user stays mappable once revealed (select untouched).
+ * Roster Mapping panel rows for the CURRENT view state. OWNER DIRECTIVE
+ * 2026-11-02 (supersedes the 10/20 zero-call-only default): INACTIVE users are
+ * NEVER listed in the panel — no show-all toggle can reveal them. The payload
+ * still carries every inactive user (data preserved, mappings untouched); this
+ * is the single display-layer gate. Any row that is not inactive (defensive
+ * isActive !== false) then follows the historical 30-day default: users WITH
+ * calls in the last 30-day window; zero-call rows behind the show-all toggle.
  * Client-local state, never persisted.
  */
-export function rosterPanelVisibleRows<T extends { callCount: number }>(rows: T[], showAll: boolean): T[] {
-  return showAll ? rows : rows.filter((u) => u.callCount > 0);
+export function rosterPanelVisibleRows<T extends { callCount: number; isActive?: boolean }>(
+  rows: T[],
+  showAll: boolean,
+): T[] {
+  const listed = rows.filter((u) => u.isActive !== false);
+  return showAll ? listed : listed.filter((u) => u.callCount > 0);
 }
 
 // ---------- 7b — Unattributed queue declutter (owner request 2026-10-21) ----------

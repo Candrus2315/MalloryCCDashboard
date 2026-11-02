@@ -278,22 +278,44 @@ describe("queueReasonBreakdown — grouped counts at the top of the manual-decis
   });
 });
 
-// ---------- 7 — Roster Mapping panel visibility (owner directive) ----------
+// ---------- 7 — Roster Mapping panel visibility (OWNER DIRECTIVE 2026-11-02) ----------
 describe("rosterPanelVisibleRows", () => {
-  const row = (externalId: string, callCount: number, mappedTo: string | null = null) => ({ externalId, callCount, mappedTo });
+  const row = (externalId: string, callCount: number, mappedTo: string | null = null, isActive = false) => ({
+    externalId,
+    callCount,
+    mappedTo,
+    isActive,
+  });
+  // The live panel shape: EVERY row is an INACTIVE (non-roster) user.
   const ROWS = [row("u_christy", 349), row("u_meg", 1), row("u_test", 0, "r_laura"), row("u_rocket", 0)];
 
-  test("default view shows only users WITH calls — zero-call rows (test/app accounts) are noise", () => {
-    expect(rosterPanelVisibleRows(ROWS, false).map((r) => r.externalId)).toEqual(["u_christy", "u_meg"]);
+  test("OWNER DIRECTIVE 2026-11-02: inactive users are NEVER listed — no toggle reveals them", () => {
+    expect(rosterPanelVisibleRows(ROWS, false)).toEqual([]);
+    expect(rosterPanelVisibleRows(ROWS, true)).toEqual([]);
   });
 
-  test("show-all reveals every row INCLUDING the mapped zero-call user (select still works when shown)", () => {
-    expect(rosterPanelVisibleRows(ROWS, true).map((r) => r.externalId)).toEqual(["u_christy", "u_meg", "u_test", "u_rocket"]);
-    expect(rosterPanelVisibleRows(ROWS, true).find((r) => r.externalId === "u_test")?.mappedTo).toBe("r_laura");
+  test("rows WITHOUT an isActive flag keep the historical 30-day rule (defensive — legacy callers)", () => {
+    const legacy = [
+      { externalId: "u_christy", callCount: 349, mappedTo: null },
+      { externalId: "u_meg", callCount: 1, mappedTo: null },
+      { externalId: "u_test", callCount: 0, mappedTo: "r_laura" },
+      { externalId: "u_rocket", callCount: 0, mappedTo: null },
+    ];
+    // default view shows only users WITH calls — zero-call rows are noise;
+    // show-all reveals every row INCLUDING the mapped zero-call user
+    expect(rosterPanelVisibleRows(legacy, false).map((r) => r.externalId)).toEqual(["u_christy", "u_meg"]);
+    expect(rosterPanelVisibleRows(legacy, true).map((r) => r.externalId)).toEqual(["u_christy", "u_meg", "u_test", "u_rocket"]);
+    expect(rosterPanelVisibleRows(legacy, true).find((r) => r.externalId === "u_test")?.mappedTo).toBe("r_laura");
+  });
+
+  test("a non-inactive row (isActive true) follows the call-count rule — the gate is inactive-specific", () => {
+    const mixed = [row("u_active", 5, null, true), row("u_active_zero", 0, null, true), ...ROWS];
+    expect(rosterPanelVisibleRows(mixed, false).map((r) => r.externalId)).toEqual(["u_active"]);
+    expect(rosterPanelVisibleRows(mixed, true).map((r) => r.externalId)).toEqual(["u_active", "u_active_zero"]);
   });
 
   test("all-zero-call roster → default view empty (the panel's honest empty state), show-all lists all", () => {
-    const zeros = [row("a", 0), row("b", 0)];
+    const zeros = [row("a", 0, null, true), row("b", 0, null, true)];
     expect(rosterPanelVisibleRows(zeros, false)).toEqual([]);
     expect(rosterPanelVisibleRows(zeros, true)).toEqual(zeros);
   });

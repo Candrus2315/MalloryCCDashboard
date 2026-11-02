@@ -113,7 +113,7 @@ function AuditPage() {
             <span className="h-1 w-1 shrink-0 rounded-full bg-(--dot-muted)" aria-hidden="true" />
             <span>DB call rows for one rep × one day · America/New_York</span>
             <InfoTip
-              tip={`Read-only rows from the normalized calls table — the same rows Reps/Team count. Over-threshold uses the live settings threshold (${p?.threshold_seconds ?? 120}s), the same rule as every page; no live HighLevel harvesting happens here. Also served as JSON at /api/audit. Buckets per the owner's terminology: Non Roster Calls = a known HighLevel user outside the CC roster; Unattributed = no determinable owner. Roster mappings (Settings) change reporting eligibility at query time — these raw rows always show the original source values.`}
+              tip={`Read-only rows from the normalized calls table — the same rows Reps/Team count. Over-threshold uses the live settings threshold (${p?.threshold_seconds ?? 120}s), the same rule as every page; no live HighLevel harvesting happens here. Also served as JSON at /api/audit. Unattributed (owner's terminology) = rows with no determinable owner. Roster mappings (Settings) change reporting eligibility at query time — these raw rows always show the original source values.`}
               label="About these audit rows"
             />
           </p>
@@ -142,7 +142,9 @@ function AuditPage() {
               className="input-field max-md:w-full"
             >
               <option value="all">{data.picker?.allLabel ?? "All calls"}</option>
-              <option value="non-roster">{data.picker?.nonRosterLabel ?? "Non Roster Calls"}</option>
+              {/* "non-roster" removed from the picker (owner directive
+                  2026-11-02) — the bucket itself stays available at
+                  /api/audit?rep=non-roster and via old links. */}
               <option value="unattributed">{data.picker?.unattributedLabel ?? "Unattributed"}</option>
               <option value="unassigned">{data.picker?.unassignedLabel ?? "Unassigned (legacy — both buckets)"}</option>
               {(data.picker?.reps ?? []).map((r) => (
@@ -304,12 +306,12 @@ function CallEventRow({ r }: { r: AuditOkBody["rows"][number] }) {
               </span>
             </span>
             <span className="mt-0.5 block text-[13px] leading-snug text-(--text-body)">
+              {/* non-roster badge removed (owner directive 2026-11-02) — the
+                  raw row and its name stay; a non-roster owner just renders in
+                  the caption tone. */}
               <span className={r.rep_is_active === false ? "text-(--text-caption)" : "font-medium text-(--text-primary)"}>
                 {r.rep_name ?? "(no user)"}
               </span>
-              {r.rep_is_active === false && (
-                <span className="ml-1.5 text-[11px] uppercase tracking-wide text-(--banner-fg)">non-roster</span>
-              )}
               <span className="mx-1.5 text-(--text-faint)">·</span>
               <span className="tabular-nums">{formatInt(r.duration_seconds)}s</span>
               <span className="mx-1.5 text-(--text-faint)">·</span>
@@ -333,12 +335,10 @@ function CallEventRow({ r }: { r: AuditOkBody["rows"][number] }) {
             <div className="min-w-0">
               <p className={detailLabel}>Rep</p>
               <p className="mt-0.5 text-(--text-body)">
+                {/* non-roster badge removed (owner directive 2026-11-02). */}
                 <span className={r.rep_is_active ? "font-medium text-(--text-primary)" : "text-(--text-caption)"}>
                   {r.rep_name ?? "(no user)"}
                 </span>
-                {r.rep_is_active === false && (
-                  <span className="ml-1.5 text-[11px] uppercase tracking-wide text-(--banner-fg)">non-roster</span>
-                )}
               </p>
             </div>
             <div className="min-w-0">

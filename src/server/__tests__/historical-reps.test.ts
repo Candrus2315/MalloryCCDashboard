@@ -266,32 +266,37 @@ describe("HISTORICAL REPS — (c) Weekly output for the departed rep equals pre-
   });
 });
 
-// ---------- Reps page: restored row + team totals + Past-rep marker ----------
+// ---------- Reps page: picker is ACTIVE-ROSTER-ONLY (owner directive 2026-11-02,
+// superseding the 10/20 UI presentation of departed reps; data rows preserved) ----------
 
-describe("HISTORICAL REPS — Reps page restores the departed rep (marked Past rep)", () => {
-  test("departed rep's row, calls and team averages return; she leaves the Non Roster bucket", async () => {
+describe("HISTORICAL REPS — Reps page picker lists ONLY the active roster (directive 2026-11-02)", () => {
+  test("the departed rep is erased from the picker; her data rows and the unreachable detail branch stay", async () => {
     const departed = await seedLauraWeek("departed");
     const reps = await repsPageData({ range: "last-week", week: LW_MON }, { store: departed.store, today: TODAY });
 
-    const laura = reps.repList.find((r) => r.name === "Laura Rivera");
-    expect(laura).toBeDefined();
-    expect(laura!.historical).toBe(true); // the Past-rep marker
-    expect(laura!.totalCalls).toBe(3); // her in-week calls restored
-    expect(laura!.totalBookings).toBe(2); // her wins restored
+    // The picker lists ONLY the active-roster users — Laura is gone from it.
+    expect(reps.repList.map((r) => r.name).sort()).toEqual(["Allison Wittner", "Dan McKillop"]);
+    expect(reps.repList.find((r) => r.name === "Laura Rivera")).toBeUndefined();
+    expect(reps.repList.every((r) => r.historical === false)).toBe(true);
 
-    // She is a CC-rep owner again in the assigned-leads grid, NOT an "Other Lead Owner".
+    // The "Non Roster Calls" section is erased from the UI: the payload no
+    // longer carries the nonRoster rollup (the underlying call rows untouched).
+    expect("nonRoster" in reps).toBe(false);
+
+    // Her preserved historical row STAYS in the assigned-leads grid (data
+    // preserved); with the active-only picker she now groups under the
+    // collapsed "Other Lead Owners" set (her rep_id is not in repList).
     const gridLaura = reps.assignedByDay.rows.find((r) => r.rep_name === "Laura Rivera");
     expect(gridLaura).toBeDefined();
     expect(gridLaura!.total.family).toBe(1);
+    expect(reps.repList.some((r) => r.id === gridLaura!.rep_id)).toBe(false);
 
-    // Team averages cover ALL THREE reps again (incl. the departed one).
-    expect(reps.repList).toHaveLength(3);
-    expect(reps.nonRoster.users.some((u) => u.name === "Laura Rivera")).toBe(false);
-
-    // selectable: ?rep=<lauraId> resolves her detail with the same metrics.
+    // Selectable? NO — never from the UI. A directly-linked ?rep=<lauraId>
+    // still resolves her detail (the historical branch is unreachable, not
+    // removed), and no repList row carries the selection.
     const detail = await repsPageData({ range: "last-week", week: LW_MON, rep: departed.lauraId }, { store: departed.store, today: TODAY });
     expect(detail.detail?.rep.name).toBe("Laura Rivera");
-    expect(detail.repList.find((r) => r.isSelected)?.historical).toBe(true);
+    expect(detail.repList.find((r) => r.isSelected)).toBeUndefined();
   });
 });
 
