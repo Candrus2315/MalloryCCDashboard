@@ -300,6 +300,30 @@ export const TICK_WATCHDOG_CAP_MS = 30 * 60_000;
 export const STALE_RUN_REAP_MINUTES = TICK_WATCHDOG_CAP_MS / 60_000;
 
 /**
+ * PER-RUN WALL-CLOCK BUDGET for the HighLevel passes (2026-11-02 wedge — a
+ * HighLevel pass hung ~30 min and its 'running' sync_runs row deadlocked every
+ * tick behind the running guard, because nothing bounded the RUN as a whole).
+ * Mirror of the Acuity budget (sync/acuity-run-budget.ts, which carries the
+ * full rationale + the race mechanics); the named constant lives HERE — the
+ * shared-liveness-constants home — next to the reap window it must sit under,
+ * so the invariant is checkable without an import cycle (raceHighLevelRunBudget
+ * in sync/highlevel-run-budget.ts consumes it).
+ *
+ * 10 minutes: HighLevel passes normally finish in seconds (incremental harvest
+ * caps its page walks; every fetch is individually bounded by the ~90s
+ * fetch-timeout), and 10 min sits WELL under the 30-min STALE_RUN_REAP_MINUTES
+ * window — a breached pass rejects, the caller's EXISTING error path finishes
+ * the row with the honest "run budget exceeded" error, and the next tick
+ * retries, so the row never parks 'running' and the reaper keeps its meaning
+ * (crashed processes only). Env-overridable via HIGHLEVEL_RUN_BUDGET_MS (ms);
+ * an invalid value falls back to the default rather than disabling the bound.
+ */
+export const HIGHLEVEL_RUN_BUDGET_MS = 10 * 60_000;
+
+/** The env var that can override the HighLevel run budget (milliseconds). */
+export const HIGHLEVEL_RUN_BUDGET_ENV = "HIGHLEVEL_RUN_BUDGET_MS";
+
+/**
  * Defensive started_at parse. Accepts ISO strings AND Postgres's text form
  * ("YYYY-MM-DD HH:MM:SS.ffffff+00" — space separator, microseconds) that some
  * engines' Date.parse rejects; retries with a "T" separator before giving up.
