@@ -347,6 +347,13 @@ describe("dailyReportPageData under the anchor rule", () => {
     const conversionLabel = totalLeadConversionAnchorLabel(data.metrics.anchorDate, data.metrics.reportDate);
     expect(conversionLabel).toContain("Friday");
     expect(conversionLabel).not.toContain("Yesterday");
+    // OWNER DECISION 11/2 ("update copy"): the COPIED text's anchor-day
+    // conversion line uses the SAME derived label — it names FRIDAY here,
+    // exactly like the page, in all three copy variants.
+    expect(data.reportText).toContain("Total Lead Conversion — Friday: 100.0%"); // 1 qualifying win ÷ 1 Friday lead
+    expect(data.emailText).toContain("Total Lead Conversion — Friday: 100.0%");
+    expect(data.slackText).toContain("Total Lead Conversion — Friday: 100.0%");
+    expect(data.reportText).not.toContain("Total Lead Conversion — Yesterday:");
   });
 
   test("OWNER 11/2: Monday morning's 'Total Lead Conversion — Last Week' is the COMPLETED week's rate, not WTD", async () => {
@@ -394,6 +401,10 @@ describe("dailyReportPageData under the anchor rule", () => {
     // the unavailable-banner for it never fires.
     expect(data.metrics.totalLeadConversionYesterday).toBeCloseTo(0, 6);
     expect(data.warnings.some((w) => w.includes("Total Lead Conversion — Yesterday is unavailable"))).toBe(false);
+    // OWNER DECISION 11/2 ("update copy"): with the anchor at TODAY (post-EOD),
+    // the copied anchor-day line reads "— Today" — the same label the page
+    // renders, never "Yesterday" about today's figures.
+    expect(data.reportText).toContain("Total Lead Conversion — Today: 0.0%");
   });
 });
 

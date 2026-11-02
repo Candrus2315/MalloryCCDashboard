@@ -94,6 +94,26 @@ export const getStatusHealthData = createServerFn().handler(async (): Promise<St
   return statusHealthPageData();
 });
 
+/**
+ * SETTINGS PAGE PAYLOAD TRIM — OWNER ERASE DIRECTIVE (2026-11-02): the
+ * browser payload carries NO historical_reps. Its entries are DEPARTED users'
+ * names + emails (Laura Rivera, Dan McKillop) — Rule B email-identity inputs,
+ * never display data — and they must not reach the browser on /settings.
+ * Display/payload-only trim, by construction:
+ *  - the STORE keeps the field and every server-side consumer reads it from
+ *    store.getSettings() (buildReportingEligibility / historicalRepIds — the
+ *    Rule B matcher), never from this payload;
+ *  - the settings page's save paths patch NARROW fields (saveSettings: only
+ *    thresholdSeconds/windowHours) and normalizeAppSettings falls an absent
+ *    key back to the stored value, so the trimmed payload can never wipe the
+ *    persisted list on a save.
+ * Everything else rides through byte-identical (deep-equal minus the one key).
+ */
+export function settingsPageSettings(settings: AppSettings): Omit<AppSettings, "historical_reps"> {
+  const { historical_reps: _historicalRepsOmitted, ...payload } = settings;
+  return payload;
+}
+
 /** SETTINGS page data — every editable surface loads its rows here. */
 export const getSettingsData = createServerFn().handler(() => withDbRetry(async () => {
   const store = await getStore();
@@ -215,7 +235,10 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
   const { isPassphraseConfigured } = await import("./auth");
   return {
     meta,
-    settings,
+    // OWNER ERASE DIRECTIVE 2026-11-02: settingsPageSettings strips
+    // historical_reps (departed users' names + emails) from the browser
+    // payload — display-only, the store-side matcher keeps the field.
+    settings: settingsPageSettings(settings),
     passphraseConfigured: isPassphraseConfigured(),
     weekStart: ws,
     today,
