@@ -192,12 +192,12 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     });
   });
 
-  // Roster Mapping panel: non-roster HighLevel users seen in the last 30 days
-  // of calls, with call counts (calls carry the RAW HL user id — immutable).
-  // Built by the pure buildNonRosterPanel (roster.ts) — the payload STILL
-  // carries every inactive user; zero-call rows are hidden by the PANEL's
-  // client-local default only (owner directive, "erase everyone not on my
-  // roster"), labeled by zeroCallCount.
+  // Roster Mapping panel payload: built by the pure buildNonRosterPanel
+  // (roster.ts). OWNER DIRECTIVE 2026-11-02 (erase follow-up): the payload
+  // carries NO inactive user at all — their names must never reach the browser
+  // (previously every inactive user rode in the payload with only the PANEL
+  // gating them out of view). Existing mappings stay active: the "Active
+  // mappings" line renders from settings.rep_mappings, never from this list.
   const activeIds = new Set(users.map((u) => u.id));
   const callsByExternalId = new Map<string, number>();
   for (const c of callsWindow) {

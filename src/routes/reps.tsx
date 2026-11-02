@@ -114,8 +114,10 @@ function RepsPage() {
   const [customTo, setCustomTo] = useState(search.to ?? "");
   const [sortKey, setSortKey] = useState<SortKey>("metric");
   const [sortAsc, setSortAsc] = useState(true);
-  // Other Lead Owners disclosure (owner redesign): collapsed by default — the
-  // rows never disappear, they just stop competing with the CC roster.
+  // Other Lead Owners disclosure (owner redesign): collapsed by default —
+  // inactive owners' rows are erased at the payload builder (owner directive
+  // 2026-11-02 erase follow-up); the disclosure keeps the remaining non-roster
+  // rows from competing with the CC roster.
   const [showOtherOwners, setShowOtherOwners] = useState(false);
 
   const setRange = (mode: RangeMode) => {
@@ -187,12 +189,15 @@ function RepsPage() {
   // CC roster vs other lead owners is DERIVED from the payload, not hardcoded:
   // data.repList is the ACTIVE-ROSTER-ONLY picker list (owner directive
   // 2026-11-02 — inactive/departed users are never presented as CC reps), so a
-  // row whose rep_id is in repList is a CC roster rep and everything else
-  // (Mallory Portraits Accounts, Amy Clark, Lexa Brandis … a departed rep's
-  // preserved historical row) is an "Other Lead Owner". Both groups render the
-  // SAME verified rows in the builder's order; nothing is filtered, recomputed,
-  // or dropped. Team Total below stays the builder's full-grid rollup
-  // (dayTotals + weekTotal include every lead owner).
+  // row whose rep_id is in repList is a CC roster rep and everything else is an
+  // "Other Lead Owner". OWNER DIRECTIVE 2026-11-02 (erase follow-up): the
+  // payload builder already drops inactive users' rows, so the group header
+  // below (owner count + lead total) is recomputed from the VISIBLE rows only
+  // and the whole group renders not at all when none remain — no inactive name
+  // reaches the browser. Both groups still render the SAME verified rows in
+  // the builder's order; nothing is filtered or recomputed HERE. Team Total
+  // below stays the builder's full-grid rollup (dayTotals + weekTotal include
+  // EVERY assigned lead — inactive owners' leads included, rows dropped).
   const assignedGrid = data.assignedByDay;
   const rosterIdSet = useMemo(() => new Set(data.repList.map((r) => r.id)), [data.repList]);
   const ccRows = assignedGrid.rows.filter((r) => rosterIdSet.has(r.rep_id));
@@ -947,7 +952,7 @@ function RepsPage() {
             <span className="inline-flex items-center gap-1.5">
               <p className="section-heading">Assigned Leads by Day</p>
               <InfoTip
-                tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by the rep's HighLevel user (bucketed by ET created date). All dates America/New_York; unassigned sheet leads are excluded. Each cell stacks the count with its genre label — Animalia, Family or Fairyland — and Al · Au mark Alliance/Auction leads that rep owns. Team Total sums every lead owner shown, including the collapsed Other Lead Owners. The four Forms Data tabs (Auction Certificates, Google Ads, Alliance Certificates, Website Applications) have no session genre and no rep, so they never enter rep cells — the labeled team row beneath the grid carries them, each source with its own colored tick on the breakdown line (the row's combined day counts stay unticked because sources mix inside a day). CSV columns: rep, day, genre, assigned_leads — rep rows use Animalia / Family / Fairyland / Alliance / Auction; the form-source rows (rep “(no rep — team total)”) use the machine keys auction_certificate, google_ads, alliance_certificate, website."
+                tip="Assigned sheet leads per rep and ET work day, plus Alliance/Auction leads owned by the rep's HighLevel user (bucketed by ET created date). All dates America/New_York; unassigned sheet leads are excluded. Each cell stacks the count with its genre label — Animalia, Family or Fairyland — and Al · Au mark Alliance/Auction leads that rep owns. Team Total sums EVERY assigned lead — including inactive owners whose name rows the payload no longer carries (owner directive 2026-11-02) — plus the collapsed Other Lead Owners. The four Forms Data tabs (Auction Certificates, Google Ads, Alliance Certificates, Website Applications) have no session genre and no rep, so they never enter rep cells — the labeled team row beneath the grid carries them, each source with its own colored tick on the breakdown line (the row's combined day counts stay unticked because sources mix inside a day). CSV columns: rep, day, genre, assigned_leads — rep rows use Animalia / Family / Fairyland / Alliance / Auction; the form-source rows (rep “(no rep — team total)”) use the machine keys auction_certificate, google_ads, alliance_certificate, website."
                 label="What Assigned Leads by Day shows"
               />
             </span>
