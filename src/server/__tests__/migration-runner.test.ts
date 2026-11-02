@@ -33,7 +33,7 @@ import {
   type MigrationRecord,
   type MigrationRunnerIo,
 } from "../store/migrations/runner";
-import { migrationChecksum, MIGRATIONS, CURRENT_SCHEMA_VERSION } from "../store/migrations/registry";
+import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from "../store/migrations/registry";
 import { migration as evidenceMessages } from "../store/migrations/001_evidence_messages";
 const EVIDENCE_STMTS = evidenceMessages.statements!;
 import { migration as baseline } from "../store/migrations/000_baseline";
@@ -201,7 +201,7 @@ describe("migration runner — fresh-empty DB: full apply in order, stamped", ()
     // the stamps are the LAST writes and carry version + name + checksum
     expect(io.insertParams.length).toBe(2);
     expect(io.insertParams[0]).toEqual([1, "baseline", EXPECTED_CHECKSUM]);
-    expect(io.insertParams[1]).toEqual([2, "evidence_messages", MIGRATIONS[1]!.checksum!]);
+    expect(io.insertParams[1]).toEqual([2, "evidence_messages", migrationChecksum(MIGRATIONS[1]!)]);
     expect(io.executed[io.executed.length - 1]).toBe(io.executed.find(isMarkerInsert));
   });
 });
@@ -243,10 +243,11 @@ describe("migration runner — drift refuses to boot with a named error", () => 
     expect(io.executed.length).toBe(2);
   });
   test("recorded version the registry does not contain (DB ahead of code / lost file)", async () => {
-    // a v2 row with only the v1 registry entry: position 1 has no registry migration
+    // rows beyond the registry's top version: position 2 has no registry migration
     const io = makeIo({
       records: [
         { version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM },
+        { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) },
         { version: 3, name: "future", checksum: EXPECTED_CHECKSUM },
       ],
     });
@@ -268,7 +269,7 @@ describe("migration runner — dispatch + failure atomicity (synthetic migration
     ...over,
   });
   test("transactional statement-list migration routes through begin(); marker commits with it", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
     const result = await runMigrations(io, [baseline, makeV2()], CAP);
     expect(result.applied).toEqual([2]);
     expect(io.beginCalls).toBe(1);
@@ -276,20 +277,20 @@ describe("migration runner — dispatch + failure atomicity (synthetic migration
     expect(io.insertParams[0]).toEqual([2, "add_thing", migrationChecksum(makeV2())]);
   });
   test("nonTransactional statement-list runs per-statement autocommit (the baseline's mode)", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
     await runMigrations(io, [baseline, makeV2({ nonTransactional: true })], CAP);
     expect(io.beginCalls).toBe(0);
     expect(io.executed).toContain("CREATE TABLE IF NOT EXISTS thing (id int)");
   });
   test("programmatic up() transactional receives the transaction handle", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
     const v2 = makeV2({ statements: undefined, up: async (tx) => void (await tx.unsafe("ALTER TABLE thing ADD COLUMN IF NOT EXISTS y int")) });
     await runMigrations(io, [baseline, v2], CAP);
     expect(io.beginCalls).toBe(1);
     expect(io.txExecuted).toContain("ALTER TABLE thing ADD COLUMN IF NOT EXISTS y int");
   });
   test("programmatic up() nonTransactional receives a capped-sql wrapper routed to exec", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
     const v2 = makeV2({ statements: undefined, nonTransactional: true, up: async (tx) => void (await tx.unsafe("SELECT 1")) });
     await runMigrations(io, [baseline, v2], CAP);
     expect(io.beginCalls).toBe(0);
@@ -307,7 +308,7 @@ describe("migration runner — dispatch + failure atomicity (synthetic migration
     expect(io.insertParams.length).toBe(1);
     expect(io.insertParams[0][0]).toBe(1);
     // retry after the failure clears applies v2 (reset-on-failure at the runner level)
-    const io2 = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
+    const io2 = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
     const result = await runMigrations(io2, [baseline, v2], CAP);
     expect(result.applied).toEqual([2]);
   });

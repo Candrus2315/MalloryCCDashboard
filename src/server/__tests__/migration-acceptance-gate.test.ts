@@ -28,8 +28,9 @@ import {
   managedMigrationSource,
   markManagedMigrationContext,
 } from "../store/migration-gate";
-import { migrationChecksum, MIGRATIONS } from "../store/migrations/registry";
+import { MIGRATIONS } from "../store/migrations/registry";
 import { migration as baseline } from "../store/migrations/000_baseline";
+import { migration as evidenceMessages } from "../store/migrations/001_evidence_messages";
 import {
   migrationChecksum,
   MigrationGateError,
@@ -283,7 +284,7 @@ describe("migration acceptance gate — fresh and migrated postures", () => {
     });
     await pg.ensureSchema();
     const stmts = fake.executed.slice(2).filter((q) => !q.includes("INSERT INTO schema_migrations"));
-    expect(stmts).toEqual([...(baseline.statements ?? [])]);
+    expect(stmts).toEqual([...(baseline.statements ?? []), ...(evidenceMessages.statements ?? [])]);
     expect(fake.executed[fake.executed.length - 1]).toContain("INSERT INTO schema_migrations");
     await pg.close();
   });

@@ -72,7 +72,7 @@ for (const canon of ["DATABASE_URL", "HIGHLEVEL_API_KEY", "HIGHLEVEL_LOCATION_ID
 const RUN_MINUTES = Number.isFinite(Number(process.argv[2])) && process.argv[2] && !process.argv[2].startsWith("-") ? Number(process.argv[2]) : 45;
 
 async function main(): Promise<void> {
-  const store = getStore();
+  const store = await getStore();
   const creds = readHighLevelCreds();
   if (!creds) throw new Error("HIGHLEVEL_API_KEY / HIGHLEVEL_LOCATION_ID missing — cannot run the evidence backfill");
 
