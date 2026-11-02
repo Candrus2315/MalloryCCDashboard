@@ -21,6 +21,7 @@ import { migrateSheetsLeadKeys } from "./sheets-rekey";
 import { createHighLevelAdapter, type LiveHighLevelAdapter } from "./highlevel-live";
 import { reconcileCancellations, resolveAcuityAdapterForSync, upsertAcuityAppointments, writeAcuityConnection, type AcuityLiveAdapter } from "./acuity-live";
 import { raceAcuityRunBudget } from "./acuity-run-budget";
+import { raceHighLevelRunBudget } from "./highlevel-run-budget";
 import type { GoogleSheetsAdapter } from "./adapters";
 
 async function runProvider(
@@ -177,7 +178,16 @@ export async function runDemoSync(options?: {
   // --- HighLevel (LIVE when credentials resolve; demo fallback on failure) ---
   // Live failures fall back to the demo seed so pages still have honest,
   // demo-flagged data — the real error lands in the connection row.
-  const hlRes = await runProvider(store, "highlevel", async () => {
+  const hlRes = await runProvider(store, "highlevel", () =>
+    // PER-RUN WALL-CLOCK BUDGET (2026-11-02 wedge, highlevel-run-budget.ts):
+    // the whole HighLevel pass races the 10-min HIGHLEVEL_RUN_BUDGET_MS budget
+    // (store/types.ts), well under the 30-min reap window — the same wrap the
+    // Acuity section below got on 10/30. A breach rejects out of the race;
+    // runProvider's catch then finishes the sync_runs row with the honest
+    // "run budget exceeded" error instead of the row parking 'running'
+    // (guard-blocking background ticks) until the reaper. The body is the
+    // previous closure, unchanged.
+    raceHighLevelRunBudget(async () => {
     let adapter: HighLevelAdapter = demoHl;
     let hlLive: LiveHighLevelAdapter | null = null;
     let liveUsers: Awaited<ReturnType<LiveHighLevelAdapter["fetchUsers"]>> = [];
@@ -323,7 +333,8 @@ export async function runDemoSync(options?: {
       note,
       opportunities,
     };
-  });
+    }),
+  );
   results.push({ provider: "highlevel", count: hlRes.count, error: hlRes.error ?? null });
   // Watermark: after a successful LIVE sync, everything up to the run's start
   // is stored — the background incremental scheduler resumes from here

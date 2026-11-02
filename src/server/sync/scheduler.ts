@@ -27,6 +27,7 @@ import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS, type 
 import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds, type LiveHighLevelAdapter } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
+import { raceHighLevelRunBudget } from "./highlevel-run-budget";
 import {
   CONTACTS_INCREMENTAL_CHECKPOINT_KEY,
   CONTACTS_RECONCILIATION_CHECKPOINT_KEY,
@@ -361,6 +362,19 @@ export async function highlevelTick(options?: {
   // `stale` was always false and overlap protection here actually rested on
   // the reaper + the in-process inflight mutex (a manual SYNC NOW can still
   // overlap the background tick by design; the store bound closes the row).
+  // STALE-RUN REAP BEFORE THE GUARD (2026-11-02 deadlock): every entry path
+  // that can reach the running-guard below — this background tick, the
+  // freshness watchdog's forced recovery (which calls highlevelTick DIRECTLY,
+  // bypassing schedulerTick's own reap pass), manual triggers — reaps stale
+  // 'running' rows FIRST, so a stale row can never sit behind this guard
+  // across restarts. Idempotent with schedulerTick's reap pass (that one runs
+  // first in the composed tick; this one is the same reaper, reached even when
+  // a run is in progress). Best-effort: a failure never fails the tick.
+  try {
+    await reapStaleSyncRuns(store, now);
+  } catch {
+    // best-effort — the next tick and the independent reaper loop retry
+  }
   const running = await store.getRunningSyncRun("highlevel");
   if (running) return { outcome: "skipped", reason: "sync-in-progress", error: undefined };
 
@@ -401,6 +415,19 @@ export async function highlevelTick(options?: {
     // --- incremental: only activity newer than the watermark (minus overlap) ---
     const runId = await store.insertSyncRun("highlevel");
     try {
+      // PER-RUN WALL-CLOCK BUDGET (2026-11-02 wedge, highlevel-run-budget.ts):
+      // the harvest pass — contacts walk, call harvest, upserts, checkpoint,
+      // late-contact heal, reconciliation — races the 10-min
+      // HIGHLEVEL_RUN_BUDGET_MS budget (store/types.ts), well under the 30-min
+      // reap window (the 11/2 incident: a hung pass parked its row 'running'
+      // and deadlocked every tick behind the guard for ~30 min). A breach
+      // rejects out of the race and the catch below finishes the row with the
+      // honest "run budget exceeded" error; the detached residual is bounded
+      // step-by-step (per-request fetch timeouts, capped page walks). The row
+      // FINISHING stays outside the race (the runProvider pattern). The next
+      // tick retries. The body is the previous inline block, unchanged.
+      const { harvest, walk, healedCalls, records, recon, reconWarn, reconMessage } =
+        await raceHighLevelRunBudget(async () => {
       // S4 (design §3a): the contacts walk runs FIRST so contacts created in
       // HighLevel without any harvested call still enter the DB this tick, and
       // so the call→contact linkage map below already contains them.
@@ -579,6 +606,9 @@ export async function highlevelTick(options?: {
         reconMessage = null;
         void e;
       }
+
+          return { harvest, walk, healedCalls, records, recon, reconWarn, reconMessage };
+      });
 
       await store.finishSyncRun(runId, "success", records, null);
 

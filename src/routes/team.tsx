@@ -615,7 +615,13 @@ function TeamPage() {
             onChange={(monday) => setWeekOf(monday)}
           />
         )}
-        {data.range.mode === "custom" && (
+        {/* 2026-11-02 (owner-reported): gate the From/To inputs on the URL's
+            range=custom, NOT the server-resolved data.range.mode — with empty
+            dates the server falls back to Today, so the old gate hid the very
+            inputs needed to START a custom range (chicken-and-egg). The boxes
+            now appear the moment the pill is clicked; Apply navigates with
+            from/to and resolveRange validates (from <= to). */}
+        {search.range === "custom" && (
           <span className="flex items-center gap-2 text-[13px] text-(--text-caption)">
             <input
               type="date"
