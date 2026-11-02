@@ -35,6 +35,9 @@ const specExampleMetrics = (): DailyReportMetrics => ({
   // placeholder (null → "—" until the owner approves a definition).
   totalLeadConversionYesterday: 0.6363,
   totalLeadConversionWeek: 37 / 594,
+  // OWNER 11/2: the week line reports the LAST COMPLETED week — a distinct
+  // value here proves the copied line reads THIS field, not the WTD one.
+  totalLeadConversionLastWeek: 0.094,
   dailyPickupRate: null,
   goalAchievement: 0.5316,
   weeklyLeadBudget: 700,
@@ -67,7 +70,7 @@ const SPEC_EXAMPLE = [
   "Left: 42",
   "Daily: 21",
   "Total Lead Conversion — Yesterday: 63.6%",
-  "Total Lead Conversion — Week: 6.2%",
+  "Total Lead Conversion — Last Week: 9.4%",
   "Daily Pickup Rate: —",
   "",
   "Leads:",
@@ -117,7 +120,8 @@ describe("report text formatting", () => {
       expect(line).not.toMatch(/\d{3,}\.\d/); // no long float tails anywhere
     }
     expect(text).toContain("Total Lead Conversion — Yesterday: 63.6%");
-    expect(text).toContain("Total Lead Conversion — Week: 6.2%");
+    expect(text).toContain("Total Lead Conversion — Last Week: 9.4%");
+    expect(text).not.toContain("Total Lead Conversion — Week:");
     expect(text).toContain("Bookings Yesterday: 11");
     expect(text).not.toContain("Conversion of Calls Over 2 Mins");
     expect(text).not.toContain("Conversion of Assigned Leads");

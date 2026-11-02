@@ -349,6 +349,27 @@ describe("dailyReportPageData under the anchor rule", () => {
     expect(conversionLabel).not.toContain("Yesterday");
   });
 
+  test("OWNER 11/2: Monday morning's 'Total Lead Conversion — Last Week' is the COMPLETED week's rate, not WTD", async () => {
+    const { store } = await seedStoreWith({ fridayCalls: true, fridayWins: true, fridayLeads: true });
+    const data = await dailyReportPageData({ store, today: MON, etNowMinutes: H0900 });
+    // The week-TO-DATE figure this line replaced: 0 qualifying wins ÷ 2
+    // Monday leads (the weekend fold loads Fri–Sun leads into Monday's
+    // cohort while the weekend deposits sit in LAST week's window) → 0.0% —
+    // noise every Monday morning.
+    expect(data.metrics.weekBookings).toBe(0);
+    expect(data.metrics.totalLeadConversionWeek).toBeCloseTo(0, 6);
+    // The rendered line instead carries the LAST COMPLETED week's pairing —
+    // the exact chain the Weekly CC Report's headline uses: Friday's
+    // qualifying win (deposit dated 9/25, inside 9/21–9/27) ÷ Friday's lead
+    // → 100.0%.
+    expect(data.metrics.totalLeadConversionLastWeek).toBeCloseTo(1, 6);
+    expect(data.reportText).toContain("Total Lead Conversion — Last Week: 100.0%");
+    expect(data.emailText).toContain("Total Lead Conversion — Last Week: 100.0%");
+    expect(data.slackText).toContain("Total Lead Conversion — Last Week: 100.0%");
+    // The collapsing WTD week line is GONE from every copied variant.
+    expect(data.reportText).not.toContain("Total Lead Conversion — Week:");
+  });
+
   test("Monday-morning with NO Friday data: banners name FRIDAY (never 'yesterday')", async () => {
     const { store } = await seedStoreWith({ fridayCalls: false, fridayWins: false, fridayLeads: false });
     const data = await dailyReportPageData({ store, today: MON, etNowMinutes: H0900 });
@@ -384,8 +405,12 @@ describe("daily-report route source: the conversion dt label derives from the an
     expect(ROUTE_SOURCE).toContain("totalLeadConversionAnchorLabel(m.anchorDate, m.reportDate)");
   });
 
-  test("no hardcoded 'Total Lead Conversion — Yesterday' dt; the Week line stays static", () => {
+  test("no hardcoded 'Total Lead Conversion — Yesterday' dt; the week line is the LAST COMPLETED week (owner 11/2)", () => {
     expect(ROUTE_SOURCE).not.toMatch(/>Total Lead Conversion — Yesterday</);
-    expect(ROUTE_SOURCE).toContain("Total Lead Conversion — Week");
+    // OWNER 11/2: the second conversion line's dt is the LAST COMPLETED week
+    // — the old week-TO-DATE dt (which collapsed every Monday morning) is gone.
+    expect(ROUTE_SOURCE).toContain("Total Lead Conversion — Last Week");
+    expect(ROUTE_SOURCE).not.toMatch(/>Total Lead Conversion — Week</);
+    expect(ROUTE_SOURCE).toContain("m.totalLeadConversionLastWeek");
   });
 });
