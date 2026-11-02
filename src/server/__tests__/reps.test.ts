@@ -59,15 +59,32 @@ describe("resolveRange (ET date filters)", () => {
     const r = resolveRange("custom", TODAY, "2026-09-15", "2026-09-20");
     expect(r).toMatchObject({ start: "2026-09-15", end: "2026-09-20", warning: null });
   });
-  test("invalid custom ranges fall back to Today WITH a warning (never silent)", () => {
+  test("genuinely invalid custom ranges fall back to Today WITH a warning (never silent)", () => {
     const reversed = resolveRange("custom", TODAY, "2026-09-20", "2026-09-15");
     expect(reversed.mode).toBe("today");
     expect(reversed.warning).toContain("after end date");
-    const missing = resolveRange("custom", TODAY, undefined, "2026-09-15");
-    expect(missing.mode).toBe("today");
-    expect(missing.warning).toContain("both dates required");
     const malformed = resolveRange("custom", TODAY, "09/15/2026", "2026-09-20");
     expect(malformed.mode).toBe("today");
+    expect(malformed.warning).toContain("malformed");
+  });
+  test("OWNER 11/2: ABSENT custom dates are PENDING INPUT — Today fallback with NO warning", () => {
+    // The user just clicked the Custom Range pill: neither date picked yet.
+    // This is the exact state that made a custom range impossible to START —
+    // the old "Invalid custom range (both dates required)" warning fired
+    // here and the From/To inputs (URL-gated) never rendered.
+    const both = resolveRange("custom", TODAY, undefined, undefined);
+    expect(both.mode).toBe("today");
+    expect(both.warning).toBeNull();
+    // Mid-entry: only one date picked (a cleared <input type=date> submits "").
+    const onlyFrom = resolveRange("custom", TODAY, "2026-09-15", undefined);
+    expect(onlyFrom.mode).toBe("today");
+    expect(onlyFrom.warning).toBeNull();
+    const emptyFrom = resolveRange("custom", TODAY, "", "2026-09-20");
+    expect(emptyFrom.mode).toBe("today");
+    expect(emptyFrom.warning).toBeNull();
+    const onlyTo = resolveRange("custom", TODAY, undefined, "2026-09-20");
+    expect(onlyTo.mode).toBe("today");
+    expect(onlyTo.warning).toBeNull();
   });
   test("mondaysInRange covers multi-week ranges including partial edge weeks", () => {
     expect(mondaysInRange("2026-09-24", "2026-09-25")).toEqual(["2026-09-21"]);

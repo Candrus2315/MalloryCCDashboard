@@ -545,14 +545,27 @@ export function resolveRange(
           warning: null,
         };
       }
-      const why = !fromOk || !toOk ? "both dates required" : "start date is after end date";
+      // 2026-11-02 (owner-reported: a custom range could never be STARTED):
+      // one or both dates merely ABSENT (undefined/empty — the user just
+      // clicked the Custom Range pill and has not picked dates yet, or is
+      // mid-entry) is PENDING INPUT, not invalid input. Fall back to Today
+      // SILENTLY — the "Invalid custom range" warning previously fired here
+      // and the From/To inputs (gated on the URL's range=custom) never got a
+      // chance to collect the dates. The warning is kept ONLY for genuinely
+      // invalid input: a date that is present but malformed, or start > end.
+      const absent = !from || !to;
+      const why = absent
+        ? null
+        : !fromOk || !toOk
+          ? "date is malformed"
+          : "start date is after end date";
       return {
         mode: "today",
         start: today,
         end: today,
         label: "Today",
         toDate: true,
-        warning: `Invalid custom range (${why}) — showing Today instead.`,
+        warning: why ? `Invalid custom range (${why}) — showing Today instead.` : null,
       };
     }
   }
