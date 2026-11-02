@@ -369,6 +369,33 @@ export interface HarvestCallRow {
 }
 
 /**
+ * One NON-CALL conversation message persisted as attribution EVIDENCE
+ * (evidence_messages table; written by the incremental harvest and the
+ * evidence backfill — SMS EVIDENCE spec, owner approved 2026-11-02).
+ *
+ * An OUTBOUND row whose `user_external_id` resolves (users.external_id) to a
+ * roster rep SATISFIES the 2026-10-30 conversation-evidence requirement inside
+ * a booking's attribution window; inbound-only threads are never evidence.
+ * This ledger is deliberately SEPARATE from `calls`/`harvest_calls`: writing
+ * here never touches pickup rate, call counts, or over-2-min metrics.
+ */
+export interface EvidenceMessageRow {
+  message_id: string;
+  conversation_id: string | null;
+  contact_external_id: string | null;
+  /** Raw HL messageType, e.g. "TYPE_SMS" | "TYPE_LIVE_CHAT" — never "TYPE_CALL". */
+  message_type: string;
+  /** "outbound" | "inbound" | null (unknown). */
+  direction: string | null;
+  /** The sending HL user (present on outbound) — rep resolution key. */
+  user_external_id: string | null;
+  /** ISO. */
+  date_added: string;
+  /** Truncated message body (audit display). */
+  body: string | null;
+}
+
+/**
  * HOW a call's contact was resolved (call→contact restoration backfill,
  * owner-ratified hierarchy): direct message contactId > parent conversation
  * contactId > exact normalized phone > exact normalized email; ambiguity and
@@ -2314,6 +2341,10 @@ finishSyncRun(id: string, status: string, recordsUpserted: number, error: string
   getHarvestCallsByMessageIds(messageIds: string[]): Promise<HarvestCallRow[]>;
   /** Harvest ledger rows started at/after startUtc (s1 window-interaction evidence read). */
   getHarvestCallsSince(startUtc: string): Promise<HarvestCallRow[]>;
+  /** Upsert non-call conversation messages (SMS/live-chat) as attribution evidence (dedupe by message id). */
+  upsertEvidenceMessages(rows: EvidenceMessageRow[]): Promise<number>;
+  /** Evidence messages date_added at/after startUtc (s1 SMS-evidence read). */
+  getEvidenceMessagesSince(startUtc: string): Promise<EvidenceMessageRow[]>;
   /**
    * Call→contact restoration verdicts, FILL-NULL-ONLY: an existing non-null
    * calls.contact_id is never touched (direct source data always wins); only

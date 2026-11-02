@@ -19,9 +19,10 @@
  *     guarded step only.
  */
 import { migration as baseline } from "./000_baseline";
+import { migration as evidenceMessages } from "./001_evidence_messages";
 import type { Migration } from "./runner";
 
-export const MIGRATIONS: readonly Migration[] = [baseline];
+export const MIGRATIONS: readonly Migration[] = [baseline, evidenceMessages];
 
 /** Highest applied version once every migration is recorded. */
 export const CURRENT_SCHEMA_VERSION = MIGRATIONS.length;

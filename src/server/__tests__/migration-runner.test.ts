@@ -33,7 +33,9 @@ import {
   type MigrationRecord,
   type MigrationRunnerIo,
 } from "../store/migrations/runner";
-import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from "../store/migrations/registry";
+import { migrationChecksum, MIGRATIONS, CURRENT_SCHEMA_VERSION } from "../store/migrations/registry";
+import { migration as evidenceMessages } from "../store/migrations/001_evidence_messages";
+const EVIDENCE_STMTS = evidenceMessages.statements!;
 import { migration as baseline } from "../store/migrations/000_baseline";
 
 /* ------------------------------------------------------------------ */
@@ -104,11 +106,13 @@ const CAP = { grantedBy: "migration-runner unit tests" };
 /* registry — the frozen baseline, census-pinned                       */
 /* ------------------------------------------------------------------ */
 describe("migration registry — frozen baseline shape", () => {
-  test("exactly one migration: version 1 'baseline'; CURRENT_SCHEMA_VERSION agrees", () => {
-    expect(MIGRATIONS.length).toBe(1);
+  test("registry: version 1 baseline + version 2 evidence_messages; CURRENT_SCHEMA_VERSION agrees", () => {
+    expect(MIGRATIONS.length).toBe(2);
     expect(baseline.version).toBe(1);
+    expect(MIGRATIONS[1]!.name).toBe("evidence_messages");
+    expect(MIGRATIONS[1]!.version).toBe(2);
     expect(baseline.name).toBe("baseline");
-    expect(CURRENT_SCHEMA_VERSION).toBe(1);
+    expect(CURRENT_SCHEMA_VERSION).toBe(2);
   });
   test("140 statements, census identical to the audited MIGRATION-PLAN §1.1", () => {
     expect(BASELINE_STMTS.length).toBe(140);
@@ -186,27 +190,28 @@ describe("migration registry — frozen baseline shape", () => {
 /* runner flows — fresh, migrated, drifted                             */
 /* ------------------------------------------------------------------ */
 describe("migration runner — fresh-empty DB: full apply in order, stamped", () => {
-  test("marker create → version read → 140 statements → INSERT stamp", async () => {
+  test("marker create → version read → registry statements (baseline + evidence_messages) → INSERT stamp", async () => {
     const io = makeIo();
     const result = await runMigrations(io, MIGRATIONS, CAP);
-    expect(result.applied).toEqual([1]);
-    expect(result.appliedMax).toBe(1);
+    expect(result.applied).toEqual([1, 2]);
+    expect(result.appliedMax).toBe(2);
     expect(io.executed[0]).toBe(SCHEMA_MIGRATIONS_DDL);
     expect(isVersionSelect(io.executed[1])).toBe(true);
-    expect(migrationStatementsOf(io)).toEqual([...BASELINE_STMTS]);
-    // the stamp is the LAST write and carries version + name + checksum
-    expect(io.insertParams.length).toBe(1);
+    expect(migrationStatementsOf(io)).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS]);
+    // the stamps are the LAST writes and carry version + name + checksum
+    expect(io.insertParams.length).toBe(2);
     expect(io.insertParams[0]).toEqual([1, "baseline", EXPECTED_CHECKSUM]);
+    expect(io.insertParams[1]).toEqual([2, "evidence_messages", MIGRATIONS[1]!.checksum!]);
     expect(io.executed[io.executed.length - 1]).toBe(io.executed.find(isMarkerInsert));
   });
 });
 
 describe("migration runner — already-migrated DB: ZERO DDL work (the whole point)", () => {
   test("only marker bootstrap + version read run; no baseline statement, no INSERT", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     const result = await runMigrations(io, MIGRATIONS, CAP);
     expect(result.applied).toEqual([]);
-    expect(result.appliedMax).toBe(1);
+    expect(result.appliedMax).toBe(2);
     expect(io.executed.length).toBe(2); // create-if-not-exists + select
     for (const stmt of BASELINE_STMTS) expect(io.executed).not.toContain(stmt);
     expect(io.insertParams.length).toBe(0);
@@ -215,7 +220,7 @@ describe("migration runner — already-migrated DB: ZERO DDL work (the whole poi
   test("boot log says up to date (fail-visible freshness, plan §2.5)", async () => {
     const logs: string[] = [];
     await runMigrations(
-      { ...makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] }), log: (m) => logs.push(m) },
+      { ...makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] }), log: (m) => logs.push(m) },
       MIGRATIONS,
       CAP,
     );
@@ -242,7 +247,7 @@ describe("migration runner — drift refuses to boot with a named error", () => 
     const io = makeIo({
       records: [
         { version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM },
-        { version: 2, name: "future", checksum: EXPECTED_CHECKSUM },
+        { version: 3, name: "future", checksum: EXPECTED_CHECKSUM },
       ],
     });
     await expect(runMigrations(io, MIGRATIONS, CAP)).rejects.toThrow(/does not contain/);
@@ -263,7 +268,7 @@ describe("migration runner — dispatch + failure atomicity (synthetic migration
     ...over,
   });
   test("transactional statement-list migration routes through begin(); marker commits with it", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     const result = await runMigrations(io, [baseline, makeV2()], CAP);
     expect(result.applied).toEqual([2]);
     expect(io.beginCalls).toBe(1);
@@ -271,20 +276,20 @@ describe("migration runner — dispatch + failure atomicity (synthetic migration
     expect(io.insertParams[0]).toEqual([2, "add_thing", migrationChecksum(makeV2())]);
   });
   test("nonTransactional statement-list runs per-statement autocommit (the baseline's mode)", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     await runMigrations(io, [baseline, makeV2({ nonTransactional: true })], CAP);
     expect(io.beginCalls).toBe(0);
     expect(io.executed).toContain("CREATE TABLE IF NOT EXISTS thing (id int)");
   });
   test("programmatic up() transactional receives the transaction handle", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     const v2 = makeV2({ statements: undefined, up: async (tx) => void (await tx.unsafe("ALTER TABLE thing ADD COLUMN IF NOT EXISTS y int")) });
     await runMigrations(io, [baseline, v2], CAP);
     expect(io.beginCalls).toBe(1);
     expect(io.txExecuted).toContain("ALTER TABLE thing ADD COLUMN IF NOT EXISTS y int");
   });
   test("programmatic up() nonTransactional receives a capped-sql wrapper routed to exec", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
+    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     const v2 = makeV2({ statements: undefined, nonTransactional: true, up: async (tx) => void (await tx.unsafe("SELECT 1")) });
     await runMigrations(io, [baseline, v2], CAP);
     expect(io.beginCalls).toBe(0);
@@ -302,7 +307,7 @@ describe("migration runner — dispatch + failure atomicity (synthetic migration
     expect(io.insertParams.length).toBe(1);
     expect(io.insertParams[0][0]).toBe(1);
     // retry after the failure clears applies v2 (reset-on-failure at the runner level)
-    const io2 = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
+    const io2 = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     const result = await runMigrations(io2, [baseline, v2], CAP);
     expect(result.applied).toEqual([2]);
   });
@@ -334,7 +339,7 @@ const makePg = (sql: unknown, capMs = DEFAULT_SCHEMA_STMT_TIMEOUT_MS) =>
 
 describe("PgStore wiring — ensureSchema is now 'ensure migrations applied'", () => {
   test("already-migrated DB: ZERO migration statements on cold boot", async () => {
-    const { sql, executed } = makePgSql({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }] });
+    const { sql, executed } = makePgSql({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     const pg = makePg(sql);
     await pg.ensureSchema();
     expect(executed.length).toBe(2); // marker bootstrap + version read
@@ -344,17 +349,17 @@ describe("PgStore wiring — ensureSchema is now 'ensure migrations applied'", (
     expect(executed.length).toBe(2);
     await pg.close();
   });
-  test("fresh DB: the full 140 apply in order through the capped executor, then memoize", async () => {
+  test("fresh DB: the full registry (baseline 140 + evidence_messages 3) applies in order through the capped executor, then memoize", async () => {
     const { sql, executed } = makePgSql();
     const pg = makePg(sql);
     await pg.ensureSchema();
     expect(executed[0]).toBe(SCHEMA_MIGRATIONS_DDL);
     expect(executed[1].startsWith("SELECT version, name, checksum")).toBe(true);
     const migrationStmts = executed.slice(2).filter((q) => !isMarkerInsert(q));
-    expect(migrationStmts).toEqual([...BASELINE_STMTS]);
+    expect(migrationStmts).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS]);
     expect(executed[executed.length - 1]).toContain("INSERT INTO schema_migrations");
     await pg.ensureSchema();
-    expect(executed.length).toBe(2 + 140 + 1); // unchanged by the memoized second call
+    expect(executed.length).toBe(2 + 140 + 3 + 2); // unchanged by the memoized second call
     await pg.close();
   });
 });
@@ -379,8 +384,8 @@ describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh +
         log: () => {},
       };
       const result = await runMigrations(io, MIGRATIONS, CAP);
-      expect(result.applied).toEqual([1]);
-      expect(count).toBe(143); // create + select + 140 statements + insert
+      expect(result.applied).toEqual([1, 2]);
+      expect(count).toBe(146); // create + select + 140 baseline + 3 evidence + 2 stamps
       const rows = (await sql`SELECT version, name, checksum FROM schema_migrations`) as MigrationRecord[];
       expect(rows.length).toBe(1);
       expect(rows[0].version).toBe(1);

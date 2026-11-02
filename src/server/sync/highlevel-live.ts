@@ -52,6 +52,7 @@ import { getSecret } from "../env";
 import { isFetchTimeoutError, syncFetchTimeoutMs, timedFetch } from "./fetch-timeout";
 import { isNetworkBodyErrorLike, raceBodyRead } from "./body-read";
 import type { NormalizedCall, NormalizedContact, NormalizedUser } from "./adapters";
+import type { EvidenceMessageRow } from "../store/types";
 
 // ---------- errors ----------
 export type HighLevelErrorKind = "config" | "auth" | "permission" | "rate_limit" | "network" | "api";
@@ -332,6 +333,40 @@ export function parseHlCall(m: Record<string, unknown>): NormalizedCall | null {
     durationSeconds: parseDurationSeconds(call?.["duration"] ?? m["duration"]),
     direction: asString(m["direction"]) ?? "unknown",
     status: asString(call?.["status"]) ?? asString(m["status"]) ?? "unknown",
+  };
+}
+
+/** Body cap for persisted evidence messages (audit display; SMS bodies are short). */
+export const EVIDENCE_BODY_MAX_CHARS = 4000;
+
+/**
+ * NON-CALL conversation message → attribution EVIDENCE row (SMS EVIDENCE
+ * spec, owner approved 2026-11-02). The mirror image of parseHlCall's guard:
+ * a TYPE_CALL message is NEVER evidence here (the calls table and every
+ * pickup/call-count metric stay untouched); every other message type (SMS,
+ * live-chat, email-in-conversation, ...) with an id + timestamp is stored.
+ * `direction` and `userId` carry the rep-credit signal — the engine counts
+ * only OUTBOUND messages from a verified roster rep as conversation evidence.
+ */
+export function parseEvidenceMessage(
+  m: Record<string, unknown>,
+  conversationId?: string | null,
+): EvidenceMessageRow | null {
+  const type = asString(m["messageType"]) ?? asString(m["type"]);
+  if (!type || type === "TYPE_CALL") return null;
+  const id = asString(m["id"]);
+  const dateAdded = parseTimestamp(m["dateAdded"] ?? m["createdAt"] ?? m["timestamp"]);
+  if (!id || !dateAdded) return null;
+  const body = asString(m["body"]);
+  return {
+    message_id: id,
+    conversation_id: asString(m["conversationId"]) ?? conversationId ?? null,
+    contact_external_id: asString(m["contactId"]),
+    message_type: type,
+    direction: asString(m["direction"]),
+    user_external_id: asString(m["userId"]),
+    date_added: dateAdded,
+    body: body ? body.slice(0, EVIDENCE_BODY_MAX_CHARS) : null,
   };
 }
 

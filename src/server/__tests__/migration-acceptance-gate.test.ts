@@ -28,7 +28,7 @@ import {
   managedMigrationSource,
   markManagedMigrationContext,
 } from "../store/migration-gate";
-import { MIGRATIONS } from "../store/migrations/registry";
+import { migrationChecksum, MIGRATIONS } from "../store/migrations/registry";
 import { migration as baseline } from "../store/migrations/000_baseline";
 import {
   migrationChecksum,
@@ -194,7 +194,7 @@ describe("migration acceptance gate — business database reachable only from ma
     process.env.DATABASE_URL = BUSINESS_SIM;
     markManagedMigrationContext("gate test (managed serve posture)");
     try {
-      const fake = makeFakeSql({ records: [{ version: 1, name: "baseline", checksum: ACCEPTED_NEW_CHECKSUM }] });
+      const fake = makeFakeSql({ records: [{ version: 1, name: "baseline", checksum: ACCEPTED_NEW_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
       const pg = new PgStore(BUSINESS_SIM, { sql: fake.sql as never });
       await pg.ensureSchema(); // must NOT throw
       expect(fake.executed.length).toBe(2); // marker bootstrap + version read, zero migration statements
@@ -219,8 +219,8 @@ describe("migration acceptance gate — business database reachable only from ma
         migrationCapability: { grantedBy: "explicit local-db grant (gate test)" },
       });
       await pg.ensureSchema();
-      // 2 (bootstrap+read) + 140 statements + 1 stamp insert
-      expect(fake.executed.length).toBe(2 + 140 + 1);
+      // 2 (bootstrap+read) + 140 baseline + 3 evidence statements + 2 stamp inserts
+      expect(fake.executed.length).toBe(2 + 140 + 3 + 2);
       await pg.close();
     } finally {
       if (prev === undefined) delete process.env.DATABASE_URL;
@@ -230,7 +230,7 @@ describe("migration acceptance gate — business database reachable only from ma
 
   test("a NON-business URL needs no grant (test/scratch posture unchanged)", async () => {
     clearManagedMigrationContextForTests();
-    const fake = makeFakeSql({ records: [{ version: 1, name: "baseline", checksum: ACCEPTED_NEW_CHECKSUM }] });
+    const fake = makeFakeSql({ records: [{ version: 1, name: "baseline", checksum: ACCEPTED_NEW_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
     const pg = new PgStore("postgres://test:test@127.0.0.1:1/any-local-db", { sql: fake.sql as never });
     await pg.ensureSchema();
     expect(fake.executed.length).toBe(2);
@@ -291,7 +291,7 @@ describe("migration acceptance gate — fresh and migrated postures", () => {
   test("already-migrated DB under the managed context runs ZERO migration statements", async () => {
     markManagedMigrationContext("zero-work posture test");
     try {
-      const fake = makeFakeSql({ records: [{ version: 1, name: "baseline", checksum: ACCEPTED_NEW_CHECKSUM }] });
+      const fake = makeFakeSql({ records: [{ version: 1, name: "baseline", checksum: ACCEPTED_NEW_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
       const pg = new PgStore("postgres://any:any@127.0.0.1:1/any", { sql: fake.sql as never });
       await pg.ensureSchema();
       expect(fake.executed).toEqual([SCHEMA_MIGRATIONS_DDL, expect.stringContaining("SELECT version, name, checksum")]);

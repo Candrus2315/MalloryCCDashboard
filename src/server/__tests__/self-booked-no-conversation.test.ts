@@ -182,18 +182,32 @@ describe("self-booked ruling — conversation-grade vs dial attempts", () => {
     expect(match.repId).toBe(JENN);
   });
 
-  test("the ruling keys off the WINNING evidence: a later dial wins the pick and is ruled team-only (selection unchanged)", () => {
-    // Earlier real conversation, later stray dial — most-recent-wins selection
-    // is UNCHANGED by the ruling; the 0-duration winner is then ruled out.
-    // (Deliberate literal reading of "whose winning evidence call has
-    // duration_seconds = 0" — flagged to the lead: 8 live October rows have
-    // this shape and an owner refinement could fall back to the conversation.)
+  test("QUALITY ORDERING (owner approved 2026-11-02): a real conversation outranks a later 0-second dial — the conversation credits its rep", () => {
+    // Earlier real conversation, later stray dial: the dial NEVER outranks
+    // conversation evidence by recency any more. The gate now only rules
+    // team-only when the window holds NO conversation at all (the v7 tier
+    // chain: qualifying call dur>0 / harvested conversation message > rep
+    // outbound SMS > 0-second dial).
     const [match] = matchAppointmentsToCalls(
       [appt({ contact_id: "c-1" })],
       [
         call("hl-talk", { contact_id: "c-1", rep_id: JENN, started_at: IN_WINDOW, duration_seconds: 90 }),
         call("hl-dial", { contact_id: "c-1", rep_id: JENN, started_at: IN_WINDOW_LATER, duration_seconds: 0 }),
       ],
+      [contact("c-1")],
+      SETTINGS,
+      { users: USERS },
+    );
+    expect(match.status).toBe("attributed");
+    expect(match.method).toBe("window_interaction");
+    expect(match.repId).toBe(JENN);
+    expect(match.evidence?.id).toBe("hl-talk");
+  });
+
+  test("the dial-alone gate is unchanged: a window with ONLY 0-second dials stays team-only", () => {
+    const [match] = matchAppointmentsToCalls(
+      [appt({ contact_id: "c-1" })],
+      [call("hl-dial", { contact_id: "c-1", rep_id: JENN, started_at: IN_WINDOW_LATER, duration_seconds: 0 })],
       [contact("c-1")],
       SETTINGS,
       { users: USERS },
@@ -302,7 +316,7 @@ describe("self-booked ruling — recompute safety", () => {
     expect(third.rows).toEqual(first.rows);
   });
 
-  test("writer version is 6 — stale v5 writers cannot re-credit the ruled-out rows", () => {
-    expect(ATTRIBUTION_WRITER_VERSION).toBe(6);
+  test("writer version is 7 — stale v6 writers cannot re-credit the ruled-out rows (v7 = SMS evidence + quality ordering)", () => {
+    expect(ATTRIBUTION_WRITER_VERSION).toBe(7);
   });
 });
