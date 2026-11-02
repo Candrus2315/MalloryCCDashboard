@@ -32,6 +32,9 @@ import { readFileSync } from "node:fs";
 import { normalizeEmail, normalizeUSPhone } from "../src/server/identity/normalize";
 import { readHighLevelCreds } from "../src/server/sync/highlevel-live";
 import { getStore } from "../src/server/store";
+import { PgStore } from "../src/server/store/pg";
+
+const GRANT_SOURCE = "data-ops runner: dead-contact-repair (owner approved 2026-11-02)";
 import { searchContacts, type HlContactLite } from "../src/server/sync/dead-contact-repair";
 import postgres from "postgres";
 
@@ -90,7 +93,9 @@ import {
 const normName = (n: string | null): string => (n ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
 async function main(): Promise<void> {
-  const store = getStore();
+  const store = await getStore(
+    { storeFactory: (u) => new PgStore(u, { migrationCapability: { grantedBy: GRANT_SOURCE } }) },
+  );
   const creds = readHighLevelCreds();
   if (!creds) throw new Error("HIGHLEVEL_API_KEY / HIGHLEVEL_LOCATION_ID missing — cannot run the dead-contact repair");
 

@@ -36,6 +36,9 @@ import {
 import { readHighLevelCreds } from "../src/server/sync/highlevel-live";
 import { makeBudgetBoundedFetch } from "../src/server/sync/body-read";
 import { getStore } from "../src/server/store";
+import { PgStore } from "../src/server/store/pg";
+
+const GRANT_SOURCE = "data-ops runner: evidence-backfill (owner approved 2026-11-02)";
 
 export const EVIDENCE_BACKFILL_CHECKPOINT_KEY = "hl_evidence_backfill_v1";
 /** The evidence floor — do NOT go older (pre-floor verdicts preserved by design). */
@@ -72,7 +75,9 @@ for (const canon of ["DATABASE_URL", "HIGHLEVEL_API_KEY", "HIGHLEVEL_LOCATION_ID
 const RUN_MINUTES = Number.isFinite(Number(process.argv[2])) && process.argv[2] && !process.argv[2].startsWith("-") ? Number(process.argv[2]) : 45;
 
 async function main(): Promise<void> {
-  const store = await getStore();
+  const store = await getStore(
+    { storeFactory: (u) => new PgStore(u, { migrationCapability: { grantedBy: GRANT_SOURCE } }) },
+  );
   const creds = readHighLevelCreds();
   if (!creds) throw new Error("HIGHLEVEL_API_KEY / HIGHLEVEL_LOCATION_ID missing — cannot run the evidence backfill");
 
