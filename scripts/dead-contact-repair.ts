@@ -32,6 +32,8 @@ import { readFileSync } from "node:fs";
 import { normalizeEmail, normalizeUSPhone } from "../src/server/identity/normalize";
 import { readHighLevelCreds } from "../src/server/sync/highlevel-live";
 import { getStore } from "../src/server/store";
+import { searchContacts, type HlContactLite } from "../src/server/sync/dead-contact-repair";
+import postgres from "postgres";
 
 export const DEAD_CONTACT_REPAIR_CHECKPOINT_KEY = "hl_dead_contact_repair_v1";
 

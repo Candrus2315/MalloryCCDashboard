@@ -36,7 +36,7 @@ async function probeContactDead(locationId: string, apiKey: string, contactId: s
   }
 }
 
-interface HlContactLite {
+export interface HlContactLite {
   id: string;
   phone: string | null;
   email: string | null;
@@ -45,7 +45,7 @@ interface HlContactLite {
   conversations: number;
 }
 
-async function searchContacts(locationId: string, apiKey: string, query: string): Promise<HlContactLite[]> {
+export async function searchContacts(locationId: string, apiKey: string, query: string): Promise<HlContactLite[]> {
   const res = await fetch(`${API}/contacts/?locationId=${encodeURIComponent(locationId)}&query=${encodeURIComponent(query)}&limit=20`, { headers: headers(apiKey) });
   if (!res.ok) return [];
   const body = (await res.json()) as { contacts?: Record<string, unknown>[] };
