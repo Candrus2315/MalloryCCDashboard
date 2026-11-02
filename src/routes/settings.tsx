@@ -1432,13 +1432,12 @@ function RosterMappingSection({ data, busy, onSave }: {
   busy: boolean;
   onSave: (mappings: { external_user_id: string; rep_id: string }[]) => void;
 }) {
-  // OWNER DIRECTIVE ("erase everyone not on my roster"): by default the panel
-  // lists only non-roster users with calls in the last 30 days — zero-call rows
-  // (test/app/marketing accounts) are noise. Client-local show-all toggle
-  // (useState, never persisted); the server payload still sends ALL inactive
-  // users, so a zero-call user stays mappable once revealed.
-  const [showAll, setShowAll] = useState(false);
-  const visibleRows = rosterPanelVisibleRows(data.nonRosterUsers, showAll);
+  // OWNER DIRECTIVE (2026-11-02, supersedes the 10/20 zero-call-only default):
+  // INACTIVE users are never listed in the panel — rosterPanelVisibleRows gates
+  // them out unconditionally (no show-all toggle). The server payload still
+  // sends ALL inactive users (data preserved, mappings untouched); the row
+  // machinery below stays for any non-inactive row the payload may ever carry.
+  const visibleRows = rosterPanelVisibleRows(data.nonRosterUsers, false);
   // draft rep choice per non-roster HL user (prefilled with any existing mapping)
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(data.nonRosterUsers.filter((u) => u.mappedTo).map((u) => [u.externalId, u.mappedTo!])),
@@ -1464,33 +1463,18 @@ function RosterMappingSection({ data, busy, onSave }: {
         Map a non-roster HighLevel user to a CC rep. From then on ALL historical calls under that HighLevel user id
         count for the rep&apos;s performance and the team totals — computed from the mapping at query time. Source
         records are never rewritten: the original HL user id, message ids and timestamps stay untouched, and removing
-        a mapping returns the calls to Non Roster.
+        a mapping excludes that user&apos;s calls from roster reporting again.
       </p>
       {data.nonRosterUsers.length > 0 && (
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-xs text-(--text-muted)">
-            {showAll
-              ? `Showing all ${data.nonRosterUsers.length} non-roster users`
-              : `Showing ${visibleRows.length} of ${data.nonRosterUsers.length} — users with calls in the last 30 days only`}
-          </p>
-          <button
-            type="button"
-            aria-pressed={showAll}
-            className="text-xs text-(--text-muted) underline underline-offset-2 hover:text-(--text-body)"
-            onClick={() => setShowAll((v) => !v)}
-          >
-            {showAll ? `Hide ${data.zeroCallCount} zero-call users` : `Show all (${data.zeroCallCount})`}
-          </button>
-        </div>
+        <p className="text-xs text-(--text-muted)">
+          Inactive users are no longer listed here (owner directive 2026-11-02) — {data.nonRosterUsers.length}{" "}
+          non-roster {data.nonRosterUsers.length === 1 ? "user" : "users"} remain in the data, and existing mappings
+          below stay active.
+        </p>
       )}
       <div className="card card-nest space-y-1 p-0">
         {data.nonRosterUsers.length === 0 && (
           <p className="p-5 text-sm text-(--text-muted)">No non-roster HighLevel users seen in calls yet.</p>
-        )}
-        {data.nonRosterUsers.length > 0 && visibleRows.length === 0 && (
-          <p className="p-5 text-sm text-(--text-muted)">
-            All {data.nonRosterUsers.length} non-roster users had no calls in the last 30 days.
-          </p>
         )}
         {visibleRows.map((u) => {
           const val = draft[u.externalId] ?? "";

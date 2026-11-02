@@ -263,11 +263,13 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
 
     // The REPORTING rep list: active roster ∪ historical reps (see above).
     // reportingRepUsers returns the SAME rows/order as the previous
-    // users.map(...) when historical_reps is empty.
+    // users.map(...) when historical_reps is empty. is_active rides along so
+    // the repList picker below can enforce the active-roster-only rule.
     const reps = reportingRepUsers(allUsers, settings.historical_reps ?? []).map((u) => ({
       id: u.id,
       name: u.name,
       call_start_date: u.call_start_date,
+      is_active: u.is_active,
     }));
 
     const summaries = repRangeSummaries({
@@ -437,28 +439,37 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
         isCurrentWeek: !isHistoricalWeek(range.mode, range.start, today),
       },
       thresholdSeconds,
-      repList: reps.map((r) => {
-        const s = summaries.get(r.id);
-        return {
-          id: r.id,
-          name: r.name,
-          totalBookings: s?.totalBookings ?? 0,
-          totalCalls: s?.totalCalls ?? 0,
-          callsOverThreshold: s?.callsOverThreshold ?? 0,
-          isSelected: r.id === rep?.id,
-          // PAST marker (owner directive: nobody reads her as a current booker).
-          // Requires is_active=false too — an ACTIVE rep listed in
-          // historical_reps by mistake is never rendered as "past".
-          historical: historicalIds.has(r.id) && !r.is_active,
-          operatingState: repOperatingState(r.call_start_date, today),
-          callStartDate: r.call_start_date ?? null,
-        };
-      }),
+      // OWNER DIRECTIVE (2026-11-02): the rep picker lists ONLY the active
+      // roster — inactive/departed users are never selectable in the UI. This
+      // supersedes the 2026-10-20 presentation of departed reps in the picker
+      // (their historical rows stay in the DB and keep feeding reporting
+      // eligibility, team totals and the Weekly surface; the detail branch for
+      // a directly-linked inactive rep id stays harmless but unreachable from
+      // this list). Requires is_active=false for the past marker too — an
+      // ACTIVE rep listed in historical_reps by mistake is never "past".
+      repList: reps
+        .filter((r) => r.is_active)
+        .map((r) => {
+          const s = summaries.get(r.id);
+          return {
+            id: r.id,
+            name: r.name,
+            totalBookings: s?.totalBookings ?? 0,
+            totalCalls: s?.totalCalls ?? 0,
+            callsOverThreshold: s?.callsOverThreshold ?? 0,
+            isSelected: r.id === rep?.id,
+            historical: historicalIds.has(r.id) && !r.is_active,
+            operatingState: repOperatingState(r.call_start_date, today),
+            callStartDate: r.call_start_date ?? null,
+          };
+        }),
       detail,
       selectedOperatingState,
       teamAverages,
       comparisons,
-      nonRoster: buckets.nonRoster,
+      // OWNER DIRECTIVE (2026-11-02): the "Non Roster Calls" section is erased
+      // from the UI — the payload no longer carries the nonRoster rollup (the
+      // underlying call rows are untouched; the unattributed bucket stays).
       unattributed: buckets.unattributed,
       warnings,
       teamGoalDefault: teamGoalByWeek.get(weeks[0]) ?? 79,
