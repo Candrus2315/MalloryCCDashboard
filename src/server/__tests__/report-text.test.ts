@@ -7,8 +7,10 @@ import {
   buildDailyReportText,
   formatInt,
   formatPercent,
+  totalLeadConversionAnchorLabel,
   type Big3Input,
 } from "../metrics/report-text";
+import { dailyReportAnchorDate } from "../date-logic";
 import type { AppointmentRow, AttributionRow, CallRow, LeadRow } from "../metrics/compute";
 
 // ---------- helpers ----------
@@ -389,5 +391,32 @@ describe("buildDailyReportMetrics (assembles raw rows via the metrics layer)", (
       // The anchor-day line is unaffected.
       expect(m.totalLeadConversionYesterday).toBeCloseTo(2 / 5, 6);
     });
+  });
+});
+
+// ---------- OWNER DIRECTIVE 10/30: the conversion line's LABEL names the anchor day ----------
+
+describe("totalLeadConversionAnchorLabel (dt label — same anchor helper as the Bookings line)", () => {
+  const MON = "2026-09-28"; // the Monday AFTER the fixture week
+  const FRI = "2026-09-25";
+  const TUE = "2026-09-22";
+
+  test("MONDAY MORNING (etNowMinutes before the 18:30 cutoff → anchor Friday): names FRIDAY, never 'Yesterday'", () => {
+    // The exact Monday-morning shape: the anchor resolves to the most recent
+    // PRIOR workday (Friday), so the dt label must say "Friday" — the old
+    // hardcoded "Total Lead Conversion — Yesterday" mislabeled Friday's data.
+    expect(dailyReportAnchorDate(MON, 9 * 60)).toBe(FRI);
+    const label = totalLeadConversionAnchorLabel(FRI, MON);
+    expect(label).toBe("Total Lead Conversion — Friday");
+    expect(label).toContain("Friday");
+    expect(label).not.toContain("Yesterday");
+  });
+
+  test("anchor == calendar yesterday (Tue–Fri mornings) → unchanged 'Yesterday' wording", () => {
+    expect(totalLeadConversionAnchorLabel("2026-09-24", FRI)).toBe("Total Lead Conversion — Yesterday");
+  });
+
+  test("anchor == report date (after the EOD cutoff) → 'Today'", () => {
+    expect(totalLeadConversionAnchorLabel(TUE, TUE)).toBe("Total Lead Conversion — Today");
   });
 });

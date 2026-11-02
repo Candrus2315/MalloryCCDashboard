@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { getDailyReportData, saveDailyPriorities } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
-import { formatInt, formatPercent, anchorDayPhrase, bookingsAnchorLabel } from "~/server/metrics/report-text";
+import { formatInt, formatPercent, anchorDayPhrase, bookingsAnchorLabel, totalLeadConversionAnchorLabel } from "~/server/metrics/report-text";
 import { InfoTip } from "~/components/InfoTip";
 import { GENRES, GENRE_BAR, GENRE_LABELS, type Genre } from "~/components/genres";
 import { FORM_SOURCE_SHEETS, LEAD_SOURCE_LABELS } from "~/components/lead-sources";
@@ -179,8 +179,13 @@ function DailyReportPage() {
                   {/* OWNER DIRECTIVE 10/30 (Mallory's metrics): the three
                       legacy performance lines are replaced by the two
                       total-lead conversion lines + the pickup placeholder.
-                      Pooled counts ÷ pooled TOTAL leads — never rep rates. */}
-                  <dt className="text-[13px] font-medium text-(--text-body)">Total Lead Conversion — Yesterday</dt>
+                      Pooled counts ÷ pooled TOTAL leads — never rep rates.
+                      The anchor-day label names the ACTUAL day the figure
+                      covers (same anchor helper as the Bookings line above —
+                      "Friday" on a Monday morning, never a wrong "Yesterday"). */}
+                  <dt className="text-[13px] font-medium text-(--text-body)">
+                    {totalLeadConversionAnchorLabel(m.anchorDate, m.reportDate)}
+                  </dt>
                   <dd className="mt-0.5 flex items-baseline gap-2">
                     <span className="text-2xl font-semibold tracking-tight tabular-nums text-(--text-primary)">
                       {formatPercent(m.totalLeadConversionYesterday, 1)}
