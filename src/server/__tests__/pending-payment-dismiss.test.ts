@@ -21,11 +21,22 @@ import { MemoryStore } from "../store/memory";
 import { PgStore } from "../store/pg";
 import { appointmentPaymentStateOf, isBookingWin } from "../metrics/compute";
 import { dismissPendingPaymentCore } from "../queries";
-import { etDayStartUtc } from "../date-logic";
+import { addDays, etDayStartUtc, etToday } from "../date-logic";
 import { derivePaymentState } from "../payments";
 import type { AppointmentRow } from "../metrics/compute";
 
-const TODAY = "2026-09-30"; // Wednesday, ET — inside the pending window
+/**
+ * DATE-ROT SAFETY (owner 11/2: the Sep-1 fixture slid past the 30-day pending
+ * window as real time reached November → "Appointment not found in the pending
+ * payments window"). The dismissal core windows on the REAL clock
+ * (etToday() − 30 days), so the fixture dates itself RELATIVE to real now:
+ * TODAY = the real ET today, and every fetch floor is the SAME 30-day window
+ * the core reads. The suite is green any day without weakening a single
+ * assertion (counts, ids, state transitions are unchanged).
+ */
+const TODAY = etToday(); // real ET today — inside the pending window by construction
+/** The Today page's pending window — the EXACT floor dismissPendingPaymentCore computes. */
+const WINDOW_START = etDayStartUtc(addDays(TODAY, -30));
 
 const raw = (paid: "yes" | "no", price: string) => ({
   paid,
@@ -45,7 +56,7 @@ function pendingAppt(overrides: Partial<AppointmentRow> = {}): AppointmentRow {
     contact_id: null,
     calendar_id: "cal-mallory",
     appointment_type: "Portrait Session + Include a pet, cleaning deposit",
-    appointment_datetime: "2026-10-01T14:00:00.000Z",
+    appointment_datetime: `${addDays(TODAY, 1)}T14:00:00.000Z`,
     created_at: `${TODAY}T14:00:00.000Z`,
     created_business_date: TODAY,
     created_time_precision: "full",
@@ -73,11 +84,11 @@ describe("pending payment dismissal — store semantics (MemoryStore)", () => {
   test("dismissPendingPayment sets pending_dismissed_at (keep-first, idempotent); the row is never deleted", async () => {
     const store = new MemoryStore();
     await seedPending(store, "dp-1");
-    const before = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const before = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(before.length).toBe(1);
 
     await store.dismissPendingPayment(before[0].id);
-    const after1 = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const after1 = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(after1.length).toBe(1); // row kept, never deleted
     const stamp1 = after1[0].pending_dismissed_at;
     expect(stamp1).not.toBeNull();
@@ -85,14 +96,14 @@ describe("pending payment dismissal — store semantics (MemoryStore)", () => {
     // idempotent: a re-dismiss never moves the original timestamp
     await new Promise((r) => setTimeout(r, 5));
     await store.dismissPendingPayment(before[0].id);
-    const after2 = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const after2 = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(after2[0].pending_dismissed_at).toBe(stamp1);
   });
 
   test("upsertAppointments (re-sync) does NOT clear pending_dismissed_at", async () => {
     const store = new MemoryStore();
     await seedPending(store, "dp-2");
-    const rows = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const rows = await store.getAppointmentsWithClientsSince(WINDOW_START);
     const apptId = rows[0].id;
     await store.dismissPendingPayment(apptId);
 
@@ -107,7 +118,7 @@ describe("pending payment dismissal — store semantics (MemoryStore)", () => {
         created_at: `${TODAY}T15:00:00.000Z`,
       } as AppointmentRow & { acuity_appointment_id: string },
     ]);
-    const after = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const after = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(after.length).toBe(1);
     expect(after[0].id).toBe(apptId); // internal id stable across re-syncs
     expect(after[0].pending_dismissed_at).not.toBeNull();
@@ -117,17 +128,17 @@ describe("pending payment dismissal — store semantics (MemoryStore)", () => {
     const store = new MemoryStore();
     await seedPending(store, "dp-3");
     await seedPending(store, "dp-4");
-    const rows = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const rows = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(rows.length).toBe(2);
     await store.dismissPendingPayment(rows[0].id);
 
     // The Today page's pending list reads WITH the exclusion...
-    const pendingWindow = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"), { excludePendingDismissed: true });
+    const pendingWindow = await store.getAppointmentsWithClientsSince(WINDOW_START, { excludePendingDismissed: true });
     expect(pendingWindow.length).toBe(1);
     expect(pendingWindow[0].pending_dismissed_at).toBeNull();
 
     // ...the attribution tick / unattributed queue / dismiss endpoint read the DEFAULT.
-    const everything = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const everything = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(everything.length).toBe(2);
   });
 });
@@ -136,7 +147,7 @@ describe("pending payment dismissal — server semantics (dismissPendingPaymentC
   test("dismiss → pending list excludes it → appointment later PAID → still counted as a Booking Win", async () => {
     const store = new MemoryStore();
     await seedPending(store, "dp-5");
-    const rows = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const rows = await store.getAppointmentsWithClientsSince(WINDOW_START);
     const apptId = rows[0].id;
 
     // core server fn: dismiss + audit row
@@ -145,7 +156,7 @@ describe("pending payment dismissal — server semantics (dismissPendingPaymentC
     expect(audit.some((a) => a.entity_type === "appointment" && a.entity_id === apptId && a.new_value === "pending payment dismissed by owner")).toBe(true);
 
     // pending list (query layer + page filter) excludes the dismissed row
-    const pendingWindow = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"), { excludePendingDismissed: true });
+    const pendingWindow = await store.getAppointmentsWithClientsSince(WINDOW_START, { excludePendingDismissed: true });
     const pendingList = pendingWindow.filter(
       (a) => !a.cancelled && a.status !== "cancelled" && appointmentPaymentStateOf(a) === "pending_payment",
     );
@@ -179,9 +190,9 @@ describe("pending payment dismissal — server semantics (dismissPendingPaymentC
         booking_win_business_date: TODAY,
       } as AppointmentRow & { acuity_appointment_id: string },
     ]);
-    const rows = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const rows = await store.getAppointmentsWithClientsSince(WINDOW_START);
     await expect(dismissPendingPaymentCore(store, { appointmentId: rows[0].id })).rejects.toThrow(/Only pending payments can be dismissed/);
-    const after = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+    const after = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(after[0].pending_dismissed_at ?? null).toBeNull();
   });
 });
@@ -191,9 +202,12 @@ describe("pending payment dismissal — server semantics (dismissPendingPaymentC
  * tests shipped a broken PgStore). SKIPPED unless TEST_DATABASE_URL is set.
  * NOTE: the managed Timescale service allows no scratch databases (only
  * "tsdb") and docker is unavailable in this environment, so when the test
- * runs against the LIVE database its rows are dated in the PAST (never on
- * Today/Weekly current figures) and removed in a finally block by unique
- * acuity id.
+ * runs against the LIVE database its rows are dated INSIDE the 30-day pending
+ * window but OUTSIDE the current Mon–Sun week (10 days back is always >6 days
+ * before today, so no current-week surface can ever show them), and removed
+ * in a finally block by unique acuity id. (Fixed past dates would slide out of
+ * the dismissal core's rolling 30-day window — the same date-rot the
+ * MemoryStore block hit in November 2026.)
  */
 describe.skipIf(!process.env.TEST_DATABASE_URL)("pending payment dismissal — PgStore (real Postgres)", () => {
   test("upsert preserves pending_dismissed_at; exclusion + win semantics hold", async () => {
@@ -201,9 +215,8 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("pending payment dismissal — P
     // ensure + several queries) — the 5s default test timeout false-fails.
     const store = new PgStore(process.env.TEST_DATABASE_URL!);
     await store.ensureSchema();
-    // Rows dated in the PAST (win/created 2026-09-02) so a run against the live
-    // DB can never surface on Today/Weekly current figures; deleted in finally.
-    const PAST_DAY = "2026-09-02";
+    // Rows dated 10 days back (date-rot-safe AND window-safe — see NOTE), deleted in finally.
+    const PAST_DAY = addDays(TODAY, -10);
     const acuityId = `test-dismiss-${Date.now()}`;
     const pastPending = pendingAppt({
       created_at: `${PAST_DAY}T14:00:00.000Z`,
@@ -218,7 +231,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("pending payment dismissal — P
           client_name: "Pg Dismiss Test",
         } as AppointmentRow & { acuity_appointment_id: string },
       ]);
-      let rows = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+      let rows = await store.getAppointmentsWithClientsSince(WINDOW_START);
       const mine = rows.find((r) => r.acuity_appointment_id === acuityId)!;
       expect(mine.payment_state).toBe("pending_payment");
       await store.dismissPendingPayment(mine.id);
@@ -232,13 +245,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("pending payment dismissal — P
           client_name: "Pg Dismiss Test",
         } as AppointmentRow & { acuity_appointment_id: string },
       ]);
-      rows = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"));
+      rows = await store.getAppointmentsWithClientsSince(WINDOW_START);
       const re = rows.find((r) => r.acuity_appointment_id === acuityId)!;
       expect(re.id).toBe(mine.id);
       expect(re.pending_dismissed_at).not.toBeNull(); // survived the sync
 
       // pending window excludes it; the default keeps it
-      const pendingWindow = await store.getAppointmentsWithClientsSince(etDayStartUtc("2026-09-01"), { excludePendingDismissed: true });
+      const pendingWindow = await store.getAppointmentsWithClientsSince(WINDOW_START, { excludePendingDismissed: true });
       expect(pendingWindow.some((r) => r.id === mine.id)).toBe(false);
 
       // the deposit arrives later — still a Booking Win, and NOT dismissible again
