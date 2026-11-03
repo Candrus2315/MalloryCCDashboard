@@ -523,6 +523,12 @@ export async function highlevelTick(options?: {
           })),
         );
       }
+      // SMS EVIDENCE (owner approved 2026-11-02): non-call conversation
+      // messages persist to evidence_messages — attribution evidence ONLY,
+      // never `calls` (pickup rate / call counts bit-identical).
+      if (harvest.evidence.length) {
+        await store.upsertEvidenceMessages(harvest.evidence);
+      }
 
       // S4 checkpoint — written ONLY after the successful walk upsert (the
       // scheduler owns it; the walk module itself never persists).

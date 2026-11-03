@@ -48,9 +48,9 @@
  * check), so the harvester and the fast incremental sync never overlap (429
  * protection).
  */
-import { hlRequest, listOf, parseHlCall, type HighLevelCreds, type HlEndpointOpts } from "./highlevel-live";
+import { hlRequest, listOf, parseEvidenceMessage, parseHlCall, type HighLevelCreds, type HlEndpointOpts } from "./highlevel-live";
 import type { NormalizedCall } from "./adapters";
-import type { HarvestConvRow, HarvestProgressRow } from "../store/types";
+import type { EvidenceMessageRow, HarvestConvRow, HarvestProgressRow } from "../store/types";
 
 export type { HarvestConvRow, HarvestProgressRow } from "../store/types";
 
@@ -181,10 +181,13 @@ export async function visitConversationMessages(opts: {
   conversationId: string;
   windowStartMs: number;
   maxPages?: number;
-}): Promise<{ calls: NormalizedCall[]; messagesScanned: number; warnings: string[] }> {
+  /** Also collect every NON-CALL message as attribution evidence (SMS EVIDENCE spec). */
+  collectEvidence?: boolean;
+}): Promise<{ calls: NormalizedCall[]; evidence: EvidenceMessageRow[]; messagesScanned: number; warnings: string[] }> {
   const doRequest = opts.hlRequestFn ?? hlRequest;
   const endpointOpts: HlEndpointOpts = { creds: opts.creds, fetchImpl: opts.fetchImpl, sleep: opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))), timeoutMs: opts.timeoutMs };
   const calls = new Map<string, NormalizedCall>();
+  const evidence = new Map<string, EvidenceMessageRow>();
   const warnings: string[] = [];
   let messagesScanned = 0;
   let lastMessageId: string | null = null;
@@ -202,6 +205,11 @@ export async function visitConversationMessages(opts: {
       if (call && Date.parse(call.startedAt) >= opts.windowStartMs) {
         call.conversation_id = opts.conversationId;
         calls.set(call.external_call_id, call);
+        continue; // a call message is never SMS evidence
+      }
+      if (opts.collectEvidence) {
+        const ev = parseEvidenceMessage(m, opts.conversationId);
+        if (ev) evidence.set(ev.message_id, ev);
       }
     }
     lastMessageId = typeof (wrapper as Record<string, unknown> | null)?.["lastMessageId"] === "string" ? ((wrapper as Record<string, unknown>)["lastMessageId"] as string) : null;
@@ -217,7 +225,7 @@ export async function visitConversationMessages(opts: {
   if (exhausted) {
     warnings.push(`conversation ${opts.conversationId}: message scan stopped at the ${maxPages}-page guard — very long conversation, some older in-window calls may be missing`);
   }
-  return { calls: [...calls.values()], messagesScanned, warnings };
+  return { calls: [...calls.values()], evidence: [...evidence.values()], messagesScanned, warnings };
 }
 
 // ---------- live listPage over the real API ----------

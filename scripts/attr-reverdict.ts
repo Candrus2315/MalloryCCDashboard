@@ -33,6 +33,9 @@
 import { readFileSync } from "node:fs";
 import { computeAndPersistAttributions } from "../src/server/sync/attribution-tick";
 import { getStore } from "../src/server/store";
+import { PgStore } from "../src/server/store/pg";
+
+const GRANT_SOURCE = "data-ops runner: attr-reverdict (explicit --since data operation)";
 import { attributionStateOf } from "../src/server/metrics/compute";
 
 // env secrets may reach /proc/self/environ with odd casing; canonicalize before use.
@@ -69,7 +72,9 @@ async function main(): Promise<void> {
     console.error(`FATAL: --since is not a parseable instant: ${since}`);
     process.exit(1);
   }
-  const store = await getStore();
+  const store = await getStore(
+    { storeFactory: (u) => new PgStore(u, { migrationCapability: { grantedBy: GRANT_SOURCE } }) },
+  );
   if (store.mode !== "postgres") {
     console.error("FATAL: postgres store unavailable — re-verdicting the live attribution table needs the real database.");
     process.exit(1);

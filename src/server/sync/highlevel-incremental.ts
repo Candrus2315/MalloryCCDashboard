@@ -17,8 +17,9 @@
  * watermark is advanced by the CALLER (scheduler.ts) only after a successful
  * store write — this module is pure fetch+parse.
  */
-import { hlRequest, listOf, parseHlCall, parseHlContact, parseHlUser, type FetchLike, type HighLevelCreds, type HlEndpointOpts } from "./highlevel-live";
+import { hlRequest, listOf, parseHlCall, parseEvidenceMessage, parseHlContact, parseHlUser, type FetchLike, type HighLevelCreds, type HlEndpointOpts } from "./highlevel-live";
 import type { NormalizedCall, NormalizedContact, NormalizedUser } from "./adapters";
+import type { EvidenceMessageRow } from "../store/types";
 
 /** Extra lookback on the watermark so a call added with a slightly older dateAdded is not missed. */
 export const WATERMARK_OVERLAP_SECONDS = 300;
@@ -35,6 +36,13 @@ export interface IncrementalHarvest {
   users: NormalizedUser[];
   contacts: NormalizedContact[];
   calls: NormalizedCall[];
+  /**
+   * NON-CALL conversation messages (SMS / live-chat) seen in visited
+   * conversations — attribution EVIDENCE, persisted to evidence_messages by
+   * the scheduler. NEVER merged into `calls`: pickup rate, call counts, and
+   * over-2-min metrics stay bit-identical.
+   */
+  evidence: EvidenceMessageRow[];
   conversationsVisited: number;
   /** Newest message/call timestamp observed (ISO) — useful for watermark sanity checks. */
   newestActivityIso: string | null;
@@ -125,8 +133,10 @@ export async function harvestIncremental(opts: {
   const plan = planConversationsToVisit([convs], opts.sinceMs);
   if (plan.truncated) warnings.push(`incremental: visit cap hit (${plan.visitIds.length} conversations) — some very recent activity may wait for the next tick`);
 
-  // 3) messages per visited conversation → in-window TYPE_CALL rows
+  // 3) messages per visited conversation → in-window TYPE_CALL rows (+ every
+  // non-call message as attribution EVIDENCE — never into `calls`)
   const calls = new Map<string, NormalizedCall>();
+  const evidenceById = new Map<string, EvidenceMessageRow>();
   const contactIds = new Set<string>();
   let newestActivityMs = 0;
   for (const convId of plan.visitIds) {
@@ -134,13 +144,17 @@ export async function harvestIncremental(opts: {
     const wrapper = (body?.["messages"] ?? null) as Record<string, unknown> | null;
     for (const m of listOf(wrapper as Record<string, unknown> | null, "messages", "data")) {
       const call = parseHlCall(m as Record<string, unknown>);
-      if (!call) continue;
-      const ts = Date.parse(call.startedAt);
-      if (ts >= opts.sinceMs) {
-        calls.set(call.external_call_id, call);
-        contactIds.add(call.contactExternalId);
-        if (ts > newestActivityMs) newestActivityMs = ts;
+      if (call) {
+        const ts = Date.parse(call.startedAt);
+        if (ts >= opts.sinceMs) {
+          calls.set(call.external_call_id, call);
+          contactIds.add(call.contactExternalId);
+          if (ts > newestActivityMs) newestActivityMs = ts;
+        }
+        continue; // TYPE_CALL: a call, never SMS evidence (calls table untouched)
       }
+      const ev = parseEvidenceMessage(m as Record<string, unknown>, convId);
+      if (ev) evidenceById.set(ev.message_id, ev);
     }
   }
 
@@ -169,6 +183,7 @@ export async function harvestIncremental(opts: {
     users,
     contacts,
     calls: [...calls.values()],
+    evidence: [...evidenceById.values()],
     conversationsVisited: plan.visitIds.length,
     newestActivityIso: newestActivityMs ? new Date(newestActivityMs).toISOString() : null,
     warnings,

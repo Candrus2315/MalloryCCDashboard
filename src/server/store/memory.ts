@@ -39,6 +39,7 @@ import type {
   ContactIdentityRow,
   ContactRow,
   DailyPrioritiesRow,
+  EvidenceMessageRow,
   HarvestCallRow,
   HarvestConvRow,
   HarvestProgressRow,
@@ -135,6 +136,7 @@ export class MemoryStore implements Store {
   private contacts = new Map<string, ContactRow>();
   private calls = new Map<string, CallExt>(); // keyed by provider:external_call_id
   private harvestCalls = new Map<string, HarvestCallRow>(); // keyed by message_id (harvest_calls mirror)
+  private evidenceMessages = new Map<string, EvidenceMessageRow>(); // keyed by message_id (SMS evidence)
   private harvestProgress = new Map<string, HarvestProgressRow>();
   private harvestConvs = new Map<string, HarvestConvRow & { visited: boolean; calls_found: number; messages_scanned: number }>();
   private opportunities = new Map<string, OpportunityRow>(); // keyed by provider:external_id
@@ -1243,6 +1245,17 @@ export class MemoryStore implements Store {
     const startMs = Date.parse(startUtc);
     return [...this.harvestCalls.values()]
       .filter((r) => Number.isFinite(Date.parse(r.started_at)) && Date.parse(r.started_at) >= startMs)
+      .map((r) => ({ ...r }));
+  }
+  async upsertEvidenceMessages(rows: EvidenceMessageRow[]): Promise<number> {
+    for (const r of rows) this.evidenceMessages.set(r.message_id, { ...r });
+    return rows.length;
+  }
+  async getEvidenceMessagesSince(startUtc: string): Promise<EvidenceMessageRow[]> {
+    const startMs = Date.parse(startUtc);
+    return [...this.evidenceMessages.values()]
+      .filter((r) => Number.isFinite(Date.parse(r.date_added)) && Date.parse(r.date_added) >= startMs)
+      .sort((a, b) => Date.parse(a.date_added) - Date.parse(b.date_added))
       .map((r) => ({ ...r }));
   }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {

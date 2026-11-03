@@ -232,6 +232,7 @@ export type AttributionMethod =
   | "phone"
   | "email"
   | "window_interaction"
+  | "sms"
   | typeof OWNER_RULE_AUCTION_METHOD;
 
 /**
@@ -259,6 +260,19 @@ export interface AttributionHarvestInteraction {
   started_at: string;
   /** Any value (including null/0) qualifies for OWNERSHIP. */
   duration_seconds: number | null;
+  /**
+   * Evidence kind: "call" (a TYPE_CALL message — normalized call or harvested
+   * conversation call) or "sms" (an SMS/live-chat TEXT message from
+   * evidence_messages). Default "call" for back-compat with existing callers.
+   */
+  kind?: "call" | "sms";
+  /**
+   * Message direction (kind "sms" only). ONLY "outbound" counts: a text the
+   * rep SENT is a conversation; a client's inbound text is not evidence and
+   * must never reach the engine as one (the caller filters inbound rows out).
+   * The engine re-checks this — a non-outbound sms row is never evidence.
+   */
+  direction?: string | null;
 }
 
 /** Audit/debug record of the window the match was evaluated against. */
@@ -343,7 +357,7 @@ export interface AttributionMatch {
    */
   evidence?: {
     id: string;
-    source: "calls" | "harvest";
+    source: "calls" | "harvest" | "sms";
     started_at: string;
     duration_seconds: number | null;
   };
@@ -788,9 +802,10 @@ export function matchAppointmentsToCalls(
         rep: string;
         ms: number;
         id: string;
-        source: "calls" | "harvest";
+        source: "calls" | "harvest" | "sms";
         started_at: string;
         dur: number | null;
+        kind: "call" | "sms";
       }> = [];
       for (const cid of candidates) {
         for (const c of callsByContact.get(cid) ?? []) {
@@ -803,7 +818,7 @@ export function matchAppointmentsToCalls(
           if (!Number.isFinite(ms)) continue;
           const day = callDateEt(c.started_at);
           if (!day || day < window.from || day > window.to) continue;
-          inter.push({ rep, ms, id: c.external_call_id, source: "calls", started_at: c.started_at, dur: c.duration_seconds });
+          inter.push({ rep, ms, id: c.external_call_id, source: "calls", started_at: c.started_at, dur: c.duration_seconds, kind: "call" });
         }
         const ext = contactExtById.get(cid);
         for (const h of (ext ? harvestByContactExt.get(ext) : undefined) ?? []) {
@@ -812,7 +827,17 @@ export function matchAppointmentsToCalls(
           if (!Number.isFinite(ms)) continue;
           const day = callDateEt(h.started_at);
           if (!day || day < window.from || day > window.to) continue;
-          inter.push({ rep: h.rep_id, ms, id: h.id, source: "harvest", started_at: h.started_at, dur: h.duration_seconds });
+          if (h.kind === "sms") {
+            // SMS EVIDENCE (owner approved 2026-11-02): an OUTBOUND rep text is
+            // a real conversation — it satisfies the 2026-10-30 conversation-
+            // evidence requirement. Inbound-only (the CLIENT texted) is NOT
+            // evidence — the engine re-checks direction so a mis-wired caller
+            // can never credit a booking from a client's own message.
+            if (h.direction !== "outbound") continue;
+            inter.push({ rep: h.rep_id, ms, id: h.id, source: "sms", started_at: h.started_at, dur: h.duration_seconds, kind: "sms" });
+          } else {
+            inter.push({ rep: h.rep_id, ms, id: h.id, source: "harvest", started_at: h.started_at, dur: h.duration_seconds, kind: "call" });
+          }
         }
       }
       if (inter.length === 0) return null;
@@ -826,26 +851,55 @@ export function matchAppointmentsToCalls(
           window: windowMarker,
         };
       }
-      // Most recent wins; deterministic tie-break by evidence id (stable re-runs).
-      let best = inter[0];
-      for (const i of inter.slice(1)) {
-        if (i.ms > best.ms || (i.ms === best.ms && i.id > best.id)) best = i;
-      }
+      // EVIDENCE QUALITY ORDERING (owner approved 2026-11-02): qualifying call
+      // (dur > 0) > rep outbound SMS > 0-second dial. Harvested conversation
+      // messages (kind "call", source "harvest") are REAL conversation
+      // evidence at any duration and stay in the top tier with qualifying
+      // calls (their most-recent-wins behavior is unchanged — the tier only
+      // re-ranks SMS above 0-second dials). Within a tier: most recent wins,
+      // deterministic tie-break by evidence id (stable re-runs). A 0-second
+      // dial NEVER outranks conversation evidence merely by being newer — the
+      // dial tier is reached only when the window holds no conversation at all.
+      const isConversation = (i: (typeof inter)[number]): boolean =>
+        i.source === "sms" ? true : i.source === "harvest" ? true : i.dur != null && i.dur > 0;
+      const isRepSms = (i: (typeof inter)[number]): boolean => i.source === "sms";
+      const conversation = inter.filter(isConversation);
+      const repSms = conversation.filter(isRepSms);
+      const convCalls = conversation.filter((i) => !isRepSms(i));
+      const dials = inter.filter((i) => !isConversation(i));
+      const mostRecent = (rows: (typeof inter)[number][]): (typeof inter)[number] | null => {
+        if (rows.length === 0) return null;
+        let best = rows[0];
+        for (const i of rows.slice(1)) {
+          if (i.ms > best.ms || (i.ms === best.ms && i.id > best.id)) best = i;
+        }
+        return best;
+      };
+      const tier1 = mostRecent(convCalls);
+      const tier2 = tier1 ? null : mostRecent(repSms);
+      // Last resort: the workflow-only tier (0-second dials) — reached only
+      // when the window holds NO conversation evidence, and its credit
+      // outcome is ruled team-only by the gate below.
+      const best = tier1 ?? tier2 ?? mostRecent(dials);
       // OWNER RULING (directive 2026-10-30): rep credit requires CONVERSATION
-      // evidence. When the winning evidence is a CALL with no positive duration
-      // (0s = a dial attempt; null = unknown length), no conversation happened —
-      // a booking the client made themselves online must never be credited to a
-      // rep. The row goes TEAM-ONLY (unattributed, rep NULL) under the distinct
-      // reason_code "self-booked-no-conversation", with the evidence trail kept
-      // on the note (evidence id + dur + the ruling) so the audit log stays
-      // honest. SELECTION IS UNCHANGED (still most-recent-wins over any
-      // duration — the s1 layer's workflow-evidence role for finding the
-      // interaction survives); only the CREDIT outcome of a conversation-less
-      // winner changes. Harvest-message evidence (a real conversation message)
-      // and every stronger tier (contact_id/phone/email/manual/owner rule) are
+      // evidence. When the best available evidence is a CALL with no positive
+      // duration (0s = a dial attempt; null = unknown length), no conversation
+      // happened — a booking the client made themselves online must never be
+      // credited to a rep. The row goes TEAM-ONLY (unattributed, rep NULL)
+      // under the distinct reason_code "self-booked-no-conversation", with the
+      // evidence trail kept on the note (evidence id + dur + the ruling) so
+      // the audit log stays honest. SELECTION IS UNCHANGED (a dial still
+      // documents the workflow); only the CREDIT outcome of a conversation-less
+      // winner changes. Rep-SMS evidence (a real conversation message) and
+      // every stronger tier (contact_id/phone/email/manual/owner rule) are
       // unaffected. Named case: Ariana Freddura — window_interaction 0.6 whose
       // ONLY evidence was a 0-duration call.
-      if (best.source === "calls" && !(best.dur != null && best.dur > 0)) {
+      if (!best) {
+        // Unreachable by construction (inter.length > 0 ⇒ one tier is
+        // non-empty), but the gate below is the only remaining path.
+        return null;
+      }
+      if (best.kind === "call" && best.source === "calls" && !(best.dur != null && best.dur > 0)) {
         return {
           appointmentId: apptId,
           status: "unattributed",
@@ -854,6 +908,17 @@ export function matchAppointmentsToCalls(
           detail: `owner ruling 2026-10-30: winning window_interaction evidence is a ${best.dur === 0 ? "0-second" : "unknown-duration"} call (a dial attempt, no conversation) — a self-booked booking stays team-only`,
           method: "window_interaction",
           evidence: { id: best.id, source: best.source, started_at: best.started_at, duration_seconds: best.dur },
+          window: windowMarker,
+        };
+      }
+      if (best.source === "sms") {
+        return {
+          appointmentId: apptId,
+          status: "attributed",
+          callExternalId: undefined,
+          repId: best.rep,
+          method: "sms",
+          evidence: { id: best.id, source: "sms", started_at: best.started_at, duration_seconds: null },
           window: windowMarker,
         };
       }

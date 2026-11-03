@@ -39,6 +39,7 @@ import {
   attributionWindowDates,
   bookingCreationDateEt,
   matchAppointmentsToCalls,
+  type AttributionHarvestInteraction,
   OWNER_RULE_AUCTION_METHOD,
   OWNER_RULE_AUCTION_NOTE,
   OWNER_RULE_AUCTION_REASON,
@@ -66,6 +67,16 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * takes over automatically — the recovery path). `force` bypasses for a
  * deliberate owner-directed recompute.
  *
+ * v7 = SMS EVIDENCE + evidence-quality ordering (owner approved 2026-11-02):
+ *      rep-sent OUTBOUND SMS/live-chat messages (evidence_messages, resolved
+ *      via users.external_id) now satisfy the conversation-evidence gate and
+ *      credit their rep with method 'sms' (call_id NULL — not a call); the
+ *      selection tiers re-rank so a qualifying call (dur>0) beats a rep SMS,
+ *      which beats a 0-second dial REGARDLESS of recency. Inbound-only SMS is
+ *      never evidence; multi-rep SMS evidence is AMBIGUOUS like call evidence.
+ *      The 0-second-dial-alone gate itself is UNCHANGED. The version bump
+ *      retires v6 writers, whose conflict-updates would re-credit the
+ *      ruled-out rows with the old ordering.
  * v6 = OWNER RULING 2026-10-30: online/self-booked bookings stay TEAM-ONLY —
  *      rep credit requires conversation evidence. A window_interaction verdict
  *      whose winning evidence is a CALL with duration_seconds <= 0 (0s dial
@@ -103,7 +114,7 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * no version check — operationally retired by the 9/27 republish; from s6 on
  * every shipped writer carries the guard).
  */
-export const ATTRIBUTION_WRITER_VERSION = 6;
+export const ATTRIBUTION_WRITER_VERSION = 7;
 /** sync_checkpoints key holding the latest writer version that has written. */
 export const ATTRIBUTION_WRITER_VERSION_KEY = "attribution-writer-version";
 
@@ -182,6 +193,7 @@ export function toAttributionRows(
     phone: 0.8,
     email: 0.8,
     window_interaction: 0.6,
+    sms: 0.7,
     [OWNER_RULE_AUCTION_METHOD]: 1,
   };
   const rows: AttributionRow[] = [];
@@ -346,13 +358,14 @@ export async function computeAndPersistAttributions(
   }
   const apptSinceDate = etDateStrFromInstant(apptSinceMs);
   const since = etDayStartUtc(addDays(apptSinceDate, -marginDays));
-  const [storedAppts, storedCalls, storedContacts, allUsers, existing, harvestCalls] = await Promise.all([
+  const [storedAppts, storedCalls, storedContacts, allUsers, existing, harvestCalls, evidenceMsgs] = await Promise.all([
     store.getAppointmentsWithClientsSince(apptSinceIso),
     store.getAllCallsSince(since),
     store.getContacts(),
     store.getAllUsers(),
     store.getAttributions(),
     store.getHarvestCallsSince(since),
+    store.getEvidenceMessagesSince(since),
   ]);
 
   // OWNER RULE resolution (directive 2026-10-19): Allison Wittner's ACTIVE
@@ -430,15 +443,36 @@ export async function computeAndPersistAttributions(
     allUsers.map((u) => ({ id: u.id, is_active: u.is_active })),
     settings.rep_mappings ?? [],
   );
-  const s1Interactions = harvestCalls.map((h) => ({
+  const resolveRepId = (userExternalId: string | null): string | null =>
+    (userExternalId ? activeHlUserByExt.get(userExternalId) : undefined) ??
+    (userExternalId ? harvestElig.mapping.get(userExternalId) ?? null : null);
+  const s1Interactions: AttributionHarvestInteraction[] = harvestCalls.map((h) => ({
     id: h.message_id,
     contact_external_id: h.contact_external_id,
-    rep_id:
-      (h.user_external_id ? activeHlUserByExt.get(h.user_external_id) : undefined) ??
-      (h.user_external_id ? harvestElig.mapping.get(h.user_external_id) ?? null : null),
+    rep_id: resolveRepId(h.user_external_id),
     started_at: h.started_at,
     duration_seconds: h.duration_seconds,
+    kind: "call" as const,
   }));
+  // SMS EVIDENCE (owner approved 2026-11-02): OUTBOUND non-call messages are
+  // rep-credit-eligible conversation evidence; rep resolution is the SAME
+  // users.external_id / rep_mappings path the call harvest uses. INBOUND rows
+  // are NOT passed at all — a client's own text is not team activity, so it
+  // must never create evidence or an "interaction-without-roster-rep"
+  // classification. Unresolved outbound rows (non-roster sender) still pass
+  // with rep_id null so the S4b triage categories stay honest.
+  const smsInteractions: AttributionHarvestInteraction[] = evidenceMsgs
+    .filter((m) => m.direction === "outbound")
+    .map((m) => ({
+      id: m.message_id,
+      contact_external_id: m.contact_external_id,
+      rep_id: resolveRepId(m.user_external_id),
+      started_at: m.date_added,
+      duration_seconds: null,
+      kind: "sms" as const,
+      direction: m.direction,
+    }));
+  s1Interactions.push(...smsInteractions);
 
   const matches = matchAppointmentsToCalls(
     appts,

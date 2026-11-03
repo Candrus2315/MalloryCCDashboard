@@ -131,6 +131,8 @@ const STORE_METHOD_FLAGS = {
   upsertHarvestConversations: 1,
   getHarvestConversationsByIds: 1,
   upsertHarvestCalls: 1,
+  upsertEvidenceMessages: 1,
+  getEvidenceMessagesSince: 1,
   getHarvestCallsByMessageIds: 1,
   getHarvestCallsSince: 1,
   applyCallContactBackfill: 1,

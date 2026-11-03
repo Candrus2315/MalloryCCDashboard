@@ -32,6 +32,7 @@ import type {
   ContactExternalIdRow,
   ContactRow,
   DailyPrioritiesRow,
+  EvidenceMessageRow,
   HarvestCallRow,
   HarvestConvRow,
   HarvestProgressRow,
@@ -2275,6 +2276,47 @@ export class PgStore implements Store {
       duration_seconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
       direction: (r.direction as string | null) ?? null,
       call_status: (r.call_status as string | null) ?? null,
+    }));
+  }
+  async upsertEvidenceMessages(rows: EvidenceMessageRow[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    if (!rows.length) return 0;
+    const chunkSize = 500;
+    let written = 0;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      await this.sql`
+        INSERT INTO evidence_messages (message_id, conversation_id, contact_external_id, message_type, direction, user_external_id, date_added, body)
+        SELECT x.message_id, x.conversation_id, x.contact_external_id, x.message_type, x.direction, x.user_external_id, x.date_added::timestamptz, x.body
+        -- this.sql.json(chunk) (typed json param, OID 114), NOT a raw
+        -- JSON.stringify string: under postgres.js 3.4.9 a plain-string
+        -- param inside jsonb_to_recordset($1::jsonb) binds through the
+        -- described jsonb type and the server sees a scalar ("cannot
+        -- call jsonb_to_recordset on a non-array"). Same convention as
+        -- app_settings (this.sql.json above). Verified on real PG 11/2.
+        FROM jsonb_to_recordset(${this.sql.json(chunk)}::jsonb) AS x(
+          message_id text, conversation_id text, contact_external_id text, message_type text,
+          direction text, user_external_id text, date_added text, body text)
+        ON CONFLICT (message_id) DO NOTHING`;
+      written += chunk.length;
+    }
+    return written;
+  }
+  async getEvidenceMessagesSince(startUtc: string): Promise<EvidenceMessageRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT message_id, conversation_id, contact_external_id, message_type, direction, user_external_id, date_added::text AS date_added, body
+      FROM evidence_messages WHERE date_added >= ${startUtc}::timestamptz ORDER BY date_added ASC`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      message_id: String(r.message_id),
+      conversation_id: (r.conversation_id as string | null) ?? null,
+      contact_external_id: (r.contact_external_id as string | null) ?? null,
+      message_type: String(r.message_type),
+      direction: (r.direction as string | null) ?? null,
+      user_external_id: (r.user_external_id as string | null) ?? null,
+      date_added: new Date(r.date_added as string).toISOString(),
+      body: (r.body as string | null) ?? null,
     }));
   }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
