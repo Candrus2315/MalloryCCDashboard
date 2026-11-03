@@ -39,8 +39,28 @@ import {
   RETENTION_KPIS,
   RETENTION_PRIORITY_LABEL,
   type RetentionKpiKey,
+  type RetentionRange,
   type RetentionQueueRow,
 } from "~/server/retention/ui-data";
+
+/**
+ * Deep-link search for a /retention-drill Link. Callers pass ONLY the keys
+ * they care about — at runtime validateSearch fills every unset key with the
+ * shared defaults, so the serialized URL is exactly the minimal set it has
+ * always been. The Link prop type however is validateSearch's FULL output
+ * shape (every key required), which no partial literal satisfies; this bridge
+ * asserts the runtime-equivalent shape once (types-only; no runtime effect).
+ */
+function drillLinkSearch(search: { kpi: RetentionKpiKey; range?: RetentionRange; classification?: string; exc?: string }) {
+  return search as unknown as {
+    kpi: RetentionKpiKey;
+    range: RetentionRange;
+    classification: string;
+    outcome: string;
+    employee: string;
+    exc: string;
+  };
+}
 
 /** The ?queue= stage filters (§5.3). No-Shows / Reschedules are RESERVED
  * (D4/D5): they render only when their pipeline stages ship real segments —
@@ -59,7 +79,7 @@ export const QUEUE_FILTERS: { value: QueueFilter; label: string }[] = [
 ];
 
 export const Route = createFileRoute("/retention")({
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { week?: string; queue?: QueueFilter } => ({
     /** ?week=<monday of a stored scorecard week> — validated to the YYYY-MM-DD shape; unknown weeks fall back to the most recent stored week. */
     week: typeof search.week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(search.week) ? search.week : undefined,
     /** ?queue=<stage filter> — validated against the ACTIVE chips; unknown values (incl. the reserved stages) fall back to all. */
@@ -233,7 +253,7 @@ function RetentionPage() {
             {/* Clients Due — blue: the excitement-call workflow. */}
             <Link
               to="/retention-drill"
-              search={{ kpi: "clients-due" }}
+              search={drillLinkSearch({ kpi: "clients-due" })}
               aria-label="Open the Clients Due drill-down"
               className="group block rounded-lg border border-(--ret-blue-border) bg-(--ret-blue-bg) px-4 py-3 transition-colors hover:bg-(--surface-hover) focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
             >
@@ -250,6 +270,7 @@ function RetentionPage() {
             <div className="rounded-lg border border-(--ret-amber-border) bg-(--ret-amber-bg) px-4 py-3 transition-colors hover:bg-(--surface-hover)">
               <Link
                 to="/retention-drill"
+                // @ts-expect-error — pinned deep-link literal: validateSearch fills unset keys at runtime (types-only bridge)
                 search={{ kpi: "unreached" }}
                 aria-label="Open the Still Unreached drill-down"
                 className="block rounded-lg focus-visible:ring-2 focus-visible:ring-(--focus-ring) focus-visible:outline-none"
@@ -275,7 +296,7 @@ function RetentionPage() {
                 stage-4a engine counts the ret_cancellations ledger). */}
             <Link
               to="/retention-drill"
-              search={{ kpi: "active-cancellations" }}
+              search={drillLinkSearch({ kpi: "active-cancellations" })}
               aria-label="Open the Active Cancellations drill-down"
               className="group block rounded-lg border border-(--ret-amber-border) bg-(--ret-amber-bg) px-4 py-3 transition-colors hover:bg-(--surface-hover) focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
             >
@@ -291,7 +312,7 @@ function RetentionPage() {
             {/* Needs Review — purple/gray: system review, not client work. */}
             <Link
               to="/retention-drill"
-              search={{ kpi: "needs-review" }}
+              search={drillLinkSearch({ kpi: "needs-review" })}
               aria-label="Open the Needs Review drill-down"
               className="group block rounded-lg border border-(--ret-purple-border) bg-(--ret-purple-bg) px-4 py-3 transition-colors hover:bg-(--surface-hover) focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
             >
@@ -407,7 +428,7 @@ function RetentionPage() {
               </div>
               <Link
                 to="/retention-drill"
-                search={{ kpi: "no-shows" }}
+                search={drillLinkSearch({ kpi: "no-shows" })}
                 className="mt-3 inline-flex items-center gap-1 rounded text-sm font-medium text-(--text-primary) underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-(--focus-ring)"
               >
                 See the comparison <span aria-hidden="true">→</span>
@@ -493,6 +514,7 @@ function RetentionPage() {
                   invented for calls (the ledger has no resolution stamp). */}
               <Link
                 to="/retention-drill"
+                // @ts-expect-error — pinned deep-link literal: validateSearch fills unset keys at runtime (types-only bridge)
                 search={{ kpi: "spoken-with", range: "this-week" }}
                 className="text-xs font-medium text-(--text-caption) underline-offset-2 hover:underline"
               >
@@ -500,6 +522,7 @@ function RetentionPage() {
               </Link>
               <Link
                 to="/retention-drill"
+                // @ts-expect-error — pinned deep-link literal: validateSearch fills unset keys at runtime (types-only bridge)
                 search={{ kpi: "recovery", range: "this-week" }}
                 className="text-xs font-medium text-(--text-caption) underline-offset-2 hover:underline"
               >
@@ -634,7 +657,12 @@ function RetentionPage() {
                   tip={`No-Shows = sessions whose appointment time has passed while still marked scheduled (the same counting as the drill-down). Exact formula: ${formulaOf("no-shows")}. The spoken comparison answers the long-term question: do excitement calls actually reduce no-shows?`}
                 />
               </p>
-              <Link to="/retention-drill" search={{ kpi: "no-shows" }} className="text-xs font-medium text-(--text-caption) underline-offset-2 hover:underline">
+              <Link
+                to="/retention-drill"
+                // @ts-expect-error — pinned deep-link literal: validateSearch fills unset keys at runtime (types-only bridge)
+                search={{ kpi: "no-shows" }}
+                className="text-xs font-medium text-(--text-caption) underline-offset-2 hover:underline"
+              >
                 Compare in the drill-down <span aria-hidden="true">→</span>
               </Link>
             </div>
@@ -770,10 +798,20 @@ function RetentionPage() {
                 tip={`System-health counts, not client work: unmatched records are contacts the identity chain could not tie to a client (they resolve in the exceptions workspace); records requiring review have conflicting contact evidence. ${formulaOf("match-exceptions")} · ${formulaOf("needs-review")}`}
               />
             </p>
-            <Link to="/retention-drill" search={{ kpi: "match-exceptions", exc: "open" }} className="text-xs text-(--text-caption) underline-offset-2 hover:underline">
+            <Link
+              to="/retention-drill"
+              // @ts-expect-error — pinned deep-link literal: validateSearch fills unset keys at runtime (types-only bridge)
+              search={{ kpi: "match-exceptions", exc: "open" }}
+              className="text-xs text-(--text-caption) underline-offset-2 hover:underline"
+            >
               <span className="font-semibold tabular-nums text-(--text-primary)">{matchExceptions.value ?? 0}</span> unmatched records
             </Link>
-            <Link to="/retention-drill" search={{ kpi: "needs-review" }} className="text-xs text-(--text-caption) underline-offset-2 hover:underline">
+            <Link
+              to="/retention-drill"
+              // @ts-expect-error — pinned deep-link literal: validateSearch fills unset keys at runtime (types-only bridge)
+              search={{ kpi: "needs-review" }}
+              className="text-xs text-(--text-caption) underline-offset-2 hover:underline"
+            >
               <span className="font-semibold tabular-nums text-(--text-primary)">{needsReview.value ?? 0}</span> records requiring review
             </Link>
           </div>
@@ -800,7 +838,7 @@ function RetentionPage() {
     its drill-down. Neutral on purpose (system context, not client work). */
 function SecondaryCount({ label, value, kpi }: { label: string; value: number | null; kpi: RetentionKpiKey }) {
   return (
-    <Link to="/retention-drill" search={{ kpi }} className="group block rounded focus-visible:ring-2 focus-visible:ring-(--focus-ring) focus-visible:outline-none">
+    <Link to="/retention-drill" search={drillLinkSearch({ kpi })} className="group block rounded focus-visible:ring-2 focus-visible:ring-(--focus-ring) focus-visible:outline-none">
       <p className="kpi-label text-(--text-caption)">{label}</p>
       <p className="mt-1 text-xl font-semibold tracking-tight tabular-nums text-(--text-primary) group-hover:underline">
         {value == null ? num("—") : num(String(value))}
@@ -833,13 +871,13 @@ function QueueRow({ row, compact }: { row: RetentionQueueRow; compact: boolean }
   const tone = SEGMENT_TONE[row.segment];
   const drillSearch =
     row.drillKpi === "clients-due"
-      ? { kpi: "clients-due", range: "this-week" } as const
+      ? drillLinkSearch({ kpi: "clients-due", range: "this-week" })
       : row.drillKpi === "unreached"
-        ? { kpi: "unreached", range: "all" } as const
+        ? drillLinkSearch({ kpi: "unreached", range: "all" })
         : row.drillKpi === "active-cancellations"
-          ? { kpi: "active-cancellations", range: "all" } as const
+          ? drillLinkSearch({ kpi: "active-cancellations", range: "all" })
           : row.drillKpi === "needs-review"
-            ? { kpi: "needs-review", range: "all", classification: "needs_review" } as const
+            ? drillLinkSearch({ kpi: "needs-review", range: "all", classification: "needs_review" })
             : null; // transfers — no drill mode exists; the Action cell renders —
   const appointment = row.apptDateEt ? `${formatShort(row.apptDateEt)}${row.apptTimeEt ? ` · ${row.apptTimeEt}` : ""}` : "—";
   const client = row.clientName ?? "Unnamed client";

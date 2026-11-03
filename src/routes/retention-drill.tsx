@@ -16,7 +16,7 @@
  * "—" on appointment-funnel drills.
  */
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
 import { formatDateHuman } from "~/server/date-logic";
 import { getRetentionDrillData } from "~/server/queries";
 import { Panel } from "~/components/page-panel";
@@ -36,18 +36,45 @@ import {
   type RetentionKpiKey,
   type RetentionRange,
   type RetentionDrillRow,
+  type RetentionDrillData,
 } from "~/server/retention/ui-data";
 
 const KPI_KEYS = RETENTION_KPIS.map((k) => k.key);
 
-export const Route = createFileRoute("/retention-drill")({
-  validateSearch: (search: Record<string, unknown>) => {
-    const kpi: RetentionKpiKey = KPI_KEYS.includes(search.kpi as RetentionKpiKey) ? (search.kpi as RetentionKpiKey) : "clients-due";
+/**
+ * Defaults validateSearch fills for search keys absent from the URL — the one
+ * defaults table for the drill-down search. Deep-link callers (retention.tsx)
+ * pass only the keys they set and validateSearch fills the rest from here, so
+ * their URLs stay the minimal set they have always been. Values are
+ * byte-identical to the previous inline defaults (types-only refactor).
+ */
+export function retentionDrillSearchDefaults(kpi: RetentionKpiKey): {
+  kpi: RetentionKpiKey;
+  range: RetentionRange;
+  classification: string;
+  outcome: string;
+  employee: string;
+  exc: string;
+} {
+  return {
+    kpi,
     // Queue + §16 ledger kpis default to All open (the card counts the whole
     // open queue / written ledger); week-scoped cohort KPIs default to This
     // week (the card's own window).
-    const defaultRange: RetentionRange = kpi === "needs-review" || kpi === "match-exceptions" || isCancellationKpi(kpi) ? "all" : "this-week";
-    const range: RetentionRange = RETENTION_RANGES.some((r) => r.value === search.range) ? (search.range as RetentionRange) : defaultRange;
+    range: kpi === "needs-review" || kpi === "match-exceptions" || isCancellationKpi(kpi) ? "all" : "this-week",
+    // Needs Review is locked to its own classification (the card IS the filter).
+    classification: kpi === "needs-review" ? "needs_review" : "all",
+    outcome: "all",
+    employee: "all",
+    exc: "open",
+  };
+}
+
+export const Route = createFileRoute("/retention-drill")({
+  validateSearch: (search: Record<string, unknown>) => {
+    const kpi: RetentionKpiKey = KPI_KEYS.includes(search.kpi as RetentionKpiKey) ? (search.kpi as RetentionKpiKey) : "clients-due";
+    const defaults = retentionDrillSearchDefaults(kpi);
+    const range: RetentionRange = RETENTION_RANGES.some((r) => r.value === search.range) ? (search.range as RetentionRange) : defaults.range;
     const rawClassification = typeof search.classification === "string" ? search.classification : "all";
     return {
       kpi,
@@ -130,7 +157,13 @@ function outcomeLabel(outcome: string | null): string | null {
 }
 
 function RetentionDrillPage() {
-  const data = Route.useLoaderData();
+  // The loader returns RetentionDrillData, but TanStack's server-fn serializable
+  // return-type mapping collapses to `unknown` (rows[].evidence is a jsonb
+  // Record<string, unknown> — deliberately not serializable-constrained), so
+  // useLoaderData() cannot carry the type. Assert it at the one consumption
+  // site; the runtime payload is exactly this shape (validateSearch + the
+  // handler build it). Types-only: no runtime effect.
+  const data = Route.useLoaderData() as RetentionDrillData;
   const search = Route.useSearch();
   const navigate = useNavigate();
   const router = useRouter();
@@ -138,7 +171,7 @@ function RetentionDrillPage() {
   const [confirming, setConfirming] = useState<Record<string, string>>({}); // exception id → candidate client id
   const [actionError, setActionError] = useState<string | null>(null);
   const setParam = (patch: Partial<typeof search>) =>
-    void navigate({ to: "/retention-drill", search: (prev) => ({ ...prev, ...patch }) });
+    void navigate({ to: "/retention-drill", search: (prev) => ({ ...prev, ...patch }) as typeof search });
   const toggle = (id: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -307,7 +340,7 @@ function RetentionDrillPage() {
             <select
               aria-label="Filter by employee"
               value={search.employee}
-              onChange={(e) => setParam({ employee: e.target.value })}
+              onChange={(e: ChangeEvent<HTMLSelectElement>) => setParam({ employee: e.target.value })}
               className="min-h-[44px] rounded-lg border border-(--card-border) bg-(--card-bg) px-2.5 py-1.5 text-[13px] font-medium text-(--text-primary) outline-none focus:border-(--input-focus-border)"
             >
               <option value="all">All employees</option>
