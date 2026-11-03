@@ -376,7 +376,9 @@ export interface AvailabilityFeedOptions {
  */
 export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions): Promise<AvailabilityFeedResult> {
   const now = options?.now ?? (() => new Date());
-  const store = options?.store ?? (await import("../store").then((m) => m.getStore()));
+  // getStore() always RESOLVES a best-available store (or throws) — the
+  // dynamic-import fallback only looks optional; pin the variable to Store.
+  const store: Store = options?.store ?? (await import("../store").then((m) => m.getStore()));
   const client =
     options && "client" in options ? options.client ?? null : resolveAcuityAvailabilityClient();
   if (!client) return { outcome: "skipped", reason: "no-credentials" }; // demo mode never calls
@@ -596,10 +598,14 @@ export async function availabilityFeedTick(options?: {
   client?: AcuityAvailabilityClient | null;
   now?: () => Date;
   trigger?: "background" | "manual";
+  /** Skip the background throttle even for a background run (tests) — same seam as AvailabilityFeedOptions.skipThrottle. */
+  skipThrottle?: boolean;
 }): Promise<AvailabilityFeedResult> {
   const now = options?.now ?? (() => new Date());
   const trigger = options?.trigger ?? "background";
-  const store = options?.store ?? (await import("../store").then((m) => m.getStore()));
+  // Same as runAvailabilityFeedSync: the dynamic-import fallback always
+  // resolves (or throws) — pin the variable to Store.
+  const store: Store = options?.store ?? (await import("../store").then((m) => m.getStore()));
 
   const running = await store.getRunningSyncRun(AVAILABILITY_FEED_PROVIDER);
   if (running) {

@@ -118,8 +118,12 @@ async function runAcuityPass(
   const appts = await demoAcuity.fetchAppointments();
   count += await upsertAcuityAppointments(store, appts);
   const blocked = await demoAcuity.fetchBlockedTimes();
+  // CONSTRUCTION INPUT: both stores generate ids (and any read-side fields
+  // the row interfaces require) at insert time; the upsert SQL binds only
+  // the columns set here. The casts below surface that contract to tsc —
+  // runtime values are untouched.
   await store.upsertBlockedTimes(
-    blocked.map((b) => ({ provider: "acuity", external_id: b.external_id, start_at: b.startAt, end_at: b.endAt, reason: b.reason })),
+    blocked.map((b) => ({ provider: "acuity", external_id: b.external_id, start_at: b.startAt, end_at: b.endAt, reason: b.reason })) as Parameters<Store["upsertBlockedTimes"]>[0],
   );
   count += blocked.length;
   return { count, live: false, note: null };
@@ -240,7 +244,7 @@ export async function runDemoSync(options?: {
         name: u.name,
         email: u.email,
         is_active: live ? isRosterUser(u.name, u.email, settings.active_roster) : true,
-      })),
+      })) as Parameters<Store["upsertUsers"]>[0],
     );
     count += users.length;
 
@@ -259,7 +263,7 @@ export async function runDemoSync(options?: {
         phone: c.phone,
         email: c.email,
         assigned_rep_id: c.assignedRepExternalId ? userIdByExt.get(`highlevel:${c.assignedRepExternalId}`) ?? null : null,
-      })),
+      })) as Parameters<Store["upsertContacts"]>[0],
     );
     count += contacts.length;
 
@@ -278,7 +282,7 @@ export async function runDemoSync(options?: {
         over_two_minutes: c.durationSeconds > settings.meaningful_call_threshold_seconds,
         direction: c.direction,
         call_status: c.status,
-      })),
+      })) as Parameters<Store["upsertCalls"]>[0],
     );
     count += calls.length;
 
@@ -398,7 +402,9 @@ export async function runDemoSync(options?: {
   // live adapter when the service-account secret resolves, demo seed otherwise
   // (see runSheetsSync for the demo-replace guard). The sync_runs row + result
   // wrapping stays here; the connection row is written inside runSheetsSync.
-  const sheetsRes = await runProvider(store, "google_sheets", () => runSheetsSync(store, settings, liveSheets));
+  // SheetsSyncResult satisfies the runProvider contract (count + optional
+  // error + extras) but carries no index signature for the & Record member.
+  const sheetsRes = await runProvider(store, "google_sheets", () => runSheetsSync(store, settings, liveSheets) as Promise<{ count: number; error?: string } & Record<string, unknown>>);
   results.push({ provider: "google_sheets", count: sheetsRes.count, error: sheetsRes.error ?? null });
 
   // --- Attributions (engine over STORED rows; re-runs replace, manual overrides preserved by store) ---
@@ -621,6 +627,8 @@ export async function runSheetsSync(
           const contactId = l.phone ? contactByPhone.get(l.phone.replace(/\D/g, "").slice(-10)) ?? null : null;
           const contactId2 = contactId ?? (l.email ? contactByEmail.get(l.email.toLowerCase()) ?? null : null);
           const contact = contactId2 ? contactById.get(contactId2) ?? null : null;
+          // CONSTRUCTION INPUT (same as the HighLevel upserts above): the
+          // stores fill ids/read-side fields; the cast surfaces the contract.
           return {
             provider: "google_sheets",
             source_id: l.source_id,
@@ -635,7 +643,7 @@ export async function runSheetsSync(
             source_sheet: l.sheet,
             source_raw_date: l.sourceRawDate ?? null,
           };
-        }),
+        }) as Parameters<Store["upsertLeads"]>[0],
         { deadline: ingestDeadline },
       );
       count += sheetLeads.length;

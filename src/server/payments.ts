@@ -79,10 +79,13 @@ export function derivePaymentState(raw: unknown): PaymentDerivation {
   if (raw == null || typeof raw !== "object") {
     return { state: "unknown", paid: null, price: null, priceSold: null, amountPaid: null, paymentTimestamp: null };
   }
-  const paid = parsePaidFlag(raw.paid);
-  const price = parseMoney(raw.price);
-  const priceSold = parseMoney(raw.priceSold);
-  const amountPaid = parseMoney(raw.amountPaid);
+  // The guard above narrows only to `object` (no index signature) — view the
+  // evidence keys through a record. Runtime identity: same value, new name.
+  const r = raw as Record<string, unknown>;
+  const paid = parsePaidFlag(r.paid);
+  const price = parseMoney(r.price);
+  const priceSold = parseMoney(r.priceSold);
+  const amountPaid = parseMoney(r.amountPaid);
   let state: BookingPaymentState;
   if (paid === true) {
     state = "paid"; // paid:"yes" is THE authoritative evidence (amountPaid informational)
@@ -94,7 +97,7 @@ export function derivePaymentState(raw: unknown): PaymentDerivation {
   } else {
     state = "unknown";
   }
-  const ts = typeof raw.paymentTimestamp === "string" && raw.paymentTimestamp.trim() !== "" ? raw.paymentTimestamp.trim() : null;
+  const ts = typeof r.paymentTimestamp === "string" && r.paymentTimestamp.trim() !== "" ? r.paymentTimestamp.trim() : null;
   return { state, paid, price, priceSold, amountPaid, paymentTimestamp: ts };
 }
 
@@ -139,7 +142,7 @@ export function deriveBookingPaymentFields(input: {
     return {
       payment_state: d.state,
       booking_win_business_date: existing?.booking_win_business_date ?? null,
-      payment_business_date_source: existing?.payment_business_date_source ?? null,
+      payment_business_date_source: (existing?.payment_business_date_source ?? null) as WinDateSource,
       first_seen_paid_at: firstSeen,
     };
   }
