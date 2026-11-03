@@ -70,7 +70,7 @@ export function commissionEmployeeOf(user: UserRow): CommissionEmployeeInput | n
  */
 export function tierHeldForWeek(
   employee: CommissionEmployeeInput,
-  weekStart: string,
+  _weekStart: string,
   weekEnd: string,
 ): CommissionEmployeeInput | null {
   if (employee.tierEffectiveDate != null && employee.tierEffectiveDate > weekEnd) return null;

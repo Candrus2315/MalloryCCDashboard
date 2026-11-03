@@ -24,7 +24,6 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
-import type { UserRow } from "../store/types";
 import { todayPageData, repsPageData, weeklyPageData } from "../page-data";
 import {
   applyRosterEligibility,

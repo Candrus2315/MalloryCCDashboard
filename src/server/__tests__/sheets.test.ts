@@ -19,7 +19,7 @@ import {
 } from "../sync/sheets-mapping";
 import { runDemoSync } from "../sync/run";
 import { demoAwarenessLine, syncStaleWarnings } from "../queries";
-import { etToday, getWorkDate, addDays } from "../date-logic";
+import { getWorkDate } from "../date-logic";
 
 // Frozen window: the fixtures below use fixed September 2026 dates, and a
 // clock-relative window rots as real time passes (the moving 35-day window

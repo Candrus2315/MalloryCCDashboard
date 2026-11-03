@@ -25,7 +25,7 @@ import {
   type AttributionContact,
   type AttributionHarvestInteraction,
 } from "../metrics/attribution";
-import { attributionStateOf, bookingsFromOverThresholdCalls, type AppointmentRow, type AttributionRow, type CallRow } from "../metrics/compute";
+import { attributionStateOf, bookingsFromOverThresholdCalls, type AppointmentRow, type CallRow } from "../metrics/compute";
 import { toAttributionRows } from "../sync/attribution-tick";
 
 const SETTINGS = { meeting_threshold_seconds: 120, attribution_window_hours: 24 };

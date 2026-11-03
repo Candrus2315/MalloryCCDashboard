@@ -9,7 +9,7 @@
  * plausible ok). Freshness math is the same pure function the watchdog uses.
  */
 import { describe, expect, test } from "bun:test";
-import { buildHealthPayload, healthHttpStatus, resolveGitCommit, type HealthPayload } from "../health";
+import { buildHealthPayload, healthHttpStatus, resolveGitCommit } from "../health";
 import { defaultSettings, type Store } from "../store/types";
 
 const T0 = Date.parse("2026-10-20T12:00:00Z");

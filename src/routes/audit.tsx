@@ -77,8 +77,6 @@ function AuditPage() {
   const rows = data.payload?.rows ?? [];
   const sorted = useMemo(() => sortRows(rows, sort), [rows, sort.key, sort.asc]);
 
-  const onSort = (key: SortKey) =>
-    setSort((s) => (s.key === key ? { key, asc: !s.asc } : { key, asc: key === "rep_name" || key === "direction" }));
 
   // Day groups (wave-2 History anatomy). The loader window is one ET day, so
   // this yields the selected day's single group; grouping stays by et_date so

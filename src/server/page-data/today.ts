@@ -70,7 +70,6 @@ export async function todayPageData(deps?: PageDeps) {
 
   const todayStart = etDayStartUtc(today);
   const todayEnd = etDayEndUtc(today);
-  const yesterdayStart = etDayStartUtc(yesterday);
   const weekStartUtc = etDayStartUtc(ws);
 
   const [meta, settings, callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, connections, slotDayResults] =
@@ -308,7 +307,6 @@ export async function dailyReportPageData(deps?: PageDeps) {
   const lwMon = lastCompletedWeekStart(today);
   const lwSun = addDays(lwMon, 6);
 
-  const todayStart = etDayStartUtc(today);
   const anchorStart = etDayStartUtc(anchorDate);
   const weekStartUtc = etDayStartUtc(ws);
   // The join pool (conversation conversion) and the lead cohorts must cover the

@@ -17,28 +17,16 @@ import {
   dateRange,
   etDayEndUtc,
   etDayStartUtc,
-  etRangeBounds,
   etToday,
   formatDateHuman,
-  formatDateHumanFull,
-  isHistoricalWeek,
-  isRangeMode,
-  mondaysInRange,
   OPERATIONAL_TIMEZONE,
-  repOperatingState,
-  resolveRange,
   weekStart,
-  type RangeMode,
 } from "./date-logic";
 import {
   type RepGoalInfo,
   appointmentPaymentStateOf,
   bookingAttributionSplit,
-  buildTeamRangeMetrics,
-  buildTeamTrends,
   buildUnattributedQueue,
-  repRangeSummaries,
-  resolveRepGoal,
 } from "./metrics/compute";
 import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
@@ -52,12 +40,8 @@ import { matchAppointmentsToCalls } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
 import { WEEKLY_CC_SECTIONS, addMonthsKey, monthKeyLabel, monthKeyOf } from "./metrics/weekly";
 import {
-  applyAttributionEligibility,
-  applyRosterEligibility,
   buildNonRosterPanel,
-  buildRosterEligibility,
 } from "./roster";
-import { buildCallOwnershipBuckets } from "~/components/reps-views";
 import { ensureDemoData } from "./sync/run";
 import { refreshAvailabilityRange } from "./sync/availability-feed";
 import type { AuditOkBody } from "./audit-api";

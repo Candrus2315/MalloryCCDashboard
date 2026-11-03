@@ -171,7 +171,6 @@ export async function computeAndStoreWeeklyScorecard(
   // outcome rows the KPI band aggregates — one metrics source of truth.
   const outcomes = await store.listRetentionAppointmentOutcomes();
   const cohort = outcomes.filter((o) => o.eligible && o.contact_due_date >= weekStart && o.contact_due_date <= weekEnd);
-  const cohortIds = new Set(cohort.map((o) => o.appointment_id));
   const calledCount = cohort.filter((o) => o.attempts_count >= 1).length;
   const spokenWithCount = cohort.filter((o) => o.final_status === "verified_spoke_with").length;
   const needsReviewCount = cohort.filter((o) => o.final_status === "needs_review").length;

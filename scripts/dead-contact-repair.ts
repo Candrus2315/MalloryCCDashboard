@@ -35,7 +35,7 @@ import { getStore } from "../src/server/store";
 import { PgStore } from "../src/server/store/pg";
 
 const GRANT_SOURCE = "data-ops runner: dead-contact-repair (owner approved 2026-11-02)";
-import { searchContacts, type HlContactLite } from "../src/server/sync/dead-contact-repair";
+import { type HlContactLite } from "../src/server/sync/dead-contact-repair";
 import postgres from "postgres";
 
 export const DEAD_CONTACT_REPAIR_CHECKPOINT_KEY = "hl_dead_contact_repair_v1";

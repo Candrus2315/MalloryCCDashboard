@@ -512,7 +512,6 @@ const realRules: AvailabilityRule[] = [0, 1, 2, 3, 4, 5, 6].flatMap((weekday) =>
 // per-day session layout: [singles on grid times..., doubles as [time, ×2]]
 // → Oct 5: 9 distinct/10 sessions; Oct 6: 8/8; Oct 7: 9/10; Oct 8–10: 9/9 each;
 //   Oct 11: 8 distinct/10 sessions. Totals: 61 distinct slots, 65 sessions.
-const OW_GRID = ["08:00", "09:00", "10:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30", "17:30"];
 const OW_DAY_PLAN: Array<[string, string[], string[]]> = [
   // [date, single times, double times]
   [OW_MON, ["08:00", "09:00", "11:00", "12:00", "13:30", "14:30", "15:30", "16:30"], ["10:00"]],

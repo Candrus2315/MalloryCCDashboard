@@ -90,11 +90,8 @@ describe("§5 TIER CALC RULE — the ASSIGNED tier governs regardless of volume"
     expect(RATE(false, 3, 0).totalCents).toBe(0);
   });
   test("invalid tier / employment / count THROW — unassigned tiers never silently compute $0", () => {
-    // @ts-expect-error deliberately invalid inputs
     expect(() => rateCommission("full_time", 6 as never, 10)).toThrow();
-    // @ts-expect-error
     expect(() => rateCommission("full_time", 0 as never, 10)).toThrow();
-    // @ts-expect-error
     expect(() => rateCommission("seasonal" as never, 3 as never, 10)).toThrow();
     expect(() => RATE(true, 3, -1)).toThrow();
     expect(() => RATE(true, 3, 1.5)).toThrow();

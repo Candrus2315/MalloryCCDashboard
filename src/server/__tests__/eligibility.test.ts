@@ -13,7 +13,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { repOperatingState } from "../date-logic";
-import { buildTeamRangeMetrics, repRangeSummaries, type AttributionRow, type CallRow, type LeadRow } from "../metrics/compute";
+import { buildTeamRangeMetrics, repRangeSummaries, type AttributionRow, type CallRow } from "../metrics/compute";
 import {
   applyAttributionEligibility,
   applyRosterEligibility,
@@ -82,19 +82,6 @@ function buildCalls(opts: { linkNonRoster: boolean }): { calls: CallRow[]; users
   for (let i = 0; i < NO_USER_ROWS; i++) calls.push(call(null, null, false));
   return { calls, users };
 }
-
-const lead = (repId: string | null): LeadRow => {
-  seq += 1;
-  return {
-    id: `l${seq}`,
-    lead_type: "family",
-    source_date: "2026-09-24",
-    work_date: "2026-09-25",
-    contact_id: null,
-    assigned_rep_id: repId,
-    source_sheet: "family",
-  };
-};
 
 describe("NO-MAPPING REGRESSION — bit-identical to the part-2 verified matrix", () => {
   const { calls, users } = buildCalls({ linkNonRoster: true });

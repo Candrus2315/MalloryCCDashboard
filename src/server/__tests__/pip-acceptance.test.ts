@@ -48,8 +48,6 @@ const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const W1 = "2027-01-04";
 const W2 = "2027-01-11";
 const W3 = "2027-01-18";
-const W4 = "2027-01-25";
-const WEEKS = [W1, W2, W3, W4];
 const REVIEW_END = "2027-01-31";
 const TODAY = "2027-01-20"; // a Wednesday inside week 3
 
@@ -97,7 +95,7 @@ async function seedWins(store: Store, stamp: number, repId: string, week: string
     ),
   );
   const overlap = await store.getAppointmentsOverlapping(`${week}T00:00:00.000Z`, `${week}T23:59:59.000Z`);
-  const attrRows: AttributionRow[] = rows.map((n, i) => ({
+  const attrRows: AttributionRow[] = rows.map((n) => ({
     id: `pip-acc-attr-${stamp}-${n}`,
     appointment_id: overlap.find((a) => a.acuity_appointment_id === `pip-acc-${stamp}-${n}`)!.id,
     call_id: null,
@@ -308,7 +306,7 @@ async function runAcceptanceBattery(makeStore: () => Store): Promise<BatteryCtx>
     actor: "christopher",
   });
   cleanupIds.pipIds.push(cancelDraft.id);
-  const cancelIssued = await issuePipCore(store, { pipId: cancelDraft.id, actor: "christopher", today: TODAY });
+  await issuePipCore(store, { pipId: cancelDraft.id, actor: "christopher", today: TODAY });
   const cancelSnaps = await store.getPipEvidenceSnapshots(cancelDraft.id);
   expect(cancelSnaps).toHaveLength(1);
   const cancelFrozen = JSON.stringify(cancelSnaps[0].snapshot);
@@ -400,7 +398,7 @@ async function runAcceptanceBattery(makeStore: () => Store): Promise<BatteryCtx>
 
 describe("PIP Phase 5 — the owner's 12 acceptance scenarios (MemoryStore)", () => {
   test("AC1–AC12: lifecycle, evidence, RBAC module surface, audit, print honesty", async () => {
-    const ctx = await runAcceptanceBattery(() => new MemoryStore());
+    await runAcceptanceBattery(() => new MemoryStore());
 
     // ---- AC8 (wiring): every PIP server function asserts the manager server-side ----
     const source = readFileSync(new URL("../pip-api.ts", import.meta.url), "utf8");

@@ -15,7 +15,6 @@ import { MemoryStore } from "../store/memory";
 import { dailyReportPageData, repsPageData, teamPageData, todayPageData } from "../page-data";
 import { buildTeamTrends, splitLeadRows, type AttributionRow, type LeadRow } from "../metrics/compute";
 import { appointmentInScope } from "../metrics/availability";
-import type { UserRow } from "../store/types";
 
 // Pinned clock: Friday 2026-09-25 (EDT, UTC-4) — the week-cadence fixture week.
 const FRI = "2026-09-25";

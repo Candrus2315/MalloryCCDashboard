@@ -22,7 +22,7 @@ import { deriveWeeklyHoles, isCancelledSession } from "../commission/derive";
 import { buildWeeklyCcReportText, type WeeklyCcReportInput } from "../metrics/weekly-report-text";
 import { weeklyPageData } from "../page-data";
 import { MemoryStore } from "../store/memory";
-import type { AppointmentRow, LeadRow } from "../metrics/compute";
+import type { AppointmentRow } from "../metrics/compute";
 import { totalLeadConversionWeek } from "../metrics/compute";
 import { addDays, dateRange, isWorkday, weekdayName } from "../date-logic";
 

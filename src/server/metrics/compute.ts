@@ -1054,7 +1054,7 @@ export function buildTodayMetrics(input: {
   const bookingsYesterday = countBookingsCreatedBetween(input.apptsCreatedYesterday, "", "9999");
   const bookingsWtd = countBookingsCreatedBetween(input.apptsCreatedWtd, "", "9999");
 
-  const fromOverWeek = bookingsFromOverThresholdCalls(
+  void bookingsFromOverThresholdCalls(
     input.apptsCreatedWtd,
     input.attributions,
     input.allCallsForWeek,
@@ -1069,7 +1069,7 @@ export function buildTodayMetrics(input: {
 
   const leadsTodaySummary = leadsToday(input.leadsAllRecent, reportDate, input.leadCountAdjustments);
   const weeklyLeads = leadsForWeek(input.leadsAllRecent, reportDate, input.leadCountAdjustments);
-  const assignedLeadsWeek = [...assignedLeadsByRep(input.leadsAllRecent, ws, addDays(ws, 6)).values()].reduce(
+  void [...assignedLeadsByRep(input.leadsAllRecent, ws, addDays(ws, 6)).values()].reduce(
     (a, b) => a + b,
     0,
   );

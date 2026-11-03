@@ -23,7 +23,7 @@ import { PgStore } from "../store/pg";
 import { pipDateShort, pipEvidenceCore, pipGoalLabel } from "../pip-evidence";
 import { statementsFromEvidence } from "../pip-statements";
 import { isBookingWin, resolveRepGoal } from "../metrics/compute";
-import type { AttributionRow, AppointmentRow } from "../metrics/compute";
+import type { AttributionRow } from "../metrics/compute";
 import type { Store } from "../store/types";
 
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;

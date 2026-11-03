@@ -44,7 +44,6 @@ const json = (body: unknown, status = 200) =>
 
 const NOW = Date.now();
 const secondsAgoIso = (s: number) => new Date(NOW - s * 1000).toISOString();
-const hoursAgoMs = (h: number) => NOW - h * 3_600_000;
 
 /** Minimal incremental fixture fetch (mirrors scheduler.test.ts shapes). */
 function makeIncrementalFetch(opts: { seen?: string[]; hang?: boolean } = {}) {

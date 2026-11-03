@@ -21,7 +21,7 @@ function headers(apiKey: string): Record<string, string> {
 }
 
 /** True when the contact id is DEAD (GHL answers CONVERSATIONS_CONTACT_NOT_FOUND). */
-async function probeContactDead(locationId: string, apiKey: string, contactId: string): Promise<"alive" | "dead" | "error"> {
+export async function probeContactDead(locationId: string, apiKey: string, contactId: string): Promise<"alive" | "dead" | "error"> {
   try {
     const res = await fetch(`${API}/conversations/search?locationId=${encodeURIComponent(locationId)}&contactId=${encodeURIComponent(contactId)}&limit=1`, { headers: headers(apiKey) });
     if (res.status === 200) return "alive";
@@ -60,7 +60,7 @@ export async function searchContacts(locationId: string, apiKey: string, query: 
 }
 
 /** Count live conversations for a candidate (the "has interactions" signal). */
-async function countConversations(locationId: string, apiKey: string, contactId: string): Promise<number> {
+export async function countConversations(locationId: string, apiKey: string, contactId: string): Promise<number> {
   try {
     const res = await fetch(`${API}/conversations/search?locationId=${encodeURIComponent(locationId)}&contactId=${encodeURIComponent(contactId)}&limit=20`, { headers: headers(apiKey) });
     if (!res.ok) return 0;

@@ -31,7 +31,6 @@ import { getStore } from "../src/server/store";
 import { getSecret } from "../src/server/env";
 import { applyInternalClientBackfill } from "../src/server/retention/backfill";
 import { attributeCall, contactDueDate, groupAppointmentsByClient, type CallForAttribution } from "../src/server/retention/attribution";
-import { normalizeUSPhone } from "../src/server/identity/normalize";
 import { writeFileSync } from "fs";
 import { createHash } from "crypto";
 
@@ -345,8 +344,7 @@ try {
 
   // ================= assemble + verdicts =================
   const g1QualifyingPct = pct(Number(g1[0].resolved), Number(g1[0].total));
-  const g2Primary = g2_30d;
-  const results = {
+    const results = {
     when,
     gate_run_id: gateRunId,
     due_days: DUE_DAYS,

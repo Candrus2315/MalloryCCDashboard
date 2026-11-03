@@ -81,7 +81,6 @@ const failingStub = (message = "Sheets API unreachable"): GoogleSheetsAdapter =>
   },
 });
 
-const FAM = (rows: NormalizedLead[], d: string) => rows.filter((l) => l.sheet === "family" && l.sourceDate === d).length;
 
 // ---------- runSheetsSync: the shared sync core ----------
 describe("runSheetsSync — demo-replace guard + upsert-only storage", () => {

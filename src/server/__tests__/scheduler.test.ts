@@ -16,7 +16,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
-import { planConversationsToVisit, WATERMARK_OVERLAP_SECONDS, harvestIncremental } from "../sync/highlevel-incremental";
+import { planConversationsToVisit, WATERMARK_OVERLAP_SECONDS } from "../sync/highlevel-incremental";
 import { readSchedulerIntervalSeconds, schedulerTick } from "../sync/scheduler";
 import { runDemoSync } from "../sync/run";
 import type { HighLevelAdapter } from "../sync/adapters";
