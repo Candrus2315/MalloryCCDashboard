@@ -42,9 +42,10 @@ import {
 const KPI_KEYS = RETENTION_KPIS.map((k) => k.key);
 
 /**
- * Defaults validateSearch fills for search keys absent from the URL. Exported
- * so the retention-card deep-links (retention.tsx <Link search>) build their
- * search from the SAME source — one defaults table, no drift. Values are
+ * Defaults validateSearch fills for search keys absent from the URL — the one
+ * defaults table for the drill-down search. Deep-link callers (retention.tsx)
+ * pass only the keys they set and validateSearch fills the rest from here, so
+ * their URLs stay the minimal set they have always been. Values are
  * byte-identical to the previous inline defaults (types-only refactor).
  */
 export function retentionDrillSearchDefaults(kpi: RetentionKpiKey): {
