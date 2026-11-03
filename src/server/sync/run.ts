@@ -7,7 +7,7 @@
  * Phase 1: demo adapters only (flagged in integration_connections). Real HTTP
  * adapters plug into the same runProvider flow later.
  */
-import { addDays, etDayStartUtc, weekStart } from "../date-logic";
+import { addDays, weekStart } from "../date-logic";
 import { isRosterUser } from "../roster";
 import { getStore, type Store } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";

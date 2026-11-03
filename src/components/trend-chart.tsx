@@ -248,7 +248,7 @@ export function TrendCard({ title, points, unit, refLine, note, info, wide, meta
               ))}
               {points.map((p, i) => {
                 if (p.value == null) return null;
-                const { hollow, partial } = dotProps(i);
+                const { hollow } = dotProps(i);
                 return (
                   <circle
                     key={i}

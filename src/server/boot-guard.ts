@@ -39,7 +39,7 @@
  *     replace. The existing free-port + retry bind loop in serve.ts handles
  *     the eviction.
  */
-import { mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 

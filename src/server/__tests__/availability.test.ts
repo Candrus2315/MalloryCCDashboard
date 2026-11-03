@@ -51,7 +51,6 @@ const appt = (datetime: string, extra: Partial<AppointmentRow> = {}): Appointmen
   ...extra,
 });
 
-const block = (start: string, end: string, id = "b1"): BlockedTimeRow => ({ id, start_at: start, end_at: end, reason: "photo shoot" });
 
 const ET = (date: string, hhmm: string, durMin = 60): BlockedTimeRow => {
   // build a UTC interval from an ET clock time on an ET date (fixed EDT offset in fixtures)

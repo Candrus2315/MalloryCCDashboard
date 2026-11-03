@@ -14,9 +14,6 @@ import { composeAvailabilitySync, type AvailabilitySyncPanel } from "../availabi
 const TODAY = "2026-10-06";
 const RUN = "run-pr3-sync";
 
-function syncPanelOf(p: Awaited<ReturnType<typeof availabilityPageData>>): AvailabilitySyncPanel {
-  return (p.view as { sync: AvailabilitySyncPanel }).sync;
-}
 
 describe("composeAvailabilitySync — the panel payload", () => {
   const connection = { connected: true, mode: "live" as const, lastSyncAt: "2026-10-06T21:06:52.000Z", stale: false };

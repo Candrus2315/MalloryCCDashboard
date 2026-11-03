@@ -22,7 +22,6 @@ import { PgStore } from "../store/pg";
 import { appointmentPaymentStateOf, isBookingWin } from "../metrics/compute";
 import { dismissPendingPaymentCore } from "../queries";
 import { addDays, etDayStartUtc, etToday } from "../date-logic";
-import { derivePaymentState } from "../payments";
 import type { AppointmentRow } from "../metrics/compute";
 
 /**

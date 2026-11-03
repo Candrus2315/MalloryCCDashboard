@@ -36,7 +36,6 @@ function makeEnv(responses: Map<string, unknown | (() => never)>, opts?: { statu
   const fetchImpl = (async (url: string) => {
     calls.push(url);
     const key = new URL(url).pathname.replace("/api/v1/", "") + "?" + new URL(url).search;
-    const matcher = [...responses.keys()].find((k) => key.startsWith(k)) ?? [...responses.keys()].find((k) => key.startsWith(new URLSearchParams(k.split("?")[0]).get("") ?? ""));
     // route by pathname+query prefix
     const hit = [...responses.entries()].find(([k]) => key.startsWith(k));
     if (!hit) {

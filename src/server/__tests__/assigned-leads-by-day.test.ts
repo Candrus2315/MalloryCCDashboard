@@ -64,10 +64,6 @@ const REPS = [
 
 type RepKey = (typeof REPS)[number]["key"];
 
-/** Sum of one rep's sheet anchor for a genre (whole week). */
-function sheetTotal(key: RepKey, genre: "ani" | "fam"): number {
-  return SHEET_ANCHOR[key][genre].reduce((a, b) => a + b, 0);
-}
 
 /** Deterministic seeded battery — one function, run against each store. */
 async function runAssignedByDayBattery(

@@ -21,10 +21,8 @@ import { describe, expect, test } from "bun:test";
 import { getWorkDate } from "../date-logic";
 import {
   computeAssignedCohortProduced,
-  computeLeadCohortOutcomes,
   weekCohortFunnelRows,
   type LeadJoinRow,
-  type SourceBucket,
   type WinWithClients,
 } from "../metrics/source-attribution";
 import { weeklyPageData } from "../page-data";

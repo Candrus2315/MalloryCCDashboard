@@ -108,7 +108,7 @@ describe("call→contact backfill — resolution hierarchy", () => {
 
   test("tier precedence: direct beats parent-conversation beats value-match; idempotent rerun changes nothing", async () => {
     const store = await seedStore();
-    const rep = await seedRep(store, "rep1");
+    await seedRep(store, "rep1");
     const direct = await seedContact(store, { external_id: "hl-direct" });
     const parent = await seedContact(store, { external_id: "hl-parent", phone: "+15551230001" });
     const byPhone = await seedContact(store, { external_id: "hl-phone", phone: "5551230999" });
@@ -145,7 +145,7 @@ describe("call→contact backfill — resolution hierarchy", () => {
     const store = await seedStore();
     const rep = await seedRep(store, "rep1");
     const owner = await seedContact(store, { external_id: "hl-owner" });
-    const other = await seedContact(store, { external_id: "hl-other" });
+    await seedContact(store, { external_id: "hl-other" });
     // Call ALREADY linked (never re-resolved) + a call whose phone matches `other`.
     const linked = await seedCall(store, { external_call_id: "hl-linked", contact_id: owner.id, conversation_id: null });
     const orphan = await seedCall(store, { external_call_id: "hl-orphan", contact_id: null, conversation_id: null });

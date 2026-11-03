@@ -106,7 +106,7 @@ describe("sendOpsAlert — env-gated, honest, never throws", () => {
       async () => {
         const calls: string[] = [];
         const originalFetch = globalThis.fetch;
-        globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+        globalThis.fetch = (async (url: string | URL | Request, _init?: RequestInit) => {
           calls.push(String(url));
           return new Response("{}", { status: 200 });
         }) as typeof fetch;

@@ -80,7 +80,7 @@ import type {
   RetentionNoShowWrite,
   RetentionTransferRow,
   RetentionTransferWrite,
-  type LeadJoinRow,
+  LeadJoinRow,
 } from "./types";
 import { DEFAULT_SETTINGS, isPipStatus, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
 import {

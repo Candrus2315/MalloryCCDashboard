@@ -23,7 +23,7 @@
  */
 import { addDays, etDateStrFromInstant, weekStart } from "../date-logic";
 import type { AppointmentRow, AttributionRow, LeadRow } from "./compute";
-import { bookingWinBusinessDateOf, filterApptsInWinBucketRange, isBookingWin } from "./compute";
+import { bookingWinBusinessDateOf, filterApptsInWinBucketRange } from "./compute";
 
 /** Session-type split (owner definition): animalia = type contains "animalia" (case-insensitive); everything else family. */
 export function isAnimaliaSession(appointmentType: string): boolean {

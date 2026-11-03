@@ -47,7 +47,7 @@ import {
   enumerateRange,
   type HarvestConvRow,
 } from "../src/server/sync/call-harvest";
-import { readHighLevelCreds, hlRequest, listOf, type HighLevelCreds, type HlEndpointOpts } from "../src/server/sync/highlevel-live";
+import { readHighLevelCreds, hlRequest, listOf, type HlEndpointOpts } from "../src/server/sync/highlevel-live";
 import type { NormalizedCall } from "../src/server/sync/adapters";
 import { getStore } from "../src/server/store";
 

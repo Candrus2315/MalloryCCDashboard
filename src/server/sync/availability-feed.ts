@@ -51,7 +51,6 @@
 import { addDays, etDateStrFromInstant, etDayStartUtc, etToday } from "../date-logic";
 import { etTimeOfInstant, scheduledSlotTimesForDay } from "../commission/derive";
 import { STALE_RUN_REAP_MINUTES } from "../store/types";
-import type { AppointmentRow } from "../metrics/compute";
 import {
   AcuityAvailabilityClient,
   resolveAcuityAvailabilityClient,
@@ -741,7 +740,7 @@ export function deriveAvailabilityHoles(input: {
  * label) plus per-month sweep state. An uncached future month is honest
  * "no data" until swept — never claimed beyond a horizon we have not seen.
  */
-export function coverageHorizonFromCache(cachedDates: AvailabilityDatesRow[], today: string): {
+export function coverageHorizonFromCache(cachedDates: AvailabilityDatesRow[], _today: string): {
   lastOfferedDate: string | null;
   months: Array<{ month: string; calendarCount: number; offeredDates: number; fetchedAt: string | null }>;
   lastSweptAt: string | null;

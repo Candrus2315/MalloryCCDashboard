@@ -11,7 +11,7 @@ import type {
 import { availabilityCopyText, capacityStatus, connectionView } from "~/components/availability-views";
 import { TONE_BADGE_STYLES } from "~/components/DayCardStrip";
 import { InfoTip } from "~/components/InfoTip";
-import { Eyebrow, Panel, RatioBar } from "~/components/page-panel";
+import { Eyebrow, Panel } from "~/components/page-panel";
 // Wave 2 harmonization: the view switcher uses the SAME shared segmented
 // control as Team/Reps date ranges (one control language across the app).
 import { Segmented } from "~/components/Segmented";

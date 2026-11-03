@@ -19,7 +19,6 @@ import type { PipActionItem } from "~/server/store/types";
 import { PerformanceShell, ListEditor, inputClass } from "~/components/performance-shell";
 import { InfoTip } from "~/components/InfoTip";
 
-type EditorParams = { id: string };
 
 export const Route = createFileRoute("/performance_/templates/$id/edit")({
   params: {

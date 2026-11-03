@@ -427,7 +427,7 @@ describe("§S week↔cycle states — no double counting", () => {
 
   test("assignment flips at submission make the submitted week impossible to re-count into a new cycle", async () => {
     const store = new MemoryStore();
-    const { a } = await seedCycle(store);
+    await seedCycle(store);
     await transitionCommissionCycle(store, { cycleId: CYCLE_ID, to: "ready_for_review", actor: "m" });
     await transitionCommissionCycle(store, { cycleId: CYCLE_ID, to: "approved", actor: "m" });
     const res = await submitCommissionCycle(store, { cycleId: CYCLE_ID, actor: "m" });

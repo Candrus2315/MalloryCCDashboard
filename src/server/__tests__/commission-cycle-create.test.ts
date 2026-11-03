@@ -134,7 +134,6 @@ describe("createAndAssignCommissionCycle — metadata only (RULING 4)", () => {
     const store = new MemoryStore();
     await seed(store);
     const before = snapRows(await store.getCommissionWeeklyRecords());
-    const beforeCycles = await store.getCommissionCycles();
 
     const res = await createAndAssignCommissionCycle(store, { start: OCT_START, end: OCT_END });
 

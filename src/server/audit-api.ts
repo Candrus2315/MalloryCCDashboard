@@ -30,7 +30,7 @@
  *   - vite.config.ts dev middleware (working site)
  * The /audit page reads the same logic via getAuditData in queries.ts.
  */
-import { etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etToday, formatDateHumanFull } from "./date-logic";
+import { etDayEndUtc, etDayStartUtc, etToday, formatDateHumanFull } from "./date-logic";
 import { withDbRetry } from "./store/pg-retry"; // dependency-free — safe for the client type graph; getStore stays LAZY below
 
 import { buildRosterEligibility, eligibleRepId } from "./roster";

@@ -85,7 +85,8 @@ import type {
   RetentionNoShowWrite,
   RetentionTransferRow,
   RetentionTransferWrite,
-  type LeadJoinRow,
+  LeadJoinRow,
+  RetentionScorecardWrite,
 } from "./types";
 import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
 import {

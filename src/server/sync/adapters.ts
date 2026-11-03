@@ -190,7 +190,7 @@ export class DemoSheetsAdapter implements GoogleSheetsAdapter {
 export class LiveHighLevelAdapter implements HighLevelAdapter {
   provider = "highlevel" as const;
   isDemo = false;
-  constructor(private apiKey: string) {
+  constructor(apiKey: string) {
     if (!apiKey) throw new Error("HighLevel API key missing");
   }
   async fetchUsers(): Promise<NormalizedUser[]> {

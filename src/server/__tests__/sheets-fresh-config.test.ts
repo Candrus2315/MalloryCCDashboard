@@ -52,7 +52,7 @@ const { SETTINGS_OWNER_ACTOR } = await import("../store/types");
  * nothing here touches live settings — a MemoryStore-local write only). */
 const FAIRYLAND_ID = "1dT_7KABCOuv3L4kEJiyxlMyEsxLl42snaJPxzlXVO3U";
 
-async function saveFairylandConfig(store: MemoryStore): Promise<void> {
+async function saveFairylandConfig(store: InstanceType<typeof MemoryStore>): Promise<void> {
   const settings = await store.getSettings();
   await store.saveSettings(
     {
