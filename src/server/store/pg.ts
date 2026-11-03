@@ -2289,7 +2289,13 @@ export class PgStore implements Store {
       await this.sql`
         INSERT INTO evidence_messages (message_id, conversation_id, contact_external_id, message_type, direction, user_external_id, date_added, body)
         SELECT x.message_id, x.conversation_id, x.contact_external_id, x.message_type, x.direction, x.user_external_id, x.date_added::timestamptz, x.body
-        FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb) AS x(
+        -- this.sql.json(chunk) (typed json param, OID 114), NOT a raw
+        -- JSON.stringify string: under postgres.js 3.4.9 a plain-string
+        -- param inside jsonb_to_recordset($1::jsonb) binds through the
+        -- described jsonb type and the server sees a scalar ("cannot
+        -- call jsonb_to_recordset on a non-array"). Same convention as
+        -- app_settings (this.sql.json above). Verified on real PG 11/2.
+        FROM jsonb_to_recordset(${this.sql.json(chunk)}::jsonb) AS x(
           message_id text, conversation_id text, contact_external_id text, message_type text,
           direction text, user_external_id text, date_added text, body text)
         ON CONFLICT (message_id) DO NOTHING`;
