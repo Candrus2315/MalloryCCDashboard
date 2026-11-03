@@ -26,7 +26,9 @@ export function RosterMappingSection({ data, busy, onSave }: {
   const [draft, setDraft] = useState<Record<string, string>>(() =>
     Object.fromEntries(data.nonRosterUsers.filter((u: NonRosterPanelRow) => u.mappedTo).map((u: NonRosterPanelRow) => [u.externalId, u.mappedTo!])),
   );
-  const currentByExternal = new Map(data.repMappings.map((m: RepMapping): [string, string] => [m.external_user_id, m.rep_id]));
+  // Explicit K/V: the payload array arrives untyped (any), so inference
+  // would fall back to Map<unknown, unknown> and break the dirty check.
+  const currentByExternal = new Map<string, string>(data.repMappings.map((m: RepMapping): [string, string] => [m.external_user_id, m.rep_id]));
   // the payload to save: every current mapping kept (unless changed below) + new drafts
   const nextMappings = () => {
     const merged = new Map<string, string>();

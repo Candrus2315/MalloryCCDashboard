@@ -153,11 +153,14 @@ type SortKey = RepSortKey;
  * range included), so Christopher never reselects rep + period.
  */
 function repsSearch(r: { id: string }, range: { mode: RangeMode; start: string; end: string }) {
+  // `week: undefined` completes the /reps search record (required-with-
+  // undefined member); the router drops undefined params, href unchanged.
   return {
     rep: r.id,
     range: range.mode,
     from: range.mode === "custom" || range.mode === "week-of" ? range.start : undefined,
     to: range.mode === "custom" ? range.end : undefined,
+    week: undefined,
   };
 }
 
@@ -261,10 +264,32 @@ function TeamPage() {
     const point = t.points[index];
     if (!point) return;
     // preserves range/from/to — closing later restores the identical search (§3)
-    router.navigate({ to: "/team", search: (prev) => ({ ...prev, drill: metric, date: point.key }) });
+    router.navigate({
+      to: "/team",
+      // The /team search record (members are required-with-undefined in the
+      // validateSearch output); spread of the merged prev + the two drill keys.
+      search: (prev) =>
+        ({ ...prev, drill: metric, date: point.key }) as {
+          range: string | undefined;
+          from: string | undefined;
+          to: string | undefined;
+          drill: string | undefined;
+          date: string | undefined;
+        },
+    });
   };
   const closeDrill = () => {
-    router.navigate({ to: "/team", search: (prev) => ({ ...prev, drill: undefined, date: undefined }) });
+    router.navigate({
+      to: "/team",
+      search: (prev) =>
+        ({ ...prev, drill: undefined, date: undefined }) as {
+          range: string | undefined;
+          from: string | undefined;
+          to: string | undefined;
+          drill: string | undefined;
+          date: string | undefined;
+        },
+    });
   };
 
   // ---------- trend cards: one config, shared meta + tooltip + drill wiring ----------
