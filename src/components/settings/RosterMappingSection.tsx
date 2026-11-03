@@ -1,11 +1,16 @@
 import { useState } from "react";
 import { rosterPanelVisibleRows } from "~/components/settings-views";
 import type { SettingsData } from "~/routes/settings";
+import type { NonRosterPanelRow } from "~/server/roster";
+import type { RepMapping } from "~/server/store/types";
+
+/** Users ride in the settings payload as id + name (+call_start_date). */
+type SettingsUser = { id: string; name: string; call_start_date?: string };
 
 export function RosterMappingSection({ data, busy, onSave }: {
   data: SettingsData;
   busy: boolean;
-  onSave: (mappings: { external_user_id: string; rep_id: string }[]) => void;
+  onSave: (mappings: RepMapping[]) => void;
 }) {
   // OWNER DIRECTIVE (2026-11-02, supersedes the 10/20 zero-call-only default):
   // INACTIVE users are never listed in the panel — and since the erase
@@ -13,12 +18,15 @@ export function RosterMappingSection({ data, busy, onSave }: {
   // never reach the browser). The row machinery below stays for any
   // non-inactive row the payload may ever carry; the visibility gate
   // (rosterPanelVisibleRows) remains as a second line of defense.
-  const visibleRows = rosterPanelVisibleRows(data.nonRosterUsers, false);
+  // The payload rows arrive untyped (serializable-mapped server-fn return) —
+  // the row shape is NonRosterPanelRow; pass it explicitly so the generic
+  // doesn't collapse to its constraint.
+  const visibleRows = rosterPanelVisibleRows<NonRosterPanelRow>(data.nonRosterUsers, false);
   // draft rep choice per non-roster HL user (prefilled with any existing mapping)
   const [draft, setDraft] = useState<Record<string, string>>(() =>
-    Object.fromEntries(data.nonRosterUsers.filter((u) => u.mappedTo).map((u) => [u.externalId, u.mappedTo!])),
+    Object.fromEntries(data.nonRosterUsers.filter((u: NonRosterPanelRow) => u.mappedTo).map((u: NonRosterPanelRow) => [u.externalId, u.mappedTo!])),
   );
-  const currentByExternal = new Map(data.repMappings.map((m) => [m.external_user_id, m.rep_id]));
+  const currentByExternal = new Map(data.repMappings.map((m: RepMapping): [string, string] => [m.external_user_id, m.rep_id]));
   // the payload to save: every current mapping kept (unless changed below) + new drafts
   const nextMappings = () => {
     const merged = new Map<string, string>();
@@ -68,7 +76,7 @@ export function RosterMappingSection({ data, busy, onSave }: {
                   onChange={(e) => setDraft({ ...draft, [u.externalId]: e.target.value })}
                 >
                   <option value="">Non Roster (excluded)</option>
-                  {data.users.map((r) => (
+                  {data.users.map((r: SettingsUser) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
                     </option>
@@ -90,7 +98,7 @@ export function RosterMappingSection({ data, busy, onSave }: {
       </div>
       {data.repMappings.length > 0 && (
         <p className="text-xs text-(--text-muted)">
-          Active mappings: {data.repMappings.map((m) => `${m.external_user_id} → ${data.users.find((u) => u.id === m.rep_id)?.name ?? m.rep_id}`).join(" · ")}
+          Active mappings: {data.repMappings.map((m: RepMapping) => `${m.external_user_id} → ${data.users.find((u: SettingsUser) => u.id === m.rep_id)?.name ?? m.rep_id}`).join(" · ")}
         </p>
       )}
     </div>

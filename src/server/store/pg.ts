@@ -3,7 +3,7 @@
  * indexes on provider external IDs so re-syncs UPSERT instead of duplicating.
  * Cancelled appointments keep history via status + cancelled flags.
  */
-import postgres from "postgres";
+import postgres, { type TransactionSql } from "postgres";
 import {
   type AppointmentRow,
   type AttributionRow,
@@ -104,6 +104,29 @@ import type { MigrationRunCapability } from "./migrations/runner";
 import { MIGRATIONS } from "./migrations/registry";
 import { resolveMigrationCapability } from "./migration-gate";
 import { formatPgNoticeLine, isExpectedIdempotentDdlNotice } from "./pg-notices";
+
+/**
+ * postgres.js 3.4.9's parameter TYPES are stricter than its runtime: the
+ * sql`` template accepts ParameterOrFragment<never> (primitives/Fragments
+ * only), .json() wants a JSONValue (an index-signature record), and the
+ * array helper wants EscapableArray — none of which model the plain
+ * objects, arrays and null-mixed row tuples this store legitimately
+ * serializes for ::jsonb casts and VALUES lists (the DB-side cast does
+ * the typing). Identity at runtime — the value passes through untouched,
+ * byte for byte as before; only the DECLARED type widens (same approach
+ * as the `params as never` in ensureSchema's capped exec).
+ */
+function pgParam<T>(value: T): never {
+  return value as never;
+}
+
+/**
+ * A query handle: the pool handle OR the per-transaction handle sql.begin
+ * hands its callback. TransactionSql is not assignable to Sql (it lacks
+ * close/end) — but both carry the identical template surface this store
+ * uses, so the shared audit sink accepts either.
+ */
+type PgSql = ReturnType<typeof postgres> | TransactionSql;
 
 /*
  * The pips SELECT/RETURNING column list — ONE shared fragment interpolated
@@ -298,6 +321,12 @@ export class PgStore implements Store {
   private schemaReady: Promise<void> | null = null;
   private readonly databaseUrl: string;
   private readonly migrationCapability?: MigrationRunCapability;
+  /**
+   * CLIENT-side per-statement cap (ms) for the boot DDL sweep AND the
+   * migration runner (raceSchemaStmt) — set from the constructor option
+   * of the same name (DEFAULT_SCHEMA_STMT_TIMEOUT_MS unless overridden).
+   */
+  private schemaStmtTimeoutMs: number;
   /** PERF: short-TTL (20s) read cache — bumped by every write; see store/read-cache.ts. */
   private cache = new TtlReadCache();
 
@@ -503,8 +532,8 @@ export class PgStore implements Store {
       retention,
     };
     await this.sql`
-      INSERT INTO app_settings (key, value) VALUES ('app', ${this.sql.json(next)}::jsonb)
-      ON CONFLICT (key) DO UPDATE SET value = ${this.sql.json(next)}::jsonb, updated_at = now()
+      INSERT INTO app_settings (key, value) VALUES ('app', ${this.sql.json(pgParam(next))}::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = ${this.sql.json(pgParam(next))}::jsonb, updated_at = now()
     `;
     // MODE AUDIT: every sheet-mode change THIS write made — old → new, actor.
     for (const ch of modeChanges) {
@@ -623,7 +652,7 @@ export class PgStore implements Store {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();
     await this.sql`
-      INSERT INTO weekly_report_notes (week_start, notes) VALUES (${row.week_start}::date, ${row.notes}::jsonb)
+      INSERT INTO weekly_report_notes (week_start, notes) VALUES (${row.week_start}::date, ${pgParam(row.notes)}::jsonb)
       ON CONFLICT (week_start) DO UPDATE SET notes = EXCLUDED.notes, updated_at = now()
     `;
   }
@@ -1037,7 +1066,7 @@ export class PgStore implements Store {
       ]);
       await this.sql`
         INSERT INTO appointments (acuity_appointment_id, contact_id, calendar_id, calendar_name, appointment_type, appointment_datetime, duration_minutes, created_at, created_business_date, created_time_source, created_time_precision, payment_state, booking_win_business_date, payment_business_date_source, first_seen_paid_at, raw, status, cancelled, cancelled_at, cancellation_source, client_name, client_phone, client_email)
-        VALUES ${this.sql(values)}
+        VALUES ${this.sql(pgParam(values))}
         ON CONFLICT (acuity_appointment_id) DO UPDATE SET
           contact_id = EXCLUDED.contact_id, calendar_id = EXCLUDED.calendar_id, calendar_name = EXCLUDED.calendar_name,
           appointment_type = EXCLUDED.appointment_type, appointment_datetime = EXCLUDED.appointment_datetime,
@@ -1353,7 +1382,7 @@ export class PgStore implements Store {
         ]);
         await tx`
         INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note, reason_code)
-        VALUES ${tx(values)}
+        VALUES ${tx(pgParam(values))}
         ON CONFLICT (appointment_id) DO UPDATE SET
           call_id = EXCLUDED.call_id, rep_id = EXCLUDED.rep_id, method = EXCLUDED.method,
           confidence = EXCLUDED.confidence,
@@ -1444,7 +1473,7 @@ export class PgStore implements Store {
       ]);
       await this.sql`
         INSERT INTO leads (provider, source_id, lead_type, source_date, work_date, name, phone, email, contact_id, assigned_rep_id, source_sheet, source_raw_date)
-        VALUES ${this.sql(values)}
+        VALUES ${this.sql(pgParam(values))}
         ON CONFLICT (provider, source_id) DO UPDATE SET
           lead_type = EXCLUDED.lead_type, source_date = EXCLUDED.source_date, work_date = EXCLUDED.work_date,
           name = EXCLUDED.name, phone = EXCLUDED.phone, email = EXCLUDED.email,
@@ -1957,7 +1986,7 @@ export class PgStore implements Store {
     await this.ensureSchema();
     await this.sql`
       INSERT INTO integration_connections (provider, status, is_demo, last_sync_at, last_successful_sync_at, last_error, config)
-      VALUES (${row.provider}, ${row.status}, ${row.is_demo}, ${row.last_sync_at}, ${row.last_successful_sync_at}, ${row.last_error}, ${this.sql.json(row.config)}::jsonb)
+      VALUES (${row.provider}, ${row.status}, ${row.is_demo}, ${row.last_sync_at}, ${row.last_successful_sync_at}, ${row.last_error}, ${this.sql.json(pgParam(row.config))}::jsonb)
       ON CONFLICT (provider) DO UPDATE SET status = EXCLUDED.status, is_demo = EXCLUDED.is_demo,
         last_sync_at = EXCLUDED.last_sync_at, last_successful_sync_at = EXCLUDED.last_successful_sync_at,
         last_error = EXCLUDED.last_error, config = EXCLUDED.config, updated_at = now()
@@ -2295,7 +2324,7 @@ export class PgStore implements Store {
         -- described jsonb type and the server sees a scalar ("cannot
         -- call jsonb_to_recordset on a non-array"). Same convention as
         -- app_settings (this.sql.json above). Verified on real PG 11/2.
-        FROM jsonb_to_recordset(${this.sql.json(chunk)}::jsonb) AS x(
+        FROM jsonb_to_recordset(${this.sql.json(pgParam(chunk))}::jsonb) AS x(
           message_id text, conversation_id text, contact_external_id text, message_type text,
           direction text, user_external_id text, date_added text, body text)
         ON CONFLICT (message_id) DO NOTHING`;
@@ -2382,12 +2411,12 @@ export class PgStore implements Store {
 
   /** Both audit sinks inside ONE transaction (typed log + manual_overrides mirror). */
   private static async recordPipEventTx(
-    sql: ReturnType<typeof postgres>,
+    sql: PgSql,
     event: Omit<PipEventRow, "id" | "created_at">,
   ): Promise<void> {
     await sql`INSERT INTO pip_event_log (pip_id, template_id, event_type, actor, field, previous_value, new_value, details)
       VALUES (${event.pip_id}, ${event.template_id}, ${event.event_type}, ${event.actor}, ${event.field}, ${event.previous_value}, ${event.new_value},
-        ${event.details}::jsonb)`;
+        ${pgParam(event.details)}::jsonb)`;
     const mirror = pipEventToManualOverride(event.event_type, {
       entityId: event.pip_id ?? event.template_id ?? "",
       field: event.field,
@@ -2411,8 +2440,8 @@ export class PgStore implements Store {
       VALUES (${row.id}::uuid, ${row.rep_id}::uuid, ${row.title}, ${row.status}, ${row.goal_text}, ${row.weekly_goal_min},
         ${row.hard_weekly_minimum}, ${row.review_start_date}::date, ${row.review_end_date}::date,
         ${row.pip_start_date}::date, ${row.pip_end_date}::date, ${row.manager_observations},
-        ${row.action_plan}::jsonb, ${row.personal_development_actions}::jsonb,
-        ${row.professional_development_actions}::jsonb,
+        ${pgParam(row.action_plan)}::jsonb, ${pgParam(row.personal_development_actions)}::jsonb,
+        ${pgParam(row.professional_development_actions)}::jsonb,
         ${row.created_by}, ${row.created_at}, ${row.updated_at},
         ${row.template_id}::uuid, ${row.template_version}, ${row.checkin_cadence_days})`;
     await this.sql.begin(async (sql) => {
@@ -2446,9 +2475,9 @@ export class PgStore implements Store {
           review_start_date = ${next.review_start_date}::date, review_end_date = ${next.review_end_date}::date,
           pip_start_date = ${next.pip_start_date}::date, pip_end_date = ${next.pip_end_date}::date,
           manager_observations = ${next.manager_observations},
-          action_plan = ${next.action_plan}::jsonb,
-          personal_development_actions = ${next.personal_development_actions}::jsonb,
-          professional_development_actions = ${next.professional_development_actions}::jsonb,
+          action_plan = ${pgParam(next.action_plan)}::jsonb,
+          personal_development_actions = ${pgParam(next.personal_development_actions)}::jsonb,
+          professional_development_actions = ${pgParam(next.professional_development_actions)}::jsonb,
           checkin_cadence_days = ${next.checkin_cadence_days},
           updated_at = now()
         WHERE id = ${id}::uuid RETURNING ${this.pipCols}`;
@@ -2517,7 +2546,7 @@ export class PgStore implements Store {
         }),
       ) as Record<string, unknown>;
       await sql`INSERT INTO pip_evidence_snapshots (pip_id, version, snapshot, created_by)
-        VALUES (${id}::uuid, 1, ${doc}::jsonb, ${opts.issuedBy || null})`;
+        VALUES (${id}::uuid, 1, ${pgParam(doc)}::jsonb, ${opts.issuedBy || null})`;
       const updated = await sql`UPDATE pips SET status = 'issued', issued_at = now(), issued_by = ${opts.issuedBy || null},
           updated_at = now()
         WHERE id = ${id}::uuid AND status = 'draft' RETURNING ${this.pipCols}`;
@@ -2739,8 +2768,8 @@ export class PgStore implements Store {
         default_personal, default_professional, default_checkin_cadence_days, default_duration_weeks,
         version, created_by, created_at, updated_at)
       VALUES (${row.id}::uuid, ${row.name}, ${row.category}, ${row.default_goal_text},
-        ${row.default_action_plan}::jsonb, ${row.default_personal}::jsonb,
-        ${row.default_professional}::jsonb, ${row.default_checkin_cadence_days},
+        ${pgParam(row.default_action_plan)}::jsonb, ${pgParam(row.default_personal)}::jsonb,
+        ${pgParam(row.default_professional)}::jsonb, ${row.default_checkin_cadence_days},
         ${row.default_duration_weeks}, 1, ${row.created_by}, ${row.created_at}, ${row.updated_at})`;
     await this.sql.begin(async (sql) => {
       await PgStore.recordPipEventTx(sql, {
@@ -2776,8 +2805,8 @@ export class PgStore implements Store {
       const cadence = patch.default_checkin_cadence_days !== undefined ? pipOptionalInt(patch.default_checkin_cadence_days, "default_checkin_cadence_days") : r.default_checkin_cadence_days == null ? null : Number(r.default_checkin_cadence_days);
       const duration = patch.default_duration_weeks !== undefined ? pipOptionalInt(patch.default_duration_weeks, "default_duration_weeks") : r.default_duration_weeks == null ? null : Number(r.default_duration_weeks);
       const updated = await sql`UPDATE pip_templates SET name = ${name}, category = ${category},
-          default_goal_text = ${goalText}, default_action_plan = ${actionPlan}::jsonb,
-          default_personal = ${personal}::jsonb, default_professional = ${professional}::jsonb,
+          default_goal_text = ${goalText}, default_action_plan = ${pgParam(actionPlan)}::jsonb,
+          default_personal = ${pgParam(personal)}::jsonb, default_professional = ${pgParam(professional)}::jsonb,
           default_checkin_cadence_days = ${cadence}, default_duration_weeks = ${duration},
           version = version + 1, updated_at = now()
         WHERE id = ${id}::uuid RETURNING id::text AS id, name, category, default_goal_text,
@@ -2997,7 +3026,7 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
         ${row.employment_type}, ${row.tier}, ${row.tier_effective_date_used}, ${row.qualifying_bookings},
         ${row.base_commission}, ${row.additional_commission}, ${row.pool_bonus}, ${row.hole_bonus},
         ${row.manual_adjustment}, ${row.total}, ${row.calc_date}::timestamptz, ${row.calc_version},
-        ${row.status}, ${row.cycle_id}, ${row.assignment}, ${this.sql.json(row.counted_bookings ?? [])}::jsonb, ${this.sql.json(row.hole_audit ?? [])}::jsonb, ${row.hole_bonus_capped})
+        ${row.status}, ${row.cycle_id}, ${row.assignment}, ${this.sql.json(pgParam(row.counted_bookings ?? []))}::jsonb, ${this.sql.json(pgParam(row.hole_audit ?? []))}::jsonb, ${row.hole_bonus_capped})
       ON CONFLICT (user_id, week_start) DO UPDATE SET
         rep_name = EXCLUDED.rep_name, week_end = EXCLUDED.week_end, employment_type = EXCLUDED.employment_type,
         tier = EXCLUDED.tier, tier_effective_date_used = EXCLUDED.tier_effective_date_used,
@@ -3102,7 +3131,7 @@ async upsertCommissionWeeklyRecord(row: CommissionWeeklyRow): Promise<Commission
       INSERT INTO commission_cycles (id, label, start_date, end_date, submission_date, payroll_date, status, submitted_date, submitted_by, final_snapshot)
       VALUES (${cycle.id}, ${cycle.label}, ${cycle.start_date}::date, ${cycle.end_date}::date, ${cycle.submission_date}::date,
         ${cycle.payroll_date}::date, ${cycle.status}, ${cycle.submitted_date}::date, ${cycle.submitted_by},
-        ${cycle.final_snapshot == null ? null : this.sql.json(cycle.final_snapshot)}::jsonb)
+        ${cycle.final_snapshot == null ? null : this.sql.json(pgParam(cycle.final_snapshot))}::jsonb)
       ON CONFLICT (id) DO UPDATE SET
         label = EXCLUDED.label, start_date = EXCLUDED.start_date, end_date = EXCLUDED.end_date,
         submission_date = EXCLUDED.submission_date, payroll_date = EXCLUDED.payroll_date, status = EXCLUDED.status,

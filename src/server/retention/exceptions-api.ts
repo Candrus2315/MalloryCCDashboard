@@ -59,7 +59,7 @@ export async function handleExceptionsQuery(
       counts: { open: countOpen, resolved: countResolved, dismissed: countDismissed, total: countOpen + countResolved + countDismissed },
       exceptions: all.map((e) => ({
         ...e,
-        candidates_expanded: ((e.payload as { candidates?: unknown }).candidates ?? [])
+        candidates_expanded: (((e.payload as { candidates?: unknown }).candidates ?? []) as unknown[])
           .filter((c): c is string => typeof c === "string")
           .map((c) => clientById.get(c) ?? null),
         resolved_client: e.resolved_internal_client_id ? resolvedById.get(e.resolved_internal_client_id) ?? null : null,

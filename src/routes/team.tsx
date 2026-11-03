@@ -4,6 +4,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { getAuditData, getTeamData } from "~/server/queries";
 import { auditRowView } from "~/server/date-logic";
+import type { AuditCallRow } from "~/server/store/types";
 import {
   RANGE_LABELS,
   RANGE_MODES,
@@ -187,6 +188,8 @@ function TeamPage() {
         range: mode,
         from: mode === "custom" ? (customFrom || undefined) : mode === "week-of" ? weekAnchor : undefined,
         to: mode === "custom" ? (customTo || undefined) : undefined,
+        drill: undefined,
+        date: undefined,
       }),
     });
   };
@@ -194,14 +197,14 @@ function TeamPage() {
   const setWeekOf = (monday: string) => {
     router.navigate({
       to: "/team",
-      search: () => ({ range: "week-of" as RangeMode, from: monday, to: undefined }),
+      search: () => ({ range: "week-of" as RangeMode, from: monday, to: undefined, drill: undefined, date: undefined }),
     });
   };
 
   const applyCustom = () => {
     router.navigate({
       to: "/team",
-      search: () => ({ range: "custom" as RangeMode, from: customFrom || undefined, to: customTo || undefined }),
+      search: () => ({ range: "custom" as RangeMode, from: customFrom || undefined, to: customTo || undefined, drill: undefined, date: undefined }),
     });
   };
 
@@ -243,7 +246,14 @@ function TeamPage() {
   const auditResult = data.drill.audit;
   const auditError = auditResult?.error ?? null;
   const auditPayload = auditResult && !auditResult.error ? auditResult.payload : null;
-  const drillRows = auditPayload?.rows ?? [];
+  // The drill audit payload rides a server-fn whose serializable return-type
+  // mapping collapses rows to `{ started_at } & { et_date, started_at_et }`
+  // (same failure mode as retention-drill, batch A #149). The real rows ARE
+  // the audit drill rows — AuditCallRow + the ET view fields auditRowView
+  // adds. Assert once at this single consumption site; everything downstream
+  // (recordTable, overThresholdRows, auditRowView) stays fully typed.
+  const drillRows = (auditPayload?.rows ?? []) as unknown as
+    (AuditCallRow & { et_date: string; started_at_et: string })[];
   const overRows = overThresholdRows(drillRows);
   const weekMode = t.bucketMode === "week";
 
@@ -380,7 +390,7 @@ function TeamPage() {
       ? drawerHeading(cardByKey.get(drillMetric)?.title ?? "Detail", drillPoint.label)
       : "Detail";
 
-  const recordTable = (rows: typeof drillRows, reconcileAgainst: number) => {
+  const recordTable = (rows: AuditCallRow[], reconcileAgainst: number) => {
     const rec = reconciliationText(reconcileAgainst, rows.length);
     return (
       <>

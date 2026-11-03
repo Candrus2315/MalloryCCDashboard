@@ -2,12 +2,17 @@ import { useState } from "react";
 import { WEEKDAYS } from "~/components/settings/shared";
 import type { SettingsData } from "~/routes/settings";
 
+/** One recurring-block row — the save contract, and the payload row shape. */
+type RecurringBlock = { id: string; weekday: number; start_time: string; end_time: string; reason: string | null; active: boolean };
+
 export function RecurringBlocksCard({ data, busy, onSave }: {
   data: SettingsData;
   busy: boolean;
-  onSave: (blocks: { id: string; weekday: number; start_time: string; end_time: string; reason: string | null; active: boolean }[]) => void;
+  onSave: (blocks: RecurringBlock[]) => void;
 }) {
-  const [blocks, setBlocks] = useState(data.settings.studio.recurring_blocks.map((b) => ({ ...b })));
+  // The loader payload's recurring_blocks arrives untyped (serializable-mapped
+  // server-fn return); the row shape is pinned once by RecurringBlock above.
+  const [blocks, setBlocks] = useState<RecurringBlock[]>(data.settings.studio.recurring_blocks.map((b: RecurringBlock) => ({ ...b })));
   return (
     <div className="space-y-3">
       <p className="text-xs text-(--text-muted)">Repeat every week on the chosen weekday — e.g. a standing lunch block. Feeds the same open-slot engine as one-off blocks.</p>

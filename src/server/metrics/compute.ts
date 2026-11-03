@@ -188,6 +188,12 @@ export interface AppointmentRow {
   pending_dismissed_at?: string | null;
   /** FULL provider object as Acuity returned it (forensics; written by the live sync). */
   raw?: Record<string, unknown> | null;
+  /**
+   * Client name the upsert carried (appointments.client_name) — mapped by
+   * the store's apptRow; plain metrics callers omit it. Optional extras,
+   * same convention as duration_minutes/calendar_name above.
+   */
+  client_name?: string | null;
 }
 
 export interface AttributionRow {
