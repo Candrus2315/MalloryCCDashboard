@@ -204,6 +204,74 @@ export const OWNER_DESIGNATION_NOTE =
 export const OWNER_DESIGNATION_UNDO_NOTE =
   "Owner designation undone — the row returns to engine attribution on the next tick.";
 
+/**
+ * EVIDENCE-TIER methods — the s1 identity/interaction verdicts the engine can
+ * derive on its own from synced data (identity match or a window interaction).
+ * NOT in the tier: "owner-rule-auction" (a standing OWNER RULE, needs its own
+ * handling — a designation must never strip it), "owner-designation" (the
+ * dashboard's own sticky rows), and "none" (no verdict). The designation
+ * control's supersede path (owner directive 2026-11-04, first case: Laurie
+ * Hendricks) accepts ONLY these: an evidence-tier credit is the one rep credit
+ * the engine re-derives identically after an undo, so superseding it is fully
+ * reversible by the shipped undo semantics.
+ */
+export const EVIDENCE_TIER_METHODS: ReadonlySet<string> = new Set([
+  "contact_id",
+  "phone",
+  "email",
+  "window_interaction",
+  "sms",
+] satisfies AttributionMethod[]);
+
+/**
+ * The supersede-eligibility predicate for a STORED attribution row (the
+ * designation control's ONLY allowed rep-credit shape): a rep is credited,
+ * the row is engine-derived (manual_override FALSE — any owner ruling refuses),
+ * confidence below 1 (a confidence-1 row is an owner-grade verdict, not
+ * evidence), and the method is in the evidence tier. Everything else with a
+ * rep_id stays refused — owner rulings and rule rows need their own handling.
+ */
+export function isEvidenceTierAttribution(row: {
+  rep_id?: string | null;
+  manual_override?: boolean | null;
+  confidence?: number | null;
+  method?: string | null;
+}): boolean {
+  return (
+    row.rep_id != null &&
+    row.rep_id !== "" &&
+    row.manual_override !== true &&
+    (row.confidence ?? 0) < 1 &&
+    row.method != null &&
+    EVIDENCE_TIER_METHODS.has(row.method)
+  );
+}
+
+/**
+ * SUPERSEDE audit-trail format (the designation control's previous_value when
+ * it REPLACES an evidence-tier rep credit): `"<method>: rep <name> (<id>)"` —
+ * the change log shows exactly which rep credit was replaced, not just the old
+ * method. Serialized at designation time (queries.ts, name resolved from the
+ * roster); the Today page's undo confirm parses it back to tell the owner the
+ * booking returns to that rep's evidence credit. Uniform even when the name
+ * lookup misses: the id fills both slots, so the string always parses.
+ */
+export function supersedePreviousValue(method: string, repId: string, repName: string | null): string {
+  return `${method}: rep ${repName ?? repId} (${repId})`;
+}
+
+const SUPERSEDE_PREVIOUS_RE = /^([^:]+): rep (.*) \(([^()]*)\)$/;
+
+export function parseSupersedePreviousValue(
+  previous: string | null | undefined,
+): { method: string; repId: string; repName: string | null } | null {
+  if (!previous) return null;
+  const m = SUPERSEDE_PREVIOUS_RE.exec(previous);
+  if (!m) return null;
+  const [, method, repName, repId] = m;
+  return { method, repId, repName: repName || null };
+}
+
 // Canonical identity normalizers re-exported under the engine's historical
 // names (callers keep compiling; the DEFINITION is the canonical one — the
 // divergent engine-local versions were removed in Session 2).

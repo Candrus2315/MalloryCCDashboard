@@ -17,12 +17,19 @@ const UNATTRIBUTED_REASON_LABELS: Record<string, string> = {
  * booking client-created ("Online Booking", team-only credit) and REMOVES the
  * uncertain row from the queue permanently, so the first tap only asks. The
  * confirm resets itself after 6s so a stray tap never leaves the row armed.
+ *
+ * Shared by the EVIDENCE-CREDITED section (supersede path, the Laurie
+ * Hendricks follow-up): `confirmNote` replaces the default confirm question
+ * (the supersede note names the rep credit being replaced) and `testIdPrefix`
+ * keeps the two sections' test hooks distinct (defaults stay unchanged).
  */
-function DesignateButton({ appointmentId, clientName, busy, onDesignate }: {
+function DesignateButton({ appointmentId, clientName, busy, onDesignate, confirmNote, testIdPrefix = "designate-online-booking" }: {
   appointmentId: string;
   clientName: string | null;
   busy: boolean;
   onDesignate: (appointmentId: string) => void;
+  confirmNote?: string;
+  testIdPrefix?: string;
 }) {
   const [confirming, setConfirming] = useState(false);
   useEffect(() => {
@@ -32,22 +39,22 @@ function DesignateButton({ appointmentId, clientName, busy, onDesignate }: {
   }, [confirming]);
   if (!confirming) {
     return (
-      <button type="button" className="btn-secondary text-xs" disabled={busy} data-testid="designate-online-booking" onClick={() => setConfirming(true)}>
+      <button type="button" className="btn-secondary text-xs" disabled={busy} data-testid={`${testIdPrefix}`} onClick={() => setConfirming(true)}>
         Designate Online Booking
       </button>
     );
   }
   return (
-    <div className="flex flex-col items-start gap-1" data-testid="designate-online-booking-confirm">
+    <div className="flex flex-col items-start gap-1" data-testid={`${testIdPrefix}-confirm`}>
       <span className="text-[11px] text-(--text-muted)">
-        Designate {clientName ?? "this booking"} as client-created? It leaves this queue permanently.
+        {confirmNote ?? `Designate ${clientName ?? "this booking"} as client-created? It leaves this queue permanently.`}
       </span>
       <div className="flex items-center gap-3">
         <button
           type="button"
           className="btn-secondary text-xs"
           disabled={busy}
-          data-testid="designate-online-booking-confirm-yes"
+          data-testid={`${testIdPrefix}-confirm-yes`}
           onClick={() => {
             setConfirming(false);
             onDesignate(appointmentId);
@@ -221,6 +228,90 @@ export function UnattributedCard({ row, users, busy, onAssign, onUnassign, onDes
       </div>
       <div className="mt-3">
         <DesignateButton appointmentId={row.appointment_id} clientName={row.client_name} busy={busy} onDesignate={onDesignate} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * EVIDENCE-CREDITED — SUPERSEDE (owner directive 2026-11-04, the Laurie
+ * Hendricks follow-up): the Settings section's table row. A paid win the
+ * engine credited to a rep from interaction EVIDENCE only — the one shape the
+ * designation control may supersede. The row shows the current credit holder
+ * (rep name + method + confidence) so the owner sees exactly what a
+ * designation replaces; the confirm step spells out the supersede and the
+ * undo path. Same DesignateButton confirm step as the unattributed queue.
+ */
+export function EvidenceCreditedRow({ row, busy, onDesignate }: {
+  row: { appointment_id: string; client_name: string | null; client_phone: string | null; appointment_type: string; appointment_datetime: string; created_at: string; credited_rep_name: string | null; method: string; confidence: number };
+  busy: boolean;
+  onDesignate: (appointmentId: string) => void;
+}) {
+  const repName = row.credited_rep_name ?? row.method; // name unknown → the engine method is the honest label
+  return (
+    <tr data-testid="evidence-credited-row">
+      <td className="font-medium text-(--text-primary)">
+        {row.client_name ?? "Unknown"}
+        <span className="block text-xs font-normal text-(--text-muted)">{row.client_phone ?? ""}</span>
+      </td>
+      <td>{row.appointment_type}</td>
+      <td>
+        {new Date(row.appointment_datetime).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}
+        <span className="block text-xs text-(--text-muted)">booked {new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
+      </td>
+      <td>
+        <span className="font-medium text-(--text-primary)">{repName}</span>
+        <span className="block text-xs text-(--text-muted)">
+          {row.method} · confidence {row.confidence}
+        </span>
+      </td>
+      <td>
+        <DesignateButton
+          appointmentId={row.appointment_id}
+          clientName={row.client_name}
+          busy={busy}
+          onDesignate={onDesignate}
+          testIdPrefix="supersede-online-booking"
+          confirmNote={`Supersede ${repName}'s evidence credit and designate ${row.client_name ?? "this booking"} as client-created? Undo returns the booking to this rep's evidence credit.`}
+        />
+      </td>
+    </tr>
+  );
+}
+
+/** Mobile stacked twin of EvidenceCreditedRow (md:hidden) — same data, same confirm. */
+export function EvidenceCreditedCard({ row, busy, onDesignate }: {
+  row: { appointment_id: string; client_name: string | null; client_phone: string | null; appointment_type: string; appointment_datetime: string; created_at: string; credited_rep_name: string | null; method: string; confidence: number };
+  busy: boolean;
+  onDesignate: (appointmentId: string) => void;
+}) {
+  const repName = row.credited_rep_name ?? row.method;
+  return (
+    <div className="rounded-lg border border-(--card-border) bg-(--card-bg) p-3" data-testid="evidence-credited-card">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-(--text-primary)">{row.client_name ?? "Unknown"}</p>
+          {row.client_phone && <p className="mt-0.5 break-all text-xs text-(--text-muted)">{row.client_phone}</p>}
+        </div>
+        <StatusChip kind="neutral" label="Evidence credit" />
+      </div>
+      <p className="mt-2 text-[12px] text-(--chip-neutral-fg)">{row.appointment_type}</p>
+      <p className="mt-0.5 text-[12px] tabular-nums text-(--text-caption)">
+        {new Date(row.appointment_datetime).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}
+        <span className="text-(--text-muted)"> · booked {new Date(row.created_at).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
+      </p>
+      <p className="mt-1 text-[12px] text-(--text-caption)">
+        Credited to <span className="font-medium text-(--text-body)">{repName}</span> · {row.method} · confidence {row.confidence}
+      </p>
+      <div className="mt-3">
+        <DesignateButton
+          appointmentId={row.appointment_id}
+          clientName={row.client_name}
+          busy={busy}
+          onDesignate={onDesignate}
+          testIdPrefix="supersede-online-booking"
+          confirmNote={`Supersede ${repName}'s evidence credit and designate ${row.client_name ?? "this booking"} as client-created? Undo returns the booking to this rep's evidence credit.`}
+        />
       </div>
     </div>
   );
