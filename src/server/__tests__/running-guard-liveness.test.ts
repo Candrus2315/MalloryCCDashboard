@@ -46,11 +46,14 @@ import {
   schedulerTick,
   STALE_RUN_REAP_MINUTES,
   TICK_WATCHDOG_CAP_MS,
+  staleRunReapMinutesFor,
+  HIGHLEVEL_STALE_RUN_REAP_MINUTES,
 } from "../sync/scheduler";
 import { sheetsTick } from "../sync/sheets-tick";
 import type { GoogleSheetsAdapter } from "../sync/adapters";
 import { getWorkDate } from "../date-logic";
-import type { SyncRunRow } from "../store/types";
+import { HIGHLEVEL_RUN_BUDGET_MS, REAP_WINDOW_MARGIN_MINUTES, type SyncRunRow } from "../store/types";
+import { ACUITY_RUN_BUDGET_MS } from "../sync/acuity-run-budget";
 
 /** Backdoor into MemoryStore's private syncRuns — backdate started_at (house pattern). */
 const syncRunsOf = (store: MemoryStore): SyncRunRow[] =>
@@ -206,5 +209,58 @@ describe("ONE shared liveness bound (TICK_WATCHDOG_CAP_MS)", () => {
     expect(runningSheetsRows(store)).toHaveLength(0);
     expect(sheetsRuns.filter((r) => r.status === "success")).toHaveLength(2);
     expect(recovered.sheets?.outcome).toBe("synced");
+  });
+});
+
+describe("per-provider reap windows (2026-11-04 publish-swap incidents)", () => {
+  test("HighLevel's reap window is 12 min — its 10-min run budget + the shared margin", () => {
+    expect(staleRunReapMinutesFor("highlevel")).toBe(12);
+    expect(HIGHLEVEL_STALE_RUN_REAP_MINUTES).toBe(HIGHLEVEL_RUN_BUDGET_MS / 60_000 + REAP_WINDOW_MARGIN_MINUTES);
+    // SAFETY INVARIANT: the window must sit strictly ABOVE every legitimate
+    // run — the run budget aborts a live pass at 10 min and its caller's
+    // error path finishes the row, so a 12-min-old row is a dead process by
+    // construction, never a live one.
+    expect(HIGHLEVEL_STALE_RUN_REAP_MINUTES).toBeGreaterThan(HIGHLEVEL_RUN_BUDGET_MS / 60_000);
+  });
+
+  test("every other provider keeps the 30-min default — a global 12-min window is UNSAFE", () => {
+    for (const provider of ["acuity", "google_sheets", "acuity_availability", "attribution", "retention"]) {
+      expect(staleRunReapMinutesFor(provider)).toBe(STALE_RUN_REAP_MINUTES);
+      expect(staleRunReapMinutesFor(provider)).toBe(30);
+    }
+    // Why HighLevel's window must stay PER-PROVIDER: Acuity's legitimate run
+    // budget is 25 min and the field-evidence sheets run finished SUCCESS at
+    // 17m28s — both EXCEED 12 min, so a global 12-min window would reap live
+    // runs (the exact misclassification the 30-min bound was chosen against).
+    expect(ACUITY_RUN_BUDGET_MS).toBeGreaterThan(HIGHLEVEL_STALE_RUN_REAP_MINUTES * 60_000);
+    expect(LEGIT_SHEETS_RUN_MS).toBeGreaterThan(HIGHLEVEL_STALE_RUN_REAP_MINUTES * 60_000);
+  });
+
+  test("reaper behavior: a 13-min HighLevel row IS reaped ('exceeded 12 minutes'); an 11-min one and a 13-min Acuity row are NOT", async () => {
+    const store = new MemoryStore();
+    const hlZombie = await store.insertSyncRun("highlevel");
+    backdate(store, hlZombie, 13 * 60_000); // past HighLevel's own 12-min window
+    const hlLive = await store.insertSyncRun("highlevel");
+    backdate(store, hlLive, 11 * 60_000); // inside it
+    const acuityMid = await store.insertSyncRun("acuity");
+    backdate(store, acuityMid, 13 * 60_000); // past HighLevel's window but INSIDE Acuity's 30-min one
+
+    expect(await reapStaleSyncRuns(store)).toBe(1); // only the HighLevel zombie
+    const runs = syncRunsOf(store);
+    expect(runs.find((r) => r.id === hlZombie)!.status).toBe("error");
+    expect(runs.find((r) => r.id === hlZombie)!.error).toContain("exceeded 12 minutes");
+    expect(runs.find((r) => r.id === hlLive)!.status).toBe("running");
+    expect(runs.find((r) => r.id === acuityMid)!.status).toBe("running");
+  });
+
+  test("store guard behavior: getRunningSyncRun nulls a 13-min HighLevel row (its own 12-min window) and still trusts a 13-min Acuity row", async () => {
+    const store = new MemoryStore();
+    const hlId = await store.insertSyncRun("highlevel");
+    backdate(store, hlId, 13 * 60_000);
+    expect(await store.getRunningSyncRun("highlevel")).toBeNull();
+
+    const acuityId = await store.insertSyncRun("acuity");
+    backdate(store, acuityId, 13 * 60_000);
+    expect((await store.getRunningSyncRun("acuity"))?.id).toBe(acuityId);
   });
 });

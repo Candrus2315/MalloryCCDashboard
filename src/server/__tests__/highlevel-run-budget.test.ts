@@ -7,7 +7,8 @@
  * Mirror of acuity-run-budget.test.ts. MemoryStore-based, NO live API (every
  * fetch/sleep is injected; the hung fixture never settles). Pins:
  *  1. the PER-RUN WALL-CLOCK BUDGET — HIGHLEVEL_RUN_BUDGET_MS is 10 min and
- *     sits WELL under the 30-min reap window (the same invariant pin the
+ *     sits WELL under both reap windows — the 30-min default and
+ *     HighLevel's own tighter 12-min one (the same invariant pin the
  *     Acuity test carries, so the relationship survives constant edits);
  *     a breach finishes the sync_runs row with the honest "run budget
  *     exceeded" error on BOTH entry paths (runProvider's highlevel section in
@@ -24,6 +25,7 @@ import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
 import {
   HIGHLEVEL_RUN_BUDGET_MS,
+  staleRunReapMinutesFor,
   STALE_RUN_REAP_MINUTES,
   TICK_WATCHDOG_CAP_MS,
   type SyncRunRow,
@@ -83,9 +85,14 @@ const hlRow = (runs: SyncRunRow[]) => runs.find((r) => r.provider === "highlevel
 // ---------- the constant + its relationship to the reap window ----------
 
 describe("HIGHLEVEL_RUN_BUDGET_MS (the named constant)", () => {
-  test("the named default is 10 min and sits WELL under the 30-min reap window", () => {
+  test("the named default is 10 min and sits WELL under both reap windows (the 30-min default and HighLevel's own 12-min one)", () => {
     expect(HIGHLEVEL_RUN_BUDGET_MS).toBe(10 * 60_000);
     expect(HIGHLEVEL_RUN_BUDGET_MS).toBeLessThan(STALE_RUN_REAP_MINUTES * 60_000);
+    // 2026-11-04 publish-swap incidents: HighLevel's OWN reap window is now
+    // the tighter 12-min HIGHLEVEL_STALE_RUN_REAP_MINUTES — the budget must
+    // sit under THAT too (a live pass aborts at 10 min and finishes its row,
+    // so the reaper at 12 min only ever sees dead-process orphans).
+    expect(HIGHLEVEL_RUN_BUDGET_MS).toBeLessThan(staleRunReapMinutesFor("highlevel") * 60_000);
     // The reap window derives from the tick ceiling — the budget sits under
     // BOTH aliases of the same 30-min liveness bound.
     expect(HIGHLEVEL_RUN_BUDGET_MS).toBeLessThan(TICK_WATCHDOG_CAP_MS);
@@ -236,7 +243,7 @@ describe("reap BEFORE the sync-in-progress guard (item b)", () => {
     const row = hlRow(await store.getSyncRuns(10));
     expect(row.status).toBe("error");
     expect(row.error).toContain("stale:");
-    expect(row.error).toContain("exceeded 30 minutes");
+    expect(row.error).toContain(`exceeded ${staleRunReapMinutesFor("highlevel")} minutes`); // HighLevel's own 12-min window
   });
 
   test("a LIVE (young) 'running' row still skips the tick — the reap never touches live rows", async () => {

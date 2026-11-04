@@ -155,6 +155,49 @@ describe("provider freshness watchdog — recovery", () => {
     expect(state.finishedErrors).toEqual([]);
   });
 
+  test("HighLevel's tighter 12-min reap window: a 13-min orphaned row is cleared reaper-style and the recovery attempt FIRES (was guard-blocked until 30 min)", async () => {
+    const state = baseState({
+      lastSuccess: { highlevel: iso(30 * MIN) }, // stale: 30 min ≫ the 4.5-min threshold (3 × 90s cadence)
+      running: [
+        { id: "run-hl-stale", provider: "highlevel", status: "running", started_at: iso(13 * MIN), finished_at: null, records_upserted: 0, error: null },
+      ],
+    });
+    const store = makeStore(state);
+    const attempts: string[] = [];
+    const pass = await runFreshnessWatchdogPass({
+      store,
+      now: () => new Date(T0),
+      forceAttempt: async (p) => void attempts.push(p),
+    });
+    expect(pass.clearedRunningRows).toBe(1);
+    expect(pass.guardBlocked).toEqual([]);
+    expect(pass.forced).toEqual(["highlevel"]);
+    expect(attempts).toEqual(["highlevel"]);
+    expect(state.running[0].status).toBe("error");
+    expect(state.running[0].error).toContain("exceeded 12 minutes"); // HighLevel's own window in the honest error text
+  });
+
+  test("HighLevel's tighter window still guard-blocks a POSSIBLY-LIVE row (8-min orphan is inside the 12-min window)", async () => {
+    const state = baseState({
+      lastSuccess: { highlevel: iso(30 * MIN) },
+      running: [
+        { id: "run-hl-live", provider: "highlevel", status: "running", started_at: iso(8 * MIN), finished_at: null, records_upserted: 0, error: null },
+      ],
+    });
+    const store = makeStore(state);
+    const attempts: string[] = [];
+    const pass = await runFreshnessWatchdogPass({
+      store,
+      now: () => new Date(T0),
+      forceAttempt: async (p) => void attempts.push(p),
+    });
+    expect(pass.guardBlocked).toEqual(["highlevel"]);
+    expect(pass.forced).toEqual([]);
+    expect(attempts).toEqual([]);
+    expect(state.running[0].status).toBe("running"); // a possibly-live run is NEVER killed by the watchdog
+    expect(state.finishedErrors).toEqual([]);
+  });
+
   test("a stale provider is recovered: stale rows cleared reaper-style, EXACTLY ONE attempt, incident recorded", async () => {
     const state = baseState({
       lastSuccess: { attribution: iso(30 * MIN) },

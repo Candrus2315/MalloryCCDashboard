@@ -151,7 +151,7 @@ describe("shutdown run-closer (simulated SIGTERM/SIGINT)", () => {
     const store = new MemoryStore();
     installSyncRunTracking(store);
     const id = await store.insertSyncRun("highlevel");
-    await store.finishSyncRun(id, "error", 0, "stale: this highlevel run exceeded 30 minutes");
+    await store.finishSyncRun(id, "error", 0, "stale: this highlevel run exceeded 12 minutes");
 
     const { closer } = harness(store, { registerBeforeExit: null });
     expect(await closer.handleSignal("SIGTERM")).toBe(0);

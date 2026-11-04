@@ -89,7 +89,7 @@ import type {
   LeadJoinRow,
   RetentionScorecardWrite,
 } from "./types";
-import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_CALL_START_DATES, DEFAULT_COMMISSION_PROFILES, defaultSettings, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, normalizePipActionList, parseSyncStartedMs, SETTINGS_OWNER_ACTOR, staleRunReapMinutesFor } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -1211,9 +1211,11 @@ export class MemoryStore implements Store {
     const run = running.length ? running[running.length - 1] : null;
     if (!run) return null;
     // FRESHNESS BOUND: a zombie (or unparsable) started_at is NOT a live run.
+    // PER-PROVIDER window (2026-11-04 publish-swap incidents): HighLevel 12 min
+    // (above its 10-min run budget), the 30-min default for everyone else.
     const startedMs = parseSyncStartedMs(run.started_at);
     if (!Number.isFinite(startedMs)) return null;
-    if (Date.now() - startedMs > STALE_RUN_REAP_MINUTES * 60_000) return null;
+    if (Date.now() - startedMs > staleRunReapMinutesFor(provider) * 60_000) return null;
     return run;
   }
   async getSyncWatermark(provider: string): Promise<string | null> {
