@@ -149,6 +149,15 @@ function DailyReportPage() {
                   <p className="mt-2 text-4xl font-semibold leading-none tracking-tight tabular-nums text-(--text-primary)">
                     {formatInt(m.bookingsAnchorDay)}
                   </p>
+                  {/* ONLINE BOOKINGS (owner directive 2026-11-04): ONE team line
+                      for the report day — the anchor day's designated
+                      client-created bookings (creator rule), TEAM-ONLY credit.
+                      Additive: no existing line or number changes. */}
+                  {m.onlineBookingsAnchorDay != null && (
+                    <p className="kpi-sub mt-1.5 tabular-nums" data-testid="daily-online-bookings">
+                      Online Bookings: {formatInt(m.onlineBookingsAnchorDay)} <span className="text-(--text-faint)">(team-only)</span>
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="mt-6">

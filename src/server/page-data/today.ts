@@ -6,8 +6,8 @@
 import { getStore } from "../store";
 import type { AppSettings, AppointmentRow } from "../store/types";
 
-import { addDays, dateRange, dailyReportAnchorDate, etDayEndUtc, etDayStartUtc, etNowMinutes, etToday, formatDateHuman, repOperatingState, weekStart } from "../date-logic";
-import { buildTodayMetrics, buildDailyReportMetrics, computeOpenSlots, filterApptsInWinBucketRange, appointmentPaymentStateOf, isBookingWin, materializeRecurringBlocks, resolveRepGoal } from "../metrics/compute";
+import { addDays, dateRange, dailyReportAnchorDate, etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etNowMinutes, etToday, formatDateHuman, repOperatingState, weekStart } from "../date-logic";
+import { buildTodayMetrics, buildDailyReportMetrics, computeOpenSlots, filterApptsInWinBucketRange, appointmentPaymentStateOf, isBookingWin, bookingWinBusinessDateOf, onlineBookingWins, materializeRecurringBlocks, resolveRepGoal } from "../metrics/compute";
 import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyReportSlack, buildDailyReportText } from "../metrics/report-text";
 
 import { derivePaymentState } from "../payments";
@@ -72,7 +72,7 @@ export async function todayPageData(deps?: PageDeps) {
   const todayEnd = etDayEndUtc(today);
   const weekStartUtc = etDayStartUtc(ws);
 
-  const [meta, settings, callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, connections, slotDayResults] =
+  const [meta, settings, callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, connections, slotDayResults, onlineWindowRaw] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -125,6 +125,13 @@ export async function todayPageData(deps?: PageDeps) {
           ];
         }),
       ),
+      // ONLINE BOOKINGS window (owner directive 2026-11-04): the win-bucket
+      // fetch for the CURRENT week + the PREVIOUS week — the Online Bookings
+      // section's list window. Appended LAST (the destructure above is
+      // positional — the mis-order bug this PERF pass shipped is documented
+      // on the connections entry); sliced + qualified downstream like every
+      // win chain.
+      store.getAppointmentsByWinBusinessDateBetween(addDays(ws, -7), today),
     ]);
 
   const scope = settings.acuity;
@@ -275,11 +282,45 @@ export async function todayPageData(deps?: PageDeps) {
     })
     .sort((x, y) => (x.created_at < y.created_at ? 1 : -1));
 
+  // ONLINE BOOKINGS section (owner directive 2026-11-04): designated
+  // client-created bookings (creator rule, reason_code "online-booking", rep
+  // NULL) that are QUALIFYING wins — win-bucket slice + isBookingWin + scope,
+  // the SAME chain every team total counts — with the booking's business date
+  // in the CURRENT week + the PREVIOUS week. Computed fresh from the store on
+  // every request (SSR), so a designation, a deposit, or a cancellation is
+  // reflected on the next load. Additive payload only: no existing figure
+  // reads this array; rep math, goal math and conversions are untouched.
+  const onlineBookings = onlineBookingWins(
+    filterApptsInWinBucketRange(onlineWindowRaw, addDays(ws, -7), today).filter((a) => appointmentInScope(a, scope)),
+    attributions,
+  )
+    .map((a) => ({
+      appointment_id: a.id,
+      acuity_appointment_id: a.acuity_appointment_id ?? null,
+      client_name: a.client_name ?? null,
+      appointment_type: a.appointment_type,
+      // Booked = the ET business date the booking counts on (the deposit-date
+      // win-bucket key, first-seen fallback included — bookingWinBusinessDateOf).
+      booked_date: bookingWinBusinessDateOf(a),
+      session_datetime: a.appointment_datetime,
+      // Session = the appointment's ET calendar date (date-only display).
+      session_date: Number.isFinite(Date.parse(a.appointment_datetime))
+        ? etDateStrFromInstant(Date.parse(a.appointment_datetime))
+        : null,
+      created_at: a.created_at,
+    }))
+    .sort((x, y) => {
+      const byDate = (y.booked_date ?? "").localeCompare(x.booked_date ?? "");
+      if (byDate !== 0) return byDate;
+      return x.created_at < y.created_at ? 1 : -1;
+    });
+
   return {
     meta,
     settings,
     metrics,
     pendingPayments,
+    onlineBookings,
     connections: serializableConnections(connections),
     staleWarnings: await withHeartbeatWarning(syncStaleWarnings(connections)),
     cohortNote: `Today's cohort = leads logged (sheet date) on ${metrics.leadCohortSourceDates.join(", ")} · Family · Animalia · Fairyland sheets + 4 Forms Data tabs (Auction certificates, Google Ads, Alliance certificates, Website applications) — worked today under work-date logic`,

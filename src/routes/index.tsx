@@ -196,6 +196,77 @@ function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
   );
 }
 
+/** One designated Online Booking row (owner directive 2026-11-04). */
+interface OnlineBookingRow {
+  appointment_id: string;
+  acuity_appointment_id: string | null;
+  client_name: string | null;
+  appointment_type: string;
+  booked_date: string | null;
+  session_datetime: string;
+  session_date: string | null;
+  created_at: string;
+}
+
+/**
+ * ONLINE BOOKINGS section (owner directive 2026-11-04): the designated
+ * client-created bookings — TEAM-ONLY credit by the creator rule (rep NULL) —
+ * as a team-level section beside Pending Payments. The list + count render
+ * straight from the SSR payload (onlineBookings): a designation, a deposit,
+ * or a cancellation is reflected on the next load. Window = current week +
+ * previous week, newest first. No rep column: these bookings are never rep
+ * credit — they count in the team's daily/weekly/monthly totals only.
+ */
+function OnlineBookingsSection({ rows }: { rows: OnlineBookingRow[] }) {
+  return (
+    <details className="card card-dense mt-3" data-testid="online-bookings-section" open={rows.length > 0}>
+      <summary className="pp-summary cursor-pointer select-none">
+        <span className="section-heading inline-flex items-center gap-2">
+          Online Bookings ({rows.length})
+          <span className="text-xs font-normal text-(--text-muted)">— client created the booking · team-only credit</span>
+        </span>
+      </summary>
+      {rows.length === 0 ? (
+        <p className="mt-3 text-xs text-(--text-muted)">
+          No designated online bookings in the current + previous week.
+        </p>
+      ) : (
+        <>
+          <div className="mt-3 overflow-x-auto">
+            <table className="data-table min-w-[520px]">
+              <thead>
+                <tr>
+                  <th scope="col" className="text-left">Client</th>
+                  <th scope="col" className="text-left">Booked</th>
+                  <th scope="col" className="text-left">Session Type</th>
+                  <th scope="col" className="text-left">Session</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.appointment_id}>
+                    <td className="text-left font-medium text-(--text-primary)">{r.client_name ?? "—"}</td>
+                    <td className="text-left text-(--text-caption)">
+                      {r.booked_date ? formatDateHuman(r.booked_date) : "—"}
+                    </td>
+                    <td className="text-left text-(--text-caption)">{r.appointment_type || "—"}</td>
+                    <td className="text-left text-(--text-caption)">
+                      {r.session_date ? formatDateHuman(r.session_date) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-(--text-muted)">
+            Proven client-created bookings (owner creator rule) — team total only, never a rep row; counted in the team's daily, weekly, and monthly booking figures. Booked = the business date the deposit counts on.
+          </p>
+        </>
+      )}
+    </details>
+  );
+}
+
 function TodayPage() {
   const data = Route.useLoaderData();
   const navigate = useNavigate();
@@ -534,6 +605,10 @@ function TodayPage() {
           </div>
         </Panel>
         {pendingCount > 0 && <PendingPaymentsDrillDown rows={pendingPayments} />}
+        {/* ONLINE BOOKINGS (owner directive 2026-11-04): designated
+            client-created bookings — team-only credit — listed + counted
+            beside the pending drill-down, the team-level area of the page. */}
+        <OnlineBookingsSection rows={data.onlineBookings ?? []} />
       </section>
 
       {/* 3 — calls & conversions (secondary to the goal): one hairline-divided

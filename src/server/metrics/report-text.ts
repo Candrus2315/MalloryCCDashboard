@@ -157,6 +157,15 @@ export function buildDailyReportText(m: DailyReportMetrics, big3: Big3Input): st
     "Daily CC Report",
     "",
     `${bookingsAnchorLineLabel(m.anchorDate, m.reportDate)}: ${formatInt(m.bookingsAnchorDay)}`,
+    // ONLINE BOOKINGS (owner directive 2026-11-04): ONE team line — the anchor
+    // day's designated client-created bookings (creator rule, reason_code
+    // "online-booking"), TEAM-ONLY credit. Sub-line of the Bookings figure
+    // directly above (the same day); zero effect on any other line. Template
+    // tolerance: fixtures without the field omit the line — the SPEC pin stays
+    // byte-identical for every caller that doesn't provide it.
+    ...(m.onlineBookingsAnchorDay != null
+      ? [`Online Bookings: ${formatInt(m.onlineBookingsAnchorDay)} (team-only)`]
+      : []),
     // OWNER DIRECTIVE 10/30 (post-#126 fix): the week figure is the canonical
     // QUALIFYING WTD count (weekBookings) — the same deposit-date numerator
     // the Today strip shows and the Weekly CC Report's goal tracker uses for
