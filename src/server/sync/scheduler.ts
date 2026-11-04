@@ -261,6 +261,40 @@ export async function reapStaleSyncRuns(store: Store, now?: () => Date): Promise
   return reaped;
 }
 
+/**
+ * BOOT REAP (2026-11-04 restart gap, owner-visible incident): run the SAME
+ * stale-run reap — identical criteria: REAPABLE_SYNC_PROVIDERS + the
+ * STALE_RUN_REAP_MINUTES window — once per serve boot, BEFORE the scheduler's
+ * first tick. A previous process killed mid-pass (SIGKILL/OOM, or any crash
+ * before its shutdown closer could land) leaves its row 'running'; without
+ * this pass that row sits behind the sync-in-progress guard until the
+ * independent reaper's cadence (first pass 5 min after boot, window 30 min)
+ * catches it. Best-effort: a failure never blocks boot — the first tick reaps
+ * with the same criteria anyway (reap-first in schedulerTick/highlevelTick),
+ * so this pass only moves the guarantee earlier, to process start.
+ *
+ * Idempotent: re-running reaps nothing new (only 'running' rows past the
+ * window transition, exactly once — honest-finish guard). Graceful restarts
+ * (SIGTERM/SIGINT) need no reap at all: the shutdown run-closer
+ * (sync/run-lifecycle.ts) closes the dying process's rows as 'interrupted'.
+ */
+export async function bootReapStaleSyncRuns(opts?: {
+  store?: Store;
+  now?: () => Date;
+  log?: (msg: string) => void;
+}): Promise<number> {
+  const log = opts?.log ?? ((msg: string) => console.log(msg));
+  try {
+    const store = withSyncWriteRetry(opts?.store ?? (await getStore())); // SYNC WRITE RESILIENCE
+    const n = await reapStaleSyncRuns(store, opts?.now);
+    if (n > 0) log(`[scheduler] boot reap: closed ${String(n)} stale 'running' sync run(s) left behind by a previous process`);
+    return n;
+  } catch (e) {
+    log(`[scheduler] boot reap skipped: ${e instanceof Error ? e.message : String(e)} (the first tick reaps with the same criteria)`);
+    return 0;
+  }
+}
+
 /** Pure interval resolution: settings value clamped; anything non-finite → default 90. */
 export function readSchedulerIntervalSeconds(raw: unknown): number {
   const DEFAULT = 90;
