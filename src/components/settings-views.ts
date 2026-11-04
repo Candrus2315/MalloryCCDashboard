@@ -338,6 +338,11 @@ export const NO_REP_REASON_LABELS: Record<string, string> = {
   // rep credit requires conversation evidence (winning evidence call had no
   // positive duration). Manual assignment remains available on these rows.
   "self-booked-no-conversation": "Self-booked — no rep conversation (owner ruling 10/30)",
+  // OWNER DIRECTIVE 2026-11-04 (creation-source rule): the client PROVABLY
+  // created the booking themselves online — team-only by creation source,
+  // counted in all team totals, never rep-attributed. Manual assignment stays
+  // available if the owner disagrees with the designation.
+  "online-booking": "Online Booking — client created the booking (team-only)",
 };
 
 export interface QueueReasonBucket {

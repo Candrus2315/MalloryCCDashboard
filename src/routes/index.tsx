@@ -157,7 +157,14 @@ function PendingPaymentsDrillDown({ rows }: { rows: PendingPaymentRow[] }) {
                     <td className="text-left font-medium text-(--text-primary)">{r.client_name ?? "—"}</td>
                     <td className="text-right tabular-nums">{fmtAmount(r.amount)}</td>
                     <td className="text-left">
-                      {r.rep_name ?? <span className="text-(--text-faint)">Unattributed</span>}
+                      {r.rep_name ?? (r.reason_code === "online-booking" ? (
+                        // CREATION-SOURCE RULE (owner directive 2026-11-04): a
+                        // proven client-created booking is an Online Booking —
+                        // labeled, never shown as a bare "Unattributed".
+                        <span className="text-(--text-faint)">Online Booking</span>
+                      ) : (
+                        <span className="text-(--text-faint)">Unattributed</span>
+                      ))}
                     </td>
                     <td className="text-left text-(--text-caption)">{r.appointment_type || "—"}</td>
                     <td className="text-left text-(--text-caption)">

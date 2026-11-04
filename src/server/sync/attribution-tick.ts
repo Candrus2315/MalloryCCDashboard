@@ -39,6 +39,7 @@ import {
   attributionWindowDates,
   bookingCreationDateEt,
   matchAppointmentsToCalls,
+  ONLINE_BOOKING_REASON,
   type AttributionHarvestInteraction,
   OWNER_RULE_AUCTION_METHOD,
   OWNER_RULE_AUCTION_NOTE,
@@ -67,6 +68,28 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * takes over automatically — the recovery path). `force` bypasses for a
  * deliberate owner-directed recompute.
  *
+ * v8 = CREATION-SOURCE RULE (owner directive 2026-11-04): attribution's
+ *      deciding factor is WHO CREATED the calendar appointment. PROVEN
+ *      client-created bookings become verdict "online-booking" — TEAM-ONLY
+ *      (rep NULL, method "none", reason_code "online-booking"), counted in
+ *      all team totals, labeled "Online Booking" on the surfaces; they win
+ *      over conversation/window evidence but LOSE to the owner rulings
+ *      (manual overrides are never re-processed; owner-rule-auction
+ *      short-circuits first). UNKNOWN creation source keeps the current
+ *      evidence-chain verdicts (no mass re-classification). Proven
+ *      agent-created flows through the existing machinery: manual +
+ *      owner-rule rows stay; online payment NEVER converts or strips credit
+ *      (payment state is informational, pinned by tests). W1 finding: no
+ *      synced data can prove client-creation yet (the Acuity raw has no
+ *      created-by field; the "Paid Online:" line is LATER payment evidence —
+ *      66/98 proven agent-created bookings paid >3d later carry it — and GHL
+ *      sync carries no appointments), so today the wiring only feeds
+ *      PREVIOUSLY-DESIGNATED online-booking reason_codes back in
+ *      (stickiness); a future owner-designation feature or creator-evidence
+ *      sync (GHL appointments with assignedUserId) plugs into
+ *      options.creationEvidence without further engine change. The version
+ *      bump retires v7 writers, whose conflict-updates would re-derive
+ *      designated online-booking rows back to evidence verdicts.
  * v7 = SMS EVIDENCE + evidence-quality ordering (owner approved 2026-11-02):
  *      rep-sent OUTBOUND SMS/live-chat messages (evidence_messages, resolved
  *      via users.external_id) now satisfy the conversation-evidence gate and
@@ -114,7 +137,7 @@ export const ATTRIBUTION_MIN_INTERVAL_MS = 5 * 60_000;
  * no version check — operationally retired by the 9/27 republish; from s6 on
  * every shipped writer carries the guard).
  */
-export const ATTRIBUTION_WRITER_VERSION = 7;
+export const ATTRIBUTION_WRITER_VERSION = 8;
 /** sync_checkpoints key holding the latest writer version that has written. */
 export const ATTRIBUTION_WRITER_VERSION_KEY = "attribution-writer-version";
 
@@ -164,6 +187,36 @@ export interface AttributionTickResult {
 
 export interface AttributionComputationResult extends AttributionTickResult {
   outcome: "synced";
+}
+
+/**
+ * CREATION-SOURCE EVIDENCE (owner directive 2026-11-04) — derived from the
+ * STORED attribution rows, the only provenance we hold today (W1: no synced
+ * Acuity/GHL data can prove creation source; see the engine's ONLINE_BOOKING
+ * rule docs). Two sets:
+ *   - provenClientCreated: rows ALREADY carrying reason_code "online-booking"
+ *     — STICKY: a designated row stays designated on re-derivation (the
+ *     designation itself is the proof; without stickiness the next tick would
+ *     re-derive it back to an evidence verdict and erase the owner's call).
+ *   - provenAgentCreated: rows whose rep credit is an OWNER RULING (manual
+ *     override or the standing auction rule) — creation ground truth per the
+ *     directive; the persist layer already carries manual rows verbatim and
+ *     the engine re-derives auction rows, so agent credit survives by
+ *     construction (counted + reported, no separate handling needed).
+ * Everything else is UNKNOWN creation source — the evidence chain decides,
+ * unchanged.
+ */
+export function deriveCreationSourceEvidence(existingAttributions: AttributionRow[]): {
+  provenClientCreated: Set<string>;
+  provenAgentCreated: Set<string>;
+} {
+  const provenClientCreated = new Set<string>();
+  const provenAgentCreated = new Set<string>();
+  for (const r of existingAttributions) {
+    if (r.reason_code === ONLINE_BOOKING_REASON) provenClientCreated.add(r.appointment_id);
+    else if (r.manual_override || r.method === OWNER_RULE_AUCTION_METHOD) provenAgentCreated.add(r.appointment_id);
+  }
+  return { provenClientCreated, provenAgentCreated };
 }
 
 /**
@@ -491,7 +544,12 @@ export async function computeAndPersistAttributions(
       attribution_window_hours: settings.attribution_window_hours,
       rep_mappings: settings.rep_mappings,
     },
-    { today, users: allUsers.map((u) => ({ id: u.id, is_active: u.is_active })), s1Interactions, ownerRules },
+    { today, users: allUsers.map((u) => ({ id: u.id, is_active: u.is_active })), s1Interactions, ownerRules,
+      // CREATION-SOURCE RULE (directive 2026-11-04): previously-designated
+      // online-booking rows stay designated (stickiness — the designation is
+      // the only client-creation proof that exists today; see W1). Every other
+      // row's creation source is UNKNOWN and keeps its evidence-chain verdict.
+      creationEvidence: { provenClientCreated: deriveCreationSourceEvidence(existing).provenClientCreated } },
   );
 
   const callIdByExternalId = new Map(

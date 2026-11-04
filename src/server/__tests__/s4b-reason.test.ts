@@ -210,8 +210,8 @@ describe("S4b reason_code persistence — the sync wiring stores the category", 
     ...over,
   });
 
-  test("writer version bumped to 6 (a v5 writer would re-credit the rows the 2026-10-30 self-booked ruling rules team-only)", () => {
-    expect(ATTRIBUTION_WRITER_VERSION).toBe(7);
+  test("writer version bumped to 8 (the creation-source rule; stale writers cannot re-derive designated online-booking rows)", () => {
+    expect(ATTRIBUTION_WRITER_VERSION).toBe(8);
   });
 
   test("unattributed rows carry reason_code; attributed rows are NULL; note format unchanged", () => {
