@@ -16,6 +16,7 @@
 // listener (unhealthy beyond the boot-grace window) is also replaced by a
 // manual restart, same as before.
 import handler from "./dist/server/server.js";
+import { getStore } from "./src/server/store";
 import {
   classifyExistingListener,
   listenerAgeSeconds,
@@ -217,7 +218,29 @@ await writeServerLockfile(LOCK_PATH, {
 // highlevel_sync_interval_seconds (settings, default 90s). Skips while another
 // sync run is in progress; records failures on the connection row and retries
 // next tick; recomputes attributions after each successful HighLevel sync.
-import { startScheduler } from "./src/server/sync/scheduler";
+import { startScheduler, bootReapStaleSyncRuns } from "./src/server/sync/scheduler";
+import { installShutdownSyncRunCloser } from "./src/server/sync/run-lifecycle";
+
+// RESTART GAP CLOSER (2026-11-04 incident): a serve restart used to kill the
+// process mid-HighLevel-pass and leave its sync_runs row 'running' with no
+// closer — the sync-in-progress guard then skipped EVERY tick until the
+// independent reaper's 30-min window caught the row (three ~30-min dead zones
+// today; the owner saw the stale-heartbeat banner). Two halves, both wired
+// here BEFORE the scheduler starts:
+//   1. SHUTDOWN — SIGTERM/SIGINT (+ beforeExit, best-effort) close the rows
+//      THIS process opened as 'interrupted' (new status: distinguishable from
+//      an API-failure 'error', audited in the Sync Center), then exit; the
+//      whole pass is capped at 3s so a dying DB can never hang shutdown, and
+//      a second signal force-exits immediately. Store resolution is lazy (at
+//      signal time) so it always sees the current getStore() instance.
+//   2. BOOT — force-reap any 'running' row older than the reaper's window
+//      (bootReapStaleSyncRuns: the SAME criteria as the independent reaper)
+//      before the first tick, so even a hard kill (SIGKILL/OOM) costs at most
+//      one reaper window, never a blocked half hour of ticks. Best-effort:
+//      a failure never blocks boot (the first tick reaps with the same
+//      criteria anyway). The freshness watchdog's recovery path is untouched.
+void bootReapStaleSyncRuns();
+installShutdownSyncRunCloser({ getStoreImpl: () => getStore() });
 
 // Background Google Sheets lead sync (owner directive 2026-09-28): the
 // scheduler is started with NO pre-built adapters — every consumer resolves

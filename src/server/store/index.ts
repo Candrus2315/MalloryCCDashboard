@@ -20,6 +20,15 @@ import { PgStore } from "./pg";
 import { MemoryStore } from "./memory";
 import type { Store } from "./types";
 import { getSecret } from "../env";
+// RESTART GAP CLOSER (2026-11-04 incident): every store getStore() resolves —
+// Postgres AND the in-memory fallback — is tracking-patched so the shutdown
+// run-closer (sync/run-lifecycle.ts) can close the rows THIS process opened.
+// The patch must live HERE (not at the serve call site): getStore may resolve
+// a MemoryStore first and swap to PgStore after a later successful probe, and
+// a patch applied only to the first instance would silently lose tracking on
+// the swap. Idempotent per instance (symbol brand) — re-resolving the same
+// store is a no-op.
+import { installSyncRunTracking } from "../sync/run-lifecycle";
 
 export type DbStatus =
   | { mode: "postgres"; ok: true }
@@ -157,11 +166,16 @@ export async function getStore(opts?: ProbeOptions): Promise<Store> {
     try {
       const pg = await probePg(opts);
       if (pg) {
+        installSyncRunTracking(pg); // shutdown run-closer tracks rows this process opens (idempotent)
         cached = { store: pg, probedAt: Date.now() };
         lastError = null;
         return pg;
       }
-      if (!cached) cached = { store: new MemoryStore(), probedAt: Date.now() };
+      if (!cached) {
+        const memory = new MemoryStore();
+        installSyncRunTracking(memory); // shutdown run-closer tracks rows this process opens (idempotent)
+        cached = { store: memory, probedAt: Date.now() };
+      }
       cached.probedAt = Date.now();
       return cached.store;
     } finally {
