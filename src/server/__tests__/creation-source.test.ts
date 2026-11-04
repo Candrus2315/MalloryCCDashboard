@@ -29,7 +29,8 @@ import {
   type AttributionAppointment,
 } from "../metrics/attribution";
 import { derivePaymentState } from "../payments";
-import { assertBookingInvariant, type AttributionRow } from "../metrics/compute";
+import { assertBookingInvariant, attributionStateOf, type AttributionRow } from "../metrics/compute";
+import { bookingSplitLine } from "../../components/team-views";
 import { deriveCreationSourceEvidence, toAttributionRows } from "../sync/attribution-tick";
 
 const SETTINGS = { meeting_threshold_seconds: 120, attribution_window_hours: 24 };
@@ -241,5 +242,32 @@ describe("deriveCreationSourceEvidence — the sticky provenance sets", () => {
     // a4/a5 are UNKNOWN — neither set contains them
     expect(provenClientCreated.has("a4")).toBe(false);
     expect(provenAgentCreated.has("a5")).toBe(false);
+  });
+});
+
+describe("display split — an online-booking row is its OWN state, never 'unattributed' (owner directive 2026-11-04)", () => {
+  test("attributionStateOf classifies reason_code online-booking as 'online' — decided before the note heuristics", () => {
+    expect(attributionStateOf({ rep_id: null, note: ONLINE_BOOKING_NOTE, manual_override: false, reason_code: ONLINE_BOOKING_REASON })).toBe("online");
+    expect(attributionStateOf({ rep_id: null, note: null, manual_override: false, reason_code: ONLINE_BOOKING_REASON })).toBe("online");
+    // the long-standing states are untouched
+    expect(attributionStateOf({ rep_id: "u1", note: null, manual_override: false })).toBe("attributed");
+    expect(attributionStateOf({ rep_id: null, note: "ambiguous — email resolves a different contact", manual_override: false })).toBe("ambiguous");
+    expect(attributionStateOf({ rep_id: null, note: "no-window-interaction; …", manual_override: false })).toBe("unattributed");
+    // a rep-carrying row is attributed regardless (rep rows never carry the reason_code — the engine emits online-booking only for team-only verdicts)
+    expect(attributionStateOf({ rep_id: "u1", note: null, manual_override: false, reason_code: ONLINE_BOOKING_REASON })).toBe("attributed");
+  });
+
+  test("the Team/Settings split line labels online rows 'Online Booking(s)' — and renders NOTHING new while no such rows exist (byte-parity)", () => {
+    // online omitted/0 → the line is byte-identical to the pre-rule output
+    expect(bookingSplitLine({ attributed: 3, ambiguous: 0, unattributed: 1, online: 0, withoutVerdict: 0 })).toBe(
+      "3 attributed · 0 ambiguous · 1 unattributed",
+    );
+    expect(bookingSplitLine({ attributed: 3, ambiguous: 0, unattributed: 1, withoutVerdict: 2 })).toBe(
+      "3 attributed · 0 ambiguous · 1 unattributed · 2 without a verdict yet",
+    );
+    // when the owner designates rows, they show labeled, not folded
+    expect(bookingSplitLine({ attributed: 3, ambiguous: 0, unattributed: 1, online: 1, withoutVerdict: 0 })).toBe(
+      "3 attributed · 0 ambiguous · 1 unattributed · 1 Online Booking",
+    );
   });
 });

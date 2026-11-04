@@ -595,6 +595,14 @@ describe("bookingSplitLine — three mutually exclusive states, never folded", (
       "0 attributed · 0 ambiguous · 5 unattributed",
     );
   });
+  test("CREATION-SOURCE RULE (owner directive 2026-11-04): Online Bookings are their OWN clause — never inside unattributed", () => {
+    expect(bookingSplitLine({ attributed: 3, ambiguous: 0, unattributed: 1, online: 2, withoutVerdict: 0 })).toBe(
+      "3 attributed · 0 ambiguous · 1 unattributed · 2 Online Bookings",
+    );
+    expect(bookingSplitLine({ attributed: 0, ambiguous: 0, unattributed: 0, online: 1, withoutVerdict: 1 })).toBe(
+      "0 attributed · 0 ambiguous · 0 unattributed · 1 Online Booking · 1 without a verdict yet",
+    );
+  });
 });
 
 // ---------- OWNER-RATIFIED 18:30 ET PACE CUTOFF (2026-09-29) ----------

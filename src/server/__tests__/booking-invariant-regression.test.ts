@@ -214,7 +214,7 @@ describe("booking-invariant regression (the 415-vs-411 night)", () => {
     // The paid (Booking Win) split: total 5 — attributed 3 (incl. both manual
     // overrides), ambiguous its OWN 1, unattributed 1 (the online booking).
     const split = bookingAttributionSplit(appts, rows);
-    expect(split).toEqual({ total: 5, attributed: 3, ambiguous: 1, unattributed: 1, withoutVerdict: 0 });
+    expect(split).toEqual({ total: 5, attributed: 3, ambiguous: 1, unattributed: 1, withoutVerdict: 0, online: 0 });
     const ambAppt = appts.find((a) => a.acuity_appointment_id === "acuity_amb")!;
     expect(attributionStateOf(rows.find((r) => r.appointment_id === ambAppt.id)!)).toBe("ambiguous");
     // The pending rows are NOT Booking Wins and appear nowhere in the split.

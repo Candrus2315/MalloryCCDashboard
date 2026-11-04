@@ -86,11 +86,11 @@ describe("bookingAttributionSplit / bookingCoverage — three mutually exclusive
 
   test("split: the three states are disjoint and ambiguous is NOT inside unattributed", () => {
     const s = bookingAttributionSplit(appts, attributions);
-    expect(s).toEqual({ total: 4, attributed: 1, ambiguous: 1, unattributed: 1, withoutVerdict: 1 });
+    expect(s).toEqual({ total: 4, attributed: 1, ambiguous: 1, unattributed: 1, withoutVerdict: 1, online: 0 });
   });
-  test("invariant: Total = Attributed + Ambiguous + Unattributed (+ withoutVerdict surfaced separately)", () => {
+  test("invariant: Total = Attributed + Ambiguous + Unattributed + Online (+ withoutVerdict surfaced separately)", () => {
     const s = bookingAttributionSplit(appts, attributions);
-    expect(s.attributed + s.ambiguous + s.unattributed + s.withoutVerdict).toBe(s.total);
+    expect(s.attributed + s.ambiguous + s.unattributed + s.online + s.withoutVerdict).toBe(s.total);
   });
   test("coverage folds withoutVerdict into unattributed ONLY under the sync invariant's full-coverage guarantee — with full rows the three states sum to total", () => {
     // Full verdict coverage (the state the tick always leaves the store in):
@@ -112,7 +112,18 @@ describe("bookingAttributionSplit / bookingCoverage — three mutually exclusive
   test("cancelled bookings never enter the split", () => {
     const cancelled = { ...appt("a9"), cancelled: true, status: "cancelled" } as AppointmentRow;
     const s = bookingAttributionSplit([cancelled], [row({ appointment_id: "a9", rep_id: "r1" })]);
-    expect(s).toEqual({ total: 0, attributed: 0, ambiguous: 0, unattributed: 0, withoutVerdict: 0 });
+    expect(s).toEqual({ total: 0, attributed: 0, ambiguous: 0, unattributed: 0, withoutVerdict: 0, online: 0 });
+  });
+  test("CREATION-SOURCE RULE (owner directive 2026-11-04): a reason_code online-booking row is its OWN state — never inside unattributed", () => {
+    const withOnline = [...attributions, row({ appointment_id: "a4", reason_code: "online-booking" })];
+    const s = bookingAttributionSplit(appts, withOnline);
+    expect(s).toEqual({ total: 4, attributed: 1, ambiguous: 1, unattributed: 1, withoutVerdict: 0, online: 1 });
+    expect(s.attributed + s.ambiguous + s.unattributed + s.online + s.withoutVerdict).toBe(s.total);
+    // Coverage (the sync-invariant rollup) folds online into unattributed —
+    // no rep carries credit, so the no-rep-credit bucket still sums to total.
+    const cov = bookingCoverage(appts, withOnline);
+    expect(cov).toEqual({ total: 4, attributed: 1, ambiguous: 1, unattributed: 2 });
+    expect(cov.attributed + cov.ambiguous + cov.unattributed).toBe(cov.total);
   });
 });
 

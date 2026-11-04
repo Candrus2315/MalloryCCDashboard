@@ -2083,17 +2083,25 @@ export function buildUnattributedQueue(input: {
 // ---------- booking-coverage invariants (SPEC: the totals must reconcile) ----------
 
 /**
- * THE THREE ATTRIBUTION STATES (owner directive 2026-09-27, S5b) — MUTUALLY
- * EXCLUSIVE everywhere they are computed and displayed:
+ * THE ATTRIBUTION STATES (owner directive 2026-09-27, S5b; extended by the
+ * CREATION-SOURCE rule, owner directive 2026-11-04) — MUTUALLY EXCLUSIVE
+ * everywhere they are computed and displayed:
  *
- *   Total Bookings = Attributed + Ambiguous + Unattributed
+ *   Total Bookings = Attributed + Ambiguous + Unattributed + Online
  *
  * Ambiguous is its OWN state, NEVER folded into Unattributed. Operationally
  * both may need manual follow-up, but they are different data states and stay
  * visibly separate. Ambiguous rows stay Ambiguous until Christopher assigns
  * them by hand — they are never silently counted as cleanly unattributed.
+ *
+ * "online" (owner directive 2026-11-04, creation-source rule): the client
+ * PROVABLY created the booking themselves online — team-only (rep NULL,
+ * reason_code "online-booking"), counted in all team totals, never rep
+ * credit. Its OWN state, never folded into Unattributed (same doctrine as
+ * Ambiguous): the display split must not read a proven Online Booking as
+ * "unattributed".
  */
-export type BookingAttributionState = "attributed" | "ambiguous" | "unattributed";
+export type BookingAttributionState = "attributed" | "ambiguous" | "unattributed" | "online";
 
 /**
  * How an ambiguous verdict is recognized on a STORED row. toAttributionRows
@@ -2105,10 +2113,17 @@ export type BookingAttributionState = "attributed" | "ambiguous" | "unattributed
 export const AMBIGUOUS_NOTE_PREFIX = "ambiguous";
 
 /** The ONE stored-row → state classifier (mutually exclusive by construction). */
-export function attributionStateOf(row: Pick<AttributionRow, "rep_id" | "note" | "manual_override">): BookingAttributionState {
+export function attributionStateOf(
+  row: Pick<AttributionRow, "rep_id" | "note" | "manual_override"> & { reason_code?: string | null },
+): BookingAttributionState {
   // A rep on the row (manual assignment included) is attributed — the note is
   // audit context only and never downgrades an owned booking.
   if (row.rep_id !== null) return "attributed";
+  // OWNER DIRECTIVE 2026-11-04 (creation-source rule): a proven client-created
+  // booking is an Online Booking — its OWN team-only state, decided BEFORE the
+  // ambiguous/unattributed note heuristics (the state must not depend on note
+  // wording at all).
+  if (row.reason_code === "online-booking") return "online";
   if ((row.note ?? "").startsWith(AMBIGUOUS_NOTE_PREFIX)) return "ambiguous";
   return "unattributed";
 }
@@ -2136,16 +2151,27 @@ export interface BookingCoverage {
  */
 export function bookingCoverage(appts: AppointmentRow[], attributions: AttributionRow[]): BookingCoverage {
   const s = bookingAttributionSplit(appts, attributions);
-  return { total: s.total, attributed: s.attributed, ambiguous: s.ambiguous, unattributed: s.unattributed + s.withoutVerdict };
+  // Online Bookings (owner directive 2026-11-04) are team-only by creation
+  // source — NO rep carries credit, so the no-rep-credit coverage bucket
+  // counts them alongside withoutVerdict. The DISPLAY split keeps them a
+  // separate state (bookingAttributionSplit.online); only this coverage
+  // rollup folds them.
+  return { total: s.total, attributed: s.attributed, ambiguous: s.ambiguous, unattributed: s.unattributed + s.withoutVerdict + s.online };
 }
 
 export interface BookingAttributionSplit extends BookingCoverage {
   /**
    * Qualifying bookings with NO stored verdict row at all (e.g. older than the
    * attribution recompute window). A missing row is an HONEST gap, never
-   * silently reported as unattributed: Total = A + Am + U + withoutVerdict.
+   * silently reported as unattributed: Total = A + Am + U + Online + withoutVerdict.
    */
   withoutVerdict: number;
+  /**
+   * OWNER DIRECTIVE 2026-11-04 (creation-source rule): proven client-created
+   * Online Bookings — their OWN state, NEVER folded into unattributed (the
+   * same doctrine as ambiguous). Rows with reason_code "online-booking".
+   */
+  online: number;
 }
 
 /**
@@ -2166,6 +2192,7 @@ export function bookingAttributionSplit(appts: AppointmentRow[], attributions: A
   let ambiguous = 0;
   let unattributed = 0;
   let withoutVerdict = 0;
+  let online = 0;
   for (const a of qualifying) {
     const row = rowByAppt.get(a.id);
     if (!row) {
@@ -2182,9 +2209,12 @@ export function bookingAttributionSplit(appts: AppointmentRow[], attributions: A
       case "unattributed":
         unattributed += 1;
         break;
+      case "online":
+        online += 1;
+        break;
     }
   }
-  return { total: qualifying.length, attributed, ambiguous, unattributed, withoutVerdict };
+  return { total: qualifying.length, attributed, ambiguous, unattributed, withoutVerdict, online };
 }
 
 /**

@@ -498,12 +498,25 @@ export interface BookingSplitLike {
   attributed: number;
   ambiguous: number;
   unattributed: number;
+  /**
+   * OWNER DIRECTIVE 2026-11-04 (creation-source rule): proven client-created
+   * Online Bookings — their OWN state on the split line, never folded into
+   * `unattributed`. Optional here only because the line is display-shaped;
+   * the metrics split (BookingAttributionSplit) always carries it.
+   */
+  online?: number;
   withoutVerdict: number;
 }
 
 export function bookingSplitLine(split: BookingSplitLike): string {
   const base = `${formatInt(split.attributed)} attributed · ${formatInt(split.ambiguous)} ambiguous · ${formatInt(split.unattributed)} unattributed`;
-  return split.withoutVerdict > 0
-    ? `${base} · ${formatInt(split.withoutVerdict)} without a verdict yet`
+  // CREATION-SOURCE RULE (owner directive 2026-11-04): a proven Online Booking
+  // is labeled, never read as bare "unattributed". Rendered only when such
+  // rows exist in range — today's output is byte-identical (0 online rows).
+  const withOnline = (split.online ?? 0) > 0
+    ? `${base} · ${formatInt(split.online ?? 0)} Online Booking${(split.online ?? 0) === 1 ? "" : "s"}`
     : base;
+  return split.withoutVerdict > 0
+    ? `${withOnline} · ${formatInt(split.withoutVerdict)} without a verdict yet`
+    : withOnline;
 }
