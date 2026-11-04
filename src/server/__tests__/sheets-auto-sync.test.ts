@@ -34,7 +34,7 @@ import type { GoogleSheetsAdapter } from "../sync/adapters";
 import type { NormalizedLead } from "../sync/sheets-mapping";
 import { runDemoSync, runSheetsSync } from "../sync/run";
 import { sheetsTick, SHEETS_MIN_INTERVAL_MS } from "../sync/sheets-tick";
-import { reapStaleSyncRuns, schedulerTick, STALE_RUN_REAP_MINUTES } from "../sync/scheduler";
+import { reapStaleSyncRuns, schedulerTick, staleRunReapMinutesFor, STALE_RUN_REAP_MINUTES } from "../sync/scheduler";
 import { hlRequest } from "../sync/highlevel-live";
 import { isNetworkBodyError } from "../sync/sheets-live";
 import { getWorkDate, addDays } from "../date-logic";
@@ -286,7 +286,7 @@ describe("schedulerTick × sheets + stale-run reaper", () => {
     const zombie = runs.find((r) => r.id === zombieId)!;
     expect(zombie.status).toBe("error");
     expect(zombie.error).toContain("stale");
-    expect(zombie.error).toContain(`${STALE_RUN_REAP_MINUTES} minutes`);
+    expect(zombie.error).toContain(`${staleRunReapMinutesFor("highlevel")} minutes`); // the highlevel row's own window
     expect(zombie.error).toContain("stale-run reaper");
     expect(runs.find((r) => r.id === freshId)!.status).toBe("running");
     expect(runs.find((r) => r.id === backfillId)!.status).toBe("running");

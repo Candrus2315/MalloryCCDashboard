@@ -13,7 +13,7 @@ import { etSyncStamp, formatDateShort } from "~/server/date-logic";
 import { formatInt } from "~/server/metrics/report-text";
 // Pure shared constants + parse helper (types.ts is client-safe — settings.tsx
 // already value-imports DEFAULT_COLUMN_MAPPING from it).
-import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "~/server/store/types";
+import { parseSyncStartedMs, staleRunReapMinutesFor } from "~/server/store/types";
 
 /**
  * QA audit 2026-10-08 (designer report §5): the lead-corrections picker's
@@ -229,8 +229,11 @@ export interface ProviderLatestRunView {
  * a later success. `providerRuns` are that provider's rows newest-first (the
  * getSyncRuns order); `running` is its in-flight sync_runs row (getRunningSyncRuns).
  *
- * A "running" row counts as live only inside the shared stale-run reap window
- * (STALE_RUN_REAP_MINUTES) — an older zombie is a hung process, not a live
+ * A "running" row counts as live only inside its provider's stale-run reap
+ * window (staleRunReapMinutesFor: HighLevel 12 min since the 2026-11-04
+ * publish-swap incidents, safely above its 10-min run budget; the 30-min
+ * default for every other provider) — an older zombie is a hung process, not
+ * a live
  * run, and the view falls through to the latest FINISHED run (the reaper marks
  * the zombie error within minutes). With no run in the window at all, the view
  * falls back to the connection row honestly: its error text shows only when
@@ -258,7 +261,7 @@ export function providerLatestRunView(
   let runningLive = false;
   if (running && nowMs != null) {
     const startedMs = parseSyncStartedMs(running.started_at);
-    runningLive = Number.isFinite(startedMs) && nowMs - startedMs <= STALE_RUN_REAP_MINUTES * 60_000;
+    runningLive = Number.isFinite(startedMs) && nowMs - startedMs <= staleRunReapMinutesFor(provider) * 60_000;
   }
   if (runningLive && running) {
     return { provider, label: "running", tone: "neutral", lastRunAt: running.started_at, lastRunError: null };

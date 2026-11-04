@@ -44,7 +44,7 @@ import { parseSupervisorState, readStateFile, type SupervisorState } from "./sup
 import { readServerLockfile, type ServerLockInfo } from "./boot-guard";
 import { syncStaleWarnings } from "./queries";
 import { getStore, type Store } from "./store";
-import { STALE_RUN_REAP_MINUTES, type SyncRunRow } from "./store/types";
+import { STALE_RUN_REAP_MINUTES, staleRunReapMinutesFor, type SyncRunRow } from "./store/types";
 import { INGEST_RUN_DEADLINE_MS } from "./store/ingest-batch";
 
 // ---------------------------------------------------------------------------
@@ -217,7 +217,10 @@ function toRunningRunView(row: SyncRunRow, nowMs: number): RunningRunView {
     provider: row.provider,
     startedAt: row.started_at,
     ageMinutes,
-    beyondReapBound: ageMinutes != null && ageMinutes > STALE_RUN_REAP_MINUTES,
+    // PER-PROVIDER reap bound (2026-11-04 publish-swap incidents): HighLevel
+    // flips at 12 min (above its 10-min run budget), every other provider at
+    // the 30-min default — the reaper's own rule for THAT row.
+    beyondReapBound: ageMinutes != null && ageMinutes > staleRunReapMinutesFor(row.provider),
   };
 }
 
@@ -315,6 +318,8 @@ export async function statusHealthPageData(deps?: {
     supervisor: sup.view,
     supervisorError: sup.error,
     serverLock: lock.view,
+    // The DEFAULT reap bound (30 min) — HighLevel rows use the tighter
+    // per-provider bound (12 min) in their own beyondReapBound flag above.
     reapBoundMinutes: STALE_RUN_REAP_MINUTES,
     ingestDeadlineMinutes: INGEST_RUN_DEADLINE_MS / 60_000,
     recentLimit,

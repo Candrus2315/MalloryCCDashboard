@@ -83,7 +83,7 @@ import type {
   RetentionTransferWrite,
   LeadJoinRow,
 } from "./types";
-import { DEFAULT_SETTINGS, isPipStatus, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, STALE_RUN_REAP_MINUTES } from "./types";
+import { DEFAULT_SETTINGS, isPipStatus, mergeRetentionSettings, mergeSheetsSettings, normalizeAppSettings, SETTINGS_OWNER_ACTOR, normalizePipActionList, parseSyncStartedMs, staleRunReapMinutesFor } from "./types";
 import {
   applyPipDraftPatch,
   assertCancelRequirements,
@@ -2149,9 +2149,11 @@ export class PgStore implements Store {
     };
     // FRESHNESS BOUND: a zombie (or unparsable) started_at is NOT a live run —
     // report null so it can't wedge the header's "Syncing…" or the tick guards.
+    // PER-PROVIDER window (2026-11-04 publish-swap incidents): HighLevel 12 min
+    // (above its 10-min run budget), the 30-min default for everyone else.
     const startedMs = parseSyncStartedMs(run.started_at);
     if (!Number.isFinite(startedMs)) return null;
-    if (Date.now() - startedMs > STALE_RUN_REAP_MINUTES * 60_000) return null;
+    if (Date.now() - startedMs > staleRunReapMinutesFor(provider) * 60_000) return null;
     return run;
   }
   async getSyncWatermark(provider: string): Promise<string | null> {

@@ -25,7 +25,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
-import { reapStaleSyncRuns, STALE_RUN_REAP_MINUTES } from "../sync/scheduler";
+import { reapStaleSyncRuns, staleRunReapMinutesFor, STALE_RUN_REAP_MINUTES } from "../sync/scheduler";
 import { parseSyncStartedMs, type SyncRunRow } from "../store/types";
 
 /** Backdoor into MemoryStore's private syncRuns — the only way to backdate a row's started_at. */
@@ -74,7 +74,7 @@ describe("stale-run reaper scans by status, not recency window", () => {
 
   test("cutoff, reapable-provider set and non-reapable providers unchanged", async () => {
     const store = new MemoryStore();
-    const withinCutoff = () => minutesFromNow(STALE_RUN_REAP_MINUTES - 1);
+    const withinCutoff = () => minutesFromNow(staleRunReapMinutesFor("highlevel") - 1); // the highlevel row's own window (12 min), not the 30-min default
     const zombieId = await store.insertSyncRun("highlevel");
     const backfillId = await store.insertSyncRun("resumable-backfill"); // legitimately long — not reapable
     expect(await reapStaleSyncRuns(store, withinCutoff)).toBe(0); // the shared-bound cutoff still honored

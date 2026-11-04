@@ -89,6 +89,9 @@ export {
   STALE_RUN_REAP_MINUTES,
   HIGHLEVEL_RUN_BUDGET_MS,
   HIGHLEVEL_RUN_BUDGET_ENV,
+  REAP_WINDOW_MARGIN_MINUTES,
+  HIGHLEVEL_STALE_RUN_REAP_MINUTES,
+  staleRunReapMinutesFor,
   parseSyncStartedMs,
 } from "./types/sync-meta";
 

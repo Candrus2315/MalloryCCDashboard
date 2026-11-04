@@ -197,6 +197,23 @@ describe("statusHealthPageData — running guard", () => {
     expect(r.ageMinutes).toBeCloseTo(STALE_RUN_REAP_MINUTES + 7, 1);
   });
 
+  test("the reap bound is PER-PROVIDER: a 13-min HighLevel row is beyond (12-min window), a 13-min Acuity row is not (30-min default)", async () => {
+    const data = await statusHealthPageData({
+      store: makeStore({
+        getRunningSyncRuns: () => [
+          runRow({ started_at: iso(13 * MIN) }), // highlevel (runRow default)
+          runRow({ provider: "acuity", started_at: iso(13 * MIN) }),
+        ],
+      }),
+      now: () => new Date(T0),
+      ...NO_FILES,
+    });
+    const hl = data.runningRuns!.find((r) => r.provider === "highlevel")!;
+    const ac = data.runningRuns!.find((r) => r.provider === "acuity")!;
+    expect(hl.beyondReapBound).toBe(true); // past HighLevel's tighter 12-min window
+    expect(ac.beyondReapBound).toBe(false); // inside the 30-min default window
+  });
+
   test("unparsable started_at → age null, never flagged, never a crash", async () => {
     const data = await statusHealthPageData({
       store: makeStore({ getRunningSyncRuns: () => [runRow({ started_at: "not-a-date" })] }),

@@ -40,7 +40,7 @@
  */
 import { getStore, type Store } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
-import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, type AppSettings } from "../store/types";
+import { parseSyncStartedMs, staleRunReapMinutesFor, type AppSettings } from "../store/types";
 import { readSchedulerIntervalSeconds } from "./scheduler";
 import { ACUITY_MIN_INTERVAL_MS } from "./acuity-live";
 import { ATTRIBUTION_MIN_INTERVAL_MS } from "./attribution-tick";
@@ -437,14 +437,19 @@ export async function runFreshnessWatchdogPass(opts?: {
       }
 
       // (a) clear stale 'running' rows for THIS provider (reaper-style). Rows
-      // younger than the reap window MIGHT be a genuinely live run — those
-      // guard-block the recovery attempt (the tick guard would skip anyway)
-      // and are left for the reaper; the next pass recovers if still stale.
+      // younger than the provider's reap window MIGHT be a genuinely live run
+      // — those guard-block the recovery attempt (the tick guard would skip
+      // anyway) and are left for the reaper; the next pass recovers if still
+      // stale. PER-PROVIDER window (2026-11-04 publish-swap incidents):
+      // HighLevel 12 min (above its 10-min run budget) — a stale provider with
+      // an orphaned HighLevel row is force-recovered at ~12-17 min instead of
+      // ~30-35; every other provider keeps the 30-min default.
+      const reapMinutes = staleRunReapMinutesFor(f.provider);
       const running = (await store.getRunningSyncRuns()).filter((r) => r.provider === f.provider);
       let liveRemains = false;
       for (const run of running) {
         const startedMs = parseSyncStartedMs(run.started_at);
-        if (Number.isFinite(startedMs) && nowMs - startedMs <= STALE_RUN_REAP_MINUTES * 60_000) {
+        if (Number.isFinite(startedMs) && nowMs - startedMs <= reapMinutes * 60_000) {
           liveRemains = true;
           continue;
         }
@@ -452,7 +457,7 @@ export async function runFreshnessWatchdogPass(opts?: {
           run.id,
           "error",
           run.records_upserted,
-          `stale: this ${f.provider} run exceeded ${STALE_RUN_REAP_MINUTES} minutes without finishing while the provider was freshness-stale — marked failed by the provider freshness watchdog (the process hung or died; one bounded recovery sync follows)`,
+          `stale: this ${f.provider} run exceeded ${reapMinutes} minutes without finishing while the provider was freshness-stale — marked failed by the provider freshness watchdog (the process hung or died; one bounded recovery sync follows)`,
         );
         result.clearedRunningRows++;
       }

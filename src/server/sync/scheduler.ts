@@ -23,7 +23,7 @@
  */
 import { getStore, type Store } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
-import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS, type AppSettings } from "../store/types";
+import { parseSyncStartedMs, staleRunReapMinutesFor, STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS, type AppSettings } from "../store/types";
 import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds, type LiveHighLevelAdapter } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
@@ -75,16 +75,26 @@ import {
  *
  * 2026-10-23 (running-guard forensics §2): this cap is now THE ONE SHARED
  * LIVENESS BOUND — the store guards (getRunningSyncRun), the sheets-tick
- * running guard and the reaper's window (STALE_RUN_REAP_MINUTES) all derive
- * from it, so a legitimately live run is never misclassified as dead while a
- * hung one is still reaped within one reaper cadence. The old local 12-hour
- * staleness re-check (STALE_RUNNING_CUTOFF_HOURS = 12, deleted here) was
- * UNREACHABLE dead code: the store nulls a zombie FIRST (getRunningSyncRun's
- * freshness bound), so the 12h `stale` branch in highlevelTick could never
- * fire for the rows it guarded. Canonical definition lives in store/types.ts
- * (no store→scheduler cycle); re-exported below for callers/tests.
+ * running guard and the reaper's DEFAULT window (STALE_RUN_REAP_MINUTES) all
+ * derive from it, so a legitimately live run is never misclassified as dead
+ * while a hung one is still reaped within one reaper cadence. The old local
+ * 12-hour staleness re-check (STALE_RUNNING_CUTOFF_HOURS = 12, deleted here)
+ * was UNREACHABLE dead code: the store nulls a zombie FIRST
+ * (getRunningSyncRun's freshness bound), so the 12h `stale` branch in
+ * highlevelTick could never fire for the rows it guarded. Canonical definition
+ * lives in store/types.ts (no store→scheduler cycle); re-exported below for
+ * callers/tests. 2026-11-04 publish-swap incidents: the reaper's window is now
+ * PER-PROVIDER — read it through staleRunReapMinutesFor (HighLevel: 12 min,
+ * safely above its 10-min run budget; every other provider: the 30-min
+ * default, because Acuity's 25-min budget and the 17m28s sheets run forbid
+ * tighter).
  */
-export { STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS } from "../store/types";
+export {
+  STALE_RUN_REAP_MINUTES,
+  TICK_WATCHDOG_CAP_MS,
+  HIGHLEVEL_STALE_RUN_REAP_MINUTES,
+  staleRunReapMinutesFor,
+} from "../store/types";
 
 /** Independent stale-run reaper cadence (see runStaleRunReaperLoop). */
 export const REAPER_INTERVAL_MS = 5 * 60_000;
@@ -199,8 +209,11 @@ let lastCommissionCloseAt = 0;
  * SHARED LIVENESS CONSTANTS — both now live in store/types (both stores need
  * them for getRunningSyncRun's freshness bound; defining them there avoids a
  * store→scheduler import cycle). Re-exported here for existing callers/tests:
- * TICK_WATCHDOG_CAP_MS (the ONE shared liveness bound, 2026-10-23) and
- * STALE_RUN_REAP_MINUTES (the reaper's window, derived from it).
+ * TICK_WATCHDOG_CAP_MS (the ONE shared liveness bound, 2026-10-23),
+ * STALE_RUN_REAP_MINUTES (the DEFAULT reaper window, derived from it) and
+ * staleRunReapMinutesFor (the PER-PROVIDER window reader — 2026-11-04
+ * publish-swap incidents gave HighLevel a tighter 12-min window, safely above
+ * its 10-min run budget; every other provider keeps the 30-min default).
  */
 // "acuity_availability" rides the machinery too (2026-10-07: a hung feed run
 // blocked every background tick for its 12h window — the provider was missing
@@ -225,7 +238,10 @@ const REAPABLE_SYNC_PROVIDERS = new Set([
 
 /**
  * Mark every "running" sync_runs row of a bounded provider that is older than
- * STALE_RUN_REAP_MINUTES as failed. Returns the number of rows reaped.
+ * ITS reap window — staleRunReapMinutesFor(provider): 12 min for HighLevel
+ * (safely above its 10-min run budget, so a serve restart/publish swap can no
+ * longer block the provider for half an hour), 30 min (STALE_RUN_REAP_MINUTES)
+ * for every other provider — as failed. Returns the number of rows reaped.
  * Injectable clock for tests. Best-effort: callers never let a reaper error
  * fail the tick.
  *
@@ -242,12 +258,13 @@ export async function reapStaleSyncRuns(store: Store, now?: () => Date): Promise
     if (!REAPABLE_SYNC_PROVIDERS.has(run.provider)) continue;
     const startedMs = parseSyncStartedMs(run.started_at);
     if (!Number.isFinite(startedMs)) continue;
-    if (nowFn().getTime() - startedMs <= STALE_RUN_REAP_MINUTES * 60_000) continue;
+    const reapMinutes = staleRunReapMinutesFor(run.provider);
+    if (nowFn().getTime() - startedMs <= reapMinutes * 60_000) continue;
     await store.finishSyncRun(
       run.id,
       "error",
       run.records_upserted,
-      `stale: this ${run.provider} run exceeded ${STALE_RUN_REAP_MINUTES} minutes without finishing — marked failed by the scheduler's stale-run reaper (the process hung or died; the next tick retries)`,
+      `stale: this ${run.provider} run exceeded ${reapMinutes} minutes without finishing — marked failed by the scheduler's stale-run reaper (the process hung or died; the next tick retries)`,
     );
     reaped++;
   }
