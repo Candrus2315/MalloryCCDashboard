@@ -200,31 +200,34 @@ describe("online-booking designation — guards", () => {
  * fully restores the credit (neutral row → the tick re-derives it).
  */
 describe("online-booking designation — supersede of an evidence-tier rep credit", () => {
-  /** Seed the named rep the supersede audit will resolve. */
-  async function seedRep(store: MemoryStore, id: string, name: string): Promise<void> {
+  /** Seed the named rep; returns the STORE-CANONICAL id (MemoryStore reassigns ids on upsert — never assume the seed id). */
+  async function seedRep(store: MemoryStore, externalKey: string, name: string): Promise<string> {
     await store.upsertUsers([
       {
-        id,
+        id: externalKey,
         provider: "highlevel",
-        external_id: `hl-${id}`,
+        external_id: `hl-${externalKey}`,
         name,
-        email: `${id}@example.com`,
+        email: `${externalKey}@example.com`,
         is_active: true,
         call_start_date: null,
       },
     ]);
+    const user = (await store.getAllUsers()).find((u) => u.name === name);
+    expect(user).toBeDefined();
+    return user!.id;
   }
 
   test("writes the SAME sticky row + an audit whose previous_value carries the superseded rep", async () => {
     const store = new MemoryStore();
-    await seedRep(store, "da05649f", "Carmine Morgano");
+    const repId = await seedRep(store, "carmine", "Carmine Morgano");
     const id = await seed(store, "desig-supersede");
     await store.upsertAttributions([
       {
         id: `attr:${id}`,
         appointment_id: id,
         call_id: null,
-        rep_id: "da05649f",
+        rep_id: repId,
         method: "window_interaction",
         confidence: 0.6,
         manual_override: false,
@@ -249,7 +252,7 @@ describe("online-booking designation — supersede of an evidence-tier rep credi
       (a) => a.entity_type === "booking_attribution" && a.entity_id === id && a.field === "online_booking_designation",
     );
     expect(audit).toBeDefined();
-    expect(audit!.previous_value).toBe("window_interaction: rep Carmine Morgano (da05649f)");
+    expect(audit!.previous_value).toBe(`window_interaction: rep Carmine Morgano (${repId})`);
     expect(audit!.new_value).toBe("designated online booking (team-only)");
   });
 
@@ -277,14 +280,14 @@ describe("online-booking designation — supersede of an evidence-tier rep credi
 
   test("undo after a supersede → neutral row; the tick re-derivation returns the rep's evidence credit", async () => {
     const store = new MemoryStore();
-    await seedRep(store, "rep-sup", "Carmine Morgano");
+    const repId = await seedRep(store, "carmine-undo", "Carmine Morgano");
     const id = await seed(store, "desig-supersede-undo");
     await store.upsertAttributions([
       {
         id: `attr:${id}`,
         appointment_id: id,
         call_id: null,
-        rep_id: "rep-sup",
+        rep_id: repId,
         method: "window_interaction",
         confidence: 0.6,
         manual_override: false,
@@ -312,7 +315,7 @@ describe("online-booking designation — supersede of an evidence-tier rep credi
         id: `attr:${id}`,
         appointment_id: id,
         call_id: null,
-        rep_id: "rep-sup",
+        rep_id: repId,
         method: "window_interaction",
         confidence: 0.6,
         manual_override: false,
@@ -320,7 +323,7 @@ describe("online-booking designation — supersede of an evidence-tier rep credi
       },
     ]);
     const rederived = (await store.getAttributions()).find((a) => a.appointment_id === id);
-    expect(rederived!.rep_id).toBe("rep-sup"); // the credit is BACK
+    expect(rederived!.rep_id).toBe(repId); // the credit is BACK
     expect(rederived!.method).toBe("window_interaction");
     expect(rederived!.manual_override).toBe(false);
   });

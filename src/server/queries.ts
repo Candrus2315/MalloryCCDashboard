@@ -1190,10 +1190,14 @@ export function buildEvidenceCreditedQueue(input: {
 }): EvidenceCreditedQueueRow[] {
   const attrByAppt = new Map(input.attributions.map((a) => [a.appointment_id, a]));
   const nameById = new Map(input.users.map((u) => [u.id, u.name]));
+  type JoinedAppt = AppointmentRow & { client_phone?: string | null };
   return input.appointments
     .filter((a) => !(a.status === "cancelled" || a.cancelled) && isBookingWin(a))
     .map((a) => ({ appt: a, attr: attrByAppt.get(a.id) }))
-    .filter((pair): pair is { appt: AppointmentRow; attr: AttributionRow } => isEvidenceTierAttribution(pair.attr ?? {}))
+    .filter(
+      (pair): pair is { appt: JoinedAppt; attr: AttributionRow } =>
+        pair.attr != null && isEvidenceTierAttribution(pair.attr),
+    )
     .map(({ appt, attr }) => ({
       appointment_id: appt.id,
       client_name: appt.client_name ?? null,
