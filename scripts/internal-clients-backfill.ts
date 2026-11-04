@@ -25,6 +25,7 @@
  * writes a machine-readable summary to /home/team/shared/retention/backfill-run.json.
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { getStore } from "../src/server/store";
 import { getSecret } from "../src/server/env";
 import { applyInternalClientBackfill, type BackfillInput, type BackfillResult } from "../src/server/retention/backfill";
@@ -41,10 +42,10 @@ if (store.mode !== "postgres") {
 }
 
 // Read-only gather client (separate from the store pool; small max).
-const ro = postgres(url, { max: 2, idle_timeout: 5, connect_timeout: 30 });
+const ro = postgres(url, { max: 2, ...dbConnectionBudget() });
 // Dedicated session-level lock holder (advisory locks are per-connection, so
 // it must not share ro's pool, which can round-robin across connections).
-const locker = postgres(url, { max: 1, idle_timeout: 5, connect_timeout: 30 });
+const locker = postgres(url, { max: 1, ...dbConnectionBudget() });
 
 // SINGLE-APPLIER GUARD (2026-10-20 outage): a backfill launched by a previous
 // session survived its terminal and raced the next run — two appliers on the

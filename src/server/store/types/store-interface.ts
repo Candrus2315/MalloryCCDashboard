@@ -321,6 +321,13 @@ export interface Store {
   upsertDailyPriorities(row: DailyPrioritiesRow): Promise<void>;
   getDailyPriorities(date: string): Promise<DailyPrioritiesRow | null>;
 
+  // connectivity — ONE bounded probe through this store's own pool (SELECT 1
+  // on pg). The sync pass-start warmup (store/db-warmup.ts) races it against
+  // the shared connect budget and routes a wedged/refused connection through
+  // the same withDbRetry classification as the driver's own connect-timeout
+  // failures. Read-only; never touches business rows.
+  ping(): Promise<true>;
+
   // integrations + sync
   upsertConnection(row: ConnectionRow): Promise<void>;
   getConnections(): Promise<ConnectionRow[]>;

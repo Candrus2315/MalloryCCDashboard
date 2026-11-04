@@ -51,6 +51,7 @@
 import { addDays, etDateStrFromInstant, etDayStartUtc, etToday } from "../date-logic";
 import { etTimeOfInstant, scheduledSlotTimesForDay } from "../commission/derive";
 import { STALE_RUN_REAP_MINUTES } from "../store/types";
+import { warmDbConnectionForRun } from "../store/db-warmup";
 import {
   AcuityAvailabilityClient,
   resolveAcuityAvailabilityClient,
@@ -406,6 +407,13 @@ export async function runAvailabilityFeedSync(options?: AvailabilityFeedOptions)
   let datesProbed = 0;
   let slotsCached = 0;
   try {
+    // PASS-START CONNECT FAST-FAIL (2026-11-04 incident, store/db-warmup.ts):
+    // a wedged/refused DB connection once parked a pass for the full 30-min
+    // stale-run reap window. One bounded `ping` — raced against the shared
+    // connect budget and retried through the SAME withDbRetry engine as every
+    // other transient CONNECT_TIMEOUT — fails the pass in ~31s; the catch
+    // below records the honest error row. Read-only: one `SELECT 1`.
+    await warmDbConnectionForRun(store);
     // WRITER-VERSION GUARD: an outdated build must never rewrite the feed cache
     // with old semantics (the attribution-writer pattern). The refusal is
     // recorded on BOTH run rows — visible in the Sync Center, never silent.

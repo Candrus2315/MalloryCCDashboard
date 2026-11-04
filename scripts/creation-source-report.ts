@@ -15,8 +15,9 @@
  *      client-created from synced data — owner decision required).
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { writeFileSync } from "node:fs";
-const sql = postgres(process.env.Database_URL!, { max: 2, prepare: false });
+const sql = postgres(process.env.Database_URL!, { max: 2, prepare: false, ...dbConnectionBudget() });
 
 const lines: string[] = [];
 const say = (s = "") => lines.push(s);

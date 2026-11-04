@@ -29,6 +29,7 @@
  * Run: bun scripts/dead-contact-repair.ts [--max-probes=300]
  */
 import { readFileSync } from "node:fs";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { normalizeEmail, normalizeUSPhone } from "../src/server/identity/normalize";
 import { readHighLevelCreds } from "../src/server/sync/highlevel-live";
 import { getStore } from "../src/server/store";
@@ -230,7 +231,7 @@ async function main(): Promise<void> {
 const sql = postgres(process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? "", {
   ssl: process.env.DATABASE_URL?.includes("sslmode") ? { rejectUnauthorized: false } : false,
   max: 1,
-  connect_timeout: 15,
+  ...dbConnectionBudget(),
 });
 async function repairUpdate(appointmentId: string, newContactId: string): Promise<void> {
   await sql`UPDATE appointments SET contact_id = ${newContactId}, updated_at = now() WHERE id = ${appointmentId}::uuid`;

@@ -30,6 +30,7 @@
  * Env: DATABASE_URL, HIGHLEVEL_API_KEY, HIGHLEVEL_LOCATION_ID (case-insensitive).
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { readFileSync } from "node:fs";
 import { runHarvestChunk, harvestCoverageComplete } from "../src/server/sync/call-harvest";
 import { readHighLevelCreds } from "../src/server/sync/highlevel-live";
@@ -80,7 +81,7 @@ function openSql(databaseUrl: string) {
   // this script opens its OWN raw pool, which PR #70 did not cover — a query
   // parked on a stalled DB connection was the 10/12 flare shape and would
   // leave the harvest's 'highlevel' mutex row stuck.
-  return postgres(databaseUrl, { max: 3, idle_timeout: 20, connect_timeout: 10, ...(needsSsl ? { ssl: "require" } : {}), connection: { statement_timeout: 300_000 } });
+  return postgres(databaseUrl, { max: 3, ...(needsSsl ? { ssl: "require" } : {}), ...dbConnectionBudget() });
 }
 
 async function main(): Promise<void> {

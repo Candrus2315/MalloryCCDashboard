@@ -52,6 +52,7 @@ import { assertBookingInvariant, type AttributionRow } from "../metrics/compute"
 import { buildRosterEligibility } from "../roster";
 import type { AppSettings, Store } from "../store/types";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { warmDbConnectionForRun } from "../store/db-warmup";
 import { makeRunDeadline } from "../store/ingest-batch";
 
 /** Minimum gap between BACKGROUND attribution recomputes (manual skips it). */
@@ -652,6 +653,13 @@ export async function attributionTick(options?: {
 
   const runId = await store.insertSyncRun("attribution");
   try {
+    // PASS-START CONNECT FAST-FAIL (2026-11-04 incident, store/db-warmup.ts):
+    // a wedged/refused DB connection once parked a pass for the full 30-min
+    // stale-run reap window. One bounded `ping` — raced against the shared
+    // connect budget and retried through the SAME withDbRetry engine as every
+    // other transient CONNECT_TIMEOUT — fails the pass in ~31s; the catch
+    // below records the honest error row. Read-only: one `SELECT 1`.
+    await warmDbConnectionForRun(store);
     const res = await computeAndPersistAttributions(store, settings, { now });
     await store.finishSyncRun(runId, "success", res.attributed + res.unattributed, null);
     if (trigger === "background") lastBackgroundTickAt = now().getTime();

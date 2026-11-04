@@ -1,13 +1,14 @@
 /** Reconciliation: harvest_calls ledger vs dashboard `calls` per rep, 9/25 ET + WTD. */
 /** --matrix: full per-rep × per-ET-DAY recount over 9/14 00:00 ET → today. */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { readFileSync } from "node:fs";
 const envOf = (k: string): string => {
   const m = readFileSync("/proc/self/environ", "utf8").split("\0").find((s) => s.toLowerCase().startsWith(k.toLowerCase() + "="));
   return m ? m.slice(k.length + 1) : "";
 };
 const url = process.env.DATABASE_URL || envOf("DATABASE_URL");
-const sql = postgres(url, { max: 2 });
+const sql = postgres(url, { max: 2, ...dbConnectionBudget() });
 // Operative-window start: Mon 2026-09-14 00:00 ET = 2026-09-14T04:00:00Z (EDT).
 const WINDOW_START_MS = 1789358400000;
 const WINDOW_START_DAY = "2026-09-14";

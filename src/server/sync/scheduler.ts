@@ -38,6 +38,7 @@ import {
   type ContactsReconciliationCheckpoint,
 } from "./contacts-incremental";
 import { recomputeAttributions, runDemoSync } from "./run";
+import { warmDbConnectionForRun } from "../store/db-warmup";
 import { availabilityTick, type AvailabilityTickResult } from "./acuity-live";
 import { attributionTick, type AttributionTickResult } from "./attribution-tick";
 import { sheetsTick, type SheetsTickResult } from "./sheets-tick";
@@ -347,6 +348,13 @@ export interface SchedulerTickResult {
 async function runAttributionRun(store: Store, settings: AppSettings, opts?: { force?: boolean }): Promise<number> {
   const runId = await store.insertSyncRun("attribution");
   try {
+    // PASS-START CONNECT FAST-FAIL (2026-11-04 incident, store/db-warmup.ts):
+    // a wedged/refused DB connection once parked a pass for the full 30-min
+    // stale-run reap window. One bounded `ping` — raced against the shared
+    // connect budget and retried through the SAME withDbRetry engine as every
+    // other transient CONNECT_TIMEOUT — fails the pass in ~31s; the catch
+    // below records the honest error row. Read-only: one `SELECT 1`.
+    await warmDbConnectionForRun(store);
     const n = await recomputeAttributions(store, settings, opts);
     await store.finishSyncRun(runId, "success", n, null);
     return n;
@@ -454,6 +462,13 @@ export async function highlevelTick(options?: {
     // --- incremental: only activity newer than the watermark (minus overlap) ---
     const runId = await store.insertSyncRun("highlevel");
     try {
+    // PASS-START CONNECT FAST-FAIL (2026-11-04 incident, store/db-warmup.ts):
+    // a wedged/refused DB connection once parked a pass for the full 30-min
+    // stale-run reap window. One bounded `ping` — raced against the shared
+    // connect budget and retried through the SAME withDbRetry engine as every
+    // other transient CONNECT_TIMEOUT — fails the pass in ~31s; the catch
+    // below records the honest error row. Read-only: one `SELECT 1`.
+    await warmDbConnectionForRun(store);
       // PER-RUN WALL-CLOCK BUDGET (2026-11-02 wedge, highlevel-run-budget.ts):
       // the harvest pass — contacts walk, call harvest, upserts, checkpoint,
       // late-contact heal, reconciliation — races the 10-min

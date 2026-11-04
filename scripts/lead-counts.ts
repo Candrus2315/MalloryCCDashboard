@@ -1,6 +1,7 @@
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { getSecret } from "../src/server/env";
-const sql = postgres(getSecret("DATABASE_URL")!, { ssl: "require", max: 1 });
+const sql = postgres(getSecret("DATABASE_URL")!, { ssl: "require", max: 1, ...dbConnectionBudget() });
 const rows = await sql`select source_sheet, count(*)::int as n, min(source_date) as min_src, max(source_date) as max_src, min(work_date) as min_w, max(work_date) as max_w from leads group by source_sheet order by source_sheet`;
 console.log(JSON.stringify(rows, null, 1));
 const dupes = await sql`select source_id, count(*)::int from leads group by source_id having count(*) > 1 limit 5`;

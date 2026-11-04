@@ -27,6 +27,7 @@
  * files above. Everything else is read-only.
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { getStore } from "../src/server/store";
 import { getSecret } from "../src/server/env";
 import { applyInternalClientBackfill } from "../src/server/retention/backfill";
@@ -42,7 +43,7 @@ const url = getSecret("DATABASE_URL");
 if (!url) throw new Error("DATABASE_URL secret is required");
 const store = await getStore();
 if (store.mode !== "postgres") throw new Error("STORE_NOT_POSTGRES: gate must run against the live DB");
-const ro = postgres(url, { max: 2, idle_timeout: 5, connect_timeout: 30 });
+const ro = postgres(url, { max: 2, ...dbConnectionBudget() });
 const gateRunId = await store.insertSyncRun("retention-chain-proof");
 const when = new Date().toISOString();
 
