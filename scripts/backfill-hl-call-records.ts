@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   try {
     for (const [i, w] of windows.entries()) {
       if (interrupted.v) break;
-      const res: CallRecordsIngestResult = await runCallRecordsIngest({ store, creds, startIso: w.startIso, endIso: w.endIso });
+      const res: CallRecordsIngestResult = await runCallRecordsIngest({ store, creds, startIso: w.startIso, endIso: w.endIso, fetchImpl: fetch });
       fetched += res.fetched;
       written += res.written;
       inserted += res.inserted;
