@@ -316,7 +316,7 @@ describe("self-booked ruling — recompute safety", () => {
     expect(third.rows).toEqual(first.rows);
   });
 
-  test("writer version is 7 — stale v6 writers cannot re-credit the ruled-out rows (v7 = SMS evidence + quality ordering)", () => {
-    expect(ATTRIBUTION_WRITER_VERSION).toBe(7);
+  test("writer version is 8 — stale v7 writers cannot re-derive designated online-booking rows (v8 = creation-source rule)", () => {
+    expect(ATTRIBUTION_WRITER_VERSION).toBe(8);
   });
 });
