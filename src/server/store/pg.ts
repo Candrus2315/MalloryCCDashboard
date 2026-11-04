@@ -100,6 +100,7 @@ import {
   pipRequiredText,
 } from "./pip-helpers";
 import { TtlReadCache } from "./read-cache";
+import { DB_STATEMENT_TIMEOUT_MS, dbConnectTimeoutSeconds } from "./db-pool-config";
 import { runMigrations } from "./migrations/runner";
 import type { MigrationRunCapability } from "./migrations/runner";
 import { MIGRATIONS } from "./migrations/registry";
@@ -390,15 +391,20 @@ export class PgStore implements Store {
       max: pool.max,
       idle_timeout: pool.idle_timeout,
       max_lifetime: pool.max_lifetime,
-      // CONNECT TIMEOUT 10s -> 30s (2026-10-11 provider degradation): the
-      // managed host intermittently refuses/drops connections while raw TCP
-      // connect stays healthy (~75ms, ~20 conns - nowhere near the ceiling).
-      // Those windows surface as post-cap CONNECT_TIMEOUT errors the old 10s
-      // timeout made worse (a slow-but-alive TLS/auth handshake gets abandoned
-      // mid-flight and sync runs fail). 30s gives a degraded provider room to
-      // finish the handshake. Pool max stays hard-capped at 5/process (PR
-      // #57) - never raised here.
-      connect_timeout: 30,
+      // CONNECT TIMEOUT (shared budget, db-pool-config.ts): 30s -> 10s
+      // (2026-11-04 incident). The 2026-10-11 degradation had raised 10->30s
+      // so a slow-but-alive TLS/auth handshake could finish; the 11/4
+      // refusal window turned the other way — a refused/hung connect then
+      // held every attempt (and with it a wedged pass) for the full 30
+      // minutes before the stale-run reaper. 10s bounds EACH attempt so the
+      // existing db-retry layer (attempt 1/3, 150/450ms backoff) fails a
+      // persistently dead host at pass level in ~31s with honest error rows;
+      // the pass-start warmup (store/db-warmup.ts) adds the client-side race
+      // cap for an acquisition that never settles at all. Env override:
+      // DB_CONNECT_TIMEOUT_MS (ms, clamped 1-60s) — e.g. 30000 restores the
+      // old patience during a slow-handshake degradation. Pool max stays
+      // hard-capped at 5/process (PR #57) - never raised here.
+      connect_timeout: dbConnectTimeoutSeconds(),
       // STATEMENT TIMEOUT 300s (2026-10-12 hardening): a session-level server
       // cap so a query parked on a stalled DB connection can no longer hang
       // for 43+ minutes (the 10/12 flare's failure mode) — the server cancels
@@ -413,7 +419,7 @@ export class PgStore implements Store {
       // Value is milliseconds (SHOW statement_timeout renders it as '5min').
       // Reversible: delete this one block to restore the old behavior.
       connection: {
-        statement_timeout: 300_000,
+        statement_timeout: DB_STATEMENT_TIMEOUT_MS,
       },
       ...(needsSsl ? { ssl: "require" } : {}),
       // NOTICE ROUTING (2026-10-30; root cause:
@@ -2038,6 +2044,17 @@ export class PgStore implements Store {
       last_error: r.last_error ? String(r.last_error) : null,
       config: (r.config ?? {}) as Record<string, unknown>,
     }));
+  }
+
+  /**
+   * Connectivity probe (store/db-warmup.ts): ONE `SELECT 1` through this
+   * store's own pool. Deliberately skips ensureSchema — a wedged BOOT must
+   * not turn the pass-start fast-fail into another 90s DDL sweep; every real
+   * caller has ensured the schema (or is about to fail honestly).
+   */
+  async ping(): Promise<true> {
+    await this.sql`SELECT 1`;
+    return true;
   }
 
   async insertSyncRun(provider: string): Promise<string> {

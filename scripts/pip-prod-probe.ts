@@ -7,6 +7,7 @@
  * Run: bun /home/team/shared/site/scripts/pip-prod-probe.ts
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { getSecret } from "../src/server/env";
 
 const url = getSecret("DATABASE_URL");
@@ -14,7 +15,7 @@ if (!url) {
   console.error("DATABASE_URL not resolvable — aborted, nothing read.");
   process.exit(1);
 }
-const sql = postgres(url, { max: 1 });
+const sql = postgres(url, { max: 1, ...dbConnectionBudget() });
 
 const pips = await sql`
   SELECT p.id::text AS id, p.title, p.status, p.rep_id::text AS rep_id, u.name AS rep_name,

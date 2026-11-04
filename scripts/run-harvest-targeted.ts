@@ -40,6 +40,7 @@
  * Env: DATABASE_URL, HIGHLEVEL_API_KEY, HIGHLEVEL_LOCATION_ID (case-insensitive).
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { readFileSync } from "node:fs";
 import {
   visitConversationMessages,
@@ -95,7 +96,7 @@ function openSql(databaseUrl: string) {
   } catch {
     // validated below by the first query
   }
-  return postgres(databaseUrl, { max: 3, idle_timeout: 20, connect_timeout: 10, ...(needsSsl ? { ssl: "require" } : {}) });
+  return postgres(databaseUrl, { max: 3, ...(needsSsl ? { ssl: "require" } : {}), ...dbConnectionBudget() });
 }
 
 async function main(): Promise<void> {

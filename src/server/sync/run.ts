@@ -11,6 +11,7 @@ import { addDays, weekStart } from "../date-logic";
 import { isRosterUser } from "../roster";
 import { getStore, type Store } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { warmDbConnectionForRun } from "../store/db-warmup";
 import type { AppSettings } from "../store/types";
 import { createDemoAdapters } from "./adapters";
 import type { HighLevelAdapter, NormalizedLead } from "./adapters";
@@ -31,6 +32,13 @@ async function runProvider(
 ): Promise<{ count: number; error?: string } & Record<string, unknown>> {
   const runId = await store.insertSyncRun(provider);
   try {
+    // PASS-START CONNECT FAST-FAIL (2026-11-04 incident, store/db-warmup.ts):
+    // a wedged/refused DB connection once parked a pass for the full 30-min
+    // stale-run reap window. One bounded `ping` — raced against the shared
+    // connect budget and retried through the SAME withDbRetry engine as every
+    // other transient CONNECT_TIMEOUT — fails the pass in ~31s; the catch
+    // below records the honest error row. Read-only: one `SELECT 1`.
+    await warmDbConnectionForRun(store);
     const res = await fn();
     await store.finishSyncRun(runId, res.error ? "error" : "success", res.count, res.error ?? null);
     return res;

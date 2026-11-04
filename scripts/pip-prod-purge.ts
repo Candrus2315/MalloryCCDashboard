@@ -16,6 +16,7 @@
  * Run: bun /home/team/shared/site/scripts/pip-prod-purge.ts
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { getSecret } from "../src/server/env";
 
 const url = getSecret("DATABASE_URL");
@@ -23,7 +24,7 @@ if (!url) {
   console.error("DATABASE_URL not resolvable — aborted, nothing deleted.");
   process.exit(1);
 }
-const sql = postgres(url, { max: 1 });
+const sql = postgres(url, { max: 1, ...dbConnectionBudget() });
 
 const PIP_ID = "c544ad60-2023-4181-a272-3c0677ae14d1";
 const USER_ID = "f453f9f8-d09c-4bb9-b734-c1e83a8d2c34";

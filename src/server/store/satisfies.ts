@@ -119,6 +119,7 @@ const STORE_METHOD_FLAGS = {
   upsertDailyPriorities: 1,
   getDailyPriorities: 1,
   // integrations + sync
+  ping: 1,
   upsertConnection: 1,
   getConnections: 1,
   insertSyncRun: 1,

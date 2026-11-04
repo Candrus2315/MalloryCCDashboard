@@ -49,6 +49,7 @@ import { normalizeAttributionEmail, normalizeAttributionPhone } from "../metrics
 import { deriveBookingPaymentFields } from "../payments";
 import type { Store } from "../store/types";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { warmDbConnectionForRun } from "../store/db-warmup";
 import { makeRunDeadline } from "../store/ingest-batch";
 import { raceBodyRead } from "./body-read";
 import { syncFetchTimeoutMs, timedFetch } from "./fetch-timeout";
@@ -825,6 +826,13 @@ export async function availabilityTick(options?: {
 
   const runId = await store.insertSyncRun("acuity");
   try {
+    // PASS-START CONNECT FAST-FAIL (2026-11-04 incident, store/db-warmup.ts):
+    // a wedged/refused DB connection once parked a pass for the full 30-min
+    // stale-run reap window. One bounded `ping` — raced against the shared
+    // connect budget and retried through the SAME withDbRetry engine as every
+    // other transient CONNECT_TIMEOUT — fails the pass in ~31s; the catch
+    // below records the honest error row. Read-only: one `SELECT 1`.
+    await warmDbConnectionForRun(store);
     // PER-RUN WALL-CLOCK BUDGET (2026-10-30 wedge fix #2, acuity-run-budget.ts):
     // the whole pass — list pull, upsert, reconciliation trawl — races a
     // 25-min budget, safely under the 30-min reap window. A breach rejects

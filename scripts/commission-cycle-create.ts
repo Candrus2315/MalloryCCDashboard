@@ -35,6 +35,7 @@
  *            [--label "..."] [--submission-date YYYY-MM-DD] [--payroll-date YYYY-MM-DD] --write
  */
 import postgres from "postgres";
+import { dbConnectionBudget } from "../src/server/store/db-pool-config";
 import { getSecret } from "../src/server/env";
 import {
   createAndAssignCommissionCycle,
@@ -135,7 +136,7 @@ function rawStoreAdapter(tx: postgres.Sql): Store {
 type ContractResult = Awaited<ReturnType<typeof createAndAssignCommissionCycle>>;
 const DRY_ROLLBACK = "__dry_run_rollback__";
 
-const sql = postgres(url, { max: 1, connect_timeout: 30 });
+const sql = postgres(url, { max: 1, ...dbConnectionBudget() });
 let captured: ContractResult | null = null;
 let refused: string | null = null;
 try {

@@ -28,6 +28,7 @@
  */
 import { getStore } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { warmDbConnectionForRun } from "../store/db-warmup";
 import { parseSyncStartedMs, TICK_WATCHDOG_CAP_MS, type Store } from "../store/types";
 import type { GoogleSheetsAdapter } from "./adapters";
 import { runSheetsSync } from "./run";
@@ -91,6 +92,13 @@ export async function sheetsTick(options?: {
 
   const runId = await store.insertSyncRun("google_sheets");
   try {
+    // PASS-START CONNECT FAST-FAIL (2026-11-04 incident, store/db-warmup.ts):
+    // a wedged/refused DB connection once parked a pass for the full 30-min
+    // stale-run reap window. One bounded `ping` — raced against the shared
+    // connect budget and retried through the SAME withDbRetry engine as every
+    // other transient CONNECT_TIMEOUT — fails the pass in ~31s; the catch
+    // below records the honest error row. Read-only: one `SELECT 1`.
+    await warmDbConnectionForRun(store);
     const res = await runSheetsSync(store, await store.getSettings(), adapter, { nowIso: now().toISOString() });
     await store.finishSyncRun(runId, res.error ? "error" : "success", res.count, res.error ?? null);
     if (res.error) return { outcome: "error", leads: res.count, error: res.error };

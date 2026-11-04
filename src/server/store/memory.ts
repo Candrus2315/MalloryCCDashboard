@@ -1167,6 +1167,11 @@ export class MemoryStore implements Store {
     return [...this.connections.values()];
   }
 
+  /** Connectivity probe (store/db-warmup.ts) — in-memory is always connected. */
+  async ping(): Promise<true> {
+    return true;
+  }
+
   async insertSyncRun(provider: string): Promise<string> {
     const id = this.nextId("sync");
     this.syncRuns.push({ id, provider, status: "running", started_at: new Date().toISOString(), finished_at: null, records_upserted: 0, error: null });
