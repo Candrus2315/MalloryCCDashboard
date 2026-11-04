@@ -279,6 +279,41 @@ export interface EvidenceMessageRow {
 }
 
 /**
+ * ONE raw HighLevel call record (call-source implementation W1, owner
+ * directive 2026-11-04) — the lossless landing zone for the
+ * /conversations/messages/export (channel=Call) pull that becomes the SOURCE
+ * OF TRUTH for call KPIs (W3 switch is a follow-up session). Idempotent upsert
+ * by message_id. Deliberately SEPARATE from `calls`/`harvest_calls`: writing
+ * here never touches pickup rate, call counts, or over-2-min metrics until W3.
+ */
+export interface HlCallRecordRow {
+  /** HL message id — the unique upsert key. */
+  message_id: string;
+  /** RAW HighLevel userId (rep attribution key → users.external_id). NULL = team-level (inbound/unclaimed) — kept, never dropped. */
+  user_external_id: string | null;
+  /** HL contact id (external; W3 resolves links). */
+  contact_external_id: string | null;
+  /** HL conversation id (audit endpoint linkage). */
+  conversation_id: string | null;
+  /** "outbound" | "inbound" | null (unknown). */
+  direction: string | null;
+  /** meta.call.status: completed | no-answer | failed | busy | voicemail | ringing. */
+  call_status: string | null;
+  /** meta.call.duration seconds; NULL = the API reported no talk time (attempt without a connection) — distinct from a real 0. */
+  duration_seconds: number | null;
+  /** ISO — the W3 KPI day-bucket key (ET business day, never UTC drift). */
+  date_added: string;
+  /** "TYPE_CALL" | "TYPE_IVR_CALL" (W3 excludes IVR from rep/team totals). */
+  message_type: string;
+  /** API `source` (e.g. "calls" / "process-calls"). */
+  source: string | null;
+  from_number: string | null;
+  to_number: string | null;
+  /** The untouched API record (jsonb) for audit/re-derivation. */
+  raw: Record<string, unknown> | null;
+}
+
+/**
  * HOW a call's contact was resolved (call→contact restoration backfill,
  * owner-ratified hierarchy): direct message contactId > parent conversation
  * contactId > exact normalized phone > exact normalized email; ambiguity and

@@ -320,3 +320,100 @@ function stubLiveAdapter(): LiveHighLevelAdapter & HighLevelAdapter {
 test("watermark overlap is 5 minutes", () => {
   expect(WATERMARK_OVERLAP_SECONDS).toBe(300);
 });
+
+// ---------- W4 WATERMARK FIX (owner directive 2026-11-04) ----------
+// Diagnostic 2026-11-04: a tick that hits the conversation visit cap used to
+// advance the watermark anyway → the skipped conversations were never
+// revisited → chronic call loss (11/2 −54, 11/3 −31 location-wide). Pin: a
+// truncated tick HOLDS the watermark; the next tick re-processes the SAME
+// window; a clean tick advances as before.
+describe("W4: truncated tick does not advance the watermark", () => {
+  /** 3 pages × 100 in-window conversations → the 200-visit cap truncates. */
+  const convPage = () => ({
+    conversations: Array.from({ length: 100 }, (_, i) => ({
+      id: `c${i}`,
+      lastMessageDate: NOW - 30_000 - i * 1000, // every row in-window
+      contactId: "cnt_new",
+      lastMessageType: "TYPE_CALL",
+    })),
+  });
+
+  function makeTruncatingFetch(seen: SeenReq[] = []) {
+    return async (url: string, init?: { headers?: Record<string, string>; method?: string; body?: string }): Promise<Response> => {
+      const u = String(url);
+      seen.push({ url: u, method: init?.method ?? "GET" });
+      const path = u.split("?")[0];
+      if (path.endsWith("/users/")) return json(USERS_BODY);
+      if (path.endsWith("/contacts/")) return json({ users: [], contacts: [] }); // contacts walk + reconcile probe: empty
+      if (path.endsWith("/conversations/search")) return json(convPage());
+      if (path.endsWith("/conversations/messages/export")) return json({ messages: [], nextCursor: null, total: 0 });
+      if (path.includes("/conversations/") && path.endsWith("/messages")) return json({ messages: { messages: [], nextPage: false } });
+      return json({});
+    };
+  }
+
+  test("simulated truncated tick → watermark UNCHANGED, connection row says why", async () => {
+    const store = new MemoryStore();
+    const watermarkIso = secondsAgoIso(120);
+    await store.setSyncWatermark("highlevel", watermarkIso);
+    const seen: SeenReq[] = [];
+    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeTruncatingFetch(seen), trigger: "background", liveAdapters: { sheets: null } });
+    expect(res.outcome).toBe("synced");
+    // the tick DID visit the cap (200 conversations) and reported truncation
+    expect(seen.filter((r) => r.url.includes("/messages")).length).toBeGreaterThanOrEqual(200);
+    expect(res.watermarkAdvanced).toBe(false);
+    // THE PIN: the watermark is byte-unchanged — the unvisited conversations
+    // stay in-window for the next tick.
+    expect(await store.getSyncWatermark("highlevel")).toBe(watermarkIso);
+    // honest connection row: still connected (real data synced), explains the hold
+    const hl = (await store.getConnections()).find((c) => c.provider === "highlevel");
+    expect(hl?.status).toBe("connected");
+    expect(hl?.config && typeof hl.config === "object" && "note" in hl.config ? String((hl.config as { note?: unknown }).note) : "").toContain("TRUNCATED — watermark held");
+  });
+
+  test("next tick after a truncated one revisits the SAME window (overlap preserved)", async () => {
+    const store = new MemoryStore();
+    const watermarkIso = secondsAgoIso(120);
+    await store.setSyncWatermark("highlevel", watermarkIso);
+    const seen1: SeenReq[] = [];
+    await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeTruncatingFetch(seen1), trigger: "background", liveAdapters: { sheets: null } });
+    const seen2: SeenReq[] = [];
+    await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeTruncatingFetch(seen2), trigger: "background", liveAdapters: { sheets: null } });
+    const exportUrl1 = seen1.map((r) => r.url).find((u) => u.includes("/conversations/messages/export"));
+    const exportUrl2 = seen2.map((r) => r.url).find((u) => u.includes("/conversations/messages/export"));
+    expect(exportUrl1).toBeDefined();
+    expect(exportUrl2).toBeDefined();
+    const expectedStart = new Date(Date.parse(watermarkIso) - WATERMARK_OVERLAP_SECONDS * 1000).toISOString();
+    // BOTH ticks queried the export over (watermark − 5-min overlap): the
+    // window was NOT consumed by the truncated tick.
+    expect(new URL(exportUrl1!).searchParams.get("startDate")).toBe(expectedStart);
+    expect(new URL(exportUrl2!).searchParams.get("startDate")).toBe(expectedStart);
+  });
+
+  test("untruncated success advances the watermark as today (regression guard)", async () => {
+    const store = new MemoryStore();
+    const watermarkIso = secondsAgoIso(60);
+    await store.setSyncWatermark("highlevel", watermarkIso);
+    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl: makeIncrementalFetch(), trigger: "background", liveAdapters: { sheets: null } });
+    expect(res.outcome).toBe("synced");
+    expect(res.watermarkAdvanced).toBe(true);
+    expect(Date.parse((await store.getSyncWatermark("highlevel"))!)).toBeGreaterThan(Date.parse(watermarkIso));
+  });
+
+  test("an export ingest failure fails the tick and holds the watermark (failed run never marks its range complete)", async () => {
+    const store = new MemoryStore();
+    const watermarkIso = secondsAgoIso(120);
+    await store.setSyncWatermark("highlevel", watermarkIso);
+    const seen: SeenReq[] = [];
+    const fetchImpl = async (url: string, init?: { headers?: Record<string, string>; method?: string; body?: string }): Promise<Response> => {
+      const u = String(url);
+      seen.push({ url: u, method: init?.method ?? "GET" });
+      if (u.includes("/conversations/messages/export")) throw new Error("export endpoint down");
+      return makeIncrementalFetch()(u, init);
+    };
+    const res = await schedulerTick({ store, creds: CREDENTIALS, fetchImpl, trigger: "background", liveAdapters: { sheets: null } });
+    expect(res.outcome).toBe("error");
+    expect(res.error).toContain("export endpoint down");
+    expect(await store.getSyncWatermark("highlevel")).toBe(watermarkIso); // held
+  });
+});

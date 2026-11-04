@@ -43,6 +43,7 @@ import type {
   HarvestCallRow,
   HarvestConvRow,
   HarvestProgressRow,
+  HlCallRecordRow,
   LeadCountAdjustmentRow,
   ManualOverrideRow,
   MonthlyGoalRow,
@@ -138,6 +139,7 @@ export class MemoryStore implements Store {
   private calls = new Map<string, CallExt>(); // keyed by provider:external_call_id
   private harvestCalls = new Map<string, HarvestCallRow>(); // keyed by message_id (harvest_calls mirror)
   private evidenceMessages = new Map<string, EvidenceMessageRow>(); // keyed by message_id (SMS evidence)
+  private hlCallRecords = new Map<string, HlCallRecordRow>(); // keyed by message_id (raw call-source W1)
   private harvestProgress = new Map<string, HarvestProgressRow>();
   private harvestConvs = new Map<string, HarvestConvRow & { visited: boolean; calls_found: number; messages_scanned: number }>();
   private opportunities = new Map<string, OpportunityRow>(); // keyed by provider:external_id
@@ -1297,6 +1299,21 @@ export class MemoryStore implements Store {
       .filter((r) => Number.isFinite(Date.parse(r.date_added)) && Date.parse(r.date_added) >= startMs)
       .sort((a, b) => Date.parse(a.date_added) - Date.parse(b.date_added))
       .map((r) => ({ ...r }));
+  }
+  // RAW HighLevel call records (call-source W1, owner directive 2026-11-04):
+  // idempotent upsert by message_id — the 5-min watermark overlap and re-runs
+  // can never duplicate. Writes ONLY this map: calls/harvest_calls untouched.
+  async upsertHlCallRecords(rows: HlCallRecordRow[]): Promise<number> {
+    for (const r of rows) this.hlCallRecords.set(r.message_id, { ...r });
+    return rows.length;
+  }
+  async getHlCallRecordsByMessageIds(messageIds: string[]): Promise<HlCallRecordRow[]> {
+    if (!messageIds.length) return [];
+    const set = new Set(messageIds);
+    return [...this.hlCallRecords.values()].filter((r) => set.has(r.message_id)).map((r) => ({ ...r }));
+  }
+  async countHlCallRecords(): Promise<number> {
+    return this.hlCallRecords.size;
   }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
     for (const r of rows) {
