@@ -12,6 +12,7 @@ import { anchorDayPhrase, big3Incomplete, buildDailyReportEmail, buildDailyRepor
 
 import { derivePaymentState } from "../payments";
 import { appointmentInScope } from "../metrics/availability";
+import { parseSupersedePreviousValue } from "../metrics/attribution";
 import { lastCompletedWeekStart, splitLeadsByType } from "../metrics/weekly";
 
 
@@ -73,7 +74,7 @@ export async function todayPageData(deps?: PageDeps) {
   const todayEnd = etDayEndUtc(today);
   const weekStartUtc = etDayStartUtc(ws);
 
-  const [meta, settings, callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, connections, slotDayResults, onlineWindowRaw] =
+  const [meta, settings, callsToday, callsWtd, callsForAttribution, apptsToday, apptsYesterday, apptsWtd, rules, leads, teamGoal, repGoals, users, attributions, leadAdjustments, pendingWindow, connections, slotDayResults, onlineWindowRaw, overrides] =
     await Promise.all([
       metaPromise,
       store.getSettings(),
@@ -138,6 +139,14 @@ export async function todayPageData(deps?: PageDeps) {
       // on the connections entry); sliced + qualified downstream like every
       // win chain.
       store.getAppointmentsByWinBusinessDateBetween(addDays(ws, -7), today),
+      // DESIGNATION SUPERSEDE PROVENANCE (owner directive 2026-11-04, the
+      // Laurie Hendricks follow-up): the designation audit rows — the ONLY
+      // place the superseded evidence credit is recorded once the sticky row
+      // replaced it. The Today undo confirm reads the parsed previous_value
+      // ("window_interaction: rep <name> (<id>)") to tell the owner the
+      // booking returns to that rep's evidence credit. Appended LAST
+      // (positional destructure — see the mis-order note on connections).
+      store.getManualOverrides(200),
     ]);
 
   const scope = settings.acuity;
@@ -299,6 +308,19 @@ export async function todayPageData(deps?: PageDeps) {
   // reflected on the next load. Additive payload only: no existing figure
   // reads this array; rep math, goal math and conversions are untouched.
   const attrMethodByAppt = new Map(attributions.map((r) => [r.appointment_id, r.method]));
+  // SUPERSEDE PROVENANCE (owner directive 2026-11-04): the latest designation
+  // audit row per appointment (getManualOverrides returns newest-first) — a
+  // superseded evidence credit is ONLY recorded in its previous_value once the
+  // sticky row replaced the attribution. Non-designation rows (undo etc.) and
+  // unparseable values (plain designations) leave the fields null — no guess.
+  const supersedeByAppt = new Map<string, { method: string; repId: string; repName: string | null }>();
+  for (const o of overrides) {
+    if (o.entity_type !== "booking_attribution" || o.field !== "online_booking_designation") continue;
+    if (o.new_value !== "designated online booking (team-only)") continue;
+    if (supersedeByAppt.has(o.entity_id)) continue;
+    const parsed = parseSupersedePreviousValue(o.previous_value);
+    if (parsed) supersedeByAppt.set(o.entity_id, parsed);
+  }
   const onlineBookings = onlineBookingWins(
     filterApptsInWinBucketRange(onlineWindowRaw, addDays(ws, -7), today).filter((a) => appointmentInScope(a, scope)),
     attributions,
@@ -309,6 +331,11 @@ export async function todayPageData(deps?: PageDeps) {
       // "owner-designation") — ONLY those carry the Undo action; rows the
       // engine re-derived as online-booking from other evidence do not.
       designation_method: attrMethodByAppt.get(a.id) ?? null,
+      // SUPERSEDED evidence credit (Laurie Hendricks follow-up): where the
+      // undo returns this booking to. Keys avoid "rep_id"/"rep_name" — the
+      // team-only rows carry no rep fields (pinned by online-bookings-section).
+      superseded_from_method: supersedeByAppt.get(a.id)?.method ?? null,
+      superseded_from_rep: supersedeByAppt.get(a.id)?.repName ?? supersedeByAppt.get(a.id)?.repId ?? null,
       appointment_id: a.id,
       acuity_appointment_id: a.acuity_appointment_id ?? null,
       client_name: a.client_name ?? null,

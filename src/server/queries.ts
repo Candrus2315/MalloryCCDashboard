@@ -28,6 +28,8 @@ import {
   bookingAttributionSplit,
   buildUnattributedQueue,
   isBookingWin,
+  type AppointmentRow,
+  type AttributionRow,
 } from "./metrics/compute";
 import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
@@ -42,6 +44,8 @@ import {
   OWNER_DESIGNATION_METHOD,
   OWNER_DESIGNATION_NOTE,
   OWNER_DESIGNATION_UNDO_NOTE,
+  isEvidenceTierAttribution,
+  supersedePreviousValue,
   matchAppointmentsToCalls,
 } from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
@@ -262,6 +266,16 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     runningSyncRuns: runningRuns,
     overrides,
     unattributed,
+    // EVIDENCE-CREDITED QUEUE SECTION (owner directive 2026-11-04): the
+    // supersede surface — paid wins of the same 30-day window whose stored
+    // attribution is an evidence-tier rep credit, listed with the credited
+    // rep + method/confidence the owner is about to supersede. Same scoped
+    // appointment set the unattributed queue reads; additive payload.
+    evidenceCredited: buildEvidenceCreditedQueue({
+      appointments: scopedAppts,
+      attributions,
+      users: allUsers.map((u) => ({ id: u.id, name: u.name })),
+    }),
     // Unattributed-queue declutter marker (owner request 2026-10-21) — the
     // display-only "cleared before" instant the queue's default view splits
     // on. The payload's unattributed rows above stay FULL (every row, always).
@@ -1013,9 +1027,17 @@ export const unassignAttribution = createServerFn({ method: "POST" })
  *    window the queue that offers the action reads);
  *  - must be a QUALIFYING WIN (non-cancelled + paid — isBookingWin, the exact
  *    chain Today and every team total count) and not cancelled;
- *  - must NOT already carry a rep credit (rep_id set or manual_override set):
- *    rep credits and manual assignments are OWNER RULINGS — the endpoint
- *    refuses and the owner undoes/adjusts those through their own controls;
+ *  - any manual_override row refuses (an OWNER RULING — the endpoint never
+ *    strips one; the owner adjusts those through their own controls);
+ *  - a rep credit is SUPERSEDABLE only when it is EVIDENCE-TIER (rep_id set +
+ *    manual_override false + confidence < 1 + method in EVIDENCE_TIER_METHODS
+ *    — the engine-derived window_interaction/identity verdicts, e.g. the
+ *    Laurie Hendricks case 2026-11-04): the creator rule outranks interaction
+ *    evidence, and undo fully restores it (neutral row → the next tick
+ *    re-derives the same evidence credit). The audit row's previous_value
+ *    carries the superseded credit ("window_interaction: rep <name> (<id>)").
+ *    Every OTHER rep credit (owner-rule-auction, confidence-1 rule rows, any
+ *    non-evidence method) still refuses;
  *  - designating an ALREADY-designated row is an idempotent no-op (the row
  *    keeps its original note).
  * Audited like every manual action: one manual_override row records the flip.
@@ -1042,17 +1064,34 @@ export async function designateOnlineBookingCore(store: Store, input: DesignateO
   if (prev?.reason_code === ONLINE_BOOKING_REASON) {
     return { ok: true }; // already designated — idempotent no-op
   }
-  if (prev?.manual_override || prev?.rep_id) {
+  if (prev?.manual_override) {
     throw new Error(
-      "This booking carries an owner ruling (rep credit or manual override) — designations can never strip one. Adjust or undo the ruling first.",
+      "This booking carries an owner ruling (manual override) — designations can never strip one. Adjust or undo the ruling first.",
     );
+  }
+  // SUPERSEDE PATH (owner directive 2026-11-04): a rep credit the ENGINE
+  // derived from evidence (the Laurie Hendricks shape — window_interaction,
+  // confidence 0.6) CAN be superseded. The creator rule outranks interaction
+  // evidence, and the shipped undo semantics fully restore it (undo → neutral
+  // row → the next tick re-derives the same evidence credit). ONLY evidence-
+  // tier rows qualify: owner-rule-auction, proven online-booking and any
+  // manual_override row keep their existing refusals.
+  let supersedePrevious: string | null = null;
+  if (prev?.rep_id) {
+    if (!isEvidenceTierAttribution(prev)) {
+      throw new Error(
+        `This booking's rep credit is not evidence-tier (method "${prev.method}", confidence ${prev.confidence ?? 0}) — owner-rule and rule-derived credits need their own handling and are never stripped by a designation.`,
+      );
+    }
+    const users = await store.getAllUsers();
+    supersedePrevious = supersedePreviousValue(prev.method, prev.rep_id, users.find((u) => u.id === prev.rep_id)?.name ?? null);
   }
   await store.setOnlineBookingDesignation(appointmentId, OWNER_DESIGNATION_NOTE);
   await store.insertManualOverride({
     entity_type: "booking_attribution",
     entity_id: appointmentId,
     field: "online_booking_designation",
-    previous_value: prev ? prev.reason_code ?? prev.method : "unattributed",
+    previous_value: supersedePrevious ?? (prev ? prev.reason_code ?? prev.method : "unattributed"),
     new_value: "designated online booking (team-only)",
     changed_by: "christopher",
   });
@@ -1114,6 +1153,61 @@ export const undoOnlineBookingDesignation = createServerFn({ method: "POST" })
   .handler(async ({ data }) =>
     undoOnlineBookingDesignationCore(await getStore(), { appointmentId: String(data.appointmentId) }),
   );
+
+/**
+ * EVIDENCE-CREDITED QUEUE SECTION (owner directive 2026-11-04, the Laurie
+ * Hendricks follow-up): the Settings page's second designation surface. Lists
+ * the paid non-cancelled wins of the SAME 30-day window whose CURRENT stored
+ * attribution is an evidence-tier rep credit (isEvidenceTierAttribution) —
+ * bookings the designation control CAN supersede — so the owner sees exactly
+ * which rep credit (name + method + confidence) they are about to replace.
+ *
+ * Deliberately EXCLUDED: manual_override rows of any kind (owner rulings),
+ * owner-rule-auction and every other non-evidence method, unpaid/cancelled
+ * appointments, rows without a rep credit (those are the EXISTING unattributed
+ * queue's territory) and already-designated rows (rep NULL — they live in the
+ * Today Online Bookings section). Pure and store-free: the Settings loader
+ * feeds it the rows it already fetched — no extra round trips.
+ */
+export interface EvidenceCreditedQueueRow {
+  appointment_id: string;
+  client_name: string | null;
+  client_phone: string | null;
+  appointment_type: string;
+  appointment_datetime: string;
+  created_at: string;
+  credited_rep_id: string;
+  credited_rep_name: string | null;
+  method: string;
+  confidence: number;
+}
+
+export function buildEvidenceCreditedQueue(input: {
+  appointments: (AppointmentRow & { client_phone?: string | null })[];
+  attributions: AttributionRow[];
+  /** ALL users (roster + non-roster) — name resolution for the superseded credit. */
+  users: { id: string; name: string }[];
+}): EvidenceCreditedQueueRow[] {
+  const attrByAppt = new Map(input.attributions.map((a) => [a.appointment_id, a]));
+  const nameById = new Map(input.users.map((u) => [u.id, u.name]));
+  return input.appointments
+    .filter((a) => !(a.status === "cancelled" || a.cancelled) && isBookingWin(a))
+    .map((a) => ({ appt: a, attr: attrByAppt.get(a.id) }))
+    .filter((pair): pair is { appt: AppointmentRow; attr: AttributionRow } => isEvidenceTierAttribution(pair.attr ?? {}))
+    .map(({ appt, attr }) => ({
+      appointment_id: appt.id,
+      client_name: appt.client_name ?? null,
+      client_phone: appt.client_phone ?? null,
+      appointment_type: appt.appointment_type,
+      appointment_datetime: appt.appointment_datetime,
+      created_at: appt.created_at,
+      credited_rep_id: attr.rep_id!,
+      credited_rep_name: nameById.get(attr.rep_id!) ?? null,
+      method: attr.method,
+      confidence: attr.confidence,
+    }))
+    .sort((x, y) => (x.created_at < y.created_at ? 1 : x.created_at > y.created_at ? -1 : 0));
+}
 
 /**
  * UNATTRIBUTED QUEUE DECLUTTER (owner request 2026-10-21: "can i get a clear

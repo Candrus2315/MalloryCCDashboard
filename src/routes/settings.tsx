@@ -34,7 +34,7 @@ import { BlockedTimesCard } from "~/components/settings/BlockedTimesCard";
 import { SheetMappingCard } from "~/components/settings/SheetMappingCard";
 import { SyncCenter } from "~/components/settings/SyncCenter";
 import { RosterMappingSection } from "~/components/settings/RosterMappingSection";
-import { UnattributedCard, UnattributedRow } from "~/components/settings/UnattributedQueueRows";
+import { UnattributedCard, UnattributedRow, EvidenceCreditedCard, EvidenceCreditedRow } from "~/components/settings/UnattributedQueueRows";
 import { LeadWorkDateCard } from "~/components/settings/LeadWorkDateCard";
 import { LeadCountCard } from "~/components/settings/LeadCountCard";
 import {
@@ -394,6 +394,47 @@ function SettingsPage() {
             )}
           </div>
         </div>
+        {/* (b2) EVIDENCE-CREDITED — SUPERSEDE (owner directive 2026-11-04, the
+            Laurie Hendricks follow-up): a second designation surface UNDER the
+            unattributed queue. Paid wins whose CURRENT attribution is an
+            evidence-tier rep credit (window_interaction et al., not manual, not
+            owner-rule) — bookings the designation control may now supersede.
+            The row names the credited rep + method/confidence so the owner sees
+            exactly what they replace; confirm explains the undo path. Only
+            rendered when such rows exist. */}
+        {data.evidenceCredited.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="section-heading">Evidence-credited — designate Online Booking</h3>
+            <div className="card card-nest space-y-2">
+              <p className="text-[12px] text-(--text-muted)">
+                {formatInt(data.evidenceCredited.length)} booking{data.evidenceCredited.length === 1 ? "" : "s"} credited to a rep by interaction evidence only — designating marks the booking client-created (team-only) and supersedes that credit, audited.
+              </p>
+              <div className="space-y-3 md:hidden">
+                {data.evidenceCredited.map((r) => (
+                  <EvidenceCreditedCard key={r.appointment_id} row={r} busy={busy} onDesignate={(appointmentId) => run("Booking designated as Online Booking — the evidence credit was superseded (audited)", () => designateOnlineBooking({ data: { appointmentId } }))} />
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="data-table min-w-[760px]">
+                  <thead>
+                    <tr>
+                      <th className="text-left">Client</th>
+                      <th className="text-left">Type</th>
+                      <th className="text-left">Session</th>
+                      <th className="text-left">Credited to</th>
+                      <th className="text-left"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.evidenceCredited.map((r) => (
+                      <EvidenceCreditedRow key={r.appointment_id} row={r} busy={busy} onDesignate={(appointmentId) => run("Booking designated as Online Booking — the evidence credit was superseded (audited)", () => designateOnlineBooking({ data: { appointmentId } }))} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
         {/* (c) Lead corrections */}
         <div className="space-y-3">
           <h3 className="section-heading">Corrections</h3>

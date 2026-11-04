@@ -288,24 +288,35 @@ function OnlineBookingsSection({ rows }: { rows: OnlineBookingRow[] }) {
                     <td className="text-right align-middle">
                       {r.designation_method === "owner-designation" &&
                         (confirmId === r.appointment_id ? (
-                          <span className="inline-flex items-center gap-2">
-                            <button
-                              type="button"
-                              className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--neg-text) underline underline-offset-2 hover:opacity-80 disabled:opacity-40 max-md:min-h-[44px] max-md:px-3"
-                              disabled={busyId === r.appointment_id}
-                              aria-label={`Confirm undo designation: ${r.client_name ?? r.appointment_type ?? "unknown client"}`}
-                              onClick={() => void undo(r.appointment_id)}
-                            >
-                              Confirm undo
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--text-muted) hover:text-(--text-primary) disabled:opacity-40 max-md:min-h-[44px] max-md:px-3"
-                              disabled={busyId === r.appointment_id}
-                              onClick={() => setConfirmId(null)}
-                            >
-                              Cancel
-                            </button>
+                          <span className="inline-flex flex-col items-end gap-1">
+                            {/* SUPERSEDE undo semantics (owner directive 2026-11-04):
+                                a designation that REPLACED an evidence-tier rep
+                                credit tells the owner where the booking returns —
+                                the audit row's parsed previous_value, never a guess. */}
+                            {r.superseded_from_rep && (
+                              <span className="text-[11px] leading-snug text-(--text-muted)">
+                                Undo returns this booking to its evidence-based attribution ({r.superseded_from_rep}).
+                              </span>
+                            )}
+                            <span className="inline-flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--neg-text) underline underline-offset-2 hover:opacity-80 disabled:opacity-40 max-md:min-h-[44px] max-md:px-3"
+                                disabled={busyId === r.appointment_id}
+                                aria-label={`Confirm undo designation: ${r.client_name ?? r.appointment_type ?? "unknown client"}`}
+                                onClick={() => void undo(r.appointment_id)}
+                              >
+                                Confirm undo
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--text-muted) hover:text-(--text-primary) disabled:opacity-40 max-md:min-h-[44px] max-md:px-3"
+                                disabled={busyId === r.appointment_id}
+                                onClick={() => setConfirmId(null)}
+                              >
+                                Cancel
+                              </button>
+                            </span>
                           </span>
                         ) : (
                           <button

@@ -27,9 +27,9 @@ import { describe, expect, test } from "bun:test";
 import { MemoryStore } from "../store/memory";
 import { PgStore } from "../store/pg";
 import { isBookingWin, type AppointmentRow } from "../metrics/compute";
-import { ONLINE_BOOKING_REASON, OWNER_DESIGNATION_METHOD } from "../metrics/attribution";
+import { ONLINE_BOOKING_REASON, OWNER_DESIGNATION_METHOD, OWNER_RULE_AUCTION_METHOD, supersedePreviousValue, parseSupersedePreviousValue } from "../metrics/attribution";
+import { buildEvidenceCreditedQueue, designateOnlineBookingCore, undoOnlineBookingDesignationCore } from "../queries";
 import { deriveCreationSourceEvidence } from "../sync/attribution-tick";
-import { designateOnlineBookingCore, undoOnlineBookingDesignationCore } from "../queries";
 import { addDays, etDayStartUtc, etToday } from "../date-logic";
 
 /**
@@ -168,28 +168,8 @@ describe("online-booking designation — guards", () => {
     expect((await store.getAttributions()).some((a) => a.appointment_id === id)).toBe(false);
   });
 
-  test("refuses a rep-credited row (owner ruling): engine-attributed rep_id AND manual_override", async () => {
+  test("refuses a MANUAL rep credit (owner ruling): setManualAttribution rows keep their refusal", async () => {
     const store = new MemoryStore();
-    // (a) an ENGINE row with a rep credit (window_interaction, not manual)
-    const engineId = await seed(store, "desig-rep-engine");
-    await store.upsertAttributions([
-      {
-        id: `attr:${engineId}`,
-        appointment_id: engineId,
-        call_id: null,
-        rep_id: "rep-1",
-        method: "window_interaction",
-        confidence: 0.6,
-        manual_override: false,
-        reason_code: null,
-      },
-    ]);
-    await expect(designateOnlineBookingCore(store, { appointmentId: engineId })).rejects.toThrow(/owner ruling/);
-    const engineRow = (await store.getAttributions()).find((a) => a.appointment_id === engineId);
-    expect(engineRow!.rep_id).toBe("rep-1"); // the rep credit is UNTOUCHED
-    expect(engineRow!.reason_code).toBeNull();
-
-    // (b) a MANUAL override row (rep credit via the overrides UI)
     const manualId = await seed(store, "desig-rep-manual");
     await store.setManualAttribution({
       id: "",
@@ -209,6 +189,278 @@ describe("online-booking designation — guards", () => {
   test("refuses an appointment outside the 30-day window (not found)", async () => {
     const store = new MemoryStore();
     await expect(designateOnlineBookingCore(store, { appointmentId: "appt-never-seeded" })).rejects.toThrow(/not found/i);
+  });
+});
+
+/**
+ * SUPERSEDE PATH (owner directive 2026-11-04, the Laurie Hendricks case —
+ * appointment 37b8b62d, Acuity 1800865768): an ENGINE evidence-tier rep credit
+ * (window_interaction, manual_override false, confidence 0.6) CAN be superseded
+ * by a designation. The creator rule outranks interaction evidence, and undo
+ * fully restores the credit (neutral row → the tick re-derives it).
+ */
+describe("online-booking designation — supersede of an evidence-tier rep credit", () => {
+  /** Seed the named rep the supersede audit will resolve. */
+  async function seedRep(store: MemoryStore, id: string, name: string): Promise<void> {
+    await store.upsertUsers([
+      {
+        id,
+        provider: "highlevel",
+        external_id: `hl-${id}`,
+        name,
+        email: `${id}@example.com`,
+        is_active: true,
+        call_start_date: null,
+      },
+    ]);
+  }
+
+  test("writes the SAME sticky row + an audit whose previous_value carries the superseded rep", async () => {
+    const store = new MemoryStore();
+    await seedRep(store, "da05649f", "Carmine Morgano");
+    const id = await seed(store, "desig-supersede");
+    await store.upsertAttributions([
+      {
+        id: `attr:${id}`,
+        appointment_id: id,
+        call_id: null,
+        rep_id: "da05649f",
+        method: "window_interaction",
+        confidence: 0.6,
+        manual_override: false,
+        reason_code: null,
+      },
+    ]);
+
+    await designateOnlineBookingCore(store, { appointmentId: id });
+
+    // The SAME sticky contract as a plain designation.
+    const row = (await store.getAttributions()).find((a) => a.appointment_id === id);
+    expect(row!.rep_id).toBeNull(); // the rep credit is gone — team-only
+    expect(row!.call_id).toBeNull();
+    expect(row!.method).toBe(OWNER_DESIGNATION_METHOD);
+    expect(row!.reason_code).toBe(ONLINE_BOOKING_REASON);
+    expect(row!.manual_override).toBe(true);
+    expect(row!.confidence).toBe(1);
+    expect(deriveCreationSourceEvidence(await store.getAttributions()).provenClientCreated.has(id)).toBe(true);
+
+    // The audit trail records WHAT was replaced: method + rep name + rep id.
+    const audit = (await store.getManualOverrides(10)).find(
+      (a) => a.entity_type === "booking_attribution" && a.entity_id === id && a.field === "online_booking_designation",
+    );
+    expect(audit).toBeDefined();
+    expect(audit!.previous_value).toBe("window_interaction: rep Carmine Morgano (da05649f)");
+    expect(audit!.new_value).toBe("designated online booking (team-only)");
+  });
+
+  test("audit format round-trips: supersedePreviousValue ↔ parseSupersedePreviousValue (name missing → id fills both)", async () => {
+    expect(supersedePreviousValue("window_interaction", "da05649f", "Carmine Morgano")).toBe(
+      "window_interaction: rep Carmine Morgano (da05649f)",
+    );
+    expect(parseSupersedePreviousValue("window_interaction: rep Carmine Morgano (da05649f)")).toEqual({
+      method: "window_interaction",
+      repId: "da05649f",
+      repName: "Carmine Morgano",
+    });
+    // Name lookup misses: the id fills both slots — the string still parses.
+    expect(supersedePreviousValue("phone", "rep-9", null)).toBe("phone: rep rep-9 (rep-9)");
+    expect(parseSupersedePreviousValue("phone: rep rep-9 (rep-9)")).toEqual({
+      method: "phone",
+      repId: "rep-9",
+      repName: "rep-9",
+    });
+    // Plain designation previous values do NOT parse as a supersede.
+    expect(parseSupersedePreviousValue("no-window-interaction")).toBeNull();
+    expect(parseSupersedePreviousValue("unattributed")).toBeNull();
+    expect(parseSupersedePreviousValue(null)).toBeNull();
+  });
+
+  test("undo after a supersede → neutral row; the tick re-derivation returns the rep's evidence credit", async () => {
+    const store = new MemoryStore();
+    await seedRep(store, "rep-sup", "Carmine Morgano");
+    const id = await seed(store, "desig-supersede-undo");
+    await store.upsertAttributions([
+      {
+        id: `attr:${id}`,
+        appointment_id: id,
+        call_id: null,
+        rep_id: "rep-sup",
+        method: "window_interaction",
+        confidence: 0.6,
+        manual_override: false,
+        reason_code: null,
+      },
+    ]);
+    await designateOnlineBookingCore(store, { appointmentId: id });
+    expect((await store.getAttributions()).find((a) => a.appointment_id === id)!.method).toBe(OWNER_DESIGNATION_METHOD);
+
+    await undoOnlineBookingDesignationCore(store, { appointmentId: id });
+
+    // The NEUTRAL row (same contract as any undo) — the engine's control.
+    const undone = (await store.getAttributions()).find((a) => a.appointment_id === id);
+    expect(undone!.method).toBe("none");
+    expect(undone!.rep_id).toBeNull();
+    expect(undone!.manual_override).toBe(false);
+    expect(undone!.reason_code).toBeNull();
+    expect(deriveCreationSourceEvidence(await store.getAttributions()).provenClientCreated.has(id)).toBe(false);
+
+    // The next attribution tick re-derives the SAME evidence credit (the
+    // underlying call/conversation evidence was never touched) — the store's
+    // upsertAttributions is the exact write path the tick uses.
+    await store.upsertAttributions([
+      {
+        id: `attr:${id}`,
+        appointment_id: id,
+        call_id: null,
+        rep_id: "rep-sup",
+        method: "window_interaction",
+        confidence: 0.6,
+        manual_override: false,
+        reason_code: null,
+      },
+    ]);
+    const rederived = (await store.getAttributions()).find((a) => a.appointment_id === id);
+    expect(rederived!.rep_id).toBe("rep-sup"); // the credit is BACK
+    expect(rederived!.method).toBe("window_interaction");
+    expect(rederived!.manual_override).toBe(false);
+  });
+
+  test("refusal matrix — non-evidence rep credits are never superseded", async () => {
+    const store = new MemoryStore();
+    // (a) owner-rule-auction: the standing owner rule, needs its own handling.
+    const auctionId = await seed(store, "desig-sup-auction");
+    await store.upsertAttributions([
+      {
+        id: `attr:${auctionId}`,
+        appointment_id: auctionId,
+        call_id: null,
+        rep_id: "rep-allison",
+        method: OWNER_RULE_AUCTION_METHOD,
+        confidence: 1,
+        manual_override: false,
+        reason_code: OWNER_RULE_AUCTION_METHOD,
+      },
+    ]);
+    await expect(designateOnlineBookingCore(store, { appointmentId: auctionId })).rejects.toThrow(/not evidence-tier/);
+    expect((await store.getAttributions()).find((a) => a.appointment_id === auctionId)!.rep_id).toBe("rep-allison");
+
+    // (b) evidence METHOD but confidence 1 (owner-grade verdict, not evidence).
+    const confId = await seed(store, "desig-sup-conf");
+    await store.upsertAttributions([
+      {
+        id: `attr:${confId}`,
+        appointment_id: confId,
+        call_id: null,
+        rep_id: "rep-x",
+        method: "window_interaction",
+        confidence: 1,
+        manual_override: false,
+        reason_code: null,
+      },
+    ]);
+    await expect(designateOnlineBookingCore(store, { appointmentId: confId })).rejects.toThrow(/not evidence-tier/);
+
+    // (c) a manual_override row of ANY kind (even with a rep).
+    const manualId = await seed(store, "desig-sup-manual");
+    await store.upsertAttributions([
+      {
+        id: `attr:${manualId}`,
+        appointment_id: manualId,
+        call_id: null,
+        rep_id: "rep-y",
+        method: "manual",
+        confidence: 1,
+        manual_override: true,
+        reason_code: null,
+      },
+    ]);
+    await expect(designateOnlineBookingCore(store, { appointmentId: manualId })).rejects.toThrow(/owner ruling/);
+
+    // (d) unpaid and cancelled stay refused (the supersede path inherits the guards).
+    const unpaidId = await seed(store, "desig-sup-unpaid", {
+      raw: raw("no", "300.00") as unknown as Record<string, unknown>,
+      payment_state: "pending_payment",
+      booking_win_business_date: null,
+    });
+    await expect(designateOnlineBookingCore(store, { appointmentId: unpaidId })).rejects.toThrow(/Only paid booking wins/);
+    const cancelledId = await seed(store, "desig-sup-cancelled", { status: "cancelled", cancelled: true });
+    await expect(designateOnlineBookingCore(store, { appointmentId: cancelledId })).rejects.toThrow(/Cancelled bookings/);
+
+    // (e) outside the 30-day window.
+    await expect(designateOnlineBookingCore(store, { appointmentId: "appt-not-in-window" })).rejects.toThrow(/not found/i);
+
+    // (f) an already-designated (proven online) row stays an idempotent no-op.
+    const designatedId = await seed(store, "desig-sup-designated");
+    await store.setOnlineBookingDesignation(designatedId, "pre-existing designation");
+    const before = (await store.getAttributions()).find((a) => a.appointment_id === designatedId);
+    await designateOnlineBookingCore(store, { appointmentId: designatedId }); // no throw
+    expect((await store.getAttributions()).find((a) => a.appointment_id === designatedId)).toEqual(before);
+  });
+});
+
+/**
+ * EVIDENCE-CREDITED QUEUE SECTION (Settings page payload): lists ONLY the
+ * supersede-eligible rows and excludes manual/auction/owner rulings.
+ */
+describe("buildEvidenceCreditedQueue — the Settings supersede section's rows", () => {
+  const users = [
+    { id: "rep-sup", name: "Carmine Morgano" },
+    { id: "rep-allison", name: "Allison Wittner" },
+  ];
+
+  test("includes evidence-tier credited wins (rep + method + confidence); excludes manual, auction, unpaid, cancelled, rep-less", async () => {
+    const mk = (id: string, over: Partial<AppointmentRow> = {}): AppointmentRow => winAppt({ id, ...over });
+    const supersede = mk("a-sup");
+    const manual = mk("a-manual");
+    const auction = mk("a-auction");
+    const unpaid = mk("a-unpaid", {
+      raw: raw("no", "300.00") as unknown as Record<string, unknown>,
+      payment_state: "pending_payment",
+      booking_win_business_date: null,
+    });
+    const cancelled = mk("a-cancelled", { status: "cancelled", cancelled: true });
+    const repLess = mk("a-repless");
+    const attributions = [
+      { id: "attr:1", appointment_id: "a-sup", call_id: null, rep_id: "rep-sup", method: "window_interaction", confidence: 0.6, manual_override: false, reason_code: null },
+      { id: "attr:2", appointment_id: "a-manual", call_id: null, rep_id: "rep-sup", method: "manual", confidence: 1, manual_override: true, reason_code: null },
+      { id: "attr:3", appointment_id: "a-auction", call_id: null, rep_id: "rep-allison", method: "owner-rule-auction", confidence: 1, manual_override: false, reason_code: "owner-rule-auction" },
+      { id: "attr:4", appointment_id: "a-repless", call_id: null, rep_id: null, method: "none", confidence: 0, manual_override: false, reason_code: "no-window-interaction" },
+    ];
+    const rows = buildEvidenceCreditedQueue({
+      appointments: [supersede, manual, auction, unpaid, cancelled, repLess],
+      attributions,
+      users,
+    });
+    expect(rows.map((r) => r.appointment_id)).toEqual(["a-sup"]); // ONLY the supersede-eligible row
+    expect(rows[0]!.credited_rep_name).toBe("Carmine Morgano");
+    expect(rows[0]!.method).toBe("window_interaction");
+    expect(rows[0]!.confidence).toBe(0.6);
+    // Unpaid/cancelled never appear even WITH an evidence-tier attribution row.
+    const rows2 = buildEvidenceCreditedQueue({
+      appointments: [unpaid, cancelled],
+      attributions: [
+        { id: "attr:5", appointment_id: "a-unpaid", call_id: null, rep_id: "rep-sup", method: "window_interaction", confidence: 0.6, manual_override: false, reason_code: null },
+        { id: "attr:6", appointment_id: "a-cancelled", call_id: null, rep_id: "rep-sup", method: "window_interaction", confidence: 0.6, manual_override: false, reason_code: null },
+      ],
+      users,
+    });
+    expect(rows2).toEqual([]);
+  });
+
+  test("newest-first ordering; name resolution misses render the null name (never a guess)", async () => {
+    const newer = winAppt({ id: "a-newer", created_at: `${TODAY}T18:00:00.000Z` });
+    const older = winAppt({ id: "a-older", created_at: `${TODAY}T10:00:00.000Z` });
+    const rows = buildEvidenceCreditedQueue({
+      appointments: [older, newer],
+      attributions: [
+        { id: "attr:1", appointment_id: "a-newer", call_id: null, rep_id: "rep-unknown", method: "sms", confidence: 0.5, manual_override: false, reason_code: null },
+        { id: "attr:2", appointment_id: "a-older", call_id: null, rep_id: "rep-sup", method: "email", confidence: 0.9, manual_override: false, reason_code: null },
+      ],
+      users: [{ id: "rep-sup", name: "Carmine Morgano" }],
+    });
+    expect(rows.map((r) => r.appointment_id)).toEqual(["a-newer", "a-older"]);
+    expect(rows[0]!.credited_rep_name).toBeNull(); // unknown rep — honest null
+    expect(rows[1]!.credited_rep_name).toBe("Carmine Morgano");
   });
 });
 
