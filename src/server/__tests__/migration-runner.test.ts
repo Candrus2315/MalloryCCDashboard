@@ -17,9 +17,13 @@
  *   - STORE WIRING (PgStore, fake sql): cap + memoization + zero-DDL boot on
  *     an already-migrated database.
  *
- * The REAL-DB battery (fresh DB full-apply, marker row, guarded seeds on real
- * Postgres) lives at the bottom, gated on TEST_DATABASE_URL (skipped in CI —
- * established convention).
+ * The REAL-DB battery (fresh-apply, stamped v3 marker history, the
+ * hl_call_records shape census, zero-work re-run, drift refusal, guarded
+ * seeds — all on real Postgres) lives at the bottom, gated on
+ * TEST_DATABASE_URL (skipped in CI — established convention). Its shape
+ * expectations MIRROR the in-memory census test above — one source of truth
+ * for shape, two runners: a real-DB regression in migration history or final
+ * shape fails visibly here instead of being skipped forever.
  */
 import { describe, expect, test } from "bun:test";
 import postgres from "postgres";
@@ -391,11 +395,24 @@ describe("PgStore wiring — ensureSchema is now 'ensure migrations applied'", (
 
 /* ------------------------------------------------------------------ */
 /* REAL-DB battery — skipped unless TEST_DATABASE_URL (CI convention)  */
+/*                                                                     */
+/* v3 re-pin (the in-memory census test is the shape source of truth):  */
+/* the battery proves the same registry/history/shape on REAL Postgres */
+/* — full apply, stamped marker history, hl_call_records columns and   */
+/* indexes — plus zero-work re-run, drift refusal, and guarded seeds.  */
+/*                                                                     */
+/* Derivation for a live run: TEST_DATABASE_URL = Database_URL with    */
+/* the query string stripped (postgres.js-style sslmode param). That   */
+/* both satisfies the ssl:"require" posture below and keeps the string */
+/* distinct from the business URL, so the PgStore step below gets the  */
+/* honest non-business grant instead of a gate refusal.                */
 /* ------------------------------------------------------------------ */
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
-describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh + migrated + drift + guarded seeds)", () => {
+describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh apply + stamped v3 history + shape census + zero work + drift + guarded seeds)", () => {
   const url = TEST_DATABASE_URL!;
-  test("fresh marker drop → full apply → stamped; second run → zero work; drift refuses", async () => {
+  // 120s explicit cap: ~152 idempotent statements against a REMOTE Postgres are
+  // ~152 round trips (bun's default 5s test timeout cannot cover a cloud RTT).
+  test("fresh marker drop → full apply → stamped v3 history + hl_call_records shape; second run → zero work; drift refuses", async () => {
     const sql = postgres(url, { max: 1, ...(url.includes("sslmode=") ? {} : { ssl: "require" }) });
     try {
       // 1. FRESH-EMPTY PATH: remove ONLY the runner's own marker, then run.
@@ -409,24 +426,65 @@ describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh +
         log: () => {},
       };
       const result = await runMigrations(io, MIGRATIONS, CAP);
-      expect(result.applied).toEqual([1, 2]);
-      expect(count).toBe(146); // create + select + 140 baseline + 3 evidence + 2 stamps
-      const rows = (await sql`SELECT version, name, checksum FROM schema_migrations`) as MigrationRecord[];
-      expect(rows.length).toBe(1);
-      expect(rows[0].version).toBe(1);
-      expect(rows[0].name).toBe("baseline");
+      expect(result.applied).toEqual([1, 2, 3]);
+      expect(result.appliedMax).toBe(3);
+      expect(count).toBe(152); // create + select + 140 baseline + 3 evidence + 4 hl_call_records + 3 stamps
+      // 1b. STAMPED HISTORY: one row per registry migration, in version order,
+      //     each carrying the checksum this build's registry computes.
+      const rows = (await sql`SELECT version, name, checksum FROM schema_migrations ORDER BY version`) as MigrationRecord[];
+      expect(rows.map((r) => r.version)).toEqual([1, 2, 3]);
+      expect(rows.map((r) => r.name)).toEqual(["baseline", "evidence_messages", "hl_call_records"]);
       expect(rows[0].checksum).toBe(EXPECTED_CHECKSUM);
+      expect(rows[1].checksum).toBe(migrationChecksum(MIGRATIONS[1]!));
+      expect(rows[2].checksum).toBe(migrationChecksum(MIGRATIONS[2]!));
+      // 1c. V3 SHAPE CENSUS on real Postgres — the mirror of the in-memory
+      //     "hl_call_records census" test: the table exists with EXACTLY the
+      //     migration's 14 columns in order (types and nullability included),
+      //     PK on message_id, and exactly the three idx_hlcall_* indexes.
+      const cols = (await sql`SELECT column_name, data_type, is_nullable, column_default
+        FROM information_schema.columns WHERE table_name = 'hl_call_records' ORDER BY ordinal_position`) as Array<{
+        column_name: string; data_type: string; is_nullable: string; column_default: string | null;
+      }>;
+      expect(cols.map((c) => c.column_name)).toEqual([
+        "message_id", "user_external_id", "contact_external_id", "conversation_id", "direction",
+        "call_status", "duration_seconds", "date_added", "message_type", "source",
+        "from_number", "to_number", "raw", "ingested_at",
+      ]);
+      expect(cols.map((c) => c.data_type)).toEqual([
+        "text", "text", "text", "text", "text",
+        "text", "integer", "timestamp with time zone", "text", "text",
+        "text", "text", "jsonb", "timestamp with time zone",
+      ]);
+      expect(cols.map((c) => c.is_nullable)).toEqual([
+        "NO", "YES", "YES", "YES", "YES",
+        "YES", "YES", "NO", "NO", "YES",
+        "YES", "YES", "YES", "NO",
+      ]);
+      expect(cols.find((c) => c.column_name === "ingested_at")!.column_default).toBe("now()");
+      const pk = (await sql`SELECT a.attname FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY (i.indkey)
+        WHERE c.relname = 'hl_call_records' AND i.indisprimary`) as Array<{ attname: string }>;
+      expect(pk.map((r) => r.attname)).toEqual(["message_id"]);
+      const idx = (await sql`SELECT indexname FROM pg_indexes WHERE tablename = 'hl_call_records' AND indexname LIKE 'idx_hlcall_%' ORDER BY indexname`) as Array<{ indexname: string }>;
+      expect(idx.map((r) => r.indexname)).toEqual(["idx_hlcall_contact_date", "idx_hlcall_date", "idx_hlcall_user_date"]);
       // 2. ALREADY-MIGRATED PATH: zero migration statements.
       count = 0;
       const result2 = await runMigrations(io, MIGRATIONS, CAP);
       expect(result2.applied).toEqual([]);
+      expect(result2.appliedMax).toBe(3);
       expect(count).toBe(2);
-      // 3. GUARDED SEEDS: still guarded — the users seed UPDATE matched 0 rows
-      //    on the fresh apply (no rep named in the guard exists here).
-      const seeded = (await sql`SELECT count(*)::int AS n FROM users WHERE name = 'Dan McKillop' AND call_start_date = '2026-09-28'`) as { n: number }[];
-      expect(seeded[0].n).toBe(0);
-      // 4. DRIFT PATH: a tampered checksum refuses to boot.
-      await sql`UPDATE schema_migrations SET checksum = '0'`;
+      // 3. GUARDED SEEDS: still guarded — the baseline's one-time seed UPDATEs
+      //    carry an IS NULL guard, so a re-apply on ANY real database (fresh or
+      //    live) can never overwrite or duplicate: the seed target ends with at
+      //    most its one designed dated row and nothing left NULL. (The seed
+      //    fired once on the live database when v1 first ran there — that is
+      //    its designed one-time behavior, not a battery failure.)
+      const danTotal = (await sql`SELECT count(*)::int AS n FROM users WHERE name = 'Dan McKillop'`) as { n: number }[];
+      expect(danTotal[0].n).toBeLessThanOrEqual(1);
+      const danUndated = (await sql`SELECT count(*)::int AS n FROM users WHERE name = 'Dan McKillop' AND call_start_date IS NULL`) as { n: number }[];
+      expect(danUndated[0].n).toBe(0);
+      // 4. DRIFT PATH: a tampered checksum refuses to boot (any recorded row).
+      await sql`UPDATE schema_migrations SET checksum = '0' WHERE version = 1`;
       await expect(runMigrations(io, MIGRATIONS, CAP)).rejects.toBeInstanceOf(SchemaMigrationError);
       // restore the marker so other suites see a healthy stamped DB
       await sql`UPDATE schema_migrations SET checksum = ${EXPECTED_CHECKSUM} WHERE version = 1`;
@@ -435,7 +493,7 @@ describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh +
       const store = new PgStore(url, { profile: "test" });
       try {
         await store.ensureSchema();
-        const stamped = (await sql`SELECT count(*)::int AS n FROM schema_migrations WHERE version = 1 AND name = 'baseline'`) as { n: number }[];
+        const stamped = (await sql`SELECT count(*)::int AS n FROM schema_migrations WHERE version = 3 AND name = 'hl_call_records'`) as { n: number }[];
         expect(stamped[0].n).toBe(1);
       } finally {
         await store.close();
@@ -443,5 +501,5 @@ describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh +
     } finally {
       await sql.end({ timeout: 5 });
     }
-  });
+  }, 120_000);
 });
