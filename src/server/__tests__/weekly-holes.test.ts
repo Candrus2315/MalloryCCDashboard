@@ -321,6 +321,10 @@ describe("weeklyPageData holes wiring (MemoryStore, pinned today)", () => {
       pickupByDay: dateRange(data.week.start, addDays(data.week.start, 6))
         .filter((d) => isWorkday(d) && d <= "2026-09-29")
         .map((d) => ({ date: d, label: weekdayName(d), rate: null })),
+      // ONLINE BOOKINGS (owner directive 2026-11-04): reproduce the loader's
+      // exact count-line input so the Holes line stays the ONE difference this
+      // comparison can find.
+      onlineBookingsWeek: data.report.onlineBookingsWeek,
     }).split("\n");
     const actual = data.report.reportText.split("\n");
     expect(legacy.length).toBe(actual.length);

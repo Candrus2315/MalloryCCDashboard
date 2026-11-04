@@ -919,6 +919,10 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       reportText,
       /** The Lead Source Performance section input reportText was built with. */
       sourcePerformance: reportSourcePerformance,
+      // ONLINE BOOKINGS (owner directive 2026-11-04): the exact input the
+      // reportText was built with — the "of which Online Bookings: N" line —
+      // exposed so comparisons can reproduce the loader's inputs.
+      onlineBookingsWeek,
     },
     warnings,
   };
