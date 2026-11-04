@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusChip } from "~/components/StatusChip";
 import { NO_REP_REASON_LABELS, QUEUE_STATE_LABELS, queueRowState, unassignable } from "~/components/settings-views";
 
@@ -11,12 +11,65 @@ const UNATTRIBUTED_REASON_LABELS: Record<string, string> = {
   "manually-assigned": "Manually assigned",
 };
 
-export function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
+/**
+ * DESIGNATE ONLINE BOOKING (owner directive 2026-11-04): the queue row's
+ * owner-designation action with ONE confirm step — designating labels the
+ * booking client-created ("Online Booking", team-only credit) and REMOVES the
+ * uncertain row from the queue permanently, so the first tap only asks. The
+ * confirm resets itself after 6s so a stray tap never leaves the row armed.
+ */
+function DesignateButton({ appointmentId, clientName, busy, onDesignate }: {
+  appointmentId: string;
+  clientName: string | null;
+  busy: boolean;
+  onDesignate: (appointmentId: string) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const t = setTimeout(() => setConfirming(false), 6000);
+    return () => clearTimeout(t);
+  }, [confirming]);
+  if (!confirming) {
+    return (
+      <button type="button" className="btn-secondary text-xs" disabled={busy} data-testid="designate-online-booking" onClick={() => setConfirming(true)}>
+        Designate Online Booking
+      </button>
+    );
+  }
+  return (
+    <div className="flex flex-col items-start gap-1" data-testid="designate-online-booking-confirm">
+      <span className="text-[11px] text-(--text-muted)">
+        Designate {clientName ?? "this booking"} as client-created? It leaves this queue permanently.
+      </span>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          disabled={busy}
+          data-testid="designate-online-booking-confirm-yes"
+          onClick={() => {
+            setConfirming(false);
+            onDesignate(appointmentId);
+          }}
+        >
+          Confirm designation
+        </button>
+        <button type="button" className="text-xs underline underline-offset-2 disabled:opacity-50" disabled={busy} onClick={() => setConfirming(false)}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function UnattributedRow({ row, users, busy, onAssign, onUnassign, onDesignate }: {
   row: { appointment_id: string; client_name: string | null; client_phone: string | null; client_email: string | null; appointment_type: string; calendar_name: string | null; appointment_datetime: string; created_at: string; reason: string | null; reason_code: string | null; suggested_rep_id: string | null; candidate_calls: { call_id: string; rep_id: string | null; started_at: string; duration_seconds: number }[] };
   users: { id: string; name: string }[];
   busy: boolean;
   onAssign: (appointmentId: string, repId: string, callId?: string | null) => void;
   onUnassign: (appointmentId: string) => void;
+  onDesignate: (appointmentId: string) => void;
 }) {
   const [repId, setRepId] = useState(row.suggested_rep_id ?? row.candidate_calls[0]?.rep_id ?? "");
   const [callId, setCallId] = useState(row.candidate_calls[0]?.call_id ?? "");
@@ -80,6 +133,7 @@ export function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
               Unassign
             </button>
           )}
+          <DesignateButton appointmentId={row.appointment_id} clientName={row.client_name} busy={busy} onDesignate={onDesignate} />
         </div>
       </td>
     </tr>
@@ -92,12 +146,13 @@ export function UnattributedRow({ row, users, busy, onAssign, onUnassign }: {
  * unassign handlers and controls — laid out vertically with full-width
  * selects so the decision is readable and tappable at 375px.
  */
-export function UnattributedCard({ row, users, busy, onAssign, onUnassign }: {
+export function UnattributedCard({ row, users, busy, onAssign, onUnassign, onDesignate }: {
   row: { appointment_id: string; client_name: string | null; client_phone: string | null; client_email: string | null; appointment_type: string; calendar_name: string | null; appointment_datetime: string; created_at: string; reason: string | null; reason_code: string | null; suggested_rep_id: string | null; candidate_calls: { call_id: string; rep_id: string | null; started_at: string; duration_seconds: number }[] };
   users: { id: string; name: string }[];
   busy: boolean;
   onAssign: (appointmentId: string, repId: string, callId?: string | null) => void;
   onUnassign: (appointmentId: string) => void;
+  onDesignate: (appointmentId: string) => void;
 }) {
   const [repId, setRepId] = useState(row.suggested_rep_id ?? row.candidate_calls[0]?.rep_id ?? "");
   const [callId, setCallId] = useState(row.candidate_calls[0]?.call_id ?? "");
@@ -163,6 +218,9 @@ export function UnattributedCard({ row, users, busy, onAssign, onUnassign }: {
             Unassign
           </button>
         )}
+      </div>
+      <div className="mt-3">
+        <DesignateButton appointmentId={row.appointment_id} clientName={row.client_name} busy={busy} onDesignate={onDesignate} />
       </div>
     </div>
   );

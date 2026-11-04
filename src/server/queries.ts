@@ -27,6 +27,7 @@ import {
   appointmentPaymentStateOf,
   bookingAttributionSplit,
   buildUnattributedQueue,
+  isBookingWin,
 } from "./metrics/compute";
 import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
@@ -36,7 +37,13 @@ import { availabilityPageData, type AvailabilityViewRawSearch, dailyReportPageDa
 import type { StatusHealthPageData } from "./status-health";
 import { resolveAvailabilityViewArgs } from "./availability-wiring";
 import { getRequest } from "@tanstack/react-start/server";
-import { matchAppointmentsToCalls } from "./metrics/attribution";
+import {
+  ONLINE_BOOKING_REASON,
+  OWNER_DESIGNATION_METHOD,
+  OWNER_DESIGNATION_NOTE,
+  OWNER_DESIGNATION_UNDO_NOTE,
+  matchAppointmentsToCalls,
+} from "./metrics/attribution";
 import { appointmentInScope } from "./metrics/availability";
 import { WEEKLY_CC_SECTIONS, addMonthsKey, monthKeyLabel, monthKeyOf } from "./metrics/weekly";
 import {
@@ -988,6 +995,125 @@ export const assignAttribution = createServerFn({ method: "POST" })
 export const unassignAttribution = createServerFn({ method: "POST" })
   .validator((input: unknown) => input as { appointmentId: string })
   .handler(async ({ data }) => unassignAttributionCore(await getStore(), String(data.appointmentId)));
+
+/**
+ * ONLINE-BOOKING DESIGNATION (owner directive 2026-11-04, the approved
+ * follow-up to the creator-rule engine PR #151): the owner marks a booking as
+ * client-created from the dashboard. Writes the EXACT sticky row shape the
+ * engine feeds back in (booking_attributions: rep NULL, call NULL, method
+ * "owner-designation", reason_code "online-booking", manual_override TRUE,
+ * confidence 1) — the tick's deriveCreationSourceEvidence reads it back in as
+ * proven client-created, and manual_override=true pins it through the
+ * manual-wins path. A designated booking is TEAM-ONLY credit ("Online
+ * Booking"): it leaves the unattributed queue, joins the Today Online
+ * Bookings section and counts in all team totals — never rep-attributed.
+ *
+ * Guards (fail-honest, never guessed):
+ *  - the appointment must exist in the 30-day designation window (the SAME
+ *    window the queue that offers the action reads);
+ *  - must be a QUALIFYING WIN (non-cancelled + paid — isBookingWin, the exact
+ *    chain Today and every team total count) and not cancelled;
+ *  - must NOT already carry a rep credit (rep_id set or manual_override set):
+ *    rep credits and manual assignments are OWNER RULINGS — the endpoint
+ *    refuses and the owner undoes/adjusts those through their own controls;
+ *  - designating an ALREADY-designated row is an idempotent no-op (the row
+ *    keeps its original note).
+ * Audited like every manual action: one manual_override row records the flip.
+ */
+export interface DesignateOnlineBookingInput {
+  appointmentId: string;
+}
+
+/** Core of the designateOnlineBooking server fn (test seam — no TanStack runtime). */
+export async function designateOnlineBookingCore(store: Store, input: DesignateOnlineBookingInput): Promise<{ ok: true }> {
+  const appointmentId = String(input.appointmentId);
+  // The same 30-day window the unattributed queue (and the pending list)
+  // reads — an action offered on a queue row can always resolve that row.
+  const windowStart = etDayStartUtc(addDays(etToday(), -30));
+  const appt = (await store.getAppointmentsWithClientsSince(windowStart)).find((a) => a.id === appointmentId);
+  if (!appt) throw new Error("Appointment not found in the 30-day designation window");
+  if (appt.status === "cancelled" || appt.cancelled) {
+    throw new Error("Cancelled bookings cannot be designated — this appointment is cancelled");
+  }
+  if (!isBookingWin(appt)) {
+    throw new Error("Only paid booking wins can be designated — this booking has no paid deposit yet");
+  }
+  const prev = (await store.getAttributions()).find((a) => a.appointment_id === appointmentId);
+  if (prev?.reason_code === ONLINE_BOOKING_REASON) {
+    return { ok: true }; // already designated — idempotent no-op
+  }
+  if (prev?.manual_override || prev?.rep_id) {
+    throw new Error(
+      "This booking carries an owner ruling (rep credit or manual override) — designations can never strip one. Adjust or undo the ruling first.",
+    );
+  }
+  await store.setOnlineBookingDesignation(appointmentId, OWNER_DESIGNATION_NOTE);
+  await store.insertManualOverride({
+    entity_type: "booking_attribution",
+    entity_id: appointmentId,
+    field: "online_booking_designation",
+    previous_value: prev ? prev.reason_code ?? prev.method : "unattributed",
+    new_value: "designated online booking (team-only)",
+    changed_by: "christopher",
+  });
+  return { ok: true };
+}
+
+/** Designate a booking as client-created online (team-only "Online Booking"). */
+export const designateOnlineBooking = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as DesignateOnlineBookingInput)
+  .handler(async ({ data }) =>
+    designateOnlineBookingCore(await getStore(), { appointmentId: String(data.appointmentId) }),
+  );
+
+/**
+ * UNDO of the designation: restore the NEUTRAL attribution row (reason_code
+ * NULL, method "none", rep NULL, call NULL, manual_override false) — the next
+ * attribution tick re-derives the appointment from evidence like any other
+ * row. Only OWNER-DESIGNATION rows (method "owner-designation") are undoable:
+ * a reason_code "online-booking" row that reached a different method is not a
+ * designation the dashboard wrote, and everything else is engine/owner state.
+ */
+export interface UndoOnlineBookingDesignationInput {
+  appointmentId: string;
+}
+
+/** Core of the undoOnlineBookingDesignation server fn (test seam — no TanStack runtime). */
+export async function undoOnlineBookingDesignationCore(store: Store, input: UndoOnlineBookingDesignationInput): Promise<{ ok: true }> {
+  const appointmentId = String(input.appointmentId);
+  // Same window + same booking-state re-checks as the designate path: an undo
+  // offered on the Today Online Bookings section can always resolve its row.
+  const windowStart = etDayStartUtc(addDays(etToday(), -30));
+  const appt = (await store.getAppointmentsWithClientsSince(windowStart)).find((a) => a.id === appointmentId);
+  if (!appt) throw new Error("Appointment not found in the 30-day designation window");
+  if (appt.status === "cancelled" || appt.cancelled) {
+    throw new Error("Cancelled bookings cannot be undesignated — this appointment is cancelled");
+  }
+  if (!isBookingWin(appt)) {
+    throw new Error("Only paid booking wins can be undesignated — this booking has no paid deposit");
+  }
+  const prev = (await store.getAttributions()).find((a) => a.appointment_id === appointmentId);
+  if (!prev || prev.method !== OWNER_DESIGNATION_METHOD) {
+    throw new Error("This booking is not an owner-designated Online Booking — nothing to undo");
+  }
+  await store.clearOnlineBookingDesignation(appointmentId, OWNER_DESIGNATION_UNDO_NOTE);
+  await store.insertManualOverride({
+    entity_type: "booking_attribution",
+    entity_id: appointmentId,
+    field: "online_booking_designation",
+    previous_value: "designated online booking (team-only)",
+    new_value: "designation undone — returns to engine attribution",
+    changed_by: "christopher",
+  });
+  return { ok: true };
+}
+
+/** Undo an owner designation — the booking returns to engine attribution. */
+export const undoOnlineBookingDesignation = createServerFn({ method: "POST" })
+  .validator((input: unknown) => input as UndoOnlineBookingDesignationInput)
+  .handler(async ({ data }) =>
+    undoOnlineBookingDesignationCore(await getStore(), { appointmentId: String(data.appointmentId) }),
+  );
 
 /**
  * UNATTRIBUTED QUEUE DECLUTTER (owner request 2026-10-21: "can i get a clear

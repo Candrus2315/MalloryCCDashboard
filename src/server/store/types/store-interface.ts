@@ -235,6 +235,23 @@ export interface Store {
    * control, and the next attribution tick recomputes it from raw rows.
    */
   deleteAttribution(appointmentId: string): Promise<void>;
+  /**
+   * OWNER DESIGNATION (directive 2026-11-04): mark ONE appointment as a
+   * proven client-created Online Booking — the exact sticky row shape the
+   * creation-source engine feeds back in (deriveCreationSourceEvidence):
+   * rep NULL, call NULL, method "owner-designation", reason_code
+   * "online-booking", manual_override TRUE, confidence 1. manual_override=true
+   * also pins the row through the tick's manual-wins path, so the designation
+   * survives every re-derivation until explicitly undone.
+   */
+  setOnlineBookingDesignation(appointmentId: string, note: string): Promise<void>;
+  /**
+   * UNDO of the designation: restore the NEUTRAL row (method "none", rep NULL,
+   * call NULL, reason_code NULL, manual_override false) — the next attribution
+   * tick re-derives the appointment from evidence like any other row. No-op
+   * when the appointment has no row.
+   */
+  clearOnlineBookingDesignation(appointmentId: string, note: string | null): Promise<void>;
 
   // leads
   upsertLeads(

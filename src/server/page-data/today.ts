@@ -290,11 +290,17 @@ export async function todayPageData(deps?: PageDeps) {
   // every request (SSR), so a designation, a deposit, or a cancellation is
   // reflected on the next load. Additive payload only: no existing figure
   // reads this array; rep math, goal math and conversions are untouched.
+  const attrMethodByAppt = new Map(attributions.map((r) => [r.appointment_id, r.method]));
   const onlineBookings = onlineBookingWins(
     filterApptsInWinBucketRange(onlineWindowRaw, addDays(ws, -7), today).filter((a) => appointmentInScope(a, scope)),
     attributions,
   )
     .map((a) => ({
+      // OWNER-DESIGNATION provenance (directive 2026-11-04): which rows were
+      // written by the dashboard's designation control (method
+      // "owner-designation") — ONLY those carry the Undo action; rows the
+      // engine re-derived as online-booking from other evidence do not.
+      designation_method: attrMethodByAppt.get(a.id) ?? null,
       appointment_id: a.id,
       acuity_appointment_id: a.acuity_appointment_id ?? null,
       client_name: a.client_name ?? null,

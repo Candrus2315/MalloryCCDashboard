@@ -1443,6 +1443,39 @@ export class PgStore implements Store {
     // attribution tick recomputes the appointment from raw rows.
     await this.sql`DELETE FROM booking_attributions WHERE appointment_id = ${appointmentId}::uuid`;
   }
+  async setOnlineBookingDesignation(appointmentId: string, note: string): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    // OWNER DESIGNATION (directive 2026-11-04): the EXACT sticky row shape the
+    // creation-source engine feeds back in — rep NULL, call NULL, method
+    // "owner-designation", reason_code "online-booking", manual_override TRUE,
+    // confidence 1. The tick's deriveCreationSourceEvidence reads the
+    // reason_code back in as proven client-created, and manual_override=true
+    // pins the row through toAttributionRows' manual-wins path (never
+    // re-derived until explicitly undone).
+    await this.sql`
+      INSERT INTO booking_attributions (appointment_id, call_id, rep_id, method, confidence, manual_override, note, reason_code)
+      VALUES (${appointmentId}::uuid, NULL, NULL, 'owner-designation', 1, true, ${note}, 'online-booking')
+      ON CONFLICT (appointment_id) DO UPDATE SET
+        call_id = NULL, rep_id = NULL, method = 'owner-designation',
+        confidence = 1, manual_override = true, note = ${note},
+        reason_code = 'online-booking', updated_at = now()
+    `;
+  }
+  async clearOnlineBookingDesignation(appointmentId: string, note: string | null): Promise<void> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    // UNDO of the designation: restore the NEUTRAL row (method "none", rep
+    // NULL, call NULL, reason_code NULL, manual_override false) — the next
+    // attribution tick re-derives the appointment from evidence like any
+    // other row. Matches zero rows (no-op) when there is no row.
+    await this.sql`
+      UPDATE booking_attributions
+      SET call_id = NULL, rep_id = NULL, method = 'none', confidence = 0,
+          manual_override = false, note = ${note}, reason_code = NULL, updated_at = now()
+      WHERE appointment_id = ${appointmentId}::uuid
+    `;
+  }
 
   async upsertLeads(rows: (LeadRow & { source_id: string; provider: string; name?: string | null; phone?: string | null; email?: string | null; source_raw_date?: string | null })[], opts?: IngestOptions): Promise<number> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
