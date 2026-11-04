@@ -91,6 +91,17 @@ export interface WeeklyCcReportInput {
    */
   productionMonth?: { gross: number; goal: number | null } | null;
   /**
+   * OWNER DIRECTIVE 2026-11-04 (Online Bookings): the report week's designated
+   * client-created bookings (creator rule, reason_code "online-booking") among
+   * the SAME qualifying winsLw chain bookingsWeek.total counts — TEAM-ONLY
+   * credit (rep NULL by the creator rule), a COUNT LINE only: the weekly four
+   * and the goal math are untouched. Rendered as "of which Online Bookings: N"
+   * directly under the Bookings (Week) line — inside the week's bookings
+   * context. OPTIONAL: absent/null keeps the template byte-identical (same
+   * doctrine as productionWeek).
+   */
+  onlineBookingsWeek?: number | null;
+  /**
    * LEGACY fallback (superseded by productionWeek — kept so the template stays
    * tolerant of missing inputs and old callers stay byte-identical): the
    * standalone produced line only renders when productionWeek is ABSENT.
@@ -257,6 +268,16 @@ export function buildWeeklyCcReportText(input: WeeklyCcReportInput): string {
         `Bookings Produced (Mon–Sun): ${formatInt(input.bookingsProduced)} — paid deposits on bookings created in the Mon–Sun week · per client (cancel-and-rebook counted once) · cancellations included`,
       );
     }
+  }
+  // OF WHICH ONLINE BOOKINGS (owner directive 2026-11-04): the report week's
+  // designated client-created bookings (creator rule) — a count line INSIDE the
+  // week's bookings context, directly under the Bookings (Week) line. The
+  // weekly four, the ±goal comparisons and every other line are untouched.
+  // TEMPLATE TOLERANCE: when the caller does not provide onlineBookingsWeek,
+  // the line is OMITTED — the template renders byte-identical to its
+  // pre-directive shape (same doctrine as weekConversion/pickupByDay).
+  if (input.onlineBookingsWeek != null) {
+    lines.push(`of which Online Bookings: ${formatInt(input.onlineBookingsWeek)}`);
   }
   // MTD — REV-97 GOAL BASIS (owner directive 10/30): the ±goal comparison is
   // the QUALIFYING month-to-date count (bookingsMonth.total — the deposit-date

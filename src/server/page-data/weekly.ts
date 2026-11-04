@@ -7,7 +7,7 @@ import { getStore } from "../store";
 import type { AppointmentRow } from "../store/types";
 
 import { addDays, dateRange, etDateStrFromInstant, etDayEndUtc, etDayStartUtc, etToday, formatDateHuman, isWorkday, weekStart, weekday, weekdayName } from "../date-logic";
-import { filterApptsInWinBucketRange, isBookingWin, pickupRateByDay, totalLeadConversionWeek } from "../metrics/compute";
+import { countOnlineBookings, filterApptsInWinBucketRange, isBookingWin, pickupRateByDay, totalLeadConversionWeek } from "../metrics/compute";
 
 import { isFormSourceSheet } from "../../components/lead-sources";
 
@@ -537,6 +537,12 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // Alliance/Auction bookings counted from the same in-scope win set as every
   // other last-week figure; website stays null (no such Acuity type).
   const channels = { ...splitWinsByChannel(winsLw), website: null as number | null };
+  // ONLINE BOOKINGS of the report week (owner directive 2026-11-04): the SAME
+  // qualifying winsLw chain the Bookings (Week) line counts, intersected with
+  // the stored creator-rule verdicts (reason_code "online-booking") — TEAM-ONLY
+  // credit. Feeds the report's "of which Online Bookings: N" count line only;
+  // the weekly four and the goal math never read it.
+  const onlineBookingsWeek = countOnlineBookings(winsLw, attributions);
   // Alliance/Auction LEADS of the report week — GHL opportunities on the
   // channels' pipelines, bucketed by ET created date (owner-verified source).
   // Website has no synced lead source → null, never invented.
@@ -824,6 +830,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       goal: weeklyGoal,
     },
     productionMonth: { gross: productionMtd.gross, goal: monthlyGoal },
+    // ONLINE BOOKINGS of the report week (owner directive 2026-11-04): the
+    // "of which Online Bookings: N" count line under the Bookings (Week) line —
+    // the SAME winsLw chain, stored creator-rule verdicts only. Additive line:
+    // the weekly four and the goal math are untouched.
+    onlineBookingsWeek,
     channels,
     channelLeads,
     leads: leadsWeekSummary,

@@ -57,7 +57,12 @@ import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 // window). attribution.ts imports nothing from this module, so the runtime
 // import is acyclic — the old cycle note referred to src/server/attribution.ts
 // (the retired engine the sync no longer uses).
-import { attributionWindowDates, bookingCreationDateEt, callDateEt } from "./attribution";
+import {
+  attributionWindowDates,
+  bookingCreationDateEt,
+  callDateEt,
+  ONLINE_BOOKING_REASON,
+} from "./attribution";
 // BOOKING WIN payment-state derivation (owner directive, rev 12) — one pure
 // module; payments.ts imports nothing from this file, so the runtime import
 // stays acyclic.
@@ -2032,6 +2037,13 @@ export function buildUnattributedQueue(input: {
     // paid bookings count. Unpaid (pending) bookings move to the Pending
     // Payments drill-down instead of the attribution queue.
     if (!isBookingWin(a) || attributed.has(a.id)) continue;
+    // CREATION-SOURCE RULE (owner directive 2026-11-04): a PROVEN client-created
+    // booking is a known TEAM-ONLY category (Online Booking — attributionStateOf
+    // state "online"), never unknown credit awaiting assignment. It LEAVES the
+    // unattributed queue; the queue keeps genuinely unknown rows only
+    // (unattributed / ambiguous / withoutVerdict). Read off the STORED verdict
+    // row — the same read the display split uses.
+    if (storedByAppt.get(a.id)?.reason_code === ONLINE_BOOKING_REASON) continue;
     const contact =
       (a.contact_id ? contactById.get(a.contact_id) : undefined) ??
       (a.client_phone ? contactByPhone.get(normalizeUSPhone(a.client_phone) ?? "") : undefined) ??
@@ -2217,6 +2229,36 @@ export function bookingAttributionSplit(appts: AppointmentRow[], attributions: A
   return { total: qualifying.length, attributed, ambiguous, unattributed, withoutVerdict, online };
 }
 
+// ---------- ONLINE BOOKINGS section (owner directive 2026-11-04) ----------
+
+/**
+ * The designated Online Bookings inside one qualifying-win slice: bookings
+ * whose STORED verdict is a proven client-created booking (creator rule,
+ * reason_code "online-booking" — attributionStateOf state "online").
+ *
+ * THE data source every Online Bookings display reads (Today section, Daily
+ * Report team line, Weekly CC Report count line): the caller supplies the
+ * period's qualifying wins (win-bucket slice + isBookingWin + scope — the
+ * SAME chain the team totals count) and the STORED attribution rows; the join
+ * is the stored verdict only. TEAM-ONLY credit — rep NULL by the creator rule
+ * — so no rep math, goal math, or conversion can ever read this helper's
+ * output. Raw (stored) attribution rows are the input everywhere: roster
+ * eligibility re-maps rep ids and must never relabel a team-only row.
+ */
+export function onlineBookingWins(appts: AppointmentRow[], attributions: AttributionRow[]): AppointmentRow[] {
+  const byAppt = new Map(attributions.map((a) => [a.appointment_id, a]));
+  return appts.filter((a) => {
+    if (!isBookingWin(a)) return false;
+    const row = byAppt.get(a.id);
+    return row != null && attributionStateOf(row) === "online";
+  });
+}
+
+/** Count form of onlineBookingWins (the report lines). */
+export function countOnlineBookings(appts: AppointmentRow[], attributions: AttributionRow[]): number {
+  return onlineBookingWins(appts, attributions).length;
+}
+
 /**
  * Assert the coverage invariant for one evaluation:
  *   1. every qualifying (paid / Booking Win) booking carries EXACTLY ONE
@@ -2340,6 +2382,15 @@ export interface DailyReportMetrics {
   leadCohortSourceDates: string[];
   /** Booking WINS with booking_win_business_date == anchorDate. */
   bookingsAnchorDay: number;
+  /**
+   * OWNER DIRECTIVE 2026-11-04 (Online Bookings): the anchor day's designated
+   * client-created bookings (creator rule, reason_code "online-booking") among
+   * the SAME qualifying-win slice bookingsAnchorDay counts — TEAM-ONLY credit,
+   * never rep rows. Always computed by buildDailyReportMetrics; OPTIONAL in
+   * the type so legacy fixtures stay valid, and the copied-report line renders
+   * only when present (template tolerance — old callers byte-identical).
+   */
+  onlineBookingsAnchorDay?: number;
   bookingsWtd: number;
   weeklyBookingGoal: number;
   bookingsLeft: number;
@@ -2485,6 +2536,11 @@ export function buildDailyReportMetrics(input: {
 
   const bookingsAnchorDay = countBookingsCreatedBetween(input.apptsCreatedAnchorDay, "", "9999");
   const bookingsWtd = countBookingsCreatedBetween(input.apptsCreatedWtd, "", "9999");
+  // ONLINE BOOKINGS (owner directive 2026-11-04): the anchor day's designated
+  // client-created wins — the SAME qualifying slice bookingsAnchorDay counts,
+  // intersected with the stored creator-rule verdicts (attributionStateOf
+  // "online"). Additive team line only: no existing figure reads it.
+  const onlineBookingsAnchorDay = countOnlineBookings(input.apptsCreatedAnchorDay, input.attributions);
 
   const fromOverAnchor = bookingsFromOverThresholdCalls(
     input.apptsCreatedAnchorDay,
@@ -2552,6 +2608,7 @@ export function buildDailyReportMetrics(input: {
     weekStart: ws,
     leadCohortSourceDates: getLeadCohort(reportDate),
     bookingsAnchorDay,
+    onlineBookingsAnchorDay,
     bookingsWtd,
     weeklyBookingGoal: input.teamBookingGoal,
     bookingsLeft,
