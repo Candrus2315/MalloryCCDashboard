@@ -844,6 +844,38 @@ function TeamPage() {
             <div className="px-5 py-1">
               <Field label="Average Call Duration" value={formatDuration(m.avgCallDurationSeconds)} />
             </div>
+            {/* W3 KPI SET (owner directive 11/4): the team's HL call-record
+                export KPIs — same team-scoped rows as the cells above (IVR
+                excluded, null-user inbound bucket included). */}
+            <div className="px-5 py-1">
+              <Field label="Outbound Calls" value={formatInt(data.callKpis.outbound)} sub="HL call records" />
+            </div>
+            <div className="px-5 py-1">
+              <Field label="Inbound Calls" value={formatInt(data.callKpis.inbound)} />
+            </div>
+            <div className="px-5 py-1">
+              <Field
+                label="Connected"
+                value={formatInt(data.callKpis.connected)}
+                sub={`connect rate ${data.callKpis.connectRate == null ? "—" : `${(data.callKpis.connectRate * 100).toFixed(1)}%`}`}
+              />
+            </div>
+            <div className="px-5 py-1">
+              <Field label="Missed" value={formatInt(data.callKpis.missed)} sub="no answer · busy · voicemail" />
+            </div>
+            <div className="px-5 py-1">
+              <Field label="Failed" value={formatInt(data.callKpis.failed)} />
+            </div>
+            <div className="px-5 py-1">
+              <Field label="Total Talk Time" value={formatDuration(data.callKpis.totalTalkSeconds)} />
+            </div>
+            <div className="px-5 py-1">
+              <Field
+                label="Unique Leads Contacted"
+                value={formatInt(data.callKpis.uniqueLeadsContacted)}
+                sub={`calls/lead ${data.callKpis.callsPerLead == null ? "—" : data.callKpis.callsPerLead.toFixed(1)}`}
+              />
+            </div>
           </div>
           {/* inline notice — compact, never louder than the performance story (spec) */}
           {m.assignedLeads === 0 && (

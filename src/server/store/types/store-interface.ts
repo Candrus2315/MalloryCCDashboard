@@ -400,6 +400,15 @@ finishSyncRun(id: string, status: string, recordsUpserted: number, error: string
   /** Cheap population count (backfill summary + verification). */
   countHlCallRecords(): Promise<number>;
   /**
+   * W3 CALL-KPI SOURCE (owner directive 2026-11-04): raw call records whose
+   * date_added falls in [startUtc, endUtc) — the SAME instant-bounds shape as
+   * getCallsBetween. Reads ONLY; never drops rows (IVR/null-user rows are
+   * filtered/scoped by the metrics layer, not the store).
+   */
+  getHlCallRecordsBetween(startUtc: string, endUtc: string): Promise<HlCallRecordRow[]>;
+  /** Raw call records date_added at/after startUtc (parity with getAllCallsSince). */
+  getAllHlCallRecordsSince(startUtc: string): Promise<HlCallRecordRow[]>;
+  /**
    * Call→contact restoration verdicts, FILL-NULL-ONLY: an existing non-null
    * calls.contact_id is never touched (direct source data always wins); only
    * NULL contact_ids are filled, and the resolution method/timestamp are

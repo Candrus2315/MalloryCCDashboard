@@ -44,7 +44,8 @@ import { deriveWeeklyHoles, type DayHoleDetail } from "../commission/derive";
 
 
 
-import { applyRosterEligibility, buildReportingEligibility, historicalRepIds } from "../roster";
+import { buildReportingEligibility, historicalRepIds } from "../roster";
+import { loadCallKpiRows, applyTeamCallScope } from "../metrics/call-records";
 
 import { syncStaleWarnings, type PageMeta } from "../queries";
 import { withHeartbeatWarning } from "../heartbeat-freshness"; // Reliability 2b/3 banner clause
@@ -388,10 +389,11 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
       // ⇒ sheet dates Fri 10/16–Thu 10/22).
       store.getLeadsByWorkDates(dateRange(seriesMon, lwSun)),
       // PICKUP RATE BY DAY (owner decision 10/30 — FINAL): the report week's
-      // calls — the EXISTING ET day-window convention (calls STARTED on the
-      // ET day), Mon 00:00 ET through Sun 23:59 ET of the report week. Day
-      // membership is re-derived from started_at downstream (pickupRateForDay).
-      store.getCallsBetween(etDayStartUtc(lwMon), etDayEndUtc(lwSun)),
+      // call figures — W3 CALL-KPI SOURCE (owner directive 11/4): read
+      // hl_call_records (TYPE_CALL only, rep via users.external_id; the Nov-1
+      // legacy slice rides along inside loadCallKpiRows). Day membership is
+      // re-derived downstream (pickupRateForDay) from the ET started_at.
+      (async () => loadCallKpiRows({ store, users: await store.getAllUsers(), startUtc: etDayStartUtc(lwMon), endUtc: etDayEndUtc(lwSun) }))(),
     ]);
 
   const scope = settings.acuity;
@@ -804,7 +806,10 @@ export async function weeklyPageData(deps?: PageDeps): Promise<WeeklyPageData> {
   // day with no calls rates null → "—". NO weekly average is computed
   // anywhere.
   const weekCallsEligibility = buildReportingEligibility(allUsers, settings);
-  const rosterWeekCalls = applyRosterEligibility(reportWeekCalls, weekCallsEligibility);
+  // TEAM CALL SCOPE (owner directive 11/4): the CC Report's call lines are
+  // TEAM figures — roster-rep rows PLUS the null-user inbound bucket (HL
+  // userId NULL); a known non-roster user's rows still drop.
+  const rosterWeekCalls = applyTeamCallScope(reportWeekCalls, weekCallsEligibility);
   const pickupByDay = pickupRateByDay(
     rosterWeekCalls,
     dateRange(lwMon, lwSun).filter((d) => isWorkday(d) && d <= today),

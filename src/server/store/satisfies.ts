@@ -72,6 +72,8 @@ const STORE_METHOD_FLAGS = {
   upsertCalls: 1,
   getCallsBetween: 1,
   getAllCallsSince: 1,
+  getHlCallRecordsBetween: 1,
+  getAllHlCallRecordsSince: 1,
   getAuditCalls: 1,
   upsertOpportunities: 1,
   getOpportunities: 1,

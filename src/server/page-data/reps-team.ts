@@ -8,6 +8,7 @@ import { getStore } from "../store";
 
 import { addDays, dateRange, etDayStartUtc, etRangeBounds, etNowMinutes, etToday, formatDateHumanFull, isHistoricalWeek, isRangeMode, mondaysInRange, recentMondays, repOperatingState, resolveRange, weekStart, type RangeMode } from "../date-logic";
 import { buildTeamAverages, buildTeamRangeMetrics, buildTeamTrends, buildRepDetail, bookingAttributionSplit, compareWithTeam, filterApptsInWinBucketRange, filterCallsInEtRange, isBookingWin, repRangeSummaries, resolveRepGoal } from "../metrics/compute";
+import { loadCallKpiRows, applyTeamCallScope, summarizeCallRecordKpis, callsPerBooking } from "../metrics/call-records";
 
 import { isFormSourceSheet } from "../../components/lead-sources";
 
@@ -56,7 +57,11 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
 
     const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, allUsers, assignedWeekLeads, channelOpps, winsJoinRaw, leadsJoin] = await Promise.all([
       store.getUsers(),
-      store.getCallsBetween(startUtc, endUtc),
+      // W3 CALL-KPI SOURCE (owner directive 2026-11-04): rep call KPIs read
+      // hl_call_records (TYPE_CALL, rep via users.external_id) — the Nov-1
+      // legacy slice rides along inside loadCallKpiRows. Attribution joins
+      // below keep the legacy `calls` fetch (booking logic untouched).
+      (async () => loadCallKpiRows({ store, users: await store.getAllUsers(), startUtc, endUtc }))(),
       // REV 12 WIN BUCKET: wins count on booking_win_business_date (the ET
       // date the deposit was received); the superset query also returns
       // not-yet-derived rows by created date for the metrics fallback.
@@ -305,6 +310,16 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
       ? `${formatDateHumanFull(range.start)} · ${range.label}`
       : `${formatDateHumanFull(range.start)} – ${formatDateHumanFull(range.end)} · ${range.label}`;
 
+    // W3 KPI SET (owner directive 11/4): the selected rep's call-record KPIs —
+    // computed from the SAME roster-scoped rows the summaries used, so the
+    // block can never disagree with the Total Calls / Over-2-Min cells above.
+    const selectedRows = rep ? rosterCalls.filter((c) => c.rep_id === rep.id) : [];
+    const selectedCallKpis = summarizeCallRecordKpis(selectedRows);
+    const selectedCallsPerBooking = callsPerBooking(
+      selectedCallKpis.total,
+      rep ? summaries.get(rep.id)?.totalBookings ?? 0 : 0,
+    );
+
     return {
       meta,
       today,
@@ -323,6 +338,10 @@ export async function repsPageData(data?: RepsSearchParams, deps?: PageDeps) {
         isCurrentWeek: !isHistoricalWeek(range.mode, range.start, today),
       },
       thresholdSeconds,
+      // W3 KPI SET (owner directive 11/4): the selected rep's HL call-record
+      // KPIs (null when no rep is selected) + calls per qualifying booking.
+      selectedCallKpis,
+      selectedCallsPerBooking,
       // OWNER DIRECTIVE (2026-11-02): the rep picker lists ONLY the active
       // roster — inactive/departed users are never selectable in the UI. This
       // supersedes the 2026-10-20 presentation of departed reps in the picker
@@ -395,7 +414,10 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
 
     const [users, callsRaw, apptsRaw, attributions, leads, lookBackCalls, teamGoalRows, repGoalRows] = await Promise.all([
       store.getUsers(),
-      store.getCallsBetween(startUtc, endUtc),
+      // W3 CALL-KPI SOURCE: team call metrics read hl_call_records (TYPE_CALL
+      // only, null-user team bucket kept by applyTeamCallScope below) — the
+      // look-back fetch above stays on the legacy `calls` table (attribution).
+      (async () => loadCallKpiRows({ store, users: await store.getAllUsers(), startUtc, endUtc }))(),
       // REV 12 WIN BUCKET: wins count on booking_win_business_date (the ET
       // date the deposit was received); the superset query also returns
       // not-yet-derived rows by created date for the metrics fallback.
@@ -426,6 +448,10 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     // time only, source rows immutable. Empty mapping = the verified filter.
     const eligibility = buildRosterEligibility(users, settings.rep_mappings ?? []);
     const rosterCalls = applyRosterEligibility(calls, eligibility);
+    // TEAM CALL SCOPE (owner directive 11/4): team call totals ALSO count the
+    // null-user inbound bucket (HL userId NULL) — roster-rep rows plus
+    // unclaimed team-level rows; a known non-roster user's rows still drop.
+    const teamCalls = applyTeamCallScope(calls, eligibility);
     const rosterLookBackCalls = applyRosterEligibility(lookBackCalls, eligibility);
     const attributionsEligible = applyAttributionEligibility(attributions, rosterLookBackCalls, eligibility);
 
@@ -455,7 +481,7 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     }
 
     const metrics = buildTeamRangeMetrics({
-      calls: rosterCalls,
+      calls: teamCalls,
       appts,
       attributions: attributionsEligible,
       allCallsForJoin: rosterLookBackCalls,
@@ -472,7 +498,7 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     });
 
     const trends = buildTeamTrends({
-      calls: rosterCalls,
+      calls: teamCalls,
       appts,
       attributions: attributionsEligible,
       allCallsForJoin: rosterLookBackCalls,
@@ -561,6 +587,11 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
     }
     if (metrics.goal.value === 0) warnings.push("Team booking goal is 0 — Goal Achievement and pace are unavailable.");
 
+    // W3 KPI SET (owner directive 11/4): the team call-record KPIs over the
+    // SAME team-scoped rows the metrics above used (null-user inbound bucket
+    // included, IVR excluded).
+    const teamCallKpis = summarizeCallRecordKpis(teamCalls);
+
     const singleDay = range.start === range.end;
     const caption = singleDay
       ? `${formatDateHumanFull(range.start)} · ${range.label}`
@@ -580,6 +611,8 @@ export async function teamPageData(data?: TeamSearchParams, deps?: PageDeps) {
         isCurrentWeek: !isHistoricalWeek(range.mode, range.start, today),
       },
       thresholdSeconds,
+      // W3 KPI SET (owner directive 11/4): the team's HL call-record KPI block.
+      callKpis: teamCallKpis,
       metrics,
       trends,
       bookingSplit,

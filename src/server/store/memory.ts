@@ -1315,6 +1315,15 @@ export class MemoryStore implements Store {
   async countHlCallRecords(): Promise<number> {
     return this.hlCallRecords.size;
   }
+  async getHlCallRecordsBetween(startUtc: string, endUtc: string): Promise<HlCallRecordRow[]> {
+    return [...this.hlCallRecords.values()]
+      .filter((r) => r.date_added >= startUtc && r.date_added < endUtc)
+      .sort((a, b) => a.date_added.localeCompare(b.date_added))
+      .map((r) => ({ ...r }));
+  }
+  async getAllHlCallRecordsSince(startUtc: string): Promise<HlCallRecordRow[]> {
+    return this.getHlCallRecordsBetween(startUtc, "9999-12-31");
+  }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
     for (const r of rows) {
       // FILL-NULL-ONLY (owner rule, mirrors pg.ts): an existing non-null
