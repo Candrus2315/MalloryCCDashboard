@@ -124,7 +124,7 @@ export function TrendCard({ title, points, unit, refLine, note, info, wide, meta
   // flat line hugging the baseline and nonsense axis ticks (0%/54%/108%).
   // pct/duration now scale to their true max; count keeps the floor.
   const finite = values.filter((v): v is number => v != null);
-  const scaleFloor = unit === "count" ? 1 : 0;
+  const scaleFloor = unit === "int" ? 1 : 0; // type renamed count->int; QA 2026-10-08 intent restored
   const maxVal = finite.length > 0 ? Math.max(scaleFloor, ...finite, refLine?.value ?? 0) : scaleFloor;
   const yMax = maxVal > 0 ? maxVal * 1.08 : 1;
   const y = (v: number) => M.t + PH - (v / yMax) * PH;
