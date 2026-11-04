@@ -57,6 +57,7 @@ import {
   setLeadWorkDate,
   setUnattributedQueueDismissal,
   syncNow,
+  designateOnlineBooking,
   unassignAttribution,
 } from "~/server/queries";
 
@@ -364,7 +365,7 @@ function SettingsPage() {
                     full-width with the same wording and the same handlers. */}
                 <div className="space-y-3 md:hidden">
                   {queueRows.map((u) => (
-                    <UnattributedCard key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} />
+                    <UnattributedCard key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} onDesignate={(appointmentId) => run("Booking designated as Online Booking — team-only credit; it leaves the queue", () => designateOnlineBooking({ data: { appointmentId } }))} />
                   ))}
                 </div>
                 {/* md+: the compact sortable-adjacent queue table (unchanged) */}
@@ -384,7 +385,7 @@ function SettingsPage() {
                     </thead>
                     <tbody>
                       {queueRows.map((u) => (
-                        <UnattributedRow key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} />
+                        <UnattributedRow key={u.appointment_id} row={u} users={data.users} busy={busy} onAssign={(appointmentId, repId, callId) => run("Booking attributed", () => assignAttribution({ data: { appointmentId, repId, callId } }))} onUnassign={(appointmentId) => run("Booking unassigned — returns to engine attribution", () => unassignAttribution({ data: { appointmentId } }))} onDesignate={(appointmentId) => run("Booking designated as Online Booking — team-only credit; it leaves the queue", () => designateOnlineBooking({ data: { appointmentId } }))} />
                       ))}
                     </tbody>
                   </table>

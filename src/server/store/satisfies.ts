@@ -90,6 +90,10 @@ const STORE_METHOD_FLAGS = {
   getAttributions: 1,
   setManualAttribution: 1,
   deleteAttribution: 1,
+  // owner designation (directive 2026-11-04): write/clear the sticky
+  // online-booking row
+  setOnlineBookingDesignation: 1,
+  clearOnlineBookingDesignation: 1,
   // leads
   upsertLeads: 1,
   deleteLeadsForSheet: 1,

@@ -186,6 +186,24 @@ export const ONLINE_BOOKING_REASON = "online-booking" as const;
 export const ONLINE_BOOKING_NOTE =
   "Owner directive 2026-11-04: the client created this booking themselves online (proven creation evidence) — team-only, never rep-attributed; counts in all team totals";
 
+/**
+ * The OWNER-DESIGNATION control's method (owner directive 2026-11-04, the
+ * approved follow-up to PR #151): when the owner designates a booking as
+ * client-created from the dashboard, the endpoint writes the EXACT sticky row
+ * shape — rep NULL, call NULL, method "owner-designation", reason_code
+ * "online-booking", manual_override TRUE, confidence 1. Stickiness is
+ * two-layered: the tick's deriveCreationSourceEvidence reads the reason_code
+ * back in as proven client-created, AND manual_override=true pins the row
+ * through toAttributionRows' manual-wins path (carried verbatim, never
+ * re-derived). Undo restores the neutral row (method "none", reason_code NULL,
+ * manual_override false) and the next tick re-derives from evidence.
+ */
+export const OWNER_DESIGNATION_METHOD = "owner-designation" as const;
+export const OWNER_DESIGNATION_NOTE =
+  'Owner designation (creator rule, directive 2026-11-04): the owner marked this booking client-created online — team-only, never rep-attributed; counts in all team totals. Undo restores engine attribution.';
+export const OWNER_DESIGNATION_UNDO_NOTE =
+  "Owner designation undone — the row returns to engine attribution on the next tick.";
+
 // Canonical identity normalizers re-exported under the engine's historical
 // names (callers keep compiling; the DEFINITION is the canonical one — the
 // divergent engine-local versions were removed in Session 2).

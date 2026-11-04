@@ -17,7 +17,7 @@ import {
 } from "../metrics/compute";
 import { normalizeEmail, normalizeUSPhone } from "../identity/normalize";
 import type { RunDeadline } from "./ingest-batch";
-import { OWNER_RULE_AUCTION_METHOD, OWNER_RULE_AUCTION_REP_NAME } from "../metrics/attribution";
+import { ONLINE_BOOKING_REASON, OWNER_DESIGNATION_METHOD, OWNER_RULE_AUCTION_METHOD, OWNER_RULE_AUCTION_REP_NAME } from "../metrics/attribution";
 import type {
   AppSettings,
   AuditCallRow,
@@ -763,6 +763,45 @@ export class MemoryStore implements Store {
     // manual UNASSIGN: mirror the PG store — delete the derived row; the next
     // attribution tick recomputes the appointment from raw rows
     this.attributions.delete(appointmentId);
+  }
+  async setOnlineBookingDesignation(appointmentId: string, note: string): Promise<void> {
+    // OWNER DESIGNATION (directive 2026-11-04): the EXACT sticky row shape —
+    // rep NULL, call NULL, method "owner-designation", reason_code
+    // "online-booking", manual_override TRUE, confidence 1 (mirrors the PG
+    // store's INSERT .. ON CONFLICT). The tick reads the reason_code back in
+    // as proven client-created and carries the manual row verbatim.
+    const prev = this.attributions.get(appointmentId);
+    this.attributions.set(appointmentId, {
+      id: prev?.id ?? `attr:${appointmentId}`,
+      appointment_id: appointmentId,
+      call_id: null,
+      rep_id: null,
+      method: OWNER_DESIGNATION_METHOD,
+      confidence: 1,
+      manual_override: true,
+      note,
+      reason_code: ONLINE_BOOKING_REASON,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  async clearOnlineBookingDesignation(appointmentId: string, note: string | null): Promise<void> {
+    // UNDO: restore the NEUTRAL row (method "none", rep/call/reason NULL,
+    // manual_override false) — the next attribution tick re-derives the
+    // appointment from evidence like any other row. No row -> no-op (the PG
+    // store's UPDATE matches zero rows identically).
+    const prev = this.attributions.get(appointmentId);
+    if (!prev) return;
+    this.attributions.set(appointmentId, {
+      ...prev,
+      call_id: null,
+      rep_id: null,
+      method: "none",
+      confidence: 0,
+      manual_override: false,
+      note,
+      reason_code: null,
+      updated_at: new Date().toISOString(),
+    });
   }
 
   async deleteLeadsForSheet(sourceSheet: string): Promise<void> {

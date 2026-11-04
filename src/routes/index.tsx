@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useRouter, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { demoAwarenessLine, dismissPendingPayment, getTodayData } from "~/server/queries";
+import { demoAwarenessLine, dismissPendingPayment, getTodayData, undoOnlineBookingDesignation } from "~/server/queries";
 import { formatDateHuman } from "~/server/date-logic";
 import { AttentionPanel } from "~/components/AttentionPanel";
 import { DayCardStrip, type DayCardData } from "~/components/DayCardStrip";
@@ -206,6 +206,8 @@ interface OnlineBookingRow {
   session_datetime: string;
   session_date: string | null;
   created_at: string;
+  /** The attribution row's method: ONLY "owner-designation" rows carry Undo. */
+  designation_method: string | null;
 }
 
 /**
@@ -218,6 +220,28 @@ interface OnlineBookingRow {
  * credit — they count in the team's daily/weekly/monthly totals only.
  */
 function OnlineBookingsSection({ rows }: { rows: OnlineBookingRow[] }) {
+  // UNDO DESIGNATION (owner directive 2026-11-04): owner-designation rows
+  // (method "owner-designation" in the payload) carry an Undo action with one
+  // confirm step — undoing restores the neutral attribution row and the next
+  // engine tick re-derives the booking from evidence. Success refetches the
+  // SSR payload (router.invalidate) so the list/count reflect it immediately.
+  const router = useRouter();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const undo = async (appointmentId: string) => {
+    setError(null);
+    setBusyId(appointmentId);
+    try {
+      await undoOnlineBookingDesignation({ data: { appointmentId } });
+      setConfirmId(null);
+      await router.invalidate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
   return (
     <details className="card card-dense mt-3" data-testid="online-bookings-section" open={rows.length > 0}>
       <summary className="pp-summary cursor-pointer select-none">
@@ -226,6 +250,11 @@ function OnlineBookingsSection({ rows }: { rows: OnlineBookingRow[] }) {
           <span className="text-xs font-normal text-(--text-muted)">— client created the booking · team-only credit</span>
         </span>
       </summary>
+      {error && (
+        <p role="alert" className="mt-2 text-xs font-medium text-(--chip-risk-fg)">
+          Could not undo: {error}
+        </p>
+      )}
       {rows.length === 0 ? (
         <p className="mt-3 text-xs text-(--text-muted)">
           No designated online bookings in the current + previous week.
@@ -240,6 +269,9 @@ function OnlineBookingsSection({ rows }: { rows: OnlineBookingRow[] }) {
                   <th scope="col" className="text-left">Booked</th>
                   <th scope="col" className="text-left">Session Type</th>
                   <th scope="col" className="text-left">Session</th>
+                  <th scope="col" className="text-right">
+                    <span className="sr-only">Undo designation</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -252,6 +284,42 @@ function OnlineBookingsSection({ rows }: { rows: OnlineBookingRow[] }) {
                     <td className="text-left text-(--text-caption)">{r.appointment_type || "—"}</td>
                     <td className="text-left text-(--text-caption)">
                       {r.session_date ? formatDateHuman(r.session_date) : "—"}
+                    </td>
+                    <td className="text-right align-middle">
+                      {r.designation_method === "owner-designation" &&
+                        (confirmId === r.appointment_id ? (
+                          <span className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--neg-text) underline underline-offset-2 hover:opacity-80 disabled:opacity-40 max-md:min-h-[44px] max-md:px-3"
+                              disabled={busyId === r.appointment_id}
+                              aria-label={`Confirm undo designation: ${r.client_name ?? r.appointment_type ?? "unknown client"}`}
+                              onClick={() => void undo(r.appointment_id)}
+                            >
+                              Confirm undo
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--text-muted) hover:text-(--text-primary) disabled:opacity-40 max-md:min-h-[44px] max-md:px-3"
+                              disabled={busyId === r.appointment_id}
+                              onClick={() => setConfirmId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="rounded-md px-1.5 py-0.5 text-xs leading-none text-(--text-muted) underline underline-offset-2 hover:text-(--text-primary) disabled:opacity-40 max-md:min-h-[44px] max-md:px-3"
+                            disabled={busyId === r.appointment_id}
+                            data-testid="undo-designation"
+                            aria-label={`Undo designation: ${r.client_name ?? r.appointment_type ?? "unknown client"}`}
+                            title="Undo designation — the booking returns to engine attribution"
+                            onClick={() => setConfirmId(r.appointment_id)}
+                          >
+                            Undo designation
+                          </button>
+                        ))}
                     </td>
                   </tr>
                 ))}
