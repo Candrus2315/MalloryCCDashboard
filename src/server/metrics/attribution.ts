@@ -136,6 +136,56 @@ export const OWNER_RULE_AUCTION_NOTE =
 /** Roster name the directive names (exact, case-insensitive match on users.name). */
 export const OWNER_RULE_AUCTION_REP_NAME = "Allison Wittner" as const;
 
+// ---------- OWNER RULE: proven client-created bookings → Online Booking (team-only) ----------
+
+/**
+ * OWNER DIRECTIVE 2026-11-04 (creation-source semantics): the deciding factor
+ * for attribution is WHO CREATED the calendar appointment — not who spoke with
+ * the client and not who paid.
+ *
+ *   - Client created the booking themselves online → verdict
+ *     "online-booking": TEAM-ONLY (rep NULL, method "none"), counted in ALL
+ *     team totals (daily/weekly/monthly — win state flows from the payment
+ *     model, never from attribution), and labeled "Online Booking" on every
+ *     surface that shows the row. True even when an agent SPOKE with the
+ *     client but never placed them on the calendar.
+ *   - Agent created the appointment (and sent the deposit link) → the agent's
+ *     booking stays the agent's even when the client pays the deposit online
+ *     LATER; online payment must never convert or strip the credit (pinned by
+ *     attribution-creation-source.test.ts + the payments model's informational
+ *     amountPaid).
+ *   - UNKNOWN creation source → the current evidence-chain verdicts stand,
+ *     unchanged (no mass re-classification without owner sign-off).
+ *
+ * PRECEDENCE (each layer only sees what survives the layers above):
+ *   1. manual_override rows — never re-processed (store upsert skips them);
+ *      the owner's assignment IS creation ground truth for those rows.
+ *   2. owner-rule-auction — the standing "always Allison" directive wins over
+ *      every other verdict, including proven client-creation.
+ *   3. proven client-created ("online-booking", this rule — team-only).
+ *   4. the s1 evidence chain — unchanged.
+ *
+ * EVIDENCE (W1 findings, 2026-11-04 — reports in the PR): NO reliable
+ * creation-source discriminator exists in the data we sync. The Acuity raw
+ * payload has no created-by field; every candidate signal (formsText
+ * "Paid Online:" line, amountPaid, invoice notes, agent-authored notes,
+ * subCalendarID, datetimeCreated timezone offset, key presence) is shared by
+ * BOTH ground-truth sets — the raw is a LATER snapshot, so payment evidence
+ * appears after the client pays an agent-sent deposit link (66 of 98 proven
+ * agent-created bookings paid >3d after creation now carry the "Paid Online:"
+ * line), and agents add notes post-creation. The GHL sync carries calls only
+ * — no appointments, no assignedUserId/created-by evidence. Therefore today
+ * the ONLY provenance sources are owner rulings (manual + owner-rule rows =
+ * agent-created) and previously-designated online-booking rows; everything
+ * else is UNKNOWN and keeps its current verdict. The branch is driven by
+ * caller-supplied creation evidence (options.creationEvidence) so a future
+ * owner-designation feature or a creator-evidence sync (e.g. GHL appointments
+ * with assignedUserId) plugs in WITHOUT touching the engine again.
+ */
+export const ONLINE_BOOKING_REASON = "online-booking" as const;
+export const ONLINE_BOOKING_NOTE =
+  "Owner directive 2026-11-04: the client created this booking themselves online (proven creation evidence) — team-only, never rep-attributed; counts in all team totals";
+
 // Canonical identity normalizers re-exported under the engine's historical
 // names (callers keep compiling; the DEFINITION is the canonical one — the
 // divergent engine-local versions were removed in Session 2).
@@ -308,7 +358,10 @@ export interface AttributionMatch {
    * guessed against a broken anchor), "self-booked-no-conversation" (owner
    * ruling 2026-10-30: the winning window_interaction evidence was a call with
    * no positive duration — a dial attempt, no conversation — so the booking
-   * stays TEAM-ONLY; rep credit requires conversation evidence).
+   * stays TEAM-ONLY; rep credit requires conversation evidence),
+   * "online-booking" (owner directive 2026-11-04: the client PROVABLY created
+   * the booking themselves online — team-only regardless of conversation or
+   * payment evidence; decided by CREATION SOURCE).
    */
   reason?: string;
   /**
@@ -544,6 +597,22 @@ export interface AttributionOptions {
   ownerRules?: {
     auctionRepId?: string | null;
   };
+  /**
+   * CREATION-SOURCE EVIDENCE (owner directive 2026-11-04 — the caller owns
+   * evidence, the engine stays pure): `provenClientCreated` lists appointment
+   * ids PROVEN client-created (the client completed the booking themselves
+   * online). Every such appointment (that survives the owner rules above)
+   * becomes verdict "online-booking" — team-only, rep NULL, before the
+   * identity/evidence tiers run: a qualifying call or a window interaction
+   * cannot credit a booking the client made themselves. Omitted/empty → the
+   * rule is INACTIVE for those rows and the evidence chain runs unchanged
+   * (the honest default: per the W1 findings no synced data proves
+   * client-creation yet, so the wiring passes only previously-designated
+   * online-booking reason_codes back in — stickiness, not new proof).
+   */
+  creationEvidence?: {
+    provenClientCreated?: ReadonlySet<string>;
+  };
 }
 
 interface Candidate {
@@ -697,6 +766,25 @@ export function matchAppointmentsToCalls(
         status: "attributed",
         repId: auctionRepId,
         method: OWNER_RULE_AUCTION_METHOD,
+      });
+      continue;
+    }
+
+    // OWNER RULE (directive 2026-11-04): a PROVEN client-created booking is an
+    // Online Booking — TEAM-ONLY, decided by CREATION SOURCE, not by who spoke
+    // with the client (a conversation cannot credit a booking the client made
+    // themselves) and not by who paid (online deposit payment never creates
+    // attribution). Emits before the identity/evidence tiers; the manual
+    // override and owner-rule layers above stay strictly stronger (owner
+    // rulings are ground truth). No window marker is required — the verdict
+    // does not depend on the attribution window.
+    if (options.creationEvidence?.provenClientCreated?.has(apptId)) {
+      out.push({
+        appointmentId: apptId,
+        status: "unattributed",
+        reason: ONLINE_BOOKING_REASON,
+        reasonCode: ONLINE_BOOKING_REASON,
+        detail: ONLINE_BOOKING_NOTE,
       });
       continue;
     }

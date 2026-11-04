@@ -264,6 +264,10 @@ export async function todayPageData(deps?: PageDeps) {
         amountPaid: d.amountPaid,
         rep_id: attr?.rep_id ?? null,
         rep_name: attr?.rep_id ? repNameById.get(attr.rep_id) ?? null : null,
+        // CREATION-SOURCE RULE (owner directive 2026-11-04): the queue rows
+        // carry the verdict's reason_code so the surface can label a PROVEN
+        // client-created booking "Online Booking" instead of "Unattributed".
+        reason_code: attr?.reason_code ?? null,
         created_business_date: a.created_business_date ?? null,
         created_at: a.created_at,
         appointment_datetime: a.appointment_datetime,
