@@ -2451,6 +2451,44 @@ export class PgStore implements Store {
     const rows = await this.sql`SELECT count(*)::int AS n FROM hl_call_records`;
     return Number((rows as Record<string, unknown>[])[0]?.n ?? 0);
   }
+  // ---- W3 KPI reads (owner directive 2026-11-04): same mapper, instant bounds ----
+  private hlCallRecordRow(r: Record<string, unknown>): HlCallRecordRow {
+    return {
+      message_id: String(r.message_id),
+      user_external_id: (r.user_external_id as string | null) ?? null,
+      contact_external_id: (r.contact_external_id as string | null) ?? null,
+      conversation_id: (r.conversation_id as string | null) ?? null,
+      direction: (r.direction as string | null) ?? null,
+      call_status: (r.call_status as string | null) ?? null,
+      duration_seconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
+      date_added: new Date(r.date_added as string).toISOString(),
+      message_type: String(r.message_type),
+      source: (r.source as string | null) ?? null,
+      from_number: (r.from_number as string | null) ?? null,
+      to_number: (r.to_number as string | null) ?? null,
+      raw: r.raw == null ? null : typeof r.raw === "string" ? (JSON.parse(r.raw) as Record<string, unknown>) : (r.raw as Record<string, unknown>),
+    };
+  }
+  async getHlCallRecordsBetween(startUtc: string, endUtc: string): Promise<HlCallRecordRow[]> {
+    return this.cache.wrap("getHlCallRecordsBetween:" + JSON.stringify([startUtc, endUtc]), () => this.getHlCallRecordsBetweenCached(startUtc, endUtc));
+  }
+  private async getHlCallRecordsBetweenCached(startUtc: string, endUtc: string): Promise<HlCallRecordRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT message_id, user_external_id, contact_external_id, conversation_id, direction, call_status, duration_seconds, date_added::text AS date_added, message_type, source, from_number, to_number, raw
+      FROM hl_call_records WHERE date_added >= ${startUtc} AND date_added < ${endUtc} ORDER BY date_added`;
+    return (rows as Record<string, unknown>[]).map((r) => this.hlCallRecordRow(r));
+  }
+  async getAllHlCallRecordsSince(startUtc: string): Promise<HlCallRecordRow[]> {
+    return this.cache.wrap("getAllHlCallRecordsSince:" + JSON.stringify([startUtc]), () => this.getAllHlCallRecordsSinceCached(startUtc));
+  }
+  private async getAllHlCallRecordsSinceCached(startUtc: string): Promise<HlCallRecordRow[]> {
+    await this.ensureSchema();
+    const rows = await this.sql`
+      SELECT message_id, user_external_id, contact_external_id, conversation_id, direction, call_status, duration_seconds, date_added::text AS date_added, message_type, source, from_number, to_number, raw
+      FROM hl_call_records WHERE date_added >= ${startUtc} ORDER BY date_added`;
+    return (rows as Record<string, unknown>[]).map((r) => this.hlCallRecordRow(r));
+  }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
     await this.ensureSchema();

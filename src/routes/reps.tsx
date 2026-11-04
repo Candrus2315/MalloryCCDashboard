@@ -693,6 +693,33 @@ function RepsPage() {
                 />
                 <KpiMid label="Average Call Duration" value={formatDuration(d.metrics.avgCallDurationSeconds)} />
               </div>
+              {/* W3 KPI SET (owner directive 11/4): the rep's HL call-record
+                  export KPIs — same rows as the cells above, richer split.
+                  Nulls render "—" (never a fabricated 0). */}
+              {data.selectedCallKpis && (
+                <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-(--table-border-weak) pt-5 sm:grid-cols-4">
+                  <KpiMid label="Outbound Calls" value={formatInt(data.selectedCallKpis.outbound)} sub="HL call records" />
+                  <KpiMid label="Inbound Calls" value={formatInt(data.selectedCallKpis.inbound)} />
+                  <KpiMid
+                    label="Connected"
+                    value={formatInt(data.selectedCallKpis.connected)}
+                    sub={`connect rate ${data.selectedCallKpis.connectRate == null ? "—" : `${(data.selectedCallKpis.connectRate * 100).toFixed(1)}%`}`}
+                  />
+                  <KpiMid label="Missed" value={formatInt(data.selectedCallKpis.missed)} sub="no answer · busy · voicemail" />
+                  <KpiMid label="Failed" value={formatInt(data.selectedCallKpis.failed)} />
+                  <KpiMid label="Total Talk Time" value={formatDuration(data.selectedCallKpis.totalTalkSeconds)} />
+                  <KpiMid
+                    label="Unique Leads Contacted"
+                    value={formatInt(data.selectedCallKpis.uniqueLeadsContacted)}
+                    sub={`calls/lead ${data.selectedCallKpis.callsPerLead == null ? "—" : data.selectedCallKpis.callsPerLead.toFixed(1)}`}
+                  />
+                  <KpiMid
+                    label="Calls per Booking"
+                    value={data.selectedCallsPerBooking == null ? "—" : data.selectedCallsPerBooking.toFixed(1)}
+                    sub="calls ÷ qualifying bookings"
+                  />
+                </div>
+              )}
             </section>
           </div>
         ) : (

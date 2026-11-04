@@ -23,6 +23,7 @@ import { lastCompletedWeekStart, splitLeadsByType } from "../metrics/weekly";
 
 
 import { applyAttributionEligibility, applyRosterEligibility, buildRosterEligibility } from "../roster";
+import { loadCallKpiRows, applyTeamCallScope } from "../metrics/call-records";
 
 import { serializableConnections, syncStaleWarnings, type PageMeta } from "../queries";
 import { withHeartbeatWarning } from "../heartbeat-freshness"; // Reliability 2b/3 banner clause
@@ -76,8 +77,13 @@ export async function todayPageData(deps?: PageDeps) {
     await Promise.all([
       metaPromise,
       store.getSettings(),
-      store.getCallsBetween(todayStart, todayEnd),
-      store.getCallsBetween(weekStartUtc, todayEnd),
+      // W3 CALL-KPI SOURCE (owner directive 2026-11-04): call KPIs read
+      // hl_call_records (TYPE_CALL only, rep via users.external_id) — the
+      // Nov-1 legacy slice rides along inside loadCallKpiRows. The
+      // attribution fetch below stays on the legacy `calls` table (booking
+      // logic untouched).
+      (async () => loadCallKpiRows({ store, users: await store.getUsers(), startUtc: todayStart, endUtc: todayEnd }))(),
+      (async () => loadCallKpiRows({ store, users: await store.getUsers(), startUtc: weekStartUtc, endUtc: todayEnd }))(),
       store.getAllCallsSince(weekStartUtc),
       // REV 12 WIN BUCKET: today/yesterday/WTD bookings = BOOKING WINS whose
       // booking_win_business_date (the ET date the deposit was received) falls
@@ -152,7 +158,9 @@ export async function todayPageData(deps?: PageDeps) {
   // filter. Non-roster/unattributed calls stay in the DB and stay visible in
   // the Reps-page ownership buckets — never merged into roster/team totals.
   const eligibility = buildRosterEligibility(users, settings.rep_mappings ?? []);
-  const rosterCallsToday = applyRosterEligibility(callsToday, eligibility);
+  // TEAM CALL SCOPE (owner directive 11/4): the Today strip's team call totals
+  // also count the null-user inbound bucket (HL userId NULL) — never a rep.
+  const teamCallsToday = applyTeamCallScope(callsToday, eligibility);
   const rosterCallsWtd = applyRosterEligibility(callsWtd, eligibility);
   const rosterCallsForAttribution = applyRosterEligibility(callsForAttribution, eligibility);
   // Bookings inherit the same query-time eligibility (a mapped user's
@@ -222,7 +230,7 @@ export async function todayPageData(deps?: PageDeps) {
   });
   const metrics = buildTodayMetrics({
     reportDate: today,
-    calls: rosterCallsToday,
+    calls: teamCallsToday,
     apptsCreatedToday: apptsTodayScoped,
     apptsCreatedYesterday: apptsYesterdayScoped,
     apptsCreatedWtd: apptsWtdScoped,
@@ -370,8 +378,11 @@ export async function dailyReportPageData(deps?: PageDeps) {
     await Promise.all([
       metaPromise,
       store.getSettings(),
-      // roster-eligible calls STARTED on the anchor day (conversation conversion)
-      store.getCallsBetween(anchorStart, etDayEndUtc(anchorDate)),
+      // W3 CALL-KPI SOURCE (owner directive 2026-11-04): the report's
+      // anchor-day call figures read hl_call_records (TYPE_CALL only, rep via
+      // users.external_id; Nov-1 legacy slice inside loadCallKpiRows). The
+      // attribution pool below stays on the legacy `calls` table.
+      (async () => loadCallKpiRows({ store, users: await store.getUsers(), startUtc: anchorStart, endUtc: etDayEndUtc(anchorDate) }))(),
       // REV 12 WIN BUCKET + owner anchor: anchor-day/WTD = BOOKING WINS by
       // deposit date (booking_win_business_date); not-yet-derived rows fall
       // back to created.
@@ -415,7 +426,10 @@ export async function dailyReportPageData(deps?: PageDeps) {
   // + mapped HL users only, computed at query time (source rows untouched).
   const rosterUsers = await store.getUsers();
   const eligibility = buildRosterEligibility(rosterUsers, settings.rep_mappings ?? []);
-  const rosterCallsAnchorDay = applyRosterEligibility(callsAnchorDay, eligibility);
+  // TEAM CALL SCOPE (owner directive 11/4): the report's call lines are TEAM
+  // figures — roster-rep rows PLUS the null-user inbound bucket; a known
+  // non-roster user's rows still drop.
+  const teamCallsAnchorDay = applyTeamCallScope(callsAnchorDay, eligibility);
   const rosterCallsForAttribution = applyRosterEligibility(callsForAttribution, eligibility);
   const attributionsEligible = applyAttributionEligibility(
     await store.getAttributions(),
@@ -424,7 +438,7 @@ export async function dailyReportPageData(deps?: PageDeps) {
   );
   const metrics = buildDailyReportMetrics({
     reportDate: today,
-    callsAnchorDay: rosterCallsAnchorDay,
+    callsAnchorDay: teamCallsAnchorDay,
     apptsCreatedAnchorDay: apptsAnchorDayScoped,
     apptsCreatedWtd: apptsWtdScoped,
     // OWNER DIRECTIVE 10/30 (post-#126 fix): the week lines (Bookings WTD /
