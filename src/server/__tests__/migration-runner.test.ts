@@ -36,6 +36,8 @@ import {
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from "../store/migrations/registry";
 import { migration as evidenceMessages } from "../store/migrations/001_evidence_messages";
 const EVIDENCE_STMTS = evidenceMessages.statements!;
+import { migration as hlCallRecords } from "../store/migrations/002_hl_call_records";
+const HL_CALL_STMTS = hlCallRecords.statements!;
 import { migration as baseline } from "../store/migrations/000_baseline";
 
 /* ------------------------------------------------------------------ */
@@ -106,13 +108,21 @@ const CAP = { grantedBy: "migration-runner unit tests" };
 /* registry — the frozen baseline, census-pinned                       */
 /* ------------------------------------------------------------------ */
 describe("migration registry — frozen baseline shape", () => {
-  test("registry: version 1 baseline + version 2 evidence_messages; CURRENT_SCHEMA_VERSION agrees", () => {
-    expect(MIGRATIONS.length).toBe(2);
+  test("registry: version 1 baseline + version 2 evidence_messages + version 3 hl_call_records; CURRENT_SCHEMA_VERSION agrees", () => {
+    expect(MIGRATIONS.length).toBe(3);
     expect(baseline.version).toBe(1);
     expect(MIGRATIONS[1]!.name).toBe("evidence_messages");
     expect(MIGRATIONS[1]!.version).toBe(2);
+    expect(MIGRATIONS[2]!.name).toBe("hl_call_records");
+    expect(MIGRATIONS[2]!.version).toBe(3);
     expect(baseline.name).toBe("baseline");
-    expect(CURRENT_SCHEMA_VERSION).toBe(2);
+    expect(CURRENT_SCHEMA_VERSION).toBe(3);
+  });
+  test("hl_call_records census: 4 statements — 1 table + 3 indexes, additive-only (no ALTERs, no seeds)", () => {
+    expect(HL_CALL_STMTS.length).toBe(4);
+    expect(HL_CALL_STMTS.filter((s) => s.startsWith("CREATE TABLE IF NOT EXISTS hl_call_records")).length).toBe(1);
+    expect(HL_CALL_STMTS.filter((s) => s.startsWith("CREATE INDEX IF NOT EXISTS idx_hlcall_")).length).toBe(3);
+    expect(HL_CALL_STMTS.some((s) => s.startsWith("ALTER TABLE") || s.startsWith("UPDATE "))).toBe(false);
   });
   test("140 statements, census identical to the audited MIGRATION-PLAN §1.1", () => {
     expect(BASELINE_STMTS.length).toBe(140);
@@ -190,28 +200,33 @@ describe("migration registry — frozen baseline shape", () => {
 /* runner flows — fresh, migrated, drifted                             */
 /* ------------------------------------------------------------------ */
 describe("migration runner — fresh-empty DB: full apply in order, stamped", () => {
-  test("marker create → version read → registry statements (baseline + evidence_messages) → INSERT stamp", async () => {
+  test("marker create → version read → registry statements (baseline + evidence_messages + hl_call_records) → INSERT stamp", async () => {
     const io = makeIo();
     const result = await runMigrations(io, MIGRATIONS, CAP);
-    expect(result.applied).toEqual([1, 2]);
-    expect(result.appliedMax).toBe(2);
+    expect(result.applied).toEqual([1, 2, 3]);
+    expect(result.appliedMax).toBe(3);
     expect(io.executed[0]).toBe(SCHEMA_MIGRATIONS_DDL);
     expect(isVersionSelect(io.executed[1])).toBe(true);
-    expect(migrationStatementsOf(io)).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS]);
+    expect(migrationStatementsOf(io)).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS, ...HL_CALL_STMTS]);
     // the stamps are the LAST writes and carry version + name + checksum
-    expect(io.insertParams.length).toBe(2);
+    expect(io.insertParams.length).toBe(3);
     expect(io.insertParams[0]).toEqual([1, "baseline", EXPECTED_CHECKSUM]);
     expect(io.insertParams[1]).toEqual([2, "evidence_messages", migrationChecksum(MIGRATIONS[1]!)]);
+    expect(io.insertParams[2]).toEqual([3, "hl_call_records", migrationChecksum(MIGRATIONS[2]!)]);
     expect(io.executed[io.executed.length - 1]).toBe(io.executed.find(isMarkerInsert));
   });
 });
 
 describe("migration runner — already-migrated DB: ZERO DDL work (the whole point)", () => {
   test("only marker bootstrap + version read run; no baseline statement, no INSERT", async () => {
-    const io = makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
+    const io = makeIo({ records: [
+      { version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM },
+      { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) },
+      { version: 3, name: "hl_call_records", checksum: migrationChecksum(MIGRATIONS[2]!) },
+    ] });
     const result = await runMigrations(io, MIGRATIONS, CAP);
     expect(result.applied).toEqual([]);
-    expect(result.appliedMax).toBe(2);
+    expect(result.appliedMax).toBe(3);
     expect(io.executed.length).toBe(2); // create-if-not-exists + select
     for (const stmt of BASELINE_STMTS) expect(io.executed).not.toContain(stmt);
     expect(io.insertParams.length).toBe(0);
@@ -220,7 +235,11 @@ describe("migration runner — already-migrated DB: ZERO DDL work (the whole poi
   test("boot log says up to date (fail-visible freshness, plan §2.5)", async () => {
     const logs: string[] = [];
     await runMigrations(
-      { ...makeIo({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] }), log: (m) => logs.push(m) },
+      { ...makeIo({ records: [
+        { version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM },
+        { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) },
+        { version: 3, name: "hl_call_records", checksum: migrationChecksum(MIGRATIONS[2]!) },
+      ] }), log: (m) => logs.push(m) },
       MIGRATIONS,
       CAP,
     );
@@ -243,12 +262,13 @@ describe("migration runner — drift refuses to boot with a named error", () => 
     expect(io.executed.length).toBe(2);
   });
   test("recorded version the registry does not contain (DB ahead of code / lost file)", async () => {
-    // rows beyond the registry's top version: position 2 has no registry migration
+    // rows beyond the registry's top version: position 4 has no registry migration
     const io = makeIo({
       records: [
         { version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM },
         { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) },
-        { version: 3, name: "future", checksum: EXPECTED_CHECKSUM },
+        { version: 3, name: "hl_call_records", checksum: migrationChecksum(MIGRATIONS[2]!) },
+        { version: 4, name: "future", checksum: EXPECTED_CHECKSUM },
       ],
     });
     await expect(runMigrations(io, MIGRATIONS, CAP)).rejects.toThrow(/does not contain/);
@@ -340,7 +360,11 @@ const makePg = (sql: unknown, capMs = DEFAULT_SCHEMA_STMT_TIMEOUT_MS) =>
 
 describe("PgStore wiring — ensureSchema is now 'ensure migrations applied'", () => {
   test("already-migrated DB: ZERO migration statements on cold boot", async () => {
-    const { sql, executed } = makePgSql({ records: [{ version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM }, { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) }] });
+    const { sql, executed } = makePgSql({ records: [
+      { version: 1, name: "baseline", checksum: EXPECTED_CHECKSUM },
+      { version: 2, name: "evidence_messages", checksum: migrationChecksum(MIGRATIONS[1]!) },
+      { version: 3, name: "hl_call_records", checksum: migrationChecksum(MIGRATIONS[2]!) },
+    ] });
     const pg = makePg(sql);
     await pg.ensureSchema();
     expect(executed.length).toBe(2); // marker bootstrap + version read
@@ -350,17 +374,17 @@ describe("PgStore wiring — ensureSchema is now 'ensure migrations applied'", (
     expect(executed.length).toBe(2);
     await pg.close();
   });
-  test("fresh DB: the full registry (baseline 140 + evidence_messages 3) applies in order through the capped executor, then memoize", async () => {
+  test("fresh DB: the full registry (baseline 140 + evidence_messages 3 + hl_call_records 4) applies in order through the capped executor, then memoize", async () => {
     const { sql, executed } = makePgSql();
     const pg = makePg(sql);
     await pg.ensureSchema();
     expect(executed[0]).toBe(SCHEMA_MIGRATIONS_DDL);
     expect(executed[1].startsWith("SELECT version, name, checksum")).toBe(true);
     const migrationStmts = executed.slice(2).filter((q) => !isMarkerInsert(q));
-    expect(migrationStmts).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS]);
+    expect(migrationStmts).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS, ...HL_CALL_STMTS]);
     expect(executed[executed.length - 1]).toContain("INSERT INTO schema_migrations");
     await pg.ensureSchema();
-    expect(executed.length).toBe(2 + 140 + 3 + 2); // unchanged by the memoized second call
+    expect(executed.length).toBe(2 + 140 + 3 + 4 + 3); // unchanged by the memoized second call
     await pg.close();
   });
 });

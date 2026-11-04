@@ -44,6 +44,13 @@ export interface IncrementalHarvest {
    */
   evidence: EvidenceMessageRow[];
   conversationsVisited: number;
+  /**
+   * TRUE when the visit/scan cap stopped the walk early (planConversationsToVisit
+   * truncated) — the caller MUST NOT advance the watermark past this tick's
+   * window or the unvisited conversations are lost forever (the 11/2–11/3
+   * chronic call-loss bug). Structured field, not string-matched warnings.
+   */
+  truncated: boolean;
   /** Newest message/call timestamp observed (ISO) — useful for watermark sanity checks. */
   newestActivityIso: string | null;
   warnings: string[];
@@ -185,6 +192,7 @@ export async function harvestIncremental(opts: {
     calls: [...calls.values()],
     evidence: [...evidenceById.values()],
     conversationsVisited: plan.visitIds.length,
+    truncated: plan.truncated,
     newestActivityIso: newestActivityMs ? new Date(newestActivityMs).toISOString() : null,
     warnings,
   };

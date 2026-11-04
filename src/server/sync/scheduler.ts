@@ -27,6 +27,7 @@ import { parseSyncStartedMs, STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS, type 
 import { isRosterUser } from "../roster";
 import { readHighLevelCreds, type HighLevelCreds, type LiveHighLevelAdapter } from "./highlevel-live";
 import { harvestIncremental, WATERMARK_OVERLAP_SECONDS } from "./highlevel-incremental";
+import { runCallRecordsIngest, type CallRecordsIngestResult } from "./call-records-export";
 import { raceHighLevelRunBudget } from "./highlevel-run-budget";
 import {
   CONTACTS_INCREMENTAL_CHECKPOINT_KEY,
@@ -282,6 +283,10 @@ export interface SchedulerTickResult {
   attribution?: AttributionTickResult;
   /** S4: the per-tick contacts differential walk (new rows stored this tick). */
   contactsWalk?: { new: number; pages: number; truncated: boolean };
+  /** W1: the raw call-records export ingest (new rows stored this tick). */
+  callRecords?: { fetched: number; written: number; inserted: number; pages: number; truncated: boolean };
+  /** W4: false when a truncated tick HELD the watermark (it re-processes the same window next tick). */
+  watermarkAdvanced?: boolean;
   /** S4: meta.total-vs-DB reconciliation tripwire outcome. */
   contactsReconciliation?: { dbCount: number | null; sourceTotal: number | null; delta: number | null; status: string };
   /** Independent Google Sheets lead sync piggy-backed on the same tick (never fails the tick). */
@@ -426,7 +431,7 @@ export async function highlevelTick(options?: {
       // step-by-step (per-request fetch timeouts, capped page walks). The row
       // FINISHING stays outside the race (the runProvider pattern). The next
       // tick retries. The body is the previous inline block, unchanged.
-      const { harvest, walk, healedCalls, records, recon, reconWarn, reconMessage } =
+      const { harvest, walk, healedCalls, records, recon, reconWarn, reconMessage, callRecords } =
         await raceHighLevelRunBudget(async () => {
       // S4 (design §3a): the contacts walk runs FIRST so contacts created in
       // HighLevel without any harvested call still enter the DB this tick, and
@@ -530,6 +535,24 @@ export async function highlevelTick(options?: {
         await store.upsertEvidenceMessages(harvest.evidence);
       }
 
+      // CALL-RECORDS EXPORT INGEST (W1, owner directive 2026-11-04): HighLevel's
+      // raw call export becomes the SOURCE OF TRUTH for call KPIs (W3 switch is
+      // a follow-up). Same window as the walk (watermark − 5-min overlap → tick
+      // start); idempotent upserts by message_id make the overlap re-pull
+      // harmless; TYPE_IVR_CALL and null-userId (team-level) rows are KEPT.
+      // Inside the raced block: run-budget + per-request fetch timeouts apply.
+      // A failure throws → the tick records the error and the watermark does
+      // NOT advance, so the window re-pulls next tick (a failed run never
+      // marks its range complete). Writes ONLY hl_call_records.
+      const callRecords: CallRecordsIngestResult = await runCallRecordsIngest({
+        store,
+        creds,
+        fetchImpl: options?.fetchImpl ?? fetch,
+        sleep: options?.sleep,
+        startIso: new Date(Number.isFinite(sinceMs) ? sinceMs : 0).toISOString(),
+        endIso: tickStartIso,
+      });
+
       // S4 checkpoint — written ONLY after the successful walk upsert (the
       // scheduler owns it; the walk module itself never persists).
       const walkCkptRaw = await store.getSyncCheckpoint(CONTACTS_INCREMENTAL_CHECKPOINT_KEY);
@@ -584,7 +607,7 @@ export async function highlevelTick(options?: {
         }
       }
 
-      const records = harvest.calls.length + walk.newCount + harvest.contacts.length + harvest.users.length;
+      const records = harvest.calls.length + walk.newCount + harvest.contacts.length + harvest.users.length + callRecords.inserted;
 
       // S4 every-tick reconciliation tripwire (design §3c): meta.total vs
       // countContacts. Warn-only; a probe failure never fails the tick and
@@ -613,7 +636,7 @@ export async function highlevelTick(options?: {
         void e;
       }
 
-          return { harvest, walk, healedCalls, records, recon, reconWarn, reconMessage };
+          return { harvest, walk, healedCalls, records, recon, reconWarn, reconMessage, callRecords };
       });
 
       await store.finishSyncRun(runId, "success", records, null);
@@ -624,7 +647,17 @@ export async function highlevelTick(options?: {
       const purgedTotal = purged.users + purged.contacts + purged.calls;
 
       // Success: advance the watermark, refresh the connection row, recompute attributions.
-      await store.setSyncWatermark("highlevel", tickStartIso);
+      // W4 WATERMARK FIX (owner directive 2026-11-04, diagnostic 11/4): a
+      // TRUNCATED tick — the conversation visit/scan cap (harvest.truncated),
+      // the contacts walk cap (walk.truncated) or the call-records page guard
+      // (callRecords.truncated) — must NOT advance the watermark: the skipped
+      // rows would never be revisited (the chronic 11/2 −54 / 11/3 −31
+      // call-loss bug; scheduler.ts used to advance unconditionally). The
+      // watermark STAYS; the 5-min overlap re-processes the same window next
+      // tick; every upsert is idempotent. Watchdog/reaper/hang-proofing
+      // (revs 104/108/111) untouched.
+      const truncatedTick = walk.truncated || harvest.truncated || callRecords.truncated;
+      if (!truncatedTick) await store.setSyncWatermark("highlevel", tickStartIso);
       const attributions = await runAttributionRun(store, settings);
       const nowIso = now().toISOString();
       const previous = (await store.getConnections()).find((c) => c.provider === "highlevel");
@@ -638,7 +671,7 @@ export async function highlevelTick(options?: {
         config: {
           ...(previous?.config ?? {}),
           source: "highlevel-api",
-          note: `Incremental sync (${options?.trigger ?? "background"}): +${harvest.calls.length} calls, +${walk.newCount} contacts (walk ${walk.pagesFetched}p${healedCalls ? `, ${healedCalls} call links healed` : ""})${reconWarn && reconMessage ? ` · ${reconMessage}` : ""}${purgedTotal > 0 ? ` · demo rows purged: ${purgedTotal}` : ""}${harvest.warnings.length ? ` · ${harvest.warnings[0]}` : ""}`.slice(0, 500),
+          note: `Incremental sync (${options?.trigger ?? "background"}): +${harvest.calls.length} calls, +${walk.newCount} contacts, +${callRecords.inserted} call records (walk ${walk.pagesFetched}p${truncatedTick ? ", TRUNCATED — watermark held" : ""}${healedCalls ? `, ${healedCalls} call links healed` : ""})${reconWarn && reconMessage ? ` · ${reconMessage}` : ""}${purgedTotal > 0 ? ` · demo rows purged: ${purgedTotal}` : ""}${harvest.warnings.length ? ` · ${harvest.warnings[0]}` : ""}`.slice(0, 500),
           // S4 reconciliation tripwire surfaces here (syncStaleWarnings reads
           // this field; Settings → Sync Center shows the note).
           contactsReconciliation: { ...recon, warn: reconWarn },
@@ -652,6 +685,8 @@ export async function highlevelTick(options?: {
         users: harvest.users.length,
         attributions,
         contactsWalk: { new: walk.newCount, pages: walk.pagesFetched, truncated: walk.truncated },
+        callRecords: { fetched: callRecords.fetched, written: callRecords.written, inserted: callRecords.inserted, pages: callRecords.pages, truncated: callRecords.truncated },
+        watermarkAdvanced: !truncatedTick,
         contactsReconciliation: { dbCount: recon.dbCount, sourceTotal: recon.sourceTotal, delta: recon.delta, status: recon.status },
       };
     } catch (e) {

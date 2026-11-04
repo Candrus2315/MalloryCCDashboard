@@ -36,6 +36,7 @@ import type {
   HarvestCallRow,
   HarvestConvRow,
   HarvestProgressRow,
+  HlCallRecordRow,
   LeadCountAdjustmentRow,
   ManualOverrideRow,
   MonthlyGoalRow,
@@ -2380,6 +2381,75 @@ export class PgStore implements Store {
       date_added: new Date(r.date_added as string).toISOString(),
       body: (r.body as string | null) ?? null,
     }));
+  }
+  // ---- RAW HighLevel call records (call-source W1, owner directive 2026-11-04) ----
+  // Idempotent upsert by message_id: the 5-min watermark overlap and re-runs
+  // can never duplicate. ON CONFLICT DO UPDATE = the freshest API state wins
+  // (HL may still amend meta.call after a call ends). Writes ONLY
+  // hl_call_records — calls/harvest_calls untouched until the W3 KPI switch.
+  async upsertHlCallRecords(rows: HlCallRecordRow[]): Promise<number> {
+    this.cache.bump(); // PERF: any write invalidates the short-TTL read cache
+    await this.ensureSchema();
+    const chunkSize = 500;
+    let written = 0;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      await this.sql`
+        INSERT INTO hl_call_records (message_id, user_external_id, contact_external_id, conversation_id, direction, call_status, duration_seconds, date_added, message_type, source, from_number, to_number, raw)
+        SELECT x.message_id, x.user_external_id, x.contact_external_id, x.conversation_id, x.direction, x.call_status, x.duration_seconds, x.date_added::timestamptz, x.message_type, x.source, x.from_number, x.to_number, x.raw
+        -- this.sql.json(chunk) (typed json param, OID 114), NOT a raw
+        -- JSON.stringify string: under postgres.js 3.4.9 a plain-string
+        -- param inside jsonb_to_recordset($1::jsonb) binds through the
+        -- described jsonb type and the server sees a scalar. Same
+        -- convention as app_settings/evidence_messages. Verified 11/2.
+        FROM jsonb_to_recordset(${this.sql.json(pgParam(chunk))}::jsonb) AS x(
+          message_id text, user_external_id text, contact_external_id text, conversation_id text,
+          direction text, call_status text, duration_seconds int, date_added text, message_type text,
+          source text, from_number text, to_number text, raw jsonb)
+        ON CONFLICT (message_id) DO UPDATE SET
+          user_external_id = EXCLUDED.user_external_id,
+          contact_external_id = EXCLUDED.contact_external_id,
+          conversation_id = EXCLUDED.conversation_id,
+          direction = EXCLUDED.direction,
+          call_status = EXCLUDED.call_status,
+          duration_seconds = EXCLUDED.duration_seconds,
+          date_added = EXCLUDED.date_added,
+          message_type = EXCLUDED.message_type,
+          source = EXCLUDED.source,
+          from_number = EXCLUDED.from_number,
+          to_number = EXCLUDED.to_number,
+          raw = EXCLUDED.raw,
+          ingested_at = now()`;
+      written += chunk.length;
+    }
+    return written;
+  }
+  async getHlCallRecordsByMessageIds(messageIds: string[]): Promise<HlCallRecordRow[]> {
+    await this.ensureSchema();
+    if (!messageIds.length) return [];
+    const rows = await this.sql`
+      SELECT message_id, user_external_id, contact_external_id, conversation_id, direction, call_status, duration_seconds, date_added::text AS date_added, message_type, source, from_number, to_number, raw
+      FROM hl_call_records WHERE message_id = ANY(${messageIds})`;
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      message_id: String(r.message_id),
+      user_external_id: (r.user_external_id as string | null) ?? null,
+      contact_external_id: (r.contact_external_id as string | null) ?? null,
+      conversation_id: (r.conversation_id as string | null) ?? null,
+      direction: (r.direction as string | null) ?? null,
+      call_status: (r.call_status as string | null) ?? null,
+      duration_seconds: r.duration_seconds == null ? null : Number(r.duration_seconds),
+      date_added: new Date(r.date_added as string).toISOString(),
+      message_type: String(r.message_type),
+      source: (r.source as string | null) ?? null,
+      from_number: (r.from_number as string | null) ?? null,
+      to_number: (r.to_number as string | null) ?? null,
+      raw: r.raw == null ? null : typeof r.raw === "string" ? (JSON.parse(r.raw) as Record<string, unknown>) : (r.raw as Record<string, unknown>),
+    }));
+  }
+  async countHlCallRecords(): Promise<number> {
+    await this.ensureSchema();
+    const rows = await this.sql`SELECT count(*)::int AS n FROM hl_call_records`;
+    return Number((rows as Record<string, unknown>[])[0]?.n ?? 0);
   }
   async applyCallContactBackfill(rows: CallContactBackfillUpdate[]): Promise<void> {
     this.cache.bump(); // PERF: any write invalidates the short-TTL read cache

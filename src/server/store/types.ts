@@ -42,6 +42,7 @@ export {
   type HarvestConvRow,
   type HarvestCallRow,
   type EvidenceMessageRow,
+  type HlCallRecordRow,
   type CallContactResolutionMethod,
   type CallContactBackfillUpdate,
   type HarvestProgressRow,

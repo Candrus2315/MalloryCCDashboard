@@ -137,6 +137,10 @@ const STORE_METHOD_FLAGS = {
   upsertHarvestCalls: 1,
   upsertEvidenceMessages: 1,
   getEvidenceMessagesSince: 1,
+  // raw call-source records (W1, owner directive 2026-11-04)
+  upsertHlCallRecords: 1,
+  getHlCallRecordsByMessageIds: 1,
+  countHlCallRecords: 1,
   getHarvestCallsByMessageIds: 1,
   getHarvestCallsSince: 1,
   applyCallContactBackfill: 1,

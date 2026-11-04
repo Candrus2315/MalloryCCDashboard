@@ -6,7 +6,7 @@
  * ../../metrics/compute — the single store boundary for both implementations.
  */
 
-import type { AppSettings, AuditCallRow, CallContactBackfillUpdate, ConnectionRow, ContactExternalIdRow, ContactIdentityRow, ContactRow, DailyPrioritiesRow, EvidenceMessageRow, HarvestCallRow, HarvestConvRow, HarvestProgressRow, LeadCountAdjustmentRow, LeadJoinRow, ManualOverrideRow, MonthlyGoalRow, OpportunityRow, RepGoalRowFull, SyncRunRow, TeamGoalRow, UserRow, WeeklyReportNotesRow } from "./rows-core";
+import type { AppSettings, AuditCallRow, CallContactBackfillUpdate, ConnectionRow, ContactExternalIdRow, ContactIdentityRow, ContactRow, DailyPrioritiesRow, EvidenceMessageRow, HarvestCallRow, HarvestConvRow, HarvestProgressRow, HlCallRecordRow, LeadCountAdjustmentRow, LeadJoinRow, ManualOverrideRow, MonthlyGoalRow, OpportunityRow, RepGoalRowFull, SyncRunRow, TeamGoalRow, UserRow, WeeklyReportNotesRow } from "./rows-core";
 import type { AvailabilityCalendarRow, AvailabilityCatalogInput, AvailabilityDatesInput, AvailabilityDatesRow, AvailabilityDiscrepancyInput, AvailabilityDiscrepancyRow, AvailabilitySlotRow, AvailabilitySyncRunRow, AvailabilityTypeRow, ClientMatchLinkInput, ClientMatchLinkRow, CommissionAdjustmentInput, CommissionAdjustmentRow, CommissionAssignment, CommissionCycleRow, CommissionProfileInput, CommissionUpsertResult, CommissionWeeklyRow, DataMatchExceptionInput, DataMatchExceptionRow, InternalClientRow, InternalClientSeedInput, PipCheckinRow, PipCreateInput, PipDraftPatch, PipEventRow, PipEvidenceSnapshotRow, PipRow, PipStatus, PipTemplateCreateInput, PipTemplatePatch, PipTemplateRow, RetentionAttemptRow, RetentionAttemptWrite, RetentionCancellationRow, RetentionCancellationWrite, RetentionNoShowRow, RetentionNoShowWrite, RetentionOutcomeRow, RetentionOutcomeWrite, RetentionOwnerHistoryRow, RetentionScorecardRow, RetentionScorecardWrite, RetentionTransferRow, RetentionTransferWrite } from "./rows-modules";
 import type { AppointmentRow, AttributionRow, AvailabilityRule, BlockedTimeRow, CallRow, LeadRow } from "../../metrics/compute";
 import type { IngestOptions, RunDeadline } from "../ingest-batch";
@@ -387,6 +387,18 @@ finishSyncRun(id: string, status: string, recordsUpserted: number, error: string
   upsertEvidenceMessages(rows: EvidenceMessageRow[]): Promise<number>;
   /** Evidence messages date_added at/after startUtc (s1 SMS-evidence read). */
   getEvidenceMessagesSince(startUtc: string): Promise<EvidenceMessageRow[]>;
+  /**
+   * RAW HighLevel call-record upsert (call-source W1, owner directive
+   * 2026-11-04): one row per /conversations/messages/export record, dedupe by
+   * message_id — re-seeing a record (5-min watermark overlap, re-runs) is
+   * harmless and never duplicates. Writes ONLY hl_call_records; the `calls` /
+   * `harvest_calls` pipelines stay untouched until the W3 KPI switch.
+   */
+  upsertHlCallRecords(rows: HlCallRecordRow[]): Promise<number>;
+  /** Stored raw call records for the given HL message ids (ingest diff + tests). */
+  getHlCallRecordsByMessageIds(messageIds: string[]): Promise<HlCallRecordRow[]>;
+  /** Cheap population count (backfill summary + verification). */
+  countHlCallRecords(): Promise<number>;
   /**
    * Call→contact restoration verdicts, FILL-NULL-ONLY: an existing non-null
    * calls.contact_id is never touched (direct source data always wins); only
