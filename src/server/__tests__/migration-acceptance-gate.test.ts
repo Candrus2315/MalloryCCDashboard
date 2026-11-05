@@ -57,10 +57,23 @@ interface FakeSql {
 function makeFakeSql(opts?: { records?: Array<{ version: number; name: string; checksum: string }> }): FakeSql & { sql: { unsafe: (s: string) => Promise<unknown>; end?: (o?: unknown) => Promise<unknown> } } {
   const executed: string[] = [];
   const isVersionSelect = (q: string) => q.includes("SELECT version, name, checksum");
+  const isMarkerCreate = (q: string) => q.includes("CREATE TABLE IF NOT EXISTS schema_migrations");
+  /* FAST VERSION CHECK fake (portability 2026-11-05): the marker table exists
+     iff records are staged — otherwise the first version read fails 42P01. */
+  let markerTable = opts?.records !== undefined;
+  const undefinedTable = () => {
+    const err = new Error('relation "schema_migrations" does not exist') as Error & { code?: string };
+    err.code = "42P01";
+    return err;
+  };
   const sql = {
     unsafe: (stmt: string, _params?: unknown[]): Promise<unknown> => {
       executed.push(stmt);
-      if (isVersionSelect(stmt)) return Promise.resolve([...(opts?.records ?? [])]);
+      if (isMarkerCreate(stmt)) markerTable = true;
+      if (isVersionSelect(stmt)) {
+        if (!markerTable) return Promise.reject(undefinedTable());
+        return Promise.resolve([...(opts?.records ?? [])]);
+      }
       return Promise.resolve([]);
     },
     end: async () => {},
@@ -71,13 +84,24 @@ function makeFakeSql(opts?: { records?: Array<{ version: number; name: string; c
 const makeIo = (records?: Array<{ version: number; name: string; checksum: string }>): MigrationRunnerIo => {
   const executed: string[] = [];
   const isVersionSelect = (q: string) => q.includes("SELECT version, name, checksum");
+  const isMarkerCreate = (q: string) => q.includes("CREATE TABLE IF NOT EXISTS schema_migrations");
+  /* FAST VERSION CHECK fake (portability 2026-11-05): marker exists iff records staged. */
+  let markerTable = records !== undefined;
   return {
     get executed() {
       return executed;
     },
     exec: async (q: string) => {
       executed.push(q);
-      if (isVersionSelect(q)) return [...(records ?? [])];
+      if (isMarkerCreate(q)) markerTable = true;
+      if (isVersionSelect(q)) {
+        if (!markerTable) {
+          const err = new Error('relation "schema_migrations" does not exist') as Error & { code?: string };
+          err.code = "42P01";
+          throw err;
+        }
+        return [...(records ?? [])];
+      }
       return [];
     },
     begin: async (cb) => {
@@ -107,9 +131,9 @@ describe("migration acceptance — the literal incident pair", () => {
     expect(err).toBeInstanceOf(SchemaMigrationError);
     expect((err as Error).message).toContain(ACCEPTED_OLD_CHECKSUM);
     expect((err as Error).message).toContain(ACCEPTED_NEW_CHECKSUM);
-    // the marker bootstrap + version read ran; NOTHING beyond them
-    expect(io.executed.length).toBe(2);
-    expect(io.executed[0]).toBe(SCHEMA_MIGRATIONS_DDL);
+    // the fast version read ran; NOTHING beyond it (zero DDL on a drifted DB)
+    expect(io.executed.length).toBe(1);
+    expect(io.executed[0]).toContain("SELECT version, name, checksum");
   });
 
   test("the store falls back HONESTLY: probePg logs the refusal naming both checksums", async () => {
@@ -135,7 +159,7 @@ describe("migration acceptance — the literal incident pair", () => {
       expect(line).toContain("checksum mismatch");
       expect(line).toContain(ACCEPTED_OLD_CHECKSUM);
       expect(line).toContain(ACCEPTED_NEW_CHECKSUM);
-      expect(fake.executed.length).toBe(2); // bootstrap + read, nothing else
+      expect(fake.executed.length).toBe(1); // the version read only — zero DDL, nothing else
     } finally {
       console.warn = origWarn;
       if (prev === undefined) delete process.env.DATABASE_URL;
@@ -203,9 +227,9 @@ describe("migration acceptance gate — business database reachable only from ma
       ] });
       const pg = new PgStore(BUSINESS_SIM, { sql: fake.sql as never });
       await pg.ensureSchema(); // must NOT throw
-      expect(fake.executed.length).toBe(2); // marker bootstrap + version read, zero migration statements
+      expect(fake.executed.length).toBe(1); // the fast version read only — zero migration statements, zero DDL
       await pg.ensureSchema(); // memoized
-      expect(fake.executed.length).toBe(2);
+      expect(fake.executed.length).toBe(1);
       await pg.close();
     } finally {
       clearManagedMigrationContextForTests();
@@ -225,8 +249,9 @@ describe("migration acceptance gate — business database reachable only from ma
         migrationCapability: { grantedBy: "explicit local-db grant (gate test)" },
       });
       await pg.ensureSchema();
-      // 2 (bootstrap+read) + 140 baseline + 3 evidence + 4 hl_call_records statements + 3 stamp inserts
-      expect(fake.executed.length).toBe(2 + 140 + 3 + 4 + 3);
+      // 1 (the fast version read; the marker already exists in this fake, so
+      // ZERO DDL) + 140 baseline + 3 evidence + 4 hl_call_records statements + 3 stamp inserts
+      expect(fake.executed.length).toBe(1 + 140 + 3 + 4 + 3);
       await pg.close();
     } finally {
       if (prev === undefined) delete process.env.DATABASE_URL;
@@ -243,7 +268,7 @@ describe("migration acceptance gate — business database reachable only from ma
     ] });
     const pg = new PgStore("postgres://test:test@127.0.0.1:1/any-local-db", { sql: fake.sql as never });
     await pg.ensureSchema();
-    expect(fake.executed.length).toBe(2);
+    expect(fake.executed.length).toBe(1); // the fast version read only — zero DDL (portability)
     await pg.close();
   });
 
@@ -292,7 +317,7 @@ describe("migration acceptance gate — fresh and migrated postures", () => {
       migrationCapability: { grantedBy: "fresh-db posture test" },
     });
     await pg.ensureSchema();
-    const stmts = fake.executed.slice(2).filter((q) => !q.includes("INSERT INTO schema_migrations"));
+    const stmts = fake.executed.slice(3).filter((q) => !q.includes("INSERT INTO schema_migrations")); // select, create, re-read, then statements
     expect(stmts).toEqual([...(baseline.statements ?? []), ...(evidenceMessages.statements ?? []), ...(hlCallRecords.statements ?? [])]);
     expect(fake.executed[fake.executed.length - 1]).toContain("INSERT INTO schema_migrations");
     await pg.close();
@@ -308,7 +333,7 @@ describe("migration acceptance gate — fresh and migrated postures", () => {
       ] });
       const pg = new PgStore("postgres://any:any@127.0.0.1:1/any", { sql: fake.sql as never });
       await pg.ensureSchema();
-      expect(fake.executed).toEqual([SCHEMA_MIGRATIONS_DDL, expect.stringContaining("SELECT version, name, checksum")]);
+      expect(fake.executed).toEqual([expect.stringContaining("SELECT version, name, checksum")]); // ONE read — zero DDL (portability pin)
       await pg.close();
     } finally {
       clearManagedMigrationContextForTests();

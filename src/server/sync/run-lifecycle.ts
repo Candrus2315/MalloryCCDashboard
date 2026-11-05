@@ -203,6 +203,22 @@ export interface ShutdownSyncRunCloserOptions {
   capMs?: number;
   now?: () => number;
   log?: (msg: string) => void;
+  /**
+   * PORTABILITY (2026-11-05): give the single-scheduler lease back before
+   * exit (SIGTERM/SIGINT/beforeExit) so a standby instance picks up the tick
+   * duty within one interval instead of waiting for our session to die.
+   * serve.ts wires `() => schedulerLease()?.release()`. Best-effort: a failure
+   * never blocks shutdown (the session-level advisory lock dies with the
+   * process anyway).
+   */
+  releaseLease?: () => Promise<void>;
+  /**
+   * PORTABILITY (2026-11-05): close DB pools before exit so a graceful
+   * shutdown leaves zero open connections (a SIGKILL/OOM never gets this
+   * far — that is what the boot reap is for). serve.ts wires the
+   * store registry closer. Best-effort, inside the same shutdown cap.
+   */
+  closeStores?: () => Promise<void>;
 }
 
 export interface ShutdownSyncRunCloser {
@@ -213,6 +229,28 @@ export interface ShutdownSyncRunCloser {
 }
 
 const sleepMs = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * PORTABILITY teardown: release the scheduler lease, then close the DB pools —
+ * every step best-effort (a dying DB can never hang shutdown; the hard cap in
+ * handleSignal bounds the whole pass regardless).
+ */
+async function shutdownTeardown(opts: ShutdownSyncRunCloserOptions | undefined, log: (msg: string) => void): Promise<void> {
+  if (opts?.releaseLease) {
+    try {
+      await opts.releaseLease();
+    } catch (e) {
+      log(`[shutdown] lease release skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (opts?.closeStores) {
+    try {
+      await opts.closeStores();
+    } catch (e) {
+      log(`[shutdown] pool close skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+}
 
 /**
  * Install the shutdown run-closer on this process: SIGTERM/SIGINT close this
@@ -252,8 +290,10 @@ export function installShutdownSyncRunCloser(opts?: ShutdownSyncRunCloserOptions
     const deadline = nowFn() + capMs;
     const work = (async (): Promise<number> => {
       const store = await resolveStore();
-      if (!store) return 0; // nothing to close against — exit promptly
-      return await closeOpenSyncRuns(store, { reason: signal, log });
+      let closed = 0;
+      if (store) closed = await closeOpenSyncRuns(store, { reason: signal, log });
+      await shutdownTeardown(opts, log);
+      return closed;
     })();
     // ONE deadline over the whole pass (store resolution + every close): the
     // race resolves with whichever lands first; the work continues detached
@@ -276,8 +316,10 @@ export function installShutdownSyncRunCloser(opts?: ShutdownSyncRunCloserOptions
     closing = true;
     try {
       const store = await resolveStore();
-      if (!store) return 0;
-      return await closeOpenSyncRuns(store, { reason: "beforeExit", log });
+      let closed = 0;
+      if (store) closed = await closeOpenSyncRuns(store, { reason: "beforeExit", log });
+      await shutdownTeardown(opts, log);
+      return closed;
     } catch {
       return 0; // best-effort — the process is exiting either way
     }

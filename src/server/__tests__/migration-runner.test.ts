@@ -56,6 +56,10 @@ interface FakeOpts {
   rejectOn?: (q: string) => boolean;
 }
 function makeIo(opts: FakeOpts = {}) {
+  // FAST VERSION CHECK fake (portability 2026-11-05): the marker table exists
+  // iff the test stages records — a record-less fake is a marker-LESS database,
+  // whose first version read fails with SQLSTATE 42P01 exactly like Postgres.
+  let markerTable = opts.records !== undefined;
   const executed: string[] = [];
   const insertParams: unknown[][] = [];
   const txExecuted: string[] = [];
@@ -82,7 +86,15 @@ function makeIo(opts: FakeOpts = {}) {
       executed.push(q);
       if (opts.rejectOn?.(q)) throw new Error(`simulated migration failure: ${q.slice(0, 60)}`);
       if (isMarkerInsert(q)) insertParams.push([...(params ?? [])]);
-      if (isVersionSelect(q)) return [...(opts.records ?? [])];
+      if (isMarkerCreate(q)) markerTable = true;
+      if (isVersionSelect(q)) {
+        if (!markerTable) {
+          const err = new Error('relation "schema_migrations" does not exist') as Error & { code?: string };
+          err.code = "42P01";
+          throw err;
+        }
+        return [...(opts.records ?? [])];
+      }
       return [];
     },
     begin: async (cb) => {
@@ -209,8 +221,9 @@ describe("migration runner — fresh-empty DB: full apply in order, stamped", ()
     const result = await runMigrations(io, MIGRATIONS, CAP);
     expect(result.applied).toEqual([1, 2, 3]);
     expect(result.appliedMax).toBe(3);
-    expect(io.executed[0]).toBe(SCHEMA_MIGRATIONS_DDL);
-    expect(isVersionSelect(io.executed[1])).toBe(true);
+    expect(isVersionSelect(io.executed[0])).toBe(true); // fast version check FIRST (fails 42P01 on the marker-less fake)
+    expect(io.executed[1]).toBe(SCHEMA_MIGRATIONS_DDL);
+    expect(isVersionSelect(io.executed[2])).toBe(true);
     expect(migrationStatementsOf(io)).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS, ...HL_CALL_STMTS]);
     // the stamps are the LAST writes and carry version + name + checksum
     expect(io.insertParams.length).toBe(3);
@@ -231,7 +244,8 @@ describe("migration runner — already-migrated DB: ZERO DDL work (the whole poi
     const result = await runMigrations(io, MIGRATIONS, CAP);
     expect(result.applied).toEqual([]);
     expect(result.appliedMax).toBe(3);
-    expect(io.executed.length).toBe(2); // create-if-not-exists + select
+    expect(io.executed.length).toBe(1); // the version read ONLY — ZERO DDL on a current schema (portability pin)
+    expect(io.executed.find(isMarkerCreate)).toBeUndefined(); // the DDL path is never entered
     for (const stmt of BASELINE_STMTS) expect(io.executed).not.toContain(stmt);
     expect(io.insertParams.length).toBe(0);
     expect(io.beginCalls).toBe(0);
@@ -263,7 +277,7 @@ describe("migration runner — drift refuses to boot with a named error", () => 
     expect((err as Error).message).toContain("checksum mismatch");
     expect((err as Error).message).toContain("1 (baseline)");
     // nothing beyond the read ran — no DDL executed against a drifted DB
-    expect(io.executed.length).toBe(2);
+    expect(io.executed.length).toBe(1);
   });
   test("recorded version the registry does not contain (DB ahead of code / lost file)", async () => {
     // rows beyond the registry's top version: position 4 has no registry migration
@@ -276,7 +290,7 @@ describe("migration runner — drift refuses to boot with a named error", () => 
       ],
     });
     await expect(runMigrations(io, MIGRATIONS, CAP)).rejects.toThrow(/does not contain/);
-    expect(io.executed.length).toBe(2);
+    expect(io.executed.length).toBe(1);
   });
   test("gap in recorded versions", async () => {
     const two: Migration[] = [baseline, { version: 2, name: "next", statements: ["SELECT 1"] }];
@@ -344,12 +358,23 @@ describe("migration runner — dispatch + failure atomicity (synthetic migration
 function makePgSql(opts: FakeOpts = {}) {
   const executed: string[] = [];
   let healthy = true;
+  // FAST VERSION CHECK fake (portability 2026-11-05): the marker table exists
+  // iff the test stages records — otherwise the version read fails 42P01.
+  let markerTable = opts.records !== undefined;
   const sql = {
     unsafe: (q: string, _params?: unknown[]): Promise<unknown> => {
       executed.push(q);
       if (!healthy) return new Promise<never>(() => {}); // the wedge posture
       if (opts.rejectOn?.(q)) return Promise.reject(new Error("simulated DDL failure"));
-      if (isVersionSelect(q)) return Promise.resolve([...(opts.records ?? [])]);
+      if (isMarkerCreate(q)) markerTable = true;
+      if (isVersionSelect(q)) {
+        if (!markerTable) {
+          const err = new Error('relation "schema_migrations" does not exist') as Error & { code?: string };
+          err.code = "42P01";
+          return Promise.reject(err);
+        }
+        return Promise.resolve([...(opts.records ?? [])]);
+      }
       return Promise.resolve([]);
     },
     end: async () => {},
@@ -371,24 +396,27 @@ describe("PgStore wiring — ensureSchema is now 'ensure migrations applied'", (
     ] });
     const pg = makePg(sql);
     await pg.ensureSchema();
-    expect(executed.length).toBe(2); // marker bootstrap + version read
+    expect(executed.length).toBe(1); // fast version check ONLY — ZERO DDL on a current schema (portability pin)
+    expect(executed[0].startsWith("SELECT version, name, checksum")).toBe(true);
+    expect(executed.find((q) => isMarkerCreate(q))).toBeUndefined(); // the DDL path is never entered
     for (const stmt of BASELINE_STMTS) expect(executed).not.toContain(stmt);
     // memoized: a second call re-runs NOTHING
     await pg.ensureSchema();
-    expect(executed.length).toBe(2);
+    expect(executed.length).toBe(1);
     await pg.close();
   });
   test("fresh DB: the full registry (baseline 140 + evidence_messages 3 + hl_call_records 4) applies in order through the capped executor, then memoize", async () => {
     const { sql, executed } = makePgSql();
     const pg = makePg(sql);
     await pg.ensureSchema();
-    expect(executed[0]).toBe(SCHEMA_MIGRATIONS_DDL);
-    expect(executed[1].startsWith("SELECT version, name, checksum")).toBe(true);
-    const migrationStmts = executed.slice(2).filter((q) => !isMarkerInsert(q));
+    expect(executed[0].startsWith("SELECT version, name, checksum")).toBe(true); // fast version check FIRST (fails 42P01 on the marker-less fake)
+    expect(executed[1]).toBe(SCHEMA_MIGRATIONS_DDL);
+    expect(executed[2].startsWith("SELECT version, name, checksum")).toBe(true);
+    const migrationStmts = executed.slice(3).filter((q) => !isMarkerInsert(q));
     expect(migrationStmts).toEqual([...BASELINE_STMTS, ...EVIDENCE_STMTS, ...HL_CALL_STMTS]);
     expect(executed[executed.length - 1]).toContain("INSERT INTO schema_migrations");
     await pg.ensureSchema();
-    expect(executed.length).toBe(2 + 140 + 3 + 4 + 3); // unchanged by the memoized second call
+    expect(executed.length).toBe(3 + 140 + 3 + 4 + 3); // unchanged by the memoized second call
     await pg.close();
   });
 });
@@ -428,7 +456,7 @@ describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh a
       const result = await runMigrations(io, MIGRATIONS, CAP);
       expect(result.applied).toEqual([1, 2, 3]);
       expect(result.appliedMax).toBe(3);
-      expect(count).toBe(152); // create + select + 140 baseline + 3 evidence + 4 hl_call_records + 3 stamps
+      expect(count).toBe(153); // select (fails 42P01, marker-less) + create + select + 140 baseline + 3 evidence + 4 hl_call_records + 3 stamps
       // 1b. STAMPED HISTORY: one row per registry migration, in version order,
       //     each carrying the checksum this build's registry computes.
       const rows = (await sql`SELECT version, name, checksum FROM schema_migrations ORDER BY version`) as MigrationRecord[];
@@ -467,12 +495,13 @@ describe.skipIf(!TEST_DATABASE_URL)("migration runner — real Postgres (fresh a
       expect(pk.map((r) => r.attname)).toEqual(["message_id"]);
       const idx = (await sql`SELECT indexname FROM pg_indexes WHERE tablename = 'hl_call_records' AND indexname LIKE 'idx_hlcall_%' ORDER BY indexname`) as Array<{ indexname: string }>;
       expect(idx.map((r) => r.indexname)).toEqual(["idx_hlcall_contact_date", "idx_hlcall_date", "idx_hlcall_user_date"]);
-      // 2. ALREADY-MIGRATED PATH: zero migration statements.
+      // 2. ALREADY-MIGRATED PATH: ZERO DDL — one read round trip (portability:
+      // the fast version check short-circuits before the marker bootstrap).
       count = 0;
       const result2 = await runMigrations(io, MIGRATIONS, CAP);
       expect(result2.applied).toEqual([]);
       expect(result2.appliedMax).toBe(3);
-      expect(count).toBe(2);
+      expect(count).toBe(1);
       // 3. GUARDED SEEDS: still guarded — the baseline's one-time seed UPDATEs
       //    carry an IS NULL guard, so a re-apply on ANY real database (fresh or
       //    live) can never overwrite or duplicate: the seed target ends with at

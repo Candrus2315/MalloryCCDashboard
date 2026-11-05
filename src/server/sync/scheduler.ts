@@ -22,6 +22,7 @@
  *      successful timestamp) and keep retrying on the next tick.
  */
 import { getStore, type Store } from "../store";
+import { defaultSchedulerLease, type SchedulerLease } from "./scheduler-lease";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
 import { parseSyncStartedMs, staleRunReapMinutesFor, STALE_RUN_REAP_MINUTES, TICK_WATCHDOG_CAP_MS, type AppSettings } from "../store/types";
 import { isRosterUser } from "../roster";
@@ -1031,11 +1032,21 @@ export function tickInFlight(): boolean {
 export function startScheduler(options?: {
   tick?: typeof schedulerTick;
   liveAdapters?: { sheets?: LiveSheetsAdapter | null; highlevel?: LiveHighLevelAdapter | null };
+  /**
+   * SINGLE-SCHEDULER LEASE injection (tests). Default: the Postgres
+   * session-level advisory-lock lease (scheduler-lease.ts) when a database is
+   * configured — N app instances pointed at ONE database then elect ONE
+   * ticker — or the always-yes lease in demo/no-database mode (single process,
+   * nothing to arbitrate, behavior byte-identical).
+   */
+  lease?: SchedulerLease;
 }): void {
   if (started) return;
   started = true;
   const tick = options?.tick ?? schedulerTick;
   const liveAdapters = options?.liveAdapters;
+  const lease = options?.lease ?? defaultSchedulerLease();
+  activeLease = lease;
   // Independent reaper: stale rows get closed even while a tick is wedged
   // (the in-tick reap pass only runs when ticks complete — 2026-10-17).
   // Phase 2a: the SAME loop also runs the provider freshness watchdog
@@ -1044,52 +1055,132 @@ export function startScheduler(options?: {
   // recovery syncs exactly as the tick gets them; absent, recovery resolves
   // fresh per attempt like every other consumer.
   void runStaleRunReaperLoop(liveAdapters ? { freshness: { liveAdapters } } : { freshness: {} });
-  void (async () => {
-    for (;;) {
-      let intervalSeconds = 90;
+  void runSchedulerLoop({ tick, liveAdapters, lease });
+}
+
+/**
+ * The lease the running scheduler holds (null before startScheduler). The
+ * shutdown run-closer reads this at SIGNAL time to release the lease on
+ * SIGTERM/SIGINT — lazy resolution on purpose, so it always sees the lease
+ * of the process that actually started the scheduler.
+ */
+export function schedulerLease(): SchedulerLease | null {
+  return activeLease;
+}
+let activeLease: SchedulerLease | null = null;
+
+/**
+ * SCHEDULER LEASE semantics (portability 2026-11-05, scheduler-lease.ts):
+ * before EVERY round the loop calls lease.acquire() —
+ *   - true  → this process is the ONE worker: tick as today;
+ *   - false → another instance holds the lease: log ONCE and do NOT tick, but
+ *             keep retrying on the normal interval so a freed lease is picked
+ *             up within one round;
+ *   - the per-round acquire is also the liveness check: if the lease
+ *     connection dies or the lock is lost, acquire stops returning true and
+ *     ticking stops until re-acquired (exactly the contract).
+ * acquire() throwing (unreachable lease) is treated as not-held: never a tick
+ * failure, never a loop crash — the next round retries.
+ */
+export async function runSchedulerLoop(opts: {
+  tick: typeof schedulerTick;
+  liveAdapters?: { sheets?: LiveSheetsAdapter | null; highlevel?: LiveHighLevelAdapter | null };
+  lease: SchedulerLease;
+  /** Test hook — default real timers. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Test hook — bounded rounds instead of forever. */
+  rounds?: number;
+  /** Test hook — fixed interval instead of the per-round settings read. */
+  intervalSeconds?: number;
+  /** Test hook — store for the settings read (default getStore()). */
+  store?: Store;
+  /** Test hook — log sink. */
+  log?: (msg: string) => void;
+}): Promise<void> {
+  const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const rounds = opts.rounds ?? Number.POSITIVE_INFINITY;
+  const log = opts.log ?? ((msg: string) => console.log(msg));
+  const liveAdapters = opts.liveAdapters;
+  let holding = false;
+  let standbyLogged = false;
+  for (let round = 0; round < rounds; round++) {
+    let intervalSeconds = 90;
+    if (opts.intervalSeconds !== undefined) {
+      intervalSeconds = opts.intervalSeconds;
+    } else {
       try {
-        const store = await getStore();
+        const store = opts.store ?? (await getStore());
         intervalSeconds = readSchedulerIntervalSeconds((await store.getSettings()).highlevel_sync_interval_seconds);
       } catch {
         // store not ready yet — pace with the default and retry next round
       }
-      await new Promise((r) => setTimeout(r, intervalSeconds * 1000));
-      if (inflight !== null) continue; // SCHEDULER_MAX_CONCURRENT_TICKS = 1: skip while a tick runs
-      const token: object = {};
-      let runPromise: Promise<void> | null = null;
-      runPromise = (async () => {
-        const t0 = Date.now();
-        try {
-          const res = await tick(liveAdapters ? { liveAdapters } : undefined);
-          console.log(`[scheduler] tick ${res.outcome}${res.mode ? ` (${res.mode})` : ""}${res.reason ? ` — ${res.reason}` : ""}${typeof res.calls === "number" ? ` +${res.calls} calls` : ""}${typeof res.attributions === "number" ? `, ${res.attributions} attributions` : ""}${res.sheets ? `, sheets ${res.sheets.outcome}${typeof res.sheets.leads === "number" ? ` +${res.sheets.leads} leads` : ""}${res.sheets.reason ? ` (${res.sheets.reason})` : ""}` : ""}${typeof res.reaped === "number" && res.reaped > 0 ? `, reaped ${res.reaped} stale runs` : ""}${res.error ? ` ERROR: ${res.error}` : ""} [${Math.round((Date.now() - t0) / 1000)}s]`);
-        } catch (e) {
-          console.log(`[scheduler] tick crashed: ${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-          // IDENTITY GUARD (2026-10-17): release the slot only if THIS run still
-          // holds it — the watchdog may have already released the loop and a
-          // newer tick may own it; a late-settling zombie must not clobber
-          // the newer run's lock.
-          if (inflightToken === token) {
-            inflightToken = null;
-            inflight = null;
-          }
-        }
-      })();
-      inflight = runPromise as Promise<SchedulerTickResult>;
-      inflightToken = token;
-      // TICK WATCHDOG (2026-10-17): never let one parked tick own the loop
-      // forever (measured wedged ticks: 66.2h / 19.2h / 5.2h). If the cap
-      // fires while this run is STILL the holder, release the loop — the
-      // zombie keeps running detached and the independent reaper closes its
-      // stale rows; the next round starts a fresh tick.
-      const watched = runPromise as Promise<unknown>;
-      void raceTickWatchdog(watched, TICK_WATCHDOG_CAP_MS, (ms) => new Promise((r) => setTimeout(r, ms))).then((winner) => {
-        if (winner === "watchdog" && inflightToken === token) {
+    }
+    await sleep(intervalSeconds * 1000);
+    if (inflight !== null) continue; // SCHEDULER_MAX_CONCURRENT_TICKS = 1: skip while a tick runs
+    // SINGLE-SCHEDULER LEASE — see the doc above.
+    let haveLease = false;
+    try {
+      haveLease = await opts.lease.acquire();
+    } catch {
+      haveLease = false;
+    }
+    if (!haveLease) {
+      if (holding) {
+        holding = false;
+        log(`[scheduler] lease LOST (${opts.lease.name}) — ticking stopped; retrying acquisition every round`);
+      } else if (!standbyLogged) {
+        standbyLogged = true;
+        log(`[scheduler] another instance holds the scheduler lease (${opts.lease.name}) — standing by (no ticks; acquiring is retried every round)`);
+      }
+      continue;
+    }
+    if (!holding) {
+      holding = true;
+      standbyLogged = false;
+      log(`[scheduler] lease ACQUIRED (${opts.lease.name}) — this process is the sync worker`);
+    }
+    const token: object = {};
+    let runPromise: Promise<void> | null = null;
+    runPromise = (async () => {
+      const t0 = Date.now();
+      try {
+        const res = await opts.tick(liveAdapters ? { liveAdapters } : undefined);
+        log(`[scheduler] tick ${res.outcome}${res.mode ? ` (${res.mode})` : ""}${res.reason ? ` — ${res.reason}` : ""}${typeof res.calls === "number" ? ` +${res.calls} calls` : ""}${typeof res.attributions === "number" ? `, ${res.attributions} attributions` : ""}${res.sheets ? `, sheets ${res.sheets.outcome}${typeof res.sheets.leads === "number" ? ` +${res.sheets.leads} leads` : ""}${res.sheets.reason ? ` (${res.sheets.reason})` : ""}` : ""}${typeof res.reaped === "number" && res.reaped > 0 ? `, reaped ${res.reaped} stale runs` : ""}${res.error ? ` ERROR: ${res.error}` : ""} [${Math.round((Date.now() - t0) / 1000)}s]`);
+      } catch (e) {
+        log(`[scheduler] tick crashed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        // IDENTITY GUARD (2026-10-17): release the slot only if THIS run still
+        // holds it — the watchdog may have already released the loop and a
+        // newer tick may own it; a late-settling zombie must not clobber
+        // the newer run's lock.
+        if (inflightToken === token) {
           inflightToken = null;
           inflight = null;
-          console.log(`[scheduler] tick watchdog: a tick exceeded ${Math.round(TICK_WATCHDOG_CAP_MS / 60_000)} min without finishing — loop released (the parked tick stays detached; its stale rows are reaped by the stale-run reaper)`);
         }
-      });
+      }
+    })();
+    inflight = runPromise as Promise<SchedulerTickResult>;
+    inflightToken = token;
+    // TICK WATCHDOG (2026-10-17): never let one parked tick own the loop
+    // forever (measured wedged ticks: 66.2h / 19.2h / 5.2h). If the cap
+    // fires while this run is STILL the holder, release the loop — the
+    // zombie keeps running detached and the independent reaper closes its
+    // stale rows; the next round starts a fresh tick.
+    const watched = runPromise as Promise<unknown>;
+    void raceTickWatchdog(watched, TICK_WATCHDOG_CAP_MS, (ms) => new Promise((r) => setTimeout(r, ms))).then((winner) => {
+      if (winner === "watchdog" && inflightToken === token) {
+        inflightToken = null;
+        inflight = null;
+        log(`[scheduler] tick watchdog: a tick exceeded ${Math.round(TICK_WATCHDOG_CAP_MS / 60_000)} min without finishing — loop released (the parked tick stays detached; its stale rows are reaped by the stale-run reaper)`);
+      }
+    });
+  }
+  // Loop exit (tests / shutdown seam): give the lease back if we still hold it.
+  if (holding) {
+    try {
+      await opts.lease.release();
+    } catch {
+      // best-effort — the session-level lock dies with the process anyway
     }
-  })();
+  }
 }

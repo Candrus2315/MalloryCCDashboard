@@ -1,38 +1,58 @@
 // Production server for the built site. The TanStack Start build emits a portable
 // fetch handler (dist/server/server.js) plus static client assets (dist/client);
-// this wraps them in a Bun server on port 3000 — static files first, SSR for the
-// rest. Run `bun run build` before starting. Restart it with `bun run publish`.
+// this wraps them in a Bun server — static files first, SSR for the rest.
+// Run `bun run build` before starting. Restart it with `bun run publish`.
 //
-// SECOND-INSTANCE GUARD (2026-10-09 outage hardening): before binding, a port
-// pre-check classifies whoever already listens on :3000 (src/server/boot-guard).
-// A plain `bun run start` while a healthy server (or a boot still inside its
-// grace window) owns the port now EXITS CLEANLY — it never opens a DB pool and
-// never starts the sync scheduler, so stray restarts can no longer stack pools
-// and saturate the managed Postgres connection ceiling (the Oct-8 outage chain:
-// ~37 warm connections ≈ 2.5 stacked processes × max 12 → ensureSchema boots
-// hung for minutes → publish.sh's old 10s health window expired → the wedged
-// old runtime stayed live serving 500s). publish.sh sets SERVE_SUPERSEDE=1 so
-// a DEPLOY still takes the port over from the previous build; a long-wedged
+// LISTEN ADDRESS (portability 2026-11-05): PORT/HOST now come from the
+// environment through src/server/serve-config (resolveServeAddress) with
+// defaults 3000 / 0.0.0.0. Managed hosts provide PORT; the CTO sandbox sets
+// neither variable, so its resolved address is unchanged. The old hard-pin
+// rationale ("a stray env var or .env could move the site off :3000 behind
+// the sandbox proxy") was CTO-sandbox-specific: it is retired, not silently
+// deleted — the identical defaults remain, plus named validation
+// (ServeConfigError) so a misconfigured host fails loudly at boot.
+//
+// SECOND-INSTANCE GUARD (2026-10-09 outage hardening; CTO-sandbox process
+// management): before binding, a port pre-check classifies whoever already
+// listens on :3000 (src/server/boot-guard). A plain `bun run start` while a
+// healthy server (or a boot still inside its grace window) owns the port now
+// EXITS CLEANLY — it never opens a DB pool and never starts the sync
+// scheduler, so stray restarts can no longer stack pools and saturate the
+// managed Postgres connection ceiling (the Oct-8 outage chain: ~37 warm
+// connections ≈ 2.5 stacked processes × max 12 → ensureSchema boots hung for
+// minutes → publish.sh's old 10s health window expired → the wedged old
+// runtime stayed live serving 500s). publish.sh sets SERVE_SUPERSEDE=1 so a
+// DEPLOY still takes the port over from the previous build; a long-wedged
 // listener (unhealthy beyond the boot-grace window) is also replaced by a
 // manual restart, same as before.
+//
+// MANAGED MODE (SERVE_MANAGED=1; portability 2026-11-05): on an independent
+// host the platform supervisor owns the process lifecycle — this process
+// never probes or kills other processes. The guard pre-check and the sudo
+// lsof port-eviction loop are SKIPPED entirely; the boot simply attempts
+// Bun.serve and, if the port is taken, logs one line (the lockfile holder
+// when readable) and exits 1 for the supervisor to resolve. Unset keeps the
+// full sandbox behavior byte-identical (boot-guard planServeBoot is the
+// single decision point, unit-pinned).
 import handler from "./dist/server/server.js";
 import { getStore } from "./src/server/store";
 import {
   classifyExistingListener,
   listenerAgeSeconds,
   listenerPidsOnPort,
+  managedEaddrinuseLogLine,
+  planServeBoot,
+  portEvictionCommand,
   probeHttp,
   readServerLockfile,
   writeServerLockfile,
 } from "./src/server/boot-guard";
+import { isAddressInUseError, isManagedServe, resolveServeAddress } from "./src/server/serve-config";
 
-// Pinned, NOT read from the environment. The published preview URL
-// (<label>.<PUBLIC_SITE_DOMAIN>) is reverse-proxied to 0.0.0.0:3000 inside the
-// sandbox, so the default site MUST bind there. Bun auto-loads .env files, so
-// honouring process.env.PORT/HOST would let a stray env var or a .env in the site
-// dir silently move the site off :3000 (or onto loopback) and break the public URL.
-const PORT = 3000;
-const HOST = "0.0.0.0";
+// Env-driven listen address with named validation (see header). On the CTO
+// sandbox neither PORT nor HOST is set → exactly the historical 3000/0.0.0.0.
+const { port: PORT, host: HOST } = resolveServeAddress(process.env);
+const bootPlan = planServeBoot({ managed: isManagedServe(process.env) });
 /**
  * Seconds a connection may go without bytes in either direction before Bun closes
  * it. Bun's default is 10, and it counts a request whose handler is still running
@@ -76,7 +96,9 @@ const CLIENT_DIR = `${import.meta.dir}/dist/client`;
 // ---------------------------------------------------------------------------
 const LOCK_PATH = `${import.meta.dir}/.run/server.lock`;
 const SUPERSEDE = process.env.SERVE_SUPERSEDE === "1";
-const existingPids = await listenerPidsOnPort(PORT);
+// MANAGED MODE early-out: a managed plan skips the lsof pre-check entirely —
+// no probe, no sudo, no Bun.$ — and falls straight through to the bind attempt.
+const existingPids = bootPlan.runSecondInstanceGuard ? await listenerPidsOnPort(PORT) : [];
 if (existingPids.length > 0) {
   const probeStatus = await probeHttp(`http://127.0.0.1:${String(PORT)}/`, 3000);
   const age = await listenerAgeSeconds(existingPids[0]);
@@ -101,20 +123,19 @@ if (existingPids.length > 0) {
 // sudo so it can see (and the kill can signal) a process owned by another user;
 // the loop waits for the socket to actually release before we bind. Reached
 // only when the guard above classified the boot as a takeover (or the port
-// was already free — where the kill loop is a no-op).
-const freePort =
-  `for _ in $(seq 1 25); do ` +
-  `pids=$(lsof -t -iTCP:${String(PORT)} -sTCP:LISTEN 2>/dev/null || true); ` +
-  `if [ -z "$pids" ]; then exit 0; fi; ` +
-  `kill $pids 2>/dev/null || true; sleep 0.2; ` +
-  `done`;
+// was already free — where the kill loop is a no-op). MANAGED MODE: never
+// constructed — the command is built ONLY on the unmanaged plan (portability:
+// an independent host's supervisor owns process lifecycle, never this app).
+const freePort = bootPlan.runPortEviction ? portEvictionCommand(PORT) : null;
 
 // Take over the port, re-freeing and retrying if another publish grabbed it in the
 // gap between freeing and binding (last publish wins). Bun.serve throws EADDRINUSE
 // synchronously, so without this a raced publish would die while the shell already
-// reported success.
+// reported success. MANAGED MODE: no eviction, ONE bind attempt — a taken port
+// is one clear log line (lockfile holder when readable) + exit 1 for the host
+// supervisor; any other bind failure is rethrown for the supervisor to report.
 for (let attempt = 1; ; attempt++) {
-  await Bun.$`sudo sh -c ${freePort}`.quiet().nothrow();
+  if (freePort !== null) await Bun.$`sudo sh -c ${freePort}`.quiet().nothrow();
   try {
     Bun.serve({
       port: PORT,
@@ -199,6 +220,14 @@ for (let attempt = 1; ; attempt++) {
     });
     break;
   } catch (err) {
+    if (bootPlan.managed) {
+      // Supervisor owns lifecycle: a taken port is a clean named exit, never a kill.
+      if (isAddressInUseError(err)) {
+        console.log(managedEaddrinuseLogLine(readServerLockfile(LOCK_PATH)));
+        process.exit(1);
+      }
+      throw err;
+    }
     if (attempt >= 10) throw err;
     await Bun.sleep(200);
   }
@@ -218,8 +247,9 @@ await writeServerLockfile(LOCK_PATH, {
 // highlevel_sync_interval_seconds (settings, default 90s). Skips while another
 // sync run is in progress; records failures on the connection row and retries
 // next tick; recomputes attributions after each successful HighLevel sync.
-import { startScheduler, bootReapStaleSyncRuns } from "./src/server/sync/scheduler";
+import { startScheduler, bootReapStaleSyncRuns, schedulerLease } from "./src/server/sync/scheduler";
 import { installShutdownSyncRunCloser } from "./src/server/sync/run-lifecycle";
+import { closeAllPools } from "./src/server/store";
 
 // RESTART GAP CLOSER (2026-11-04 incident): a serve restart used to kill the
 // process mid-HighLevel-pass and leave its sync_runs row 'running' with no
@@ -240,7 +270,19 @@ import { installShutdownSyncRunCloser } from "./src/server/sync/run-lifecycle";
 //      a failure never blocks boot (the first tick reaps with the same
 //      criteria anyway). The freshness watchdog's recovery path is untouched.
 void bootReapStaleSyncRuns();
-installShutdownSyncRunCloser({ getStoreImpl: () => getStore() });
+// PORTABILITY (2026-11-05): the closer also RELEASES THE SCHEDULER LEASE
+// (scheduler-lease.ts — a standby instance picks up tick duty within one
+// interval instead of waiting for our advisory-lock session to die) and
+// CLOSES THE DB POOLS (a graceful restart leaves zero open connections).
+// Both are resolved lazily at signal time and best-effort inside the
+// existing 3s shutdown cap — never a new way to hang a dying process.
+installShutdownSyncRunCloser({
+  getStoreImpl: () => getStore(),
+  releaseLease: async () => {
+    await schedulerLease()?.release();
+  },
+  closeStores: () => closeAllPools(),
+});
 
 // Background Google Sheets lead sync (owner directive 2026-09-28): the
 // scheduler is started with NO pre-built adapters — every consumer resolves
