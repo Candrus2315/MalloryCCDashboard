@@ -399,9 +399,20 @@ describe("pure helpers", () => {
 // ---------------------------------------------------------------------------
 
 describe("statusHealthPageData — payload-shape guard", () => {
-  test("health object carries the exact /health fields (version, commit, now, providers, heartbeat)", async () => {
+  test("health object carries the exact /health fields (version, commit, now, providers, heartbeat + the PART 2 identity/database/scheduler fields)", async () => {
     const data = await statusHealthPageData({ store: makeStore(), now: () => new Date(T0), ...NO_FILES });
     const h: HealthPayload = data.health;
-    expect(Object.keys(h).sort()).toEqual(["commit", "heartbeat", "now", "providers", "status", "version"]);
+    expect(Object.keys(h).sort()).toEqual([
+      "bootedAt",
+      "commit",
+      "database",
+      "heartbeat",
+      "now",
+      "providers",
+      "scheduler",
+      "status",
+      "uptimeSeconds",
+      "version",
+    ]);
   });
 });

@@ -9,7 +9,7 @@
  * plausible ok). Freshness math is the same pure function the watchdog uses.
  */
 import { describe, expect, test } from "bun:test";
-import { buildHealthPayload, healthHttpStatus, resolveGitCommit } from "../health";
+import { buildHealthPayload, HealthDeadlineError, healthHttpStatus, resolveGitCommit, withHealthDeadline } from "../health";
 import { defaultSettings, type Store } from "../store/types";
 
 const T0 = Date.parse("2026-10-20T12:00:00Z");
@@ -96,5 +96,150 @@ describe("/health — payload shape", () => {
     expect(typeof c).toBe("string");
     expect(c.length).toBeGreaterThan(0);
     expect(c === "unknown" || /^[0-9a-f]+$/.test(c)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PART 2 (2026-11-05) — /health as the AUTHORITATIVE production check:
+// identity (boot age), the one-fast-probe database report, the scheduler
+// lease state, and deadline behavior on a slow store.
+// ---------------------------------------------------------------------------
+
+describe("/health — PART 2 authoritative fields", () => {
+  const T2 = Date.parse("2026-11-05T12:00:00Z");
+  const BOOT = new Date(T2 - 90_000);
+  const iso2 = (msAgo: number) => new Date(T2 - msAgo).toISOString();
+  const okStore = () =>
+    makeStore({
+      highlevel: iso2(MIN),
+      acuity: iso2(MIN),
+      google_sheets: iso2(MIN),
+      acuity_availability: iso2(MIN),
+      attribution: iso2(MIN),
+    });
+  const LEASE_NAME = 'postgres-advisory:1296911676 (0x4D414C4C "MALL")';
+
+  test("identity fields: bootedAt + uptimeSeconds next to version/commit", async () => {
+    const payload = await buildHealthPayload({
+      store: okStore(),
+      now: () => new Date(T2),
+      bootedAt: BOOT,
+      scheduler: { role: "holder", tickInFlight: false, leaseName: LEASE_NAME },
+    });
+    expect(payload.bootedAt).toBe(BOOT.toISOString());
+    expect(payload.uptimeSeconds).toBe(90);
+    expect(typeof payload.version).toBe("string");
+    expect(typeof payload.commit).toBe("string");
+    // still no business data anywhere in the JSON
+    expect(JSON.stringify(payload)).not.toMatch(/calls|contacts|leads|reps/i);
+  });
+
+  test("database report: reachable with latency when the store answers", async () => {
+    let pinged = 0;
+    const store = {
+      ...okStore(),
+      async ping() {
+        pinged++;
+        return true;
+      },
+    } as unknown as Store;
+    const payload = await buildHealthPayload({ store, now: () => new Date(T2), bootedAt: BOOT });
+    expect(payload.status).toBe("ok");
+    expect(payload.database.reachable).toBe(true);
+    expect(payload.database.error).toBeUndefined();
+    expect(typeof payload.database.latencyMs).toBe("number");
+    expect((payload.database.latencyMs as number) >= 0).toBe(true);
+    expect(pinged).toBe(1); // ONE fast probe query — never more
+  });
+
+  test("database report: stores without a ping surface (test fakes) stay reachable, latency null", async () => {
+    const payload = await buildHealthPayload({ store: okStore(), now: () => new Date(T2), bootedAt: BOOT });
+    expect(payload.database).toEqual({ reachable: true, latencyMs: null });
+    expect(payload.status).toBe("ok");
+  });
+
+  test("an unreachable database degrades the check even when the reads squeak by", async () => {
+    const store = {
+      ...okStore(),
+      ping: () => Promise.reject(new Error("db connection refused")),
+    } as unknown as Store;
+    const payload = await buildHealthPayload({ store, now: () => new Date(T2), bootedAt: BOOT });
+    expect(payload.database.reachable).toBe(false);
+    expect(payload.database.error).toContain("db connection refused");
+    expect(payload.status).toBe("degraded");
+    expect(healthHttpStatus(payload)).toBe(503);
+  });
+
+  test("scheduler lease-state field: holder/standby/stopped, query-free", async () => {
+    const holder = await buildHealthPayload({
+      store: okStore(),
+      now: () => new Date(T2),
+      bootedAt: BOOT,
+      scheduler: { role: "holder", tickInFlight: true, leaseName: LEASE_NAME },
+    });
+    expect(holder.scheduler.role).toBe("holder");
+    expect(holder.scheduler.tickInFlight).toBe(true);
+    expect(holder.scheduler.leaseName).toBe(LEASE_NAME);
+    const standby = await buildHealthPayload({
+      store: okStore(),
+      now: () => new Date(T2),
+      bootedAt: BOOT,
+      scheduler: { role: "standby", tickInFlight: false, leaseName: LEASE_NAME },
+    });
+    expect(standby.scheduler.role).toBe("standby");
+    // default: the live module mirror — no scheduler started in this test
+    // process, so the role is one of the three and the shape is honest.
+    const live = await buildHealthPayload({ store: okStore(), now: () => new Date(T2), bootedAt: BOOT });
+    expect(["holder", "standby", "stopped"]).toContain(live.scheduler.role);
+    expect(live.scheduler.leaseName === null || typeof live.scheduler.leaseName === "string").toBe(true);
+    expect(typeof live.scheduler.tickInFlight).toBe("boolean");
+  });
+
+  test("DEADLINE: a store read that never settles cannot hang /health — honest degraded within the deadline", async () => {
+    const t0 = Date.now();
+    const store = {
+      async ping() {
+        return true;
+      },
+      async getSettings() {
+        return new Promise(() => {}); // never settles — the wedge shape
+      },
+      async getLatestSuccessfulSyncRunByProvider() {
+        return {};
+      },
+    } as unknown as Store;
+    const payload = await buildHealthPayload({ store, now: () => new Date(T2), bootedAt: BOOT, deadlineMs: 60 });
+    expect(payload.status).toBe("degraded");
+    expect(healthHttpStatus(payload)).toBe(503);
+    expect(payload.error).toContain("health deadline");
+    expect(payload.error).toContain("settings read");
+    expect(Object.values(payload.providers).every((p) => p.status === "unknown")).toBe(true);
+    expect(payload.database.reachable).toBe(true); // the probe itself passed
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
+
+  test("DEADLINE: a wedged probe is reported as an unreachable database", async () => {
+    const store = {
+      ping: () => new Promise(() => {}), // never settles
+      async getSettings() {
+        return defaultSettings();
+      },
+      async getLatestSuccessfulSyncRunByProvider() {
+        return { attribution: iso2(MIN) };
+      },
+    } as unknown as Store;
+    const payload = await buildHealthPayload({ store, now: () => new Date(T2), bootedAt: BOOT, deadlineMs: 60 });
+    expect(payload.database.reachable).toBe(false);
+    expect(payload.database.error).toContain("health deadline");
+    expect(payload.database.error).toContain("database probe");
+    expect(payload.status).toBe("degraded");
+    expect(healthHttpStatus(payload)).toBe(503);
+  });
+
+  test("withHealthDeadline: winner passes through, loser surfaces HealthDeadlineError", async () => {
+    const fast = await withHealthDeadline(Promise.resolve("ok"), 500, "fast read");
+    expect(fast).toBe("ok");
+    await expect(withHealthDeadline(new Promise(() => {}), 40, "hung read")).rejects.toThrow(HealthDeadlineError);
+    await expect(withHealthDeadline(new Promise(() => {}), 40, "hung read")).rejects.toThrow(/hung read/);
   });
 });

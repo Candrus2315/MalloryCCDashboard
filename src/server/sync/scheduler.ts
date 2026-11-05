@@ -1067,7 +1067,46 @@ export function startScheduler(options?: {
 export function schedulerLease(): SchedulerLease | null {
   return activeLease;
 }
+
 let activeLease: SchedulerLease | null = null;
+
+/**
+ * LIVE LEASE STATE (portability 2026-11-05, PART 2 — /health authoritative):
+ * the loop's per-round lease verdict, kept in module state so /health can
+ * report holder/standby WITHOUT touching the database. A health probe must
+ * never call acquire() itself — a standby probing would try-lock and could
+ * STEAL the lease from the holder — so the state is written by
+ * runSchedulerLoop each round and read query-free.
+ */
+let activeLoopRunning = false;
+let activeLeaseHeld = false;
+
+export type SchedulerLeaseRole = "holder" | "standby" | "stopped";
+
+export interface SchedulerLeaseState {
+  /**
+   * holder = this process ticks; standby = this process is up but another
+   * instance holds the lease; stopped = no scheduler loop is running here
+   * (before startScheduler, or after the loop exited).
+   */
+  role: SchedulerLeaseRole;
+  /** True while a scheduler tick is executing in this process. */
+  tickInFlight: boolean;
+  /** The lease's log name (scheduler-lease.ts) — no secrets, /health-safe. */
+  leaseName: string | null;
+}
+
+/**
+ * Cheap, query-free read of this process's scheduler/lease state — the
+ * /health `scheduler` field's source. Throws never.
+ */
+export function schedulerLeaseState(): SchedulerLeaseState {
+  return {
+    role: !activeLoopRunning || activeLease === null ? "stopped" : activeLeaseHeld ? "holder" : "standby",
+    tickInFlight: inflight !== null,
+    leaseName: activeLease?.name ?? null,
+  };
+}
 
 /**
  * SCHEDULER LEASE semantics (portability 2026-11-05, scheduler-lease.ts):
@@ -1103,6 +1142,7 @@ export async function runSchedulerLoop(opts: {
   const liveAdapters = opts.liveAdapters;
   let holding = false;
   let standbyLogged = false;
+  activeLoopRunning = true;
   for (let round = 0; round < rounds; round++) {
     let intervalSeconds = 90;
     if (opts.intervalSeconds !== undefined) {
@@ -1124,6 +1164,9 @@ export async function runSchedulerLoop(opts: {
     } catch {
       haveLease = false;
     }
+    // /health lease-state mirror (schedulerLeaseState) — one flag write per
+    // round covers acquired / lost / standby alike.
+    activeLeaseHeld = haveLease;
     if (!haveLease) {
       if (holding) {
         holding = false;
@@ -1176,6 +1219,8 @@ export async function runSchedulerLoop(opts: {
     });
   }
   // Loop exit (tests / shutdown seam): give the lease back if we still hold it.
+  activeLoopRunning = false;
+  activeLeaseHeld = false;
   if (holding) {
     try {
       await opts.lease.release();
