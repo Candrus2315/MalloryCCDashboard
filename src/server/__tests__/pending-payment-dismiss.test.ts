@@ -194,6 +194,46 @@ describe("pending payment dismissal — server semantics (dismissPendingPaymentC
     const after = await store.getAppointmentsWithClientsSince(WINDOW_START);
     expect(after[0].pending_dismissed_at ?? null).toBeNull();
   });
+
+  // DEPOSIT-WAIVED (owner directive 2026-11-05, the Sunalie Morton case): the
+  // owner waived the deposit, restored the row with a DIRECT DB fix —
+  // booking_win_business_date PERSISTED while payment_state stays
+  // 'pending_payment' — and DISMISSED it from the pending list. Pinned: the
+  // dismissed waived row stays out of the pending list (payment_state filter
+  // + pending_dismissed_at exclusion unchanged) while STILL counting as a
+  // Booking Win through the win gate (isBookingWin accepts a persisted win
+  // date even unpaid).
+  test("a DISMISSED deposit-waived row (pending_payment + persisted win date) stays out of the pending list and still counts as a Booking Win", async () => {
+    const store = new MemoryStore();
+    const row = pendingAppt({ booking_win_business_date: TODAY } as Partial<AppointmentRow>);
+    await store.upsertAppointments([
+      {
+        ...row,
+        acuity_appointment_id: "dp-7",
+        payment_state: "pending_payment",
+        client_name: "Sunalie Waived",
+      } as AppointmentRow & { acuity_appointment_id: string },
+    ]);
+    const rows = await store.getAppointmentsWithClientsSince(WINDOW_START);
+    const apptId = rows[0].id;
+
+    await store.dismissPendingPayment(apptId); // the owner's ✕ (already done in prod)
+
+    // OUT of the pending list — query layer + page filter (both unchanged)
+    const pendingWindow = await store.getAppointmentsWithClientsSince(WINDOW_START, { excludePendingDismissed: true });
+    expect(pendingWindow.some((a) => a.id === apptId)).toBe(false);
+    const pendingList = pendingWindow.filter(
+      (a) => !a.cancelled && a.status !== "cancelled" && appointmentPaymentStateOf(a) === "pending_payment",
+    );
+    expect(pendingList.some((a) => a.id === apptId)).toBe(false);
+
+    // ...and STILL a Booking Win (the persisted win date is the gate's second arm)
+    const wins = await store.getAppointmentsByWinBusinessDateBetween(TODAY, TODAY);
+    expect(wins.some((w) => w.id === apptId)).toBe(true);
+    const win = wins.find((w) => w.id === apptId)!;
+    expect(appointmentPaymentStateOf(win)).toBe("pending_payment"); // honest — no payment invented
+    expect(isBookingWin(win)).toBe(true); // the DEPOSIT-WAIVED win gate
+  });
 });
 
 /**

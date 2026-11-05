@@ -413,9 +413,13 @@ export interface AvailabilityRangeSummary {
 /**
  * Per-slot availability state (Day view). CANCELLED renders struck-through on
  * the slot's row; CLOSED = a feed-observed closed day's empty slots (PR-3 §5
- * polish — chips agree with the day's real 0 open).
+ * polish — chips agree with the day's real 0 open). BOOKED-WAIVED (owner
+ * directive 2026-11-05): every appointment occupying the slot is a
+ * deposit-waived booking win (payment_state pending_payment + a PERSISTED
+ * booking_win_business_date the owner set) — booked, deposit waived, never
+ * "pending".
  */
-export type AvailabilitySlotStatus = "booked" | "booked-pending" | "open" | "blocked" | "cancelled" | "closed";
+export type AvailabilitySlotStatus = "booked" | "booked-pending" | "booked-waived" | "open" | "blocked" | "cancelled" | "closed";
 
 export interface AvailabilitySlotAppointment {
   id: string;

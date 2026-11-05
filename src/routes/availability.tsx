@@ -115,6 +115,10 @@ const TONE_BADGE = TONE_BADGE_STYLES;
 const SLOT_CHIP: Record<AvailabilitySlotView["status"], { label: string; tone: keyof typeof TONE_BADGE }> = {
   booked: { label: "BOOKED", tone: "strong" },
   "booked-pending": { label: "BOOKED-PENDING", tone: "attention" },
+  // DEPOSIT-WAIVED (owner directive 2026-11-05): every appointment in the slot
+  // carries the owner's persisted win marker — a booked WIN with a waived
+  // deposit, never "pending" (win tone = strong, like BOOKED).
+  "booked-waived": { label: "DEPOSIT WAIVED", tone: "strong" },
   open: { label: "OPEN", tone: "positive" },
   blocked: { label: "BLOCKED", tone: "neutral" },
   cancelled: { label: "CANCELLED", tone: "muted" },
@@ -536,7 +540,7 @@ function AvailabilityPage() {
                     const isHole = s.isHole && (s.status === "open" || s.status === "cancelled");
                     const names = s.appointments.map((a) => a.clientName ?? a.id);
                     const detail =
-                      s.status === "booked" || s.status === "booked-pending"
+                      s.status === "booked" || s.status === "booked-pending" || s.status === "booked-waived"
                         ? `${names.join(", ")}${s.extraCount > 0 ? ` (+${s.extraCount})` : ""}${s.appointments[0]?.appointmentType ? ` — ${s.appointments[0].appointmentType}` : ""}`
                         : s.reason ?? "";
                     return (

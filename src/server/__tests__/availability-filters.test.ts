@@ -151,6 +151,8 @@ describe("status toggles — Day-view slot-list filter (counts untouched)", () =
   const slots = [
     { status: "booked", isHole: false, cancelledAppointments: [], blocked: false, time: "09:00" },
     { status: "booked-pending", isHole: false, cancelledAppointments: [], blocked: false, time: "10:00" },
+    // DEPOSIT-WAIVED (owner directive 2026-11-05): the persisted-win-date chip — a booked slot either way
+    { status: "booked-waived", isHole: false, cancelledAppointments: [], blocked: false, time: "10:30" },
     { status: "open", isHole: false, cancelledAppointments: [], blocked: false, time: "11:00" },
     { status: "open", isHole: true, cancelledAppointments: [], blocked: false, time: "12:00" },
     { status: "blocked", isHole: false, cancelledAppointments: [], blocked: true, time: "13:30" },
@@ -158,15 +160,15 @@ describe("status toggles — Day-view slot-list filter (counts untouched)", () =
   ] as unknown as AvailabilitySlotView[];
 
   test("empty = everything", () => {
-    expect(filterDaySlotsByStatuses(slots, [])).toHaveLength(6);
+    expect(filterDaySlotsByStatuses(slots, [])).toHaveLength(7);
   });
 
   test("each token selects its rows", () => {
-    expect(filterDaySlotsByStatuses(slots, ["booked"]).map((s) => s.time)).toEqual(["09:00", "10:00"]); // pending counts as booked
+    expect(filterDaySlotsByStatuses(slots, ["booked"]).map((s) => s.time)).toEqual(["09:00", "10:00", "10:30"]); // pending + waived count as booked
     expect(filterDaySlotsByStatuses(slots, ["open"]).map((s) => s.time)).toEqual(["11:00", "12:00", "14:30"]);
     expect(filterDaySlotsByStatuses(slots, ["holes"]).map((s) => s.time)).toEqual(["12:00"]);
     expect(filterDaySlotsByStatuses(slots, ["cancelled"]).map((s) => s.time)).toEqual(["14:30"]);
     expect(filterDaySlotsByStatuses(slots, ["blocked"]).map((s) => s.time)).toEqual(["13:30"]);
-    expect(filterDaySlotsByStatuses(slots, ["booked", "holes"]).map((s) => s.time)).toEqual(["09:00", "10:00", "12:00"]);
+    expect(filterDaySlotsByStatuses(slots, ["booked", "holes"]).map((s) => s.time)).toEqual(["09:00", "10:00", "10:30", "12:00"]);
   });
 });
