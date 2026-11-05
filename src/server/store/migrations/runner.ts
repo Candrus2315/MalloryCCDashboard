@@ -4,8 +4,9 @@
  * Replaces the pre-runner cold-start DDL sweep: instead of re-asserting all
  * 140 idempotent statements on every boot, the database records which
  * migration version is applied in `schema_migrations` and subsequent boots
- * run ZERO migration statements (only the marker table bootstrap + one
- * version SELECT — two round trips instead of ~140).
+ * run ZERO DDL — one version SELECT round trip on a current database; the
+ * marker-table bootstrap only runs when the table itself is missing
+ * (fast version check, portability 2026-11-05).
  *
  * Design (following the plan, simplest-safe options chosen where it offered
  * alternatives):
@@ -117,6 +118,20 @@ export const SCHEMA_MIGRATIONS_DDL = `CREATE TABLE IF NOT EXISTS schema_migratio
 
 const SELECT_VERSIONS = `SELECT version, name, checksum FROM schema_migrations ORDER BY version`;
 
+/**
+ * FAST VERSION CHECK (portability 2026-11-05): is this the marker table
+ * missing? Postgres names the class with SQLSTATE 42P01 ("undefined_table");
+ * postgres.js surfaces it as err.code, and the message fallback keeps the
+ * detection honest across driver upgrades. ONLY this condition triggers the
+ * marker bootstrap — every other read failure is a real error and rethrows.
+ */
+export function isUndefinedTableError(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && code === "42P01") return true;
+  const msg = e instanceof Error ? e.message : String(e);
+  return /relation .+ does not exist/i.test(msg);
+}
+
 /** Named boot-refusal error for any registry/database disagreement. */
 export class SchemaMigrationError extends Error {
   constructor(message: string) {
@@ -193,8 +208,23 @@ export async function runMigrations(
       throw new SchemaMigrationError(`migration ${m.version} (${m.name}): neither statements nor up()`);
     }
   }
-  await io.exec(SCHEMA_MIGRATIONS_DDL);
-  const rows = (await io.exec(SELECT_VERSIONS)) as MigrationRecord[];
+  // FAST VERSION CHECK FIRST (portability 2026-11-05): read the marker BEFORE
+  // any DDL — a database already at the registry version completes on ONE read
+  // round trip with ZERO DDL statements (the marker bootstrap now runs only on
+  // the genuinely-missing-table path). The previous create-then-read order
+  // issued `CREATE TABLE IF NOT EXISTS schema_migrations` on EVERY boot —
+  // harmless-but-unnecessary DDL plus a notice on each healthy start.
+  let rows: MigrationRecord[];
+  try {
+    rows = (await io.exec(SELECT_VERSIONS)) as MigrationRecord[];
+  } catch (e) {
+    if (!isUndefinedTableError(e)) throw e;
+    // Fresh (or pre-runner) database: bootstrap the marker, re-read the (empty)
+    // history, and apply everything below — the re-read keeps the verification
+    // path identical no matter which arm produced the rows.
+    await io.exec(SCHEMA_MIGRATIONS_DDL);
+    rows = (await io.exec(SELECT_VERSIONS)) as MigrationRecord[];
+  }
   for (let i = 0; i < rows.length; i++) {
     const rec = rows[i];
     const m = migrations[i];

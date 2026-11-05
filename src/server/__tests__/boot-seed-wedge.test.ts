@@ -64,9 +64,12 @@ interface FakeOpts {
 function makeFakeSql(opts: FakeOpts = {}) {
   const executed: string[] = [];
   let healthy = false; // false = the blocker is in place; flip to simulate it clearing
+  let markerTable = false; // the runner bootstraps it on the 42P01 path
   const sql = {
     unsafe: (stmt: string): Promise<unknown> => {
       executed.push(stmt);
+      if (isMarkerCreate(stmt)) markerTable = true;
+      if (isVersionSelect(stmt) && !markerTable) return Promise.reject(undefinedTable());
       if (healthy) return Promise.resolve([]);
       if (opts.rejectOn?.(stmt)) return Promise.reject(new Error("simulated DDL failure"));
       if (opts.hangOn?.(stmt)) return new Promise<never>(() => {});
@@ -85,6 +88,16 @@ function makeFakeSql(opts: FakeOpts = {}) {
 
 /** Incident-faithful hang target: the boot-time seed writes against `users`. */
 const isUsersSeed = (stmt: string) => /UPDATE users SET/.test(stmt);
+/* FAST VERSION CHECK fake (portability 2026-11-05): this fake DB starts
+   WITHOUT the runner's marker table — its first version read fails 42P01,
+   exactly like Postgres, and the marker create flips existence on. */
+const isVersionSelect = (stmt: string) => stmt.startsWith("SELECT version, name, checksum");
+const isMarkerCreate = (stmt: string) => stmt.startsWith("CREATE TABLE IF NOT EXISTS schema_migrations");
+const undefinedTable = () => {
+  const err = new Error('relation "schema_migrations" does not exist') as Error & { code?: string };
+  err.code = "42P01";
+  return err;
+};
 
 /** Sub-second sleep (real timers, house style). */
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -113,19 +126,20 @@ describe("boot-seed wedge ② — ensureSchema bounded cap + reset", () => {
     const { sql, executed } = makeFakeSql();
     const pg = makePg(sql, DEFAULT_SCHEMA_STMT_TIMEOUT_MS);
     await pg.ensureSchema();
-    // ensureSchema now drives the MIGRATION RUNNER (MIGRATION-PLAN §2): marker
-    // bootstrap + version read, then the 140-statement baseline — the cap and
-    // reset semantics below are unchanged. An already-migrated fake (records
-    // present) would run ZERO baseline statements — pinned in
-    // migration-runner.test.ts.
+    // ensureSchema now drives the MIGRATION RUNNER (MIGRATION-PLAN §2): the
+    // fast version read FIRST (fails 42P01 on this marker-less fake), the
+    // marker bootstrap, the read again, then the 140-statement baseline — the
+    // cap and reset semantics below are unchanged. An already-migrated fake
+    // (records present) would run ZERO DDL — pinned in migration-runner.test.ts.
     expect(executed.length).toBeGreaterThan(140);
-    expect(executed[0]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
-    expect(executed[1].startsWith("SELECT version, name, checksum")).toBe(true);
-    expect(executed[2]).toContain("CREATE TABLE IF NOT EXISTS users");
+    expect(executed[0].startsWith("SELECT version, name, checksum")).toBe(true);
+    expect(executed[1]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
+    expect(executed[2].startsWith("SELECT version, name, checksum")).toBe(true);
+    expect(executed[3]).toContain("CREATE TABLE IF NOT EXISTS users");
     // memoized: a second call re-runs NOTHING
     await pg.ensureSchema();
     expect(executed.length).toBeGreaterThan(140); // unchanged by the second call
-    expect(executed.filter((s) => s === executed[0]).length).toBe(1);
+    expect(executed.filter((s) => isMarkerCreate(s)).length).toBe(1); // ONE marker bootstrap; the version read runs twice (42P01 fail, re-read)
     await pg.close();
   });
 
@@ -155,9 +169,11 @@ describe("boot-seed wedge ② — ensureSchema bounded cap + reset", () => {
     setHealthy(true);
     // …and the NEXT call must retry the WHOLE sweep, not return the dead promise
     await pg.ensureSchema();
-    // retry started from the top: first statement ran again
-    const first = executed[0];
-    expect(executed.filter((s) => s === first).length).toBe(2);
+    // retry started from the top: the marker bootstraps EXACTLY ONCE (it exists
+    // after attempt 1 — the retry's version read succeeds and applies), while
+    // the version read runs 3× (fail + re-read + retry read)
+    expect(executed.filter((s) => isMarkerCreate(s)).length).toBe(1);
+    expect(executed.filter((s) => isVersionSelect(s)).length).toBe(3);
     // the previously-hung users seed statement completed this time
     const seedWrites = executed.filter((s) => isUsersSeed(s));
     expect(seedWrites.length).toBeGreaterThanOrEqual(2); // hung attempt + completed retry
@@ -174,8 +190,9 @@ describe("boot-seed wedge ② — ensureSchema bounded cap + reset", () => {
     expect((err as Error).message).toBe("simulated DDL failure");
     setHealthy(true);
     await pg.ensureSchema(); // no restart needed — the retry just works
-    const first = executed[0];
-    expect(executed.filter((s) => s === first).length).toBe(2);
+    // the marker bootstraps once; the version read runs 3× (fail + re-read + retry read)
+    expect(executed.filter((s) => isMarkerCreate(s)).length).toBe(1);
+    expect(executed.filter((s) => isVersionSelect(s)).length).toBe(3);
     await pg.close();
   });
 

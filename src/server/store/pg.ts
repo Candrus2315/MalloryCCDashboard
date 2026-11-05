@@ -459,11 +459,12 @@ export class PgStore implements Store {
 
   /**
    * Ensure the database is at the current migration-registry version
-   * (docs/MIGRATION-PLAN.md): read `schema_migrations`, verify every
-   * recorded migration's checksum, then apply pending migrations in order.
-   * An already-migrated database runs ZERO migration statements — two
-   * round trips (marker bootstrap + version read) instead of the ~140
-   * uncached statements the pre-runner sweep cost every cold boot.
+   * (docs/MIGRATION-PLAN.md): read `schema_migrations` FIRST (fast version
+   * check, portability 2026-11-05), verify every recorded migration's
+   * checksum, then apply pending migrations in order. A database already at
+   * the registry version runs ZERO DDL — one read round trip instead of the
+   * ~140 uncached statements the pre-runner sweep cost every cold boot; the
+   * marker bootstrap runs only when the marker table itself is missing.
    * On ANY failure (cap or rejection) the memoized schemaReady is reset so
    * the next ensureSchema call retries from the top — recovery without
    * restart, same containment as the pre-runner sweep. A persistently

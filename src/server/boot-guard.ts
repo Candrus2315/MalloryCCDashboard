@@ -46,6 +46,68 @@ import { dirname } from "node:path";
 /** A boot younger than this is treated as "still starting" — never killed by a duplicate start. */
 export const BOOT_GRACE_SECONDS = 180;
 
+// ---------------------------------------------------------------------------
+// MANAGED MODE (SERVE_MANAGED=1) — portability early-out (2026-11-05)
+//
+// On an independent managed host, the platform supervisor owns the process
+// lifecycle: it decides what runs, restarts on failure, and never expects the
+// app itself to probe, classify, or KILL other processes. The second-instance
+// guard and the sudo-lsof port-eviction loop below are CTO-sandbox process
+// management (the Oct-8/9 restart-storm hardening) — they must NOT be part of
+// the production deployment path. planServeBoot() is the one decision serve.ts
+// branches on:
+//   - managed  → the guard and the eviction loop are SKIPPED entirely: no
+//     lsof probe, no sudo, no Bun.$ invocation — serve.ts simply attempts
+//     Bun.serve; on EADDRINUSE it logs one line (lockfile holder if readable)
+//     and exits 1. A taken port is the supervisor's problem, never this
+//     process's to solve.
+//   - unmanaged (default) → byte-identical sandbox behavior: full guard
+//     classification, SERVE_SUPERSEDE takeover, sudo lsof eviction.
+// Because the branch is a pure function of the flag, tests pin the decision
+// itself: a managed plan provably never reaches the shell/command construction.
+// ---------------------------------------------------------------------------
+
+/** What the serve entry is allowed to do before binding. */
+export interface ServeBootPlan {
+  /** SERVE_MANAGED=1 was set — supervisor owns lifecycle. */
+  managed: boolean;
+  /** Run the listener pre-check + classifyExistingListener duplicate-exit logic. */
+  runSecondInstanceGuard: boolean;
+  /** Construct/run the sudo lsof port-eviction shell loop. */
+  runPortEviction: boolean;
+}
+
+/** Pure boot-plan decision: managed mode skips guard + eviction entirely. */
+export function planServeBoot(input: { managed: boolean }): ServeBootPlan {
+  if (input.managed) {
+    return { managed: true, runSecondInstanceGuard: false, runPortEviction: false };
+  }
+  return { managed: false, runSecondInstanceGuard: true, runPortEviction: true };
+}
+
+/**
+ * The single EADDRINUSE line managed mode prints before exit 1: states the
+ * contract (the supervisor owns process lifecycle) and reports the lockfile
+ * holder when readable — otherwise nothing about a holder is claimed.
+ */
+export function managedEaddrinuseLogLine(lock: ServerLockInfo | null): string {
+  const holder = lock
+    ? `port holder per the server lockfile: pid ${String(lock.pid)}, up since ${lock.started_at}`
+    : "no readable port-owner lockfile — nothing to report";
+  return `[serve] port already in use (EADDRINUSE) — managed mode (SERVE_MANAGED=1) never probes or kills other processes; exiting 1 for the host supervisor to resolve. ${holder}`;
+}
+
+/** The port-eviction shell command — constructed ONLY on the unmanaged plan. */
+export function portEvictionCommand(port: number): string {
+  return (
+    `for _ in $(seq 1 25); do ` +
+    `pids=$(lsof -t -iTCP:${String(port)} -sTCP:LISTEN 2>/dev/null || true); ` +
+    `if [ -z "$pids" ]; then exit 0; fi; ` +
+    `kill $pids 2>/dev/null || true; sleep 0.2; ` +
+    `done`
+  );
+}
+
 /** HTTP statuses that prove a server process is up and serving (mirrors publish.sh). */
 export function isHealthyBootStatus(status: number | null): boolean {
   if (status == null) return false;
