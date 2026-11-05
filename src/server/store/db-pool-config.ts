@@ -79,6 +79,50 @@ export const DB_IDLE_TIMEOUT_SECONDS = 60;
 /** Secondary-pool connection recycle (seconds) — matches the app pool. */
 export const DB_MAX_LIFETIME_SECONDS = 1800;
 
+// ---------------------------------------------------------------------------
+// SSR PAGE-RENDER DEADLINE (2026-11-04 live wedges) — pages must NEVER hang.
+//
+// Six times tonight the live serve wedged: every page's curl timed out while
+// /health answered instantly and pg_stat_activity showed all connections
+// IDLE. Root cause (page-render-deadline.test.ts reproduces it): the shared
+// demo-seed guard `ensureDemoData` (sync/run.ts) memoizes its in-flight
+// promise in `seedInflight` and every page render adopts it wholesale; its
+// inner chain (getStore → store.getUsers → pool) contains awaits with NO
+// client-side bound — postgres.js has NO acquire timeout, so a query waiting
+// behind a leaked/hung checkout (a detached zombie scheduler tick holds its
+// connection forever) waits FOREVER, and the memo then poisons EVERY page
+// until restart. /health never calls ensureDemoData, which is exactly why it
+// kept answering. The fix makes the memo itself settle within this budget
+// (an honest fast error, memo cleared, next request fresh) and wraps the page
+// loaders as belt-and-braces so ANY builder hang fails fast per request.
+//
+// 8s default: ~2× the slowest healthy page build observed; a page that has
+// not rendered in 8s is a wedge, not a slow query (every statement is already
+// server-capped at 300s and connects at 10s). Env PAGE_RENDER_TIMEOUT_MS,
+// clamped to [1s, 60s] like DB_CONNECT_TIMEOUT_MS — 0/negative/invalid falls
+// back to the default (no "wait indefinitely" escape hatch by typo).
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_PAGE_RENDER_TIMEOUT_MS = 8_000;
+
+/** Env var name — set in ms (e.g. 15000 gives a slow-cold-seed boot more room). */
+export const PAGE_RENDER_TIMEOUT_MS_ENV = "PAGE_RENDER_TIMEOUT_MS";
+
+/** Clamp floor/ceiling: never sub-second (pointless churn), never ≥ 1 min. */
+export const PAGE_RENDER_TIMEOUT_MS_MIN = 1_000;
+export const PAGE_RENDER_TIMEOUT_MS_MAX = 60_000;
+
+/**
+ * The page-render deadline in ms — env PAGE_RENDER_TIMEOUT_MS when valid, the
+ * 8s default otherwise. Pure function of the passed env string (tests inject);
+ * production reads process.env.
+ */
+export function pageRenderTimeoutMs(env: string | undefined = process.env[PAGE_RENDER_TIMEOUT_MS_ENV]): number {
+  const raw = Number(env);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_PAGE_RENDER_TIMEOUT_MS;
+  return Math.min(Math.max(Math.round(raw), PAGE_RENDER_TIMEOUT_MS_MIN), PAGE_RENDER_TIMEOUT_MS_MAX);
+}
+
 /**
  * The bounds block for SECONDARY pools (ops/backfill/report scripts): spread
  * it into every postgres() options object so no script re-derives the numbers
