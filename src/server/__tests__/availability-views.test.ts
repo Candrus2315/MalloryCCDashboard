@@ -58,6 +58,8 @@ interface SeedAppt {
   datetime: string; // UTC ISO
   client: string;
   payment?: string;
+  /** PERSISTED booking_win_business_date — the deposit-waived win marker (owner directive 2026-11-05). */
+  winDate?: string;
   cancelled?: boolean;
   cancelledAt?: string;
   type?: string;
@@ -90,6 +92,7 @@ async function seedBase(store: MemoryStore) {
           cancelled: a.cancelled ?? false,
           ...(a.cancelledAt ? { cancelled_at: a.cancelledAt, cancellation_source: "acuity-reconciliation" } : {}),
           ...(a.payment ? { payment_state: a.payment } : {}),
+          ...(a.winDate ? { booking_win_business_date: a.winDate } : {}),
           duration_minutes: 60,
           client_name: a.client,
         })),
@@ -342,6 +345,36 @@ describe("availabilityPageData view=day — slot states", () => {
     expect(countBy("open") + countBy("blocked")).toBe(5);
     expect(slots.filter((x) => x.isHole).map((x) => x.label)).toEqual(["2:30 PM"]);
     expect(view.offGridAppointments).toHaveLength(0);
+  });
+
+  test("DEPOSIT-WAIVED slot (owner directive 2026-11-05): a pending-payment row with a PERSISTED win date renders booked-waived — never 'pending'", async () => {
+    const store = new MemoryStore();
+    const s = await seedBase(store);
+    // The Sunalie shape: unpaid (deposit WAIVED — no payment evidence will
+    // ever exist) + the owner's persisted booking_win_business_date.
+    s.seed.add({ datetime: etUtc("2026-10-13", "13:30"), client: "Sunalie Waived", payment: "pending_payment", winDate: "2026-10-13" });
+    s.seed.add({ datetime: etUtc("2026-10-13", "15:30"), client: "Bea Pending", payment: "pending_payment" }); // genuinely pending — unchanged
+    s.seed.add({ datetime: etUtc("2026-10-13", "17:30"), client: "Cara Paid" });
+    await s.flush();
+    await seedFeed(store);
+
+    const data = await availabilityPageData({ store, today: TODAY, view: { view: "day", date: "2026-10-13" } });
+    const view = data.view as AvailabilityViewPayload;
+    const slots = view.slots as AvailabilitySlotView[];
+
+    const waived = slotOf(slots, "1:30 PM");
+    expect(waived.status).toBe("booked-waived"); // DEPOSIT WAIVED — a booked WIN, never "pending"
+    expect(waived.appointments[0].paymentState).toBe("pending_payment"); // the honest payment state stays on the row
+
+    expect(slotOf(slots, "3:30 PM").status).toBe("booked-pending"); // no win date → still the chase-me placeholder (unchanged)
+    expect(slotOf(slots, "5:30 PM").status).toBe("booked");
+
+    // the booked-status partition invariant now spans all three booked chips
+    const dayRow = byDate(view.days, "2026-10-13");
+    const countBy = (st: string) => slots.filter((x) => x.status === st).length;
+    expect(countBy("booked") + countBy("booked-pending") + countBy("booked-waived")).toBe(dayRow.booked); // 3 distinct slots
+    expect(dayRow.booked).toBe(3);
+    expect(dayRow.holes).toBe(6); // 9 − 3 — a waived slot OCCUPIES like any booking
   });
 
   test("Thu 2026-10-08: UNEXPLAINED gray slot (feed silent, free, unblocked) + off-grid feed time row", async () => {

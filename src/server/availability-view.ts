@@ -311,7 +311,17 @@ export async function buildAvailabilityView(ctx: {
         // active-pending slots render BOOKED-PENDING so the agents see them to
         // chase/remove; mixed slots render BOOKED with the pending row's own
         // payment_state visible in its detail line.
-        status = active.every((iv) => iv.a.payment_state === "pending_payment") ? "booked-pending" : "booked";
+        // DEPOSIT-WAIVED exception (owner directive 2026-11-05, the Sunalie
+        // Morton case): when EVERY appointment in the slot carries a PERSISTED
+        // booking_win_business_date, the owner waived those deposits — the
+        // bookings are WINS now (isBookingWin counts them) and must not read
+        // as "pending". The slot renders BOOKED-WAIVED: booked, deposit
+        // waived, nothing to chase.
+        status = active.every((iv) => iv.a.payment_state === "pending_payment")
+          ? active.every((iv) => iv.a.booking_win_business_date != null)
+            ? "booked-waived"
+            : "booked-pending"
+          : "booked";
         bookedTimes.push(time);
         reason = dayEstimateReason; // a booked slot is still engine-estimated where no feed answer stands behind it
       } else if (blockHere.length > 0) {
@@ -579,7 +589,8 @@ export function mergeAvailabilityPageScope(
  * Day-view slot-list filter for the status toggles (Booked / Open / Holes /
  * Cancelled / Blocked). Day COUNTS are untouched — this narrows only which
  * slot rows render. Empty = everything. Tokens:
- *   booked    → status booked OR booked-pending (the pending placeholder)
+ *   booked    → status booked OR booked-pending OR booked-waived (the deposit-
+ *               waived win chip — a booked slot either way)
  *   open      → status open (hole membership is a separate toggle)
  *   holes     → the ONE derivation flags the slot (OPEN · HOLE)
  *   cancelled → the slot carries struck-through cancelled rows
@@ -590,7 +601,7 @@ export function filterDaySlotsByStatuses(slots: AvailabilitySlotView[], statuses
   if (statuses.length === 0) return slots;
   const set = new Set(statuses);
   return slots.filter((s) => {
-    if (set.has("booked") && (s.status === "booked" || s.status === "booked-pending")) return true;
+    if (set.has("booked") && (s.status === "booked" || s.status === "booked-pending" || s.status === "booked-waived")) return true;
     if (set.has("open") && s.status === "open") return true;
     if (set.has("holes") && s.isHole) return true;
     if (set.has("cancelled") && (s.cancelledAppointments.length > 0 || s.status === "cancelled")) return true;

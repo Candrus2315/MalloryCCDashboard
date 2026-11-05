@@ -511,21 +511,38 @@ export function appointmentPaymentStateOf(a: AppointmentRow): string {
   return derivePaymentState(a.raw).state;
 }
 
-/** A Booking Win: a non-cancelled appointment with paid evidence. THE unit every performance "Booking" counts. */
+/**
+ * A Booking Win: a non-cancelled appointment with paid evidence — OR a
+ * DEPOSIT-WAIVED booking (owner directive 2026-11-05, the Sunalie Morton
+ * case): the owner waived the deposit, so no payment evidence will EVER
+ * exist; the PERSISTED booking_win_business_date is the owner's write-once
+ * win marker (set deliberately, audited in manual_overrides) and counts the
+ * appointment everywhere a Booking counts. The gate stays
+ * isBooking(a)-gated — a cancelled appointment is never resurrected by a
+ * persisted date — and a genuinely pending row (unpaid, NO win date) counts
+ * nowhere, exactly as before. appointmentIsPaid stays the PAYMENT verdict
+ * alone (the Pending Payments drill-down keeps filtering on it); the waiver
+ * lives only in this win gate.
+ */
 export function isBookingWin(a: AppointmentRow): boolean {
-  return isBooking(a) && appointmentIsPaid(a);
+  return isBooking(a) && (appointmentIsPaid(a) || a.booking_win_business_date != null);
 }
 
 /**
- * THE win-bucket key (ET business date the deposit was received):
- * persisted booking_win_business_date first; else derived from a raw payment
- * timestamp; else the creation ET business date (the first-seen proxy —
- * precision-marked by the sync's payment_business_date_source). Unpaid
- * appointments have no win date and never bucket anywhere.
+ * THE win-bucket key (ET business date the deposit was received — or, for a
+ * DEPOSIT-WAIVED booking (owner directive 2026-11-05), the owner-set win
+ * date): the PERSISTED booking_win_business_date first — write-once evidence
+ * the owner set deliberately, returned even when the row is unpaid (it is
+ * already the win-bucket key; a waived row buckets by its persisted date).
+ * For paid rows the derivation order is unchanged: persisted date; else a raw
+ * payment timestamp's ET date; else the creation ET business date (the
+ * first-seen proxy — precision-marked by the sync's payment_business_date_source).
+ * Unpaid appointments WITHOUT a persisted win date have no win date and never
+ * bucket anywhere.
  */
 export function bookingWinBusinessDateOf(a: AppointmentRow): string | null {
-  if (!appointmentIsPaid(a)) return null;
   if (a.booking_win_business_date) return a.booking_win_business_date;
+  if (!appointmentIsPaid(a)) return null;
   const d = derivePaymentState(a.raw);
   if (d.paymentTimestamp) {
     const ms = Date.parse(d.paymentTimestamp.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));

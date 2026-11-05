@@ -225,8 +225,8 @@ describe("audit pin — Oct 19–25 Weekly Bookings Produced = 84 (audit-79v84)"
     const input = [
       ...candidateAppts(),
       appt(VALLEE_CANCELLED_ID, "2026-10-20", { phone: VALLEE_PHONE, cancelled: true, winDate: "2026-10-20" }),
-      appt("unpaid-1", "2026-10-21", { paid: false }),
-      appt("unpaid-cancelled-1", "2026-10-23", { paid: false, cancelled: true }),
+      appt("unpaid-1", "2026-10-21", { paid: false, winDate: null }), // genuinely pending — production unpaid rows carry a NULL win date
+      appt("unpaid-cancelled-1", "2026-10-23", { paid: false, cancelled: true, winDate: null }),
       appt("paid-next-week", "2026-10-26", { phone: "5550009999" }),
     ];
     const out = computeWeeklyBookingsProduced(input, WEEK_MON, WEEK_SUN);
@@ -247,7 +247,7 @@ describe("audit pin — Oct 19–25 Weekly Bookings Produced = 84 (audit-79v84)"
     const input: AppointmentRow[] = [
       ...candidateAppts(),
       appt(VALLEE_CANCELLED_ID, "2026-10-20", { phone: VALLEE_PHONE, cancelled: true, winDate: "2026-10-20" }),
-      appt("unpaid-1", "2026-10-21", { paid: false }),
+      appt("unpaid-1", "2026-10-21", { paid: false, winDate: null }), // genuinely pending — production unpaid rows carry a NULL win date
       appt("paid-next-week", "2026-10-26", { phone: "5550009999" }),
     ];
     const wins79 = filterApptsInWinBucketRange(input, WEEK_MON, WEEK_SUN).filter((a) => isBookingWin(a));
@@ -259,8 +259,8 @@ describe("audit pin — Oct 19–25 Weekly Bookings Produced = 84 (audit-79v84)"
     const input = [
       ...candidateAppts(),
       appt(VALLEE_CANCELLED_ID, "2026-10-20", { phone: VALLEE_PHONE, cancelled: true, winDate: "2026-10-20" }),
-      appt("unpaid-1", "2026-10-21", { paid: false }),
-      appt("unpaid-cancelled-1", "2026-10-23", { paid: false, cancelled: true }),
+      appt("unpaid-1", "2026-10-21", { paid: false, winDate: null }), // genuinely pending — production unpaid rows carry a NULL win date
+      appt("unpaid-cancelled-1", "2026-10-23", { paid: false, cancelled: true, winDate: null }),
       appt("paid-next-week", "2026-10-26", { phone: "5550009999" }),
     ];
     const out = computeWeeklyProduction(input, WEEK_MON, WEEK_SUN);
