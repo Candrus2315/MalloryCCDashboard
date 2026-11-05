@@ -185,6 +185,27 @@ export async function getStore(opts?: ProbeOptions): Promise<Store> {
   return inFlight;
 }
 
+/**
+ * PORTABILITY (2026-11-05): close every PgStore pool this process opened —
+ * the graceful-shutdown path (serve.ts → the shutdown run-closer's
+ * closeStores hook) uses it so a SIGTERM leaves zero open DB connections.
+ * Best-effort per pool: one wedged close never blocks the others. The
+ * registry lives on globalThis (see the one-pool-per-process note above), so
+ * this reaches every store generation including post-HMR re-executions.
+ */
+export async function closeAllPools(): Promise<void> {
+  const errors: string[] = [];
+  for (const [url, pg] of pgRegistry()) {
+    try {
+      await pg.close();
+      pgRegistry().delete(url);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  if (errors.length) throw new Error(`pool close failures: ${errors.join(" | ")}`);
+}
+
 export function getDbStatus(): DbStatus {
   if (cached?.store.mode === "postgres") return { mode: "postgres", ok: true };
   return { mode: "memory", ok: false, reason: lastError ?? "database unreachable" };

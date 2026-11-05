@@ -135,6 +135,7 @@ describe("grep-pin — every postgres() construction site carries the shared bud
     "scripts/run-harvest-targeted.ts",
     "scripts/run-harvest.ts",
     "src/server/store/pg.ts",
+    "src/server/sync/scheduler-lease.ts",
   ];
 
   test("the construction-site set is exactly the known list (new sites must join)", () => {

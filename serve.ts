@@ -247,8 +247,9 @@ await writeServerLockfile(LOCK_PATH, {
 // highlevel_sync_interval_seconds (settings, default 90s). Skips while another
 // sync run is in progress; records failures on the connection row and retries
 // next tick; recomputes attributions after each successful HighLevel sync.
-import { startScheduler, bootReapStaleSyncRuns } from "./src/server/sync/scheduler";
+import { startScheduler, bootReapStaleSyncRuns, schedulerLease } from "./src/server/sync/scheduler";
 import { installShutdownSyncRunCloser } from "./src/server/sync/run-lifecycle";
+import { closeAllPools } from "./src/server/store";
 
 // RESTART GAP CLOSER (2026-11-04 incident): a serve restart used to kill the
 // process mid-HighLevel-pass and leave its sync_runs row 'running' with no
@@ -269,7 +270,19 @@ import { installShutdownSyncRunCloser } from "./src/server/sync/run-lifecycle";
 //      a failure never blocks boot (the first tick reaps with the same
 //      criteria anyway). The freshness watchdog's recovery path is untouched.
 void bootReapStaleSyncRuns();
-installShutdownSyncRunCloser({ getStoreImpl: () => getStore() });
+// PORTABILITY (2026-11-05): the closer also RELEASES THE SCHEDULER LEASE
+// (scheduler-lease.ts — a standby instance picks up tick duty within one
+// interval instead of waiting for our advisory-lock session to die) and
+// CLOSES THE DB POOLS (a graceful restart leaves zero open connections).
+// Both are resolved lazily at signal time and best-effort inside the
+// existing 3s shutdown cap — never a new way to hang a dying process.
+installShutdownSyncRunCloser({
+  getStoreImpl: () => getStore(),
+  releaseLease: async () => {
+    await schedulerLease()?.release();
+  },
+  closeStores: () => closeAllPools(),
+});
 
 // Background Google Sheets lead sync (owner directive 2026-09-28): the
 // scheduler is started with NO pre-built adapters — every consumer resolves
