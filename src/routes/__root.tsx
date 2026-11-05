@@ -6,6 +6,7 @@ import appCss from "~/styles/app.css?url";
 import { useAppearance } from "~/components/appearance";
 import { BottomNav } from "~/components/bottom-nav";
 import { getFreshnessData, refreshNow, type FreshnessData } from "~/server/queries";
+import { freshnessAfterTick, noteFromThrownSync } from "~/server/sync/manual-sync-report";
 
 type NavBadgeKey = "activePips";
 interface NavItem {
@@ -320,6 +321,14 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
   const [data, setData] = useState<FreshnessData>(initial);
   const [busy, setBusy] = useState(false);
   const [, setTick] = useState(0);
+  /**
+   * Manual-sync honesty (portability P2): the visible outcome of the last
+   * manual refresh — the failure/skip reason, null after a real success.
+   * The "Last synced" stamp itself moves ONLY on a successful pass (the
+   * server re-reads it from the store, which stamps success only), so a
+   * failed attempt leaves the previous timestamp AND shows this note.
+   */
+  const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(id);
@@ -345,15 +354,30 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
     setBusy(true);
     try {
       const res = await refreshNow();
+      // Manual-sync honesty (portability P2): the tick is AWAITED above; the
+      // displayed state is derived from its REAL outcome — error → visible
+      // note + error status + unchanged stamps; skipped → note + previous
+      // status preserved; synced → connected and the advanced store stamps.
+      const report = freshnessAfterTick(
+        {
+          status: data.highlevel.status,
+          lastSyncAt: data.highlevel.lastSyncAt,
+          lastSuccessAt: data.highlevel.lastSuccessAt,
+          newestSuccessAt: data.newestSuccessAt,
+          lastError: data.highlevel.lastError,
+        },
+        res,
+      );
+      setNote(report.note);
       setData({
         highlevel: {
-          status: res.tick.outcome === "error" ? "error" : "connected",
+          status: report.next.status,
           isDemo: false,
-          lastSyncAt: res.lastSyncAt,
-          lastSuccessAt: res.lastSuccessAt,
-          lastError: res.lastError,
+          lastSyncAt: report.next.lastSyncAt,
+          lastSuccessAt: report.next.lastSuccessAt,
+          lastError: report.next.lastError,
         },
-        newestSuccessAt: res.newestSuccessAt,
+        newestSuccessAt: report.next.newestSuccessAt,
         running: res.running,
         runningStartedAt: null,
         intervalSeconds: data.intervalSeconds,
@@ -361,6 +385,10 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
         navCounts: data.navCounts,
       });
       await router.invalidate();
+    } catch (e) {
+      // The action itself failed (server fn rejected): the timestamp stays as
+      // it was and the failure is VISIBLE — never a silent no-op.
+      setNote(noteFromThrownSync(e));
     } finally {
       setBusy(false);
     }
@@ -375,6 +403,14 @@ function FreshnessIndicator({ initial, compact = false }: { initial: FreshnessDa
       >
         {label}
       </span>
+      {note && (
+        <span
+          className={"text-[11px] whitespace-nowrap text-(--neg-text) " + (compact ? "max-w-[110px] truncate" : "max-w-[220px] truncate")}
+          title={note}
+        >
+          {note}
+        </span>
+      )}
       <button
         type="button"
         onClick={onRefresh}

@@ -60,6 +60,7 @@ import {
   designateOnlineBooking,
   unassignAttribution,
 } from "~/server/queries";
+import { syncCenterReport } from "~/server/sync/manual-sync-report";
 
 export const Route = createFileRoute("/settings")({
   loader: () => getSettingsData(),
@@ -263,9 +264,13 @@ function SettingsPage() {
           </label>
           <div className="mt-4 m-acc-body">
             <SyncCenter data={data} onSync={async () => {
+              // Manual-sync honesty (portability P2): syncNow is AWAITED (the
+              // real pass) and the displayed line is derived from the REAL
+              // per-provider outcomes — any error renders as FAILED with the
+              // provider's error, never a "complete" while data is stale.
               const res = await syncNow();
               await router.invalidate();
-              return `Sync complete (${res.mode}): ${res.providers.map((p) => `${p.provider} ${p.count}`).join(", ")}`;
+              return syncCenterReport(res);
             }} />
           </div>
         </Panel>
