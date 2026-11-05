@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { etSyncStamp } from "~/server/date-logic";
 import { providerLabel, providerLatestRunView } from "~/components/settings-views";
+import type { ManualSyncReport } from "~/server/sync/manual-sync-report";
 import type { SettingsData } from "~/routes/settings";
 
 /* etSyncStamp moved to date-logic.ts (QA audit 2026-10-08) — the availability
    sync panel renders the SAME ET stamp; imported above. */
 
-export function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promise<string> }) {
+/**
+ * `onSync` returns the REAL pass outcome (portability P2 manual-sync honesty):
+ * the awaited syncNow result mapped by syncCenterReport — ok:false + a FAILED
+ * line whenever any provider errored, rendered in the danger tone. The panel
+ * never displays "complete" while source data is stale.
+ */
+export function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () => Promise<ManualSyncReport> }) {
   const [syncing, setSyncing] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<ManualSyncReport | null>(null);
   // Hydration-safe clock: a live "running" chip resolves after mount (SSR
   // shows the latest finished run's state — same pattern as the age clocks).
   const [nowMs, setNowMs] = useState<number | null>(null);
@@ -26,7 +33,7 @@ export function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () =>
             try {
               setMsg(await onSync());
             } catch (e) {
-              setMsg(e instanceof Error ? e.message : "Sync failed");
+              setMsg({ ok: false, message: e instanceof Error ? e.message : "Sync failed" });
             } finally {
               setSyncing(false);
             }
@@ -35,7 +42,7 @@ export function SyncCenter({ data, onSync }: { data: SettingsData; onSync: () =>
           {syncing ? "Syncing…" : "SYNC NOW"}
         </button>
       </div>
-      {msg && <p className="text-xs text-(--text-caption)">{msg}</p>}
+      {msg && <p className={"text-xs " + (msg.ok ? "text-(--text-caption)" : "text-(--neg-text)")}>{msg.message}</p>}
       <div className="overflow-x-auto scroll-x">
         <table className="data-table min-w-[760px]">
           <thead>
