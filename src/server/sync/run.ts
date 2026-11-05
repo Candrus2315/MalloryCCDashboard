@@ -11,6 +11,8 @@ import { addDays, weekStart } from "../date-logic";
 import { isRosterUser } from "../roster";
 import { getStore, type Store } from "../store";
 import { withSyncWriteRetry } from "../store/sync-write-retry";
+import { pageRenderTimeoutMs } from "../store/db-pool-config";
+import { racePageRenderDeadline } from "../render-deadline";
 import { warmDbConnectionForRun } from "../store/db-warmup";
 import type { AppSettings } from "../store/types";
 import { createDemoAdapters } from "./adapters";
@@ -742,6 +744,23 @@ export async function runSheetsSync(
  * guards against concurrent cold-start requests: several requests can observe
  * an empty users table at once, and racing seeds caused first-load 500s on a
  * fresh DB — they now share one in-flight promise instead.
+ *
+ * PAGE-RENDER DEADLINE (2026-11-04 live wedges, six restarts in one night):
+ * this memo is the SINGLE choke point every page render funnels through
+ * (loadPageMeta → ensureDemoData; /health never does), so a never-settling
+ * inner promise poisoned EVERY page until restart: later callers adopt
+ * `seedInflight` wholesale, and the clearing finally below only runs when the
+ * promise settles — which a hung pool-acquire await never does (postgres.js
+ * has NO acquire timeout; one detached zombie tick holding its checkout parks
+ * every later getUsers() in the acquire queue forever). The fix keeps the
+ * single-flight semantics but makes the MEMO ITSELF always settle: the inner
+ * work races pageRenderTimeoutMs() (db-pool-config, env PAGE_RENDER_TIMEOUT_MS,
+ * default 8s) — on deadline the memo rejects with an honest
+ * PageRenderDeadlineError, the finally clears it, and the NEXT request starts
+ * a fresh inner (no permanent poisoning). The losing work stays detached but
+ * holds no memo and (while waiting on the acquire queue) no connection; an
+ * in-flight statement is server-capped (statement_timeout) and a connect is
+ * capped (connect_timeout), so the loser cannot pin the pool forever.
  */
 let seedInflight: Promise<{ seeded: boolean; mode: "postgres" | "memory" }> | null = null;
 /**
@@ -753,19 +772,33 @@ let seedInflight: Promise<{ seeded: boolean; mode: "postgres" | "memory" }> | nu
 const SEED_RETRY_MS = 60_000;
 let lastSeedAttempt = 0;
 
-export async function ensureDemoData(): Promise<{ seeded: boolean; mode: "postgres" | "memory" }> {
+/** Test seam + ops knob for ensureDemoData — production callers pass nothing. */
+export interface EnsureDemoDataOpts {
+  /** Store resolver override (tests inject a stub; default the real getStore). */
+  getStoreImpl?: () => Store | Promise<Store>;
+  /** Deadline override in ms (tests; default pageRenderTimeoutMs(), 0 disables). */
+  renderTimeoutMs?: number;
+}
+
+export async function ensureDemoData(opts?: EnsureDemoDataOpts): Promise<{ seeded: boolean; mode: "postgres" | "memory" }> {
   if (seedInflight) return seedInflight;
+  const getStoreImpl = opts?.getStoreImpl ?? (async () => getStore());
   seedInflight = (async () => {
-    const store = withSyncWriteRetry(await getStore()); // SYNC WRITE RESILIENCE (demo seed deletes are idempotent)
-    const users = await store.getUsers();
-    if (users.length === 0) {
-      if (Date.now() - lastSeedAttempt < SEED_RETRY_MS) return { seeded: false, mode: store.mode };
-      lastSeedAttempt = Date.now();
-      await seedSettingsAndGoals(store);
-      await runDemoSync({ store });
-      return { seeded: true, mode: store.mode };
-    }
-    return { seeded: false, mode: store.mode };
+    return racePageRenderDeadline(
+      (async () => {
+        const store = withSyncWriteRetry(await getStoreImpl()); // SYNC WRITE RESILIENCE (demo seed deletes are idempotent)
+        const users = await store.getUsers();
+        if (users.length === 0) {
+          if (Date.now() - lastSeedAttempt < SEED_RETRY_MS) return { seeded: false, mode: store.mode };
+          lastSeedAttempt = Date.now();
+          await seedSettingsAndGoals(store);
+          await runDemoSync({ store });
+          return { seeded: true, mode: store.mode };
+        }
+        return { seeded: false, mode: store.mode };
+      })(),
+      opts?.renderTimeoutMs ?? pageRenderTimeoutMs(),
+    );
   })();
   try {
     return await seedInflight;

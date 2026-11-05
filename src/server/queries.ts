@@ -34,6 +34,19 @@ import {
 import { getStore } from "./store";
 import { withDbRetry } from "./store/pg-retry";
 import { withHeartbeatWarning } from "./heartbeat-freshness";
+import { withPageRenderDeadline } from "./render-deadline";
+
+/**
+ * SSR RENDER DEADLINE (2026-11-04 live wedges): every page loader below wraps
+ * its builder in withPageRenderDeadline — a hard 8s cap (db-pool-config,
+ * env PAGE_RENDER_TIMEOUT_MS) so a hung render-path await (e.g. a pool-acquire
+ * queue behind a leaked checkout, or a wedged outbound call in a builder)
+ * fails FAST with an honest PageRenderDeadlineError instead of hanging the
+ * request forever. Per-request bound: nothing is memoized at this layer, so
+ * the next request always starts fresh. The shared ensureDemoData memo has
+ * its own identical bound (sync/run.ts) so the shared choke point itself can
+ * never be poisoned.
+ */
 import type { Store } from "./store/types";
 import { availabilityPageData, type AvailabilityViewRawSearch, dailyReportPageData, repsPageData, teamPageData, todayPageData, weeklyPageData } from "./page-data";
 import type { StatusHealthPageData } from "./status-health";
@@ -75,7 +88,7 @@ async function loadPageMeta(): Promise<PageMeta> {
 }
 
 /** TODAY page — payload built in page-data.ts todayPageData (PageDeps test seam). */
-export const getTodayData = createServerFn().handler(() => withDbRetry(() => todayPageData()));
+export const getTodayData = createServerFn().handler(() => withPageRenderDeadline(() => withDbRetry(() => todayPageData())));
 /**
  * STATUS page (reliability item) — payload built in status-health.ts
  * statusHealthPageData. LAZY import inside the handler (the getAuditData
@@ -84,10 +97,10 @@ export const getTodayData = createServerFn().handler(() => withDbRetry(() => tod
  * browser bundle. The builder itself never throws: every read fails honestly
  * into its own section's error field.
  */
-export const getStatusHealthData = createServerFn().handler(async (): Promise<StatusHealthPageData> => {
+export const getStatusHealthData = createServerFn().handler(() => withPageRenderDeadline(async (): Promise<StatusHealthPageData> => {
   const { statusHealthPageData } = await import("./status-health");
   return statusHealthPageData();
-});
+}));
 
 /**
  * SETTINGS PAGE PAYLOAD TRIM — OWNER ERASE DIRECTIVE (2026-11-02): the
@@ -110,7 +123,7 @@ export function settingsPageSettings(settings: AppSettings): Omit<AppSettings, "
 }
 
 /** SETTINGS page data — every editable surface loads its rows here. */
-export const getSettingsData = createServerFn().handler(() => withDbRetry(async () => {
+export const getSettingsData = createServerFn().handler(() => withPageRenderDeadline(() => withDbRetry(async () => {
   const store = await getStore();
   const today = etToday();
   const ws = weekStart(today);
@@ -295,7 +308,7 @@ export const getSettingsData = createServerFn().handler(() => withDbRetry(async 
     // heartbeat (same quiet warning language; unknown log surfaces nothing).
     staleWarnings: await withHeartbeatWarning(syncStaleWarnings(connections)),
   };
-}));
+})));
 
 /** integration_connections in a fully serializable shape (config → note string). */
 export function serializableConnections(connections: { provider: string; status: string; is_demo: boolean; last_sync_at: string | null; last_successful_sync_at: string | null; last_error: string | null; config: Record<string, unknown> }[]) {
@@ -1387,7 +1400,7 @@ export function newestSyncSuccessAt(
 }
 
 /** Connection freshness for the shell's "Last synced Xm ago" indicator. */
-export const getFreshnessData = createServerFn().handler((): Promise<FreshnessData> => withDbRetry(async (): Promise<FreshnessData> => {
+export const getFreshnessData = createServerFn().handler((): Promise<FreshnessData> => withPageRenderDeadline(() => withDbRetry(async (): Promise<FreshnessData> => {
   const { readSchedulerIntervalSeconds } = await import("./sync/scheduler");
   const store = await getStore();
   const [connections, running, settings, runs] = await Promise.all([
@@ -1427,7 +1440,7 @@ export const getFreshnessData = createServerFn().handler((): Promise<FreshnessDa
     serverNow: new Date().toISOString(),
     navCounts,
   };
-}));
+})));
 
 /**
  * Shell REFRESH button — runs the same background tick (incremental HighLevel
@@ -1462,7 +1475,7 @@ export const saveSyncInterval = createServerFn({ method: "POST" })
   });
 
 /** DAILY REPORT page — payload built in page-data.ts dailyReportPageData (PageDeps test seam). */
-export const getDailyReportData = createServerFn().handler(() => withDbRetry(() => dailyReportPageData()));
+export const getDailyReportData = createServerFn().handler(() => withPageRenderDeadline(() => withDbRetry(() => dailyReportPageData())));
 
 /** Save the Big 3 priorities for TODAY's report date (America/New_York). */
 export const saveDailyPriorities = createServerFn({ method: "POST" })
@@ -1511,7 +1524,7 @@ export interface RepsSearchParams {
 
 export const getRepsData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as RepsSearchParams)
-  .handler(({ data }) => withDbRetry(() => repsPageData(data)));
+  .handler(({ data }) => withPageRenderDeadline(() => withDbRetry(() => repsPageData(data))));
 
 /**
  * Plain (non-server-fn) payload builder for the Reps page — the loader
@@ -1541,7 +1554,7 @@ export interface AuditPageData {
 }
 export const getAuditData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as AuditSearchParams)
-  .handler(async ({ data }): Promise<AuditPageData> => {
+  .handler(({ data }) => withPageRenderDeadline(async (): Promise<AuditPageData> => {
     const today = etToday();
     // LAZY import: keeps the audit orchestration (and its store graph) out of
     // the client bundle — handler bodies are stripped client-side, so a static
@@ -1567,7 +1580,7 @@ export const getAuditData = createServerFn()
       },
       today,
     };
-  });
+  }));
 
 /** TEAM page — team aggregates + trends for a date range, all via the metrics layer. */
 export interface TeamSearchParams {
@@ -1603,7 +1616,7 @@ export interface RepStripRow {
 
 export const getTeamData = createServerFn()
   .validator((input: unknown) => (input ?? {}) as TeamSearchParams)
-  .handler(({ data }) => withDbRetry(() => teamPageData(data)));
+  .handler(({ data }) => withPageRenderDeadline(() => withDbRetry(() => teamPageData(data))));
 
 /**
  * The current request's URL (server-only, h3 event storage) — null outside a
@@ -1641,7 +1654,7 @@ export const getAvailabilityData = createServerFn({ method: "POST" })
   .validator((input?: AvailabilityViewRawSearch) => input ?? {})
   .handler(({ data }) => {
     const { args, argsLost } = resolveAvailabilityViewArgs(data, currentRequestUrl());
-    return withDbRetry(() => availabilityPageData({ view: args, viewArgsLost: argsLost }));
+    return withPageRenderDeadline(() => withDbRetry(() => availabilityPageData({ view: args, viewArgsLost: argsLost })));
   });
 
 /**
@@ -1663,11 +1676,11 @@ export const refreshAvailabilityFeed = createServerFn({ method: "POST" })
     };
   });
 /** WEEKLY REPORT page — last completed week + MTD (page-data.ts weeklyPageData, PageDeps test seam). */
-export const getWeeklyData = createServerFn().handler(() => withDbRetry(() => weeklyPageData()));
+export const getWeeklyData = createServerFn().handler(() => withPageRenderDeadline(() => withDbRetry(() => weeklyPageData())));
 
 /** RETENTION TAB (stage 3b) — the 12-card KPI band + scorecard EmptyState inputs. Read-only over ret_*. */
 export const getRetentionPageData = createServerFn().handler(() =>
-  withDbRetry(async () => {
+  withPageRenderDeadline(() => withDbRetry(async () => {
     const ui = await import("./retention/ui-data");
     const store = await getStore();
     // ONE loader for the page: overview cards + Needs Attention queue (both
@@ -1687,7 +1700,7 @@ export const getRetentionPageData = createServerFn().handler(() =>
     // never rewritten) but are not shown — the departed-rep-history pattern:
     // preserved, not shown.
     return { ...overview, queue, scorecards: scorecards.filter((r) => ui.inRetentionScorecardScope(r.week_start, settings.retention.data_start_week_start)) };
-  }),
+  })),
 );
 
 /**
@@ -1706,7 +1719,7 @@ export interface RetentionDrillSearch {
 export const getRetentionDrillData = createServerFn({ method: "POST" })
   .validator((input: unknown) => (input ?? {}) as RetentionDrillSearch)
   .handler(async ({ data }) =>
-    withDbRetry(async () => {
+    withPageRenderDeadline(() => withDbRetry(async () => {
       const ui = await import("./retention/ui-data");
       const kpi: RetentionKpiKey = ui.RETENTION_KPIS.some((k) => k.key === data?.kpi) ? (data!.kpi as RetentionKpiKey) : "clients-due";
       const range: RetentionRange = ui.RETENTION_RANGES.some((r) => r.value === data?.range) ? (data!.range as RetentionRange) : "all";
@@ -1721,5 +1734,5 @@ export const getRetentionDrillData = createServerFn({ method: "POST" })
           exc: data?.exc === "resolved" || data?.exc === "dismissed" ? data.exc : "open",
         },
       );
-    }),
+    })),
   );
