@@ -3,14 +3,15 @@
 // this wraps them in a Bun server — static files first, SSR for the rest.
 // Run `bun run build` before starting. Restart it with `bun run publish`.
 //
-// LISTEN ADDRESS (portability 2026-11-05): PORT/HOST now come from the
-// environment through src/server/serve-config (resolveServeAddress) with
-// defaults 3000 / 0.0.0.0. Managed hosts provide PORT; the CTO sandbox sets
-// neither variable, so its resolved address is unchanged. The old hard-pin
-// rationale ("a stray env var or .env could move the site off :3000 behind
-// the sandbox proxy") was CTO-sandbox-specific: it is retired, not silently
-// deleted — the identical defaults remain, plus named validation
-// (ServeConfigError) so a misconfigured host fails loudly at boot.
+// LISTEN ADDRESS (portability 2026-11-05, amended same day): in MANAGED mode
+// (SERVE_MANAGED=1 — an independent production host) PORT/HOST come from the
+// environment through src/server/serve-config (resolveServeAddress), with
+// defaults 3000 / 0.0.0.0 and named validation (ServeConfigError) so a
+// misconfigured host fails loudly at boot. UNMANAGED boots — the CTO sandbox
+// and local dev — IGNORE PORT/HOST entirely and always bind 3000/0.0.0.0:
+// the sandbox shell profile really does carry a stray PORT (observed =80),
+// and honoring it moved the site off the reverse-proxied :3000 and dark. The
+// old hard-pin rationale was right; it now applies to unmanaged boots only.
 //
 // SECOND-INSTANCE GUARD (2026-10-09 outage hardening; CTO-sandbox process
 // management): before binding, a port pre-check classifies whoever already

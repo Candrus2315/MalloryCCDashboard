@@ -1,17 +1,23 @@
 /**
- * SERVE CONFIG — env-driven listen address + managed-mode flag.
+ * SERVE CONFIG — managed-mode-driven listen address + managed-mode flag.
  *
- * PORTABILITY (2026-11-05): the serve entry used to hard-pin PORT=3000 /
- * HOST=0.0.0.0 because a stray PORT in the CTO sandbox (or a .env Bun
- * auto-loads) could silently move the site off the reverse-proxied :3000.
- * That rationale is CTO-sandbox-specific. On an independent managed host the
- * platform supervisor decides the port and hands it over as env PORT — the
- * app must honor it. On the CTO sandbox neither PORT nor HOST is set, so the
- * resolved defaults stay byte-identical (3000 / 0.0.0.0) and nothing moves.
+ * PORTABILITY (2026-11-05, amended same day): the serve entry used to hard-pin
+ * PORT=3000 / HOST=0.0.0.0 because a stray PORT in the CTO sandbox (or a .env
+ * Bun auto-loads) could silently move the site off the reverse-proxied :3000.
+ * The original hard-pin concern was REAL and stays in force for unmanaged
+ * boots: on 2026-11-05 the sandbox shell profile was found to carry PORT=80,
+ * and honoring it moved the dev site off :3000 and dark. So the env-driven
+ * address is a MANAGED-MODE capability only:
  *
- * Every value is validated: a non-numeric or out-of-range PORT is a hard,
- * NAMED boot failure (ServeConfigError) — never silently interpreted as the
- * default, which would hide a misconfigured host.
+ *   - UNMANAGED (no SERVE_MANAGED=1 — CTO sandbox, local dev): PORT and HOST
+ *     are IGNORED entirely; the site always binds 3000 / 0.0.0.0.
+ *   - MANAGED (SERVE_MANAGED=1 — independent production host): PORT and HOST
+ *     are honored, defaulting to 3000 / 0.0.0.0 when unset. This is the path
+ *     a hosting supervisor configures.
+ *
+ * Every managed value is validated: a non-numeric or out-of-range PORT is a
+ * hard, NAMED boot failure (ServeConfigError) — never silently interpreted as
+ * the default, which would hide a misconfigured host.
  */
 
 /** Named boot refusal for an invalid serve address env value. */
@@ -37,11 +43,21 @@ export const DEFAULT_SERVE_HOST = "0.0.0.0";
 
 /**
  * Resolve the listen address from an env-style record (pass process.env, or a
- * literal for tests). Unset/empty PORT → 3000; unset/empty HOST → "0.0.0.0".
- * A present PORT must be an integer 1–65535; anything else throws the named
- * ServeConfigError. HOST is taken verbatim when present.
+ * literal for tests).
+ *
+ * UNMANAGED boots ignore the environment entirely and always return
+ * 3000 / 0.0.0.0 — a stray PORT/HOST in the shell profile or a .env cannot
+ * move the site (the 2026-11-05 PORT=80 incident is pinned in tests).
+ *
+ * MANAGED boots (SERVE_MANAGED=1) honor PORT/HOST: unset/empty PORT → 3000;
+ * unset/empty HOST → "0.0.0.0". A present PORT must be an integer 1–65535;
+ * anything else throws the named ServeConfigError. HOST is taken verbatim
+ * when present.
  */
 export function resolveServeAddress(env: Record<string, string | undefined>): ServeAddress {
+  if (!isManagedServe(env)) {
+    return { port: DEFAULT_SERVE_PORT, host: DEFAULT_SERVE_HOST };
+  }
   const rawPort = env.PORT?.trim() ?? "";
   if (rawPort === "") {
     return { port: DEFAULT_SERVE_PORT, host: resolveHost(env) };

@@ -28,26 +28,26 @@ import {
   type ServerLockInfo,
 } from "../boot-guard";
 
-describe("resolveServeAddress — env-driven listen address (deliverable 1)", () => {
-  test("unset PORT/HOST → the documented defaults 3000 / 0.0.0.0", () => {
-    expect(resolveServeAddress({})).toEqual({ port: 3000, host: "0.0.0.0" });
-    expect(resolveServeAddress({ PORT: undefined, HOST: undefined })).toEqual({ port: 3000, host: "0.0.0.0" });
-    expect(resolveServeAddress({ PORT: "", HOST: "" })).toEqual({ port: 3000, host: "0.0.0.0" });
+describe("resolveServeAddress — env-driven listen address (deliverable 1, amended 11/5)", () => {
+  test("managed: unset PORT/HOST → the documented defaults 3000 / 0.0.0.0", () => {
+    expect(resolveServeAddress({ SERVE_MANAGED: "1" })).toEqual({ port: 3000, host: "0.0.0.0" });
+    expect(resolveServeAddress({ SERVE_MANAGED: "1", PORT: undefined, HOST: undefined })).toEqual({ port: 3000, host: "0.0.0.0" });
+    expect(resolveServeAddress({ SERVE_MANAGED: "1", PORT: "", HOST: "" })).toEqual({ port: 3000, host: "0.0.0.0" });
     expect(DEFAULT_SERVE_PORT).toBe(3000);
     expect(DEFAULT_SERVE_HOST).toBe("0.0.0.0");
   });
 
-  test("PORT=4599 → 4599; HOST=127.0.0.1 honored", () => {
-    expect(resolveServeAddress({ PORT: "4599", HOST: "127.0.0.1" })).toEqual({ port: 4599, host: "127.0.0.1" });
-    expect(resolveServeAddress({ PORT: "8080" }).port).toBe(8080);
-    expect(resolveServeAddress({ HOST: "127.0.0.1" })).toEqual({ port: 3000, host: "127.0.0.1" });
+  test("managed: PORT=4599 → 4599; HOST=127.0.0.1 honored", () => {
+    expect(resolveServeAddress({ SERVE_MANAGED: "1", PORT: "4599", HOST: "127.0.0.1" })).toEqual({ port: 4599, host: "127.0.0.1" });
+    expect(resolveServeAddress({ SERVE_MANAGED: "1", PORT: "8080" }).port).toBe(8080);
+    expect(resolveServeAddress({ SERVE_MANAGED: "1", HOST: "127.0.0.1" })).toEqual({ port: 3000, host: "127.0.0.1" });
   });
 
-  test("invalid PORT → named ServeConfigError (never a silent default)", () => {
+  test("managed: invalid PORT → named ServeConfigError (never a silent default)", () => {
     for (const bad of ["abc", "12.5", "30o0", "-1", "0", "65536", "999999"]) {
       let err: unknown = null;
       try {
-        resolveServeAddress({ PORT: bad });
+        resolveServeAddress({ SERVE_MANAGED: "1", PORT: bad });
       } catch (e) {
         err = e;
       }
@@ -58,9 +58,21 @@ describe("resolveServeAddress — env-driven listen address (deliverable 1)", ()
     }
   });
 
-  test("the sandbox posture (no PORT/HOST in env) resolves byte-identically to the old hard-pin", () => {
-    // The CTO sandbox sets neither variable — the site stays on :3000/0.0.0.0.
+  test("UNMANAGED: stray PORT/HOST are IGNORED — the site cannot be moved (11/5 PORT=80 incident)", () => {
+    // The sandbox shell profile carries PORT=80; honoring it moved the dev
+    // site off the reverse-proxied :3000 and dark (2026-11-05). Unmanaged
+    // boots always bind the historical hard-pin, whatever the env says:
+    expect(resolveServeAddress({ PORT: "80" })).toEqual({ port: 3000, host: "0.0.0.0" });
+    expect(resolveServeAddress({ PORT: "4599", HOST: "127.0.0.1" })).toEqual({ port: 3000, host: "0.0.0.0" });
+    // …and an invalid unmanaged PORT is ignored too, never a crash:
+    expect(resolveServeAddress({ PORT: "not-a-port" })).toEqual({ port: 3000, host: "0.0.0.0" });
+    expect(resolveServeAddress({ SERVE_MANAGED: "0", PORT: "80" })).toEqual({ port: 3000, host: "0.0.0.0" });
+  });
+
+  test("the sandbox posture resolves byte-identically to the old hard-pin", () => {
+    // The CTO sandbox sets SERVE_MANAGED never — the site stays on :3000/0.0.0.0.
     expect(resolveServeAddress({ SERVE_MANAGED: undefined })).toEqual({ port: 3000, host: "0.0.0.0" });
+    expect(resolveServeAddress({ SERVE_MANAGED: undefined, PORT: "80" })).toEqual({ port: 3000, host: "0.0.0.0" });
   });
 });
 
