@@ -54,9 +54,14 @@ const win = (over: Partial<WinWithClients> = {}): WinWithClients => ({
   cancelled: false,
   created_business_date: over.created_business_date ?? "2026-10-20",
   // honor the override so tests can construct genuinely unpaid rows (the
-  // paid-only win rule in computeLeadCohortOutcomes rides on isBookingWin)
+  // paid-only win rule in computeLeadCohortOutcomes rides on isBookingWin).
+  // `!== undefined` (not ??) so an EXPLICIT null override lands — production
+  // genuinely-pending rows carry booking_win_business_date NULL (the writer's
+  // not-paid branch), and under the DEPOSIT-WAIVED win gate (owner directive
+  // 2026-11-05) a persisted win date IS win evidence: a fixture that wanted
+  // "unpaid, never counts" must model that real shape.
   payment_state: over.payment_state ?? "paid",
-  booking_win_business_date: over.booking_win_business_date ?? "2026-10-22",
+  booking_win_business_date: over.booking_win_business_date !== undefined ? over.booking_win_business_date : "2026-10-22",
   client_phone: over.client_phone ?? null,
   client_email: over.client_email ?? null,
 });
